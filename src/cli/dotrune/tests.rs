@@ -409,6 +409,11 @@ fn resolved_deck_artifacts_store_canonical_ids() {
             .iter()
             .filter_map(|file| file.artifact_id.as_deref())
             .collect::<Vec<_>>(),
-        ["science/skills/OnlyScience", "science/hooks/OnEvent"]
+        [
+            "science/skills/OnlyScience",
+            "science/hooks/OnEvent",
+            "science/hooks/hooks",
+            "science/hooks/safety-net",
+        ]
     );
 }

@@ -97,7 +97,7 @@ pub fn execute(
                 .iter()
                 .filter(|(key, _)| !deployed_keys.contains(*key))
                 .filter(|(key, _)| {
-                    ["agents/", "skills/", "rules/"]
+                    ["agents/", "skills/", "rules/", "hooks/"]
                         .iter()
                         .any(|prefix| key.starts_with(prefix))
                 })
@@ -239,7 +239,9 @@ fn deploy_provider_files(
         let files = collect_files_recursive(&kind_dir)?;
 
         for build_path in files {
-            if build_path.extension().unwrap_or_default() == "yaml" {
+            if *kind != commands::provider::ContentKind::Hooks
+                && build_path.extension().unwrap_or_default() == "yaml"
+            {
                 continue;
             }
 
@@ -256,11 +258,15 @@ fn deploy_provider_files(
             let build_fingerprint = manifest::content_sha256(&build_content);
             let provenance_relative = manifest::provenance_path(&manifest_key);
             let sidecar_source = manifest::sidecar_path(&build_path);
+            let has_provenance = sidecar_source.is_file()
+                && sidecar_source != build_path
+                && *kind != commands::provider::ContentKind::Hooks;
 
-            if sidecar_source.is_file() {
+            if has_provenance {
                 let provenance_target = target_base.join(&provenance_relative);
                 let _ = copy_file(&sidecar_source, &provenance_target);
             }
+            let deployed_provenance = has_provenance.then(|| provenance_relative.clone());
 
             let target_content = fs::read_to_string(&target_path).ok();
             let status = manifest::status(
@@ -276,7 +282,7 @@ fn deploy_provider_files(
                         manifest_key,
                         manifest::ManifestEntry {
                             fingerprint: build_fingerprint.clone(),
-                            provenance: Some(provenance_relative.clone()),
+                            provenance: deployed_provenance.clone(),
                         },
                     );
                     result.installed.push(DeployedFile {
@@ -290,7 +296,7 @@ fn deploy_provider_files(
                         manifest_key,
                         manifest::ManifestEntry {
                             fingerprint: build_fingerprint.clone(),
-                            provenance: Some(provenance_relative.clone()),
+                            provenance: deployed_provenance.clone(),
                         },
                     );
                     result.skipped.push(SkippedFile {
@@ -306,7 +312,7 @@ fn deploy_provider_files(
                             manifest_key,
                             manifest::ManifestEntry {
                                 fingerprint: build_fingerprint.clone(),
-                                provenance: Some(provenance_relative.clone()),
+                                provenance: deployed_provenance,
                             },
                         );
                         result.installed.push(DeployedFile {

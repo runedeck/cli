@@ -79,6 +79,48 @@ fn install_local_deck(
 }
 
 #[test]
+fn deck_install_ships_domain_hooks_and_rewrites_plugin_paths() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    let output =
+        install_local_deck(consumer.path(), "include", "'science/skills/OnlyScience'").success();
+
+    let hooks_root = consumer.path().join(".claude/hooks/science");
+    let manifest = fs::read_to_string(hooks_root.join("hooks.json")).unwrap();
+    assert!(
+        manifest.contains("bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/science/safety-net.sh"),
+        "hook command must point at the deployed domain bundle: {manifest}"
+    );
+    assert!(
+        !manifest.contains("${CLAUDE_PLUGIN_ROOT}"),
+        "plugin-root paths must not survive deployment: {manifest}"
+    );
+    assert_eq!(
+        fs::read_to_string(hooks_root.join("safety-net.sh")).unwrap(),
+        "#!/bin/sh\nprintf '%s\\n' \"fixture safety net\"\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(
+            fs::metadata(hooks_root.join("safety-net.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0,
+            "deployed hook script must remain executable"
+        );
+    }
+
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("unsupported.txt") && stderr.contains("unsupported file type"),
+        "unsupported source files must produce a named warning: {stderr}"
+    );
+}
+
+#[test]
 fn dotrune_deploys_requested_artifacts_across_providers() {
     let producer_a = tempfile::tempdir().unwrap();
     let producer_b = tempfile::tempdir().unwrap();
@@ -377,7 +419,12 @@ fn deck_does_not_deploy_hook_without_selected_domain_artifact() {
 
     install_local_deck(consumer.path(), "hooks", "science/hooks/OnEvent").success();
 
-    assert!(!consumer.path().join(".claude/hooks/OnEvent.md").exists());
+    assert!(
+        !consumer
+            .path()
+            .join(".claude/hooks/science/OnEvent.md")
+            .exists()
+    );
 }
 
 #[test]
@@ -386,7 +433,7 @@ fn deck_deploys_domain_hooks_with_selected_domain_artifact() {
 
     install_local_deck(consumer.path(), "skills", "science/skills/OnlyScience").success();
 
-    let hook = consumer.path().join(".claude/hooks/OnEvent.md");
+    let hook = consumer.path().join(".claude/hooks/science/OnEvent.md");
     let body = fs::read_to_string(&hook).expect("science hook must deploy with science skill");
     assert!(
         body.contains("Descriptive fixture placeholder for a hook."),

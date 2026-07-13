@@ -4,8 +4,6 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use crate::cli::config::read_file;
-
 fn parse_targets(content: &str) -> Option<Vec<String>> {
     frontmatter_list(content, "targets").map(|value| value.split(", ").map(String::from).collect())
 }
@@ -107,6 +105,10 @@ fn collect_kinds(
         } else {
             valid_qualifiers
         };
+        if *kind == commands::provider::ContentKind::Hooks {
+            walk_hook_dir(&dir, module_root, &mut sources)?;
+            continue;
+        }
         walk_content_dir(&dir, *kind, module_root, &mut sources, qualifiers)?;
     }
 
@@ -125,16 +127,18 @@ fn walk_content_dir(
     sources: &mut Vec<SourceFile>,
     valid_qualifiers: &HashSet<String>,
 ) -> Result<(), Error> {
-    let entries = fs::read_dir(dir)
+    let mut entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
+    let mut entries = entries
+        .by_ref()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
 
     let mut base_filenames: HashSet<String> = HashSet::new();
     let mut qualifier_directories: Vec<(String, std::path::PathBuf)> = Vec::new();
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
-
         let path = entry.path();
 
         if path.is_dir() {
@@ -162,6 +166,7 @@ fn walk_content_dir(
         }
 
         if path.extension().unwrap_or_default() != "md" {
+            warn_skipped(&path, "unsupported file type");
             continue;
         }
 
@@ -179,7 +184,9 @@ fn walk_content_dir(
             .to_string_lossy()
             .to_string();
 
-        let content = read_file(&path)?;
+        let Some(content) = read_source_text(&path)? else {
+            continue;
+        };
 
         let targets = parse_targets(&content);
         sources.push(SourceFile {
@@ -210,6 +217,72 @@ fn walk_content_dir(
     Ok(())
 }
 
+/// Hook bundles are opaque UTF-8 files. Keep every relative path and byte of
+/// text intact; the assembly step only rewrites command locations in
+/// `hooks.json`.
+fn walk_hook_dir(
+    dir: &Path,
+    module_root: &Path,
+    sources: &mut Vec<SourceFile>,
+) -> Result<(), Error> {
+    let mut entries = fs::read_dir(dir)
+        .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_hook_dir(&path, module_root, sources)?;
+            continue;
+        }
+        if !path.is_file() {
+            warn_skipped(&path, "unsupported file type");
+            continue;
+        }
+        let Some(content) = read_source_text(&path)? else {
+            continue;
+        };
+        let relative_path = path
+            .strip_prefix(module_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        sources.push(SourceFile {
+            relative_path,
+            full_path: path.to_string_lossy().to_string(),
+            content,
+            kind: commands::provider::ContentKind::Hooks,
+            passthrough: true,
+            qualifier: None,
+            targets: None,
+            artifact_id: None,
+            providers: None,
+        });
+    }
+    Ok(())
+}
+
+fn read_source_text(path: &Path) -> Result<Option<String>, Error> {
+    let bytes = fs::read(path).map_err(|e| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {e}", path.display()),
+        )
+    })?;
+    if let Ok(content) = String::from_utf8(bytes) {
+        Ok(Some(content))
+    } else {
+        warn_skipped(path, "file is not valid UTF-8");
+        Ok(None)
+    }
+}
+
+fn warn_skipped(path: &Path, reason: &str) {
+    eprintln!("warning: skipping {} ({reason})", path.display());
+}
+
 /// Walk a qualifier subdirectory, collecting only qualifier-only files.
 ///
 /// Files that share a name with a base file are variant overrides, handled
@@ -230,12 +303,15 @@ fn walk_qualifier_dir(
     base_filenames: &HashSet<String>,
     valid_qualifiers: &HashSet<String>,
 ) -> Result<(), Error> {
-    let entries = fs::read_dir(dir)
+    let mut entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
+    let mut entries = entries
+        .by_ref()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -270,6 +346,7 @@ fn walk_qualifier_dir(
         }
 
         if path.extension().unwrap_or_default() != "md" {
+            warn_skipped(&path, "unsupported file type");
             continue;
         }
         let filename = path
@@ -285,7 +362,9 @@ fn walk_qualifier_dir(
             .unwrap_or(&path)
             .to_string_lossy()
             .to_string();
-        let content = read_file(&path)?;
+        let Some(content) = read_source_text(&path)? else {
+            continue;
+        };
         let targets = parse_targets(&content);
         sources.push(SourceFile {
             relative_path: relative,
@@ -347,16 +426,22 @@ fn collect_skill_files(
     file_map: &mut std::collections::HashMap<String, SourceFile>,
     is_overlay: bool,
 ) -> Result<(), Error> {
-    let entries = fs::read_dir(dir)
+    let mut entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
+    let mut entries = entries
+        .by_ref()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
-
         let path = entry.path();
 
-        if path.is_dir() || path.extension().unwrap_or_default() != "md" {
+        if path.is_dir() {
+            continue;
+        }
+        if path.extension().unwrap_or_default() != "md" {
+            warn_skipped(&path, "unsupported file type");
             continue;
         }
 
@@ -368,7 +453,9 @@ fn collect_skill_files(
 
         let is_skill_file = filename == "SKILL.md";
         let flattened_relative = format!("skills/{skill_name}/{filename}");
-        let content = read_file(&path)?;
+        let Some(content) = read_source_text(&path)? else {
+            continue;
+        };
 
         if is_overlay && file_map.contains_key(&filename) {
             eprintln!("  override  skills/{skill_name}/user/{filename} → {filename}");

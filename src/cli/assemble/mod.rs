@@ -160,7 +160,7 @@ fn resolve_active_model(
     provider_config.model.clone()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn assemble_source_for_provider(
     source: &sources::SourceFile,
     module_root: &Path,
@@ -204,16 +204,21 @@ fn assemble_source_for_provider(
         .cloned()
         .unwrap_or_default();
 
-    let mut assembled = pipeline::assemble_source(
-        source,
-        module_root,
-        provider_name,
-        active_model,
-        &kind_keep_fields,
-        model_tiers,
-        effort_tiers,
-        assembly_rules.contains(&commands::provider::AssemblyRule::StripLinks),
-    )?;
+    let is_hook = source.kind == commands::provider::ContentKind::Hooks;
+    let mut assembled = if is_hook {
+        source.content.clone()
+    } else {
+        pipeline::assemble_source(
+            source,
+            module_root,
+            provider_name,
+            active_model,
+            &kind_keep_fields,
+            model_tiers,
+            effort_tiers,
+            assembly_rules.contains(&commands::provider::AssemblyRule::StripLinks),
+        )?
+    };
     // For skills, preserve the skill directory: skills/SceneReview/SKILL.md
     // For agents/rules, use just the filename: agents/GameMaster.md
     // For qualifier-only files, strip the qualifier directory too:
@@ -234,20 +239,30 @@ fn assemble_source_for_provider(
     };
 
     // Apply transformation rules (kebab-case, kebab-case-agents, remap-tools, etc.)
-    let (transformed_content, transformed_filename) = commands::transform::apply_rules(
-        &assembled,
-        relative_within_kind,
-        assembly_rules,
-        tool_mappings,
-        source.kind.as_str(),
-    )
-    .map_err(|e| commands::error::Error::new(commands::error::ErrorKind::Validate, e))?;
+    let (transformed_content, transformed_filename) = if is_hook {
+        let domain = hook_domain(source)?;
+        let content = if relative_within_kind == "hooks.json" {
+            rewrite_hook_commands(&assembled, &provider_config.target, domain)?
+        } else {
+            assembled.clone()
+        };
+        (content, format!("{domain}/{relative_within_kind}"))
+    } else {
+        commands::transform::apply_rules(
+            &assembled,
+            relative_within_kind,
+            assembly_rules,
+            tool_mappings,
+            source.kind.as_str(),
+        )
+        .map_err(|e| commands::error::Error::new(commands::error::ErrorKind::Validate, e))?
+    };
 
     assembled = transformed_content;
 
     // Always ensure a trailing newline for POSIX text file convention
     // before calculating the hash for provenance and writing to disk.
-    if !assembled.is_empty() && !assembled.ends_with('\n') {
+    if !is_hook && !assembled.is_empty() && !assembled.ends_with('\n') {
         assembled.push('\n');
     }
 
@@ -271,15 +286,123 @@ fn assemble_source_for_provider(
     let manifest_key = format!("{}/{}/{}", provider_name, source.kind, transformed_filename);
 
     output::write_file(&output_path, &assembled)?;
+    if is_hook {
+        preserve_executable_bit(source, &output_path)?;
+    }
 
-    let statement = provenance::build_statement(&manifest_key, &assembled, source, source_uri);
-    provenance::write_sidecar(&output_path, &statement)?;
+    if !is_hook {
+        let statement = provenance::build_statement(&manifest_key, &assembled, source, source_uri);
+        provenance::write_sidecar(&output_path, &statement)?;
+    }
 
     Ok(Some(DeployedFile {
         source: source.relative_path.clone(),
         target: output_path.to_string_lossy().to_string(),
         provider: provider_name.to_string(),
     }))
+}
+
+fn hook_domain(source: &sources::SourceFile) -> Result<&str, Error> {
+    source
+        .artifact_id
+        .as_deref()
+        .and_then(|id| id.split('/').next())
+        .filter(|domain| !domain.is_empty())
+        .ok_or_else(|| {
+            commands::error::Error::new(
+                commands::error::ErrorKind::Config,
+                format!("hook {} has no deck domain", source.relative_path),
+            )
+        })
+}
+
+fn rewrite_hook_commands(
+    content: &str,
+    provider_target: &str,
+    domain: &str,
+) -> Result<String, Error> {
+    let mut manifest: serde_json::Value = serde_json::from_str(content).map_err(|error| {
+        commands::error::Error::new(
+            commands::error::ErrorKind::Validate,
+            format!("invalid hooks/hooks.json: {error}"),
+        )
+    })?;
+    let deployed_root = format!(
+        "${{CLAUDE_PROJECT_DIR}}/{}/hooks/{domain}",
+        provider_target.trim_end_matches('/')
+    );
+    rewrite_command_values(&mut manifest, &deployed_root);
+    serde_json::to_string_pretty(&manifest)
+        .map(|mut value| {
+            value.push('\n');
+            value
+        })
+        .map_err(|error| {
+            commands::error::Error::new(
+                commands::error::ErrorKind::Validate,
+                format!("cannot serialize hooks/hooks.json: {error}"),
+            )
+        })
+}
+
+fn rewrite_command_values(value: &mut serde_json::Value, deployed_root: &str) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                if key == "command"
+                    && let serde_json::Value::String(command) = child
+                {
+                    *command = command.replace("${CLAUDE_PLUGIN_ROOT}/hooks", deployed_root);
+                } else {
+                    rewrite_command_values(child, deployed_root);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                rewrite_command_values(item, deployed_root);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn preserve_executable_bit(source: &sources::SourceFile, output_path: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source_mode = std::fs::metadata(&source.full_path)
+            .map_err(|error| {
+                commands::error::Error::new(
+                    commands::error::ErrorKind::Io,
+                    format!("cannot inspect {}: {error}", source.full_path),
+                )
+            })?
+            .permissions()
+            .mode();
+        if source_mode & 0o111 != 0 {
+            let mut permissions = std::fs::metadata(output_path)
+                .map_err(|error| {
+                    commands::error::Error::new(
+                        commands::error::ErrorKind::Io,
+                        format!("cannot inspect {}: {error}", output_path.display()),
+                    )
+                })?
+                .permissions();
+            permissions.set_mode(permissions.mode() | (source_mode & 0o111));
+            std::fs::set_permissions(output_path, permissions).map_err(|error| {
+                commands::error::Error::new(
+                    commands::error::ErrorKind::Io,
+                    format!(
+                        "cannot set permissions on {}: {error}",
+                        output_path.display()
+                    ),
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Check whether a qualifier-only source applies to a provider/model target.

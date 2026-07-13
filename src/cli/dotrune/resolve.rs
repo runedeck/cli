@@ -81,10 +81,18 @@ fn canonical_artifact_id(domain: &str, file: &SourceFile) -> Result<String, Erro
         file.relative_path
             .strip_prefix("skills/")
             .and_then(|path| path.split('/').next())
+            .map(str::to_string)
+    } else if file.kind == commands::provider::ContentKind::Hooks {
+        file.relative_path
+            .strip_prefix("hooks/")
+            .map(Path::new)
+            .map(|path| path.with_extension(""))
+            .map(|path| path.to_string_lossy().into_owned())
     } else {
         Path::new(&file.relative_path)
             .file_stem()
             .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_string)
     }
     .filter(|name| !name.is_empty())
     .ok_or_else(|| {
