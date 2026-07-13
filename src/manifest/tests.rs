@@ -39,8 +39,8 @@ fn statement_is_valid_yaml() {
         "rules/AgentTeams.md",
         &entry.fingerprint,
         &[("rules/AgentTeams.md".into(), content_sha256("source"))],
-        "forge-cli",
-        "https://github.com/N4M3Z/forge-cli/assemble/v1",
+        "https://github.com/runedeck/rune",
+        "https://github.com/runedeck/rune/assemble/v1",
         env!("CARGO_PKG_VERSION"),
         "https://github.com/N4M3Z/forge-core",
     );
@@ -55,6 +55,18 @@ fn statement_is_valid_yaml() {
     assert_eq!(
         provenance["subject"][0]["name"].as_str().unwrap(),
         "rules/AgentTeams.md"
+    );
+    assert_eq!(
+        provenance["predicate"]["buildDefinition"]["buildType"]
+            .as_str()
+            .unwrap(),
+        "https://github.com/runedeck/rune/assemble/v1"
+    );
+    assert_eq!(
+        provenance["predicate"]["runDetails"]["builder"]["id"]
+            .as_str()
+            .unwrap(),
+        "https://github.com/runedeck/rune"
     );
 }
 
@@ -75,8 +87,8 @@ fn statement_includes_all_dependencies() {
         "rules/AgentTeams.md",
         &content_sha256("output"),
         &inputs,
-        "forge-cli",
-        "https://github.com/N4M3Z/forge-cli/assemble/v1",
+        "https://github.com/runedeck/rune",
+        "https://github.com/runedeck/rune/assemble/v1",
         env!("CARGO_PKG_VERSION"),
         "https://github.com/N4M3Z/forge-core",
     );

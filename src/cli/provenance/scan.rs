@@ -155,6 +155,7 @@ mod tests {
         sidecar_subject: &str,
         digest: &str,
         source_uri: &str,
+        build_type: &str,
     ) {
         let kind_dir = target_root.join(kind);
         let provenance_dir = kind_dir.join(".provenance");
@@ -164,7 +165,7 @@ mod tests {
             .unwrap()
             .to_string_lossy();
         let yaml = format!(
-            "provenance:\n    _type: https://in-toto.io/Statement/v1\n    subject:\n        - name: {sidecar_subject}\n          digest:\n              sha256: {digest}\n    predicate:\n        buildDefinition:\n            buildType: https://example.test/copy/v1\n            externalParameters:\n                source: {source_uri}\n            resolvedDependencies:\n                - uri: {sidecar_subject}\n                  digest:\n                      sha256: {digest}\n        runDetails:\n            builder:\n                id: forge-cli\n                version:\n                    forge: 0.0.0-test\n            metadata:\n                startedOn: \"2026-01-01T00:00:00Z\"\n"
+            "provenance:\n    _type: https://in-toto.io/Statement/v1\n    subject:\n        - name: {sidecar_subject}\n          digest:\n              sha256: {digest}\n    predicate:\n        buildDefinition:\n            buildType: {build_type}\n            externalParameters:\n                source: {source_uri}\n            resolvedDependencies:\n                - uri: {sidecar_subject}\n                  digest:\n                      sha256: {digest}\n        runDetails:\n            builder:\n                id: forge-cli\n                version:\n                    forge: 0.0.0-test\n            metadata:\n                startedOn: \"2026-01-01T00:00:00Z\"\n"
         );
         std::fs::write(provenance_dir.join(format!("{stem}.yaml")), yaml).unwrap();
     }
@@ -184,6 +185,7 @@ mod tests {
             "codex/agents/GameMaster.toml",
             &digest,
             "https://example.test/upstream",
+            "https://example.test/copy/v1",
         );
 
         let (by_source, orphans) = collect(target.path());
@@ -213,6 +215,7 @@ mod tests {
             "claude/agents/ClaudeAgent.md",
             &digest,
             "https://example.test/upstream",
+            "https://example.test/copy/v1",
         );
 
         let (by_source, orphans) = collect(target.path());
@@ -238,6 +241,36 @@ mod tests {
             "dotfile and stray .yaml must not appear"
         );
         assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn legacy_forge_cli_build_type_parses_and_verifies() {
+        let target = TempDir::new().unwrap();
+        let rules_dir = target.path().join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        let content = "# Legacy sidecar\n";
+        std::fs::write(rules_dir.join("Legacy.md"), content).unwrap();
+        let digest = manifest::content_sha256(content);
+        write_sidecar_for(
+            target.path(),
+            "rules",
+            "Legacy.md",
+            "rules/Legacy.md",
+            &digest,
+            "https://example.test/upstream",
+            "https://github.com/N4M3Z/forge-cli/assemble/v1",
+        );
+
+        let sidecar = read_sidecar(&rules_dir.join(".provenance/Legacy.yaml"))
+            .expect("legacy buildType URI must parse");
+        assert_eq!(
+            sidecar.provenance.predicate.build_definition.build_type,
+            "https://github.com/N4M3Z/forge-cli/assemble/v1"
+        );
+
+        let (by_source, orphans) = collect(target.path());
+        assert!(orphans.is_empty());
+        assert_eq!(by_source["https://example.test/upstream"], (1, 1));
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub fn build_statement(
         manifest_key,
         &output_sha256,
         &[(source.relative_path.clone(), source_sha256)],
-        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_REPOSITORY"),
         &format!("{}/assemble/v1", env!("CARGO_PKG_REPOSITORY")),
         env!("CARGO_PKG_VERSION"),
         source_uri,

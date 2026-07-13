@@ -69,7 +69,7 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
                     format!("templates/init/{filename}"),
                     manifest::content_sha256(template_content),
                 )],
-                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_REPOSITORY"),
                 &format!("{}/init/v1", env!("CARGO_PKG_REPOSITORY")),
                 env!("CARGO_PKG_VERSION"),
                 env!("CARGO_PKG_REPOSITORY"),

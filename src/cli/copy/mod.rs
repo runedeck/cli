@@ -146,7 +146,7 @@ fn write_copy_provenance(
         &relative_source,
         &content_digest,
         &[(relative_source.clone(), content_digest.clone())],
-        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_REPOSITORY"),
         &format!("{}/copy/v1", env!("CARGO_PKG_REPOSITORY")),
         env!("CARGO_PKG_VERSION"),
         source_uri,
