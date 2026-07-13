@@ -60,6 +60,22 @@ fn skips_entry_without_module_manifest() {
 }
 
 #[test]
+fn skips_dotfiles_under_runes_without_warning() {
+    let root = tempfile::tempdir().unwrap();
+    write(&root.path().join("deck.yaml"), &deck_yaml(""));
+    write(&root.path().join("runes/.DS_Store"), "metadata");
+    write(
+        &root.path().join("runes/.notes/README.md"),
+        "hidden entry\n",
+    );
+
+    let deck = load(root.path()).unwrap();
+
+    assert!(deck.domains.is_empty());
+    assert!(deck.warnings.is_empty());
+}
+
+#[test]
 fn rejects_domain_name_that_differs_from_directory() {
     let root = tempfile::tempdir().unwrap();
     write(&root.path().join("deck.yaml"), &deck_yaml(""));

@@ -160,6 +160,10 @@ pub fn load(root: &Path) -> Result<Deck, String> {
     let mut domains = Vec::new();
     let mut warnings = Vec::new();
     for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
         let domain_root = entry.path();
         let module_yaml = domain_root.join("module.yaml");
         if !domain_root.is_dir() || !module_yaml.is_file() {
@@ -172,7 +176,6 @@ pub fn load(root: &Path) -> Result<Deck, String> {
             continue;
         }
 
-        let name = entry.file_name().to_string_lossy().into_owned();
         let domain_manifest = crate::module::load(&domain_root)?;
         if domain_manifest.name != name {
             return Err(format!(

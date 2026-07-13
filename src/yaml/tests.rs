@@ -216,6 +216,21 @@ fn merge_both_empty_mappings() {
 }
 
 #[test]
+fn merge_empty_override_keeps_defaults_without_a_root_conflict() {
+    let merged = deep_merge(MERGE_DEFAULTS, "").unwrap();
+    assert_eq!(yaml_value(&merged, "user.root"), Some("/default".into()));
+}
+
+#[test]
+fn merge_empty_defaults_accepts_mapping_override() {
+    let merged = deep_merge("", "providers:\n    claude:\n        target: .custom\n").unwrap();
+    assert_eq!(
+        yaml_value(&merged, "providers.claude.target"),
+        Some(".custom".into())
+    );
+}
+
+#[test]
 fn merge_keeps_default_when_override_has_sequence_for_mapping() {
     let defaults = "models:\n    claude:\n        strong: opus\n";
     let override_with_sequence = "models:\n    - opus\n    - sonnet\n";

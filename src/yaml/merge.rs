@@ -37,7 +37,11 @@ pub fn deep_merge(defaults_content: &str, override_content: &str) -> Result<Stri
     let overlay: Value = serde_yaml::from_str(override_content)
         .map_err(|e| format!("failed to parse override YAML: {e}"))?;
 
-    merge_value(&mut base, overlay, "");
+    match (&base, &overlay) {
+        (_, Value::Null) => {}
+        (Value::Null, _) => base = overlay,
+        _ => merge_value(&mut base, overlay, ""),
+    }
 
     serde_yaml::to_string(&base).map_err(|e| format!("failed to serialize merged YAML: {e}"))
 }

@@ -103,7 +103,7 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
         .assert()
         .success();
 
-    rune()
+    let clean_drift = rune()
         .args([
             "drift",
             "--source",
@@ -113,6 +113,11 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
         ])
         .assert()
         .success();
+    let stderr = String::from_utf8_lossy(&clean_drift.get_output().stderr);
+    assert!(
+        !stderr.contains("config key `<root>` has incompatible types"),
+        "an absent deck config must merge silently: {stderr}"
+    );
 
     let deployed = consumer.path().join(".claude/skills/OnlyScience/SKILL.md");
     fs::write(&deployed, "locally edited\n").unwrap();
@@ -131,6 +136,36 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
     assert!(
         stdout.contains("OnlyScience"),
         "real drift must be named: {stdout}"
+    );
+}
+
+#[test]
+fn empty_module_defaults_merge_without_a_warning() {
+    let module = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    fs::write(
+        module.path().join("module.yaml"),
+        "name: empty-defaults\nversion: 0.1.0\ndescription: fixture\nevents: []\n",
+    )
+    .unwrap();
+    fs::write(module.path().join("defaults.yaml"), "").unwrap();
+    fs::create_dir(module.path().join("rules")).unwrap();
+    fs::write(module.path().join("rules/Rule.md"), "Rule body.\n").unwrap();
+
+    let install = rune()
+        .args([
+            "install",
+            "--source",
+            module.path().to_str().unwrap(),
+            "--target",
+            target.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&install.get_output().stderr);
+    assert!(
+        !stderr.contains("config key `<root>` has incompatible types"),
+        "empty defaults must merge silently: {stderr}"
     );
 }
 
