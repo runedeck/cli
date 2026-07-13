@@ -32,6 +32,18 @@
                     <span class="nav-icon">&#9654;</span> Repositories
                 </a>
             </nav>
+            <div class="sidebar-section-title">Deck</div>
+            <nav class="sidebar-nav">
+                <a href="/domains" class="nav-item{% if tab == "domains" %} active{% endif %}">
+                    <span class="nav-icon">&#9635;</span> Domains
+                </a>
+                <a href="/casts" class="nav-item{% if tab == "casts" %} active{% endif %}">
+                    <span class="nav-icon">&#10022;</span> Casts
+                </a>
+                <a href="/targets" class="nav-item{% if tab == "targets" %} active{% endif %}">
+                    <span class="nav-icon">&#8599;</span> Targets
+                </a>
+            </nav>
             <div class="sidebar-section-title">Artifacts</div>
             <nav class="sidebar-nav">
                 <a href="/search?kind=skills" class="nav-item filter-item"><span class="kind-icon k-skills"></span> Skills</a>
@@ -90,6 +102,9 @@
     var COMMANDS = [
         { label: 'Go to Overview', hint: 'g o', run: function(){ location.href = '/'; } },
         { label: 'Go to Repositories', hint: 'g r', run: function(){ location.href = '/repositories'; } },
+        { label: 'Go to Domains', hint: 'g d', run: function(){ location.href = '/domains'; } },
+        { label: 'Go to Casts', run: function(){ location.href = '/casts'; } },
+        { label: 'Go to Targets', run: function(){ location.href = '/targets'; } },
         { label: 'Go to Provenance', hint: 'g p', run: function(){ location.href = '/provenance'; } },
         { label: 'Go to ADRs', hint: 'g a', run: function(){ location.href = '/adrs'; } },
         { label: 'Go to Settings', hint: 'g s', run: function(){ location.href = '/settings'; } },
@@ -178,4 +193,3 @@
     </script>
 </body>
 </html>
-

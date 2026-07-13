@@ -70,7 +70,7 @@ fn render_artifact(
     let deploy_groups = group_deployments(&provenance_entries);
     let provenance_raw = scan::read_source_sidecar(
         &module_view.source_uri,
-        Some(&artifact.relative_path),
+        Some(&artifact.source_path),
         &state.local_repos,
     )
     .or_else(|| read_deployed_sidecar(state, root, &provenance_entries))
@@ -83,7 +83,7 @@ fn render_artifact(
             scan::source_at_deploy(
                 &entry.input_sha,
                 &module_view.source_uri,
-                &artifact.relative_path,
+                &artifact.source_path,
                 &state.local_repos,
             )
         })
@@ -331,7 +331,7 @@ fn read_current_source(state: &DashboardState, module_name: &str, deployed_path:
                 .artifacts
                 .iter()
                 .find(|artifact| strip_extension(&artifact.relative_path) == stem)
-                .map(|artifact| (module.source_uri.clone(), artifact.relative_path.clone()))
+                .map(|artifact| (module.source_uri.clone(), artifact.source_path.clone()))
         })
     else {
         return String::new();
@@ -464,7 +464,7 @@ pub(super) async fn effective_page(
             .into_response();
     };
 
-    let base_path = repo.join(&artifact.relative_path);
+    let base_path = repo.join(&artifact.source_path);
     let Some(source_directory) = base_path.parent() else {
         return (
             axum::http::StatusCode::NOT_FOUND,
@@ -473,10 +473,10 @@ pub(super) async fn effective_page(
             .into_response();
     };
     let filename = artifact
-        .relative_path
+        .source_path
         .rsplit('/')
         .next()
-        .unwrap_or(&artifact.relative_path);
+        .unwrap_or(&artifact.source_path);
 
     let qualifiers: Vec<String> = params
         .qualifier
@@ -504,7 +504,7 @@ pub(super) async fn effective_page(
         &base_content,
         variant_path.as_ref(),
         repo,
-        &artifact.relative_path,
+        &artifact.source_path,
     );
 
     let title = format!("{}/{} · {}", kind, name, params.qualifier);
@@ -591,7 +591,7 @@ fn find_source_location(
                 .artifacts
                 .iter()
                 .find(|artifact| artifact.kind == kind && artifact.name == name)
-                .map(|artifact| (module.source_uri.clone(), artifact.relative_path.clone()))
+                .map(|artifact| (module.source_uri.clone(), artifact.source_path.clone()))
         });
     if direct.is_some() {
         return direct;
@@ -605,7 +605,13 @@ fn find_source_location(
                 .iter()
                 .flat_map(|artifact| &artifact.companions)
                 .find(|comp| comp.name == name)
-                .map(|comp| (module.source_uri.clone(), comp.relative_path.clone()))
+                .map(|comp| {
+                    let path = view.deck.as_ref().map_or_else(
+                        || comp.relative_path.clone(),
+                        |_| format!("runes/{module_name}/{}", comp.relative_path),
+                    );
+                    (module.source_uri.clone(), path)
+                })
         })
 }
 
@@ -690,6 +696,7 @@ mod tests {
             summary: commands::view::StatusSummary::default(),
             provenance: Vec::new(),
             adrs: Vec::new(),
+            deck: None,
         }
     }
 

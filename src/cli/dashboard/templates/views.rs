@@ -1,7 +1,9 @@
 use askama::Template;
 pub use commands::services::builders::{DepLink, MatrixView, NestedGroup, VariantCoverage};
 pub use commands::services::files::{ConfigFile, HarnessHooks};
-use commands::view::{ArtifactView, DashboardView, ModuleView};
+use commands::view::{ArtifactView, DashboardView, DeckView, ModuleView};
+
+use crate::cli::dashboard::routes::deck::TargetPanelRow;
 
 /// Shared status + search bar loaded into card-list views via htmx.
 #[derive(Template)]
@@ -49,6 +51,31 @@ pub struct ModulesTemplate<'a> {
     pub view: &'a DashboardView,
     pub selected_module: &'a str,
     pub detail: Option<&'a ModuleView>,
+}
+
+#[derive(Template)]
+#[template(path = "dashboard/pages/domains.html")]
+pub struct DomainsTemplate<'a> {
+    pub tab: &'a str,
+    pub version: &'a str,
+    pub deck: &'a DeckView,
+}
+
+#[derive(Template)]
+#[template(path = "dashboard/pages/casts.html")]
+pub struct CastsTemplate<'a> {
+    pub tab: &'a str,
+    pub version: &'a str,
+    pub deck: &'a DeckView,
+}
+
+#[derive(Template)]
+#[template(path = "dashboard/pages/targets.html")]
+pub struct TargetsTemplate<'a> {
+    pub tab: &'a str,
+    pub version: &'a str,
+    pub deck: &'a DeckView,
+    pub targets: Vec<TargetPanelRow<'a>>,
 }
 
 #[derive(Template)]

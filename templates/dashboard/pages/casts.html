@@ -1,0 +1,44 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<div class="detail-header">
+    <div class="detail-title-row">
+        <h1 class="detail-name">Casts</h1>
+        <span class="detail-module">{{ deck.name }} {{ deck.version }}</span>
+    </div>
+    <p class="detail-description">Read-only stage-B resolution results for deck casts.</p>
+</div>
+
+{% if deck.casts.is_empty() %}
+<div class="detail-panel"><p class="detail-description">This deck has no casts.</p></div>
+{% else %}
+<div class="cards">
+{% for cast in deck.casts %}
+    <section class="detail-panel">
+        <div class="card-header">
+            <span class="card-name">{{ cast.name }}</span>
+            {% if cast.resolution_error.is_some() %}
+            <span class="status-chip broken">resolution error</span>
+            {% else %}
+            <span class="status-chip ok">resolved</span>
+            {% endif %}
+        </div>
+        {% if !cast.description.is_empty() %}<p class="card-desc">{{ cast.description }}</p>{% endif %}
+        {% if let Some(error) = cast.resolution_error %}
+        <p class="variant-note">{{ error }}</p>
+        {% else %}
+        <p class="results-count">{{ cast.resolved_artifacts.len() }} resolved artifacts</p>
+        {% if !cast.resolved_artifacts.is_empty() %}
+        <ul class="module-artifact-list">
+        {% for artifact in cast.resolved_artifacts %}
+            <li class="module-artifact-row"><span class="mono">{{ artifact }}</span></li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+        {% if !cast.extends.is_empty() %}<p class="mono">extends: {{ cast.extends|join(", ") }}</p>{% endif %}
+    </section>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

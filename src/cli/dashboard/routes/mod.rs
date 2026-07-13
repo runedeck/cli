@@ -9,6 +9,7 @@ use commands::view::DashboardView;
 
 mod artifact;
 mod browse;
+pub(super) mod deck;
 mod files;
 mod integrity;
 mod shared;
@@ -38,6 +39,9 @@ pub fn router(shared: SharedState, root: PathBuf) -> Router {
         .route("/chrome", get(browse::chrome))
         .route("/repositories", get(browse::modules_page))
         .route("/repositories/{name}", get(browse::module_detail))
+        .route("/domains", get(deck::domains_page))
+        .route("/casts", get(deck::casts_page))
+        .route("/targets", get(deck::targets_page))
         .route(
             "/artifact/{module}/{kind}/{name}",
             get(artifact::artifact_detail_in_module),

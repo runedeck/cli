@@ -1,0 +1,37 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<div class="detail-header">
+    <div class="detail-title-row">
+        <h1 class="detail-name">Targets</h1>
+        <span class="detail-module">{{ deck.name }} {{ deck.version }}</span>
+    </div>
+    <p class="detail-description">Deployment and drift summaries for persistent targets pointing at this deck.</p>
+</div>
+
+{% if targets.is_empty() %}
+<div class="detail-panel"><p class="detail-description">No persistent targets point at this deck.</p></div>
+{% else %}
+<div class="cards">
+{% for row in targets %}
+    <section class="detail-panel">
+        <div class="card-header">
+            <span class="card-name">{{ row.target.name }}</span>
+            <span class="status-chip {{ row.status }}">{{ row.status }}</span>
+        </div>
+        <p class="mono">{{ row.target.root.display() }}</p>
+        <p class="results-count">{{ row.target.artifacts.len() }} known deployments</p>
+        <table class="status-table">
+            <tbody>
+                <tr><td>Unchanged</td><td class="count-ok">{{ row.target.summary.unchanged }} unchanged</td></tr>
+                <tr><td>Drift</td><td class="count-modified">{{ row.drift }} drifted</td></tr>
+                <tr><td>Stale</td><td class="count-stale">{{ row.target.summary.stale }} stale</td></tr>
+                <tr><td>Modified</td><td class="count-modified">{{ row.target.summary.modified }} modified</td></tr>
+                <tr><td>Pending</td><td class="count-new">{{ row.target.summary.new }} pending</td></tr>
+            </tbody>
+        </table>
+    </section>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}
