@@ -1,6 +1,6 @@
-//! Integration tests for the `.forge` consumer manifest.
+//! Integration tests for the `.rune` consumer manifest.
 //!
-//! A consumer repo declares which artifacts it wants in `.forge`; `forge
+//! A consumer repo declares which artifacts it wants in `.rune`; `rune
 //! install` from that repo reads the manifest, walks the named producer
 //! modules on disk, and deploys only the requested subset.
 
@@ -45,8 +45,8 @@ fn write_rule(producer_root: &Path, name: &str) {
     .unwrap();
 }
 
-fn write_dotforge(consumer_root: &Path, body: &str) {
-    fs::write(consumer_root.join(".forge"), body).unwrap();
+fn write_dotrune(consumer_root: &Path, body: &str) {
+    fs::write(consumer_root.join(".rune"), body).unwrap();
 }
 
 fn install(consumer_root: &Path) -> assert_cmd::assert::Assert {
@@ -62,7 +62,7 @@ fn install(consumer_root: &Path) -> assert_cmd::assert::Assert {
 }
 
 #[test]
-fn dotforge_deploys_requested_artifacts_across_providers() {
+fn dotrune_deploys_requested_artifacts_across_providers() {
     let producer_a = tempfile::tempdir().unwrap();
     let producer_b = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
@@ -75,7 +75,7 @@ fn dotforge_deploys_requested_artifacts_across_providers() {
     write_rule(producer_b.path(), "KeepThis");
     write_rule(producer_b.path(), "Unrequested");
 
-    write_dotforge(
+    write_dotrune(
         consumer.path(),
         &format!(
             "version: 1\n\
@@ -141,9 +141,9 @@ fn dotforge_deploys_requested_artifacts_across_providers() {
 }
 
 #[test]
-fn dotforge_errors_on_missing_source_path() {
+fn dotrune_errors_on_missing_source_path() {
     let consumer = tempfile::tempdir().unwrap();
-    write_dotforge(
+    write_dotrune(
         consumer.path(),
         "version: 1\nsources:\n  ghost:\n    path: /definitely/does/not/exist\nartifacts:\n  ghost:\n    skills: [X]\n",
     );
@@ -157,13 +157,13 @@ fn dotforge_errors_on_missing_source_path() {
 }
 
 #[test]
-fn dotforge_errors_on_missing_artifact_in_source() {
+fn dotrune_errors_on_missing_artifact_in_source() {
     let producer = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
     scaffold_producer(producer.path(), "producer");
     write_skill(producer.path(), "RealSkill");
 
-    write_dotforge(
+    write_dotrune(
         consumer.path(),
         &format!(
             "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [DoesNotExist]\n",
@@ -180,13 +180,13 @@ fn dotforge_errors_on_missing_artifact_in_source() {
 }
 
 #[test]
-fn dotforge_install_is_idempotent() {
+fn dotrune_install_is_idempotent() {
     let producer = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
     scaffold_producer(producer.path(), "producer");
     write_skill(producer.path(), "AlphaSkill");
 
-    write_dotforge(
+    write_dotrune(
         consumer.path(),
         &format!(
             "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
@@ -214,13 +214,13 @@ fn dotforge_install_is_idempotent() {
 }
 
 #[test]
-fn dotforge_defaults_target_to_source_when_omitted() {
+fn dotrune_defaults_target_to_source_when_omitted() {
     let producer = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
     scaffold_producer(producer.path(), "producer");
     write_skill(producer.path(), "AlphaSkill");
 
-    write_dotforge(
+    write_dotrune(
         consumer.path(),
         &format!(
             "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
@@ -251,11 +251,37 @@ fn dotforge_defaults_target_to_source_when_omitted() {
 }
 
 #[test]
-fn dotforge_errors_on_oversized_file() {
+fn legacy_dotforge_resolves_when_dotrune_is_absent() {
+    let producer = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
-    // 65 KiB of payload — over the 64 KiB cap enforced in dotforge::load.
+    scaffold_producer(producer.path(), "producer");
+    write_skill(producer.path(), "LegacySkill");
+
+    fs::write(
+        consumer.path().join(".forge"),
+        format!(
+            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [LegacySkill]\n",
+            p = producer.path().display(),
+        ),
+    )
+    .unwrap();
+
+    install(consumer.path()).success();
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/LegacySkill/SKILL.md")
+            .is_file(),
+        "a repo containing only legacy .forge must still resolve"
+    );
+}
+
+#[test]
+fn dotrune_errors_on_oversized_file() {
+    let consumer = tempfile::tempdir().unwrap();
+    // 65 KiB of payload — over the 64 KiB cap enforced in dotrune::load.
     let payload = "x".repeat(65 * 1024);
-    fs::write(consumer.path().join(".forge"), payload).unwrap();
+    fs::write(consumer.path().join(".rune"), payload).unwrap();
 
     let output = install(consumer.path()).failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();

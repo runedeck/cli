@@ -43,12 +43,11 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
         ));
     }
     let module_manifest = module_root.join("module.yaml");
-    let dotforge_path = module_root.join(".forge");
-    if !module_manifest.is_file() && !dotforge_path.is_file() {
+    if !module_manifest.is_file() && !crate::cli::dotrune::exists(module_root) {
         return Err(Error::new(
             commands::error::ErrorKind::Config,
             format!(
-                "no module.yaml or .forge at {}; --source must point to a module root or consumer repo",
+                "no module.yaml or .rune at {}; --source must point to a module root or consumer repo",
                 module_root.display()
             ),
         ));
@@ -62,8 +61,8 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
     let source_uri = config::load_source_uri(module_root);
     let provider_names: Vec<String> = providers.keys().cloned().collect();
     let valid_qualifiers = sources::build_valid_qualifiers(&provider_names, &models);
-    let source_files = if let Some(manifest) = crate::cli::dotforge::load(module_root)? {
-        crate::cli::dotforge::resolve_sources(&manifest, module_root, &valid_qualifiers)?
+    let source_files = if let Some(manifest) = crate::cli::dotrune::load(module_root)? {
+        crate::cli::dotrune::resolve_sources(&manifest, module_root, &valid_qualifiers)?
     } else {
         sources::collect(module_root, &valid_qualifiers)?
     };

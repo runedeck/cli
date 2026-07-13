@@ -1,11 +1,11 @@
-//! Fetch git sources declared in `.forge` into a content-addressed cache and
+//! Fetch git sources declared in `.rune` into a content-addressed cache and
 //! materialize the requested commit's tree into a worktree-shaped directory
 //! that downstream pipeline code treats as a regular module on disk.
 //!
 //! Cache layout:
 //!
 //! ```text
-//! ~/.cache/forge/git/
+//! ~/.cache/rune/git/
 //!     <host>/<owner>/<repo>/
 //!         .bare.git/      bare clone, fetched once and reused
 //!         <commit-sha>/   materialized worktree for one pinned SHA
@@ -48,7 +48,9 @@ pub fn ensure_cached(url: &str, commit: &str, source_label: &str) -> Result<Path
 }
 
 fn cache_root() -> Result<PathBuf, Error> {
-    if let Ok(override_dir) = std::env::var("FORGE_GIT_CACHE_DIR") {
+    if let Some(override_dir) =
+        std::env::var_os("RUNE_GIT_CACHE_DIR").or_else(|| std::env::var_os("FORGE_GIT_CACHE_DIR"))
+    {
         return Ok(PathBuf::from(override_dir));
     }
     let base = dirs::cache_dir().ok_or_else(|| {
@@ -57,7 +59,7 @@ fn cache_root() -> Result<PathBuf, Error> {
             "cannot resolve user cache directory (set XDG_CACHE_HOME or HOME)".to_string(),
         )
     })?;
-    Ok(base.join("forge").join("git"))
+    Ok(base.join("rune").join("git"))
 }
 
 fn parse_url(url: &str, source_label: &str) -> Result<(String, String, String), Error> {
@@ -67,7 +69,7 @@ fn parse_url(url: &str, source_label: &str) -> Result<(String, String, String), 
         .ok_or_else(|| {
             Error::new(
                 ErrorKind::Config,
-                format!(".forge: source '{source_label}' has unsupported URL scheme: {url}"),
+                format!(".rune: source '{source_label}' has unsupported URL scheme: {url}"),
             )
         })?;
     let mut parts = after_scheme.trim_start_matches('/').split('/');
@@ -79,7 +81,7 @@ fn parse_url(url: &str, source_label: &str) -> Result<(String, String, String), 
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                ".forge: source '{source_label}' URL must be <scheme>://<host>/<owner>/<repo>, got: {url}"
+                ".rune: source '{source_label}' URL must be <scheme>://<host>/<owner>/<repo>, got: {url}"
             ),
         ));
     }
@@ -95,7 +97,7 @@ fn bare_clone(url: &str, bare_dir: &Path, source_label: &str) -> Result<(), Erro
     let parsed = gix::Url::try_from(url).map_err(|error| {
         Error::new(
             ErrorKind::Config,
-            format!(".forge: source '{source_label}' invalid git URL '{url}': {error}"),
+            format!(".rune: source '{source_label}' invalid git URL '{url}': {error}"),
         )
     })?;
     let mut prepare = gix::clone::PrepareFetch::new(
@@ -108,7 +110,7 @@ fn bare_clone(url: &str, bare_dir: &Path, source_label: &str) -> Result<(), Erro
     .map_err(|error| {
         Error::new(
             ErrorKind::Io,
-            format!(".forge: git clone setup for '{source_label}' failed: {error}"),
+            format!(".rune: git clone setup for '{source_label}' failed: {error}"),
         )
     })?;
     prepare
@@ -116,7 +118,7 @@ fn bare_clone(url: &str, bare_dir: &Path, source_label: &str) -> Result<(), Erro
         .map_err(|error| {
             Error::new(
                 ErrorKind::Io,
-                format!(".forge: git fetch for '{source_label}' from {url} failed: {error}"),
+                format!(".rune: git fetch for '{source_label}' from {url} failed: {error}"),
             )
         })?;
     Ok(())
@@ -138,7 +140,7 @@ fn materialize_commit(
     let oid = gix::ObjectId::from_hex(commit.as_bytes()).map_err(|error| {
         Error::new(
             ErrorKind::Config,
-            format!(".forge: source '{source_label}' invalid commit SHA '{commit}': {error}"),
+            format!(".rune: source '{source_label}' invalid commit SHA '{commit}': {error}"),
         )
     })?;
 
@@ -146,7 +148,7 @@ fn materialize_commit(
         Error::new(
             ErrorKind::Config,
             format!(
-                ".forge: source '{source_label}' commit {commit} not found in repository (was it pushed and is it reachable from the default branch?): {error}"
+                ".rune: source '{source_label}' commit {commit} not found in repository (was it pushed and is it reachable from the default branch?): {error}"
             ),
         )
     })?;

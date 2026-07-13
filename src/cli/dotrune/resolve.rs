@@ -8,11 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::assemble::sources::{self, SourceFile};
-use crate::cli::dotforge::filter::filter_to_requested;
-use crate::cli::dotforge::parse::{DotForge, Source};
+use crate::cli::dotrune::filter::filter_to_requested;
+use crate::cli::dotrune::parse::{DotRune, Source};
 
 pub fn resolve_sources(
-    manifest: &DotForge,
+    manifest: &DotRune,
     repo_root: &Path,
     valid_qualifiers: &HashSet<String>,
 ) -> Result<Vec<SourceFile>, Error> {
@@ -36,7 +36,7 @@ pub fn resolve_sources(
                 return Err(Error::new(
                     ErrorKind::Config,
                     format!(
-                        ".forge: artifact {} requested from more than one source",
+                        ".rune: artifact {} requested from more than one source",
                         file.relative_path
                     ),
                 ));
@@ -56,14 +56,14 @@ fn canonicalize_source(
     let materialized = match source {
         Source::Local { path } => canonicalize_local(path, source_label, repo_root)?,
         Source::Git { git, commit } => {
-            crate::cli::dotforge::git::ensure_cached(git, commit, source_label)?
+            crate::cli::dotrune::git::ensure_cached(git, commit, source_label)?
         }
     };
     if !materialized.join("module.yaml").is_file() {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                ".forge: source '{source_label}' at {} has no module.yaml",
+                ".rune: source '{source_label}' at {} has no module.yaml",
                 materialized.display()
             ),
         ));
@@ -81,7 +81,7 @@ fn canonicalize_local(path: &Path, source_label: &str, repo_root: &Path) -> Resu
         Error::new(
             ErrorKind::Config,
             format!(
-                ".forge: source '{source_label}' path {} does not exist: {error}",
+                ".rune: source '{source_label}' path {} does not exist: {error}",
                 resolved.display()
             ),
         )

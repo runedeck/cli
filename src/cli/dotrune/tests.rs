@@ -1,3 +1,4 @@
+use super::load;
 use super::parse::{Source, parse};
 
 const MINIMAL: &str = r"
@@ -9,6 +10,18 @@ artifacts:
     forge-core:
         skills: [BuildSkill]
 ";
+
+#[test]
+fn load_prefers_dotrune_when_both_manifest_names_exist() {
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::write(repo.path().join(".rune"), "version: 1\nsources: {}\n").unwrap();
+    std::fs::write(repo.path().join(".forge"), "not valid yaml: [").unwrap();
+
+    let manifest = load(repo.path())
+        .expect("current .rune must take precedence over legacy .forge")
+        .expect("current .rune must load");
+    assert_eq!(manifest.version, 1);
+}
 
 #[test]
 fn parse_minimal_happy_path() {
@@ -147,8 +160,8 @@ fn parse_rejects_malformed_yaml() {
     let content = "version: 1\nsources:\n  a:\n   path: bad\n  - dangling";
     let error = parse(content).expect_err("malformed YAML must be rejected");
     assert!(
-        error.to_string().contains(".forge"),
-        "error must be tagged as .forge: {error}"
+        error.to_string().contains(".rune"),
+        "error must be tagged as .rune: {error}"
     );
 }
 

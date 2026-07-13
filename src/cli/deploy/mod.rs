@@ -48,11 +48,11 @@ pub fn execute(
         Some(module_source_uri)
     };
 
-    // Consumer mode (.forge present): the consumer dir IS the target the user wants
+    // Consumer mode (.rune present): the consumer dir IS the target the user wants
     // provider trees written into, so an omitted --target defaults to --source.
     let effective_target: Option<&str> = match target {
         Some(dir) => Some(dir),
-        None if module_root.join(".forge").is_file() => Some(path),
+        None if crate::cli::dotrune::exists(module_root) => Some(path),
         None => None,
     };
 
@@ -365,8 +365,8 @@ fn filter_requested_providers(
     Ok(matched)
 }
 
-/// Refuse to operate on a path that isn't a forge module root or a consumer
-/// repo. A consumer repo (one with `.forge`) is a valid `--source` for
+/// Refuse to operate on a path that isn't a rune module root or a consumer
+/// repo. A consumer repo (one with `.rune`) is a valid `--source` for
 /// install and deploy; the assemble step has already turned its manifest
 /// into a `Vec<SourceFile>` by the time deploy runs.
 fn require_module_root(module_root: &Path) -> Result<(), Error> {
@@ -376,11 +376,11 @@ fn require_module_root(module_root: &Path) -> Result<(), Error> {
             format!("source directory not found: {}", module_root.display()),
         ));
     }
-    if !module_root.join("module.yaml").is_file() && !module_root.join(".forge").is_file() {
+    if !module_root.join("module.yaml").is_file() && !crate::cli::dotrune::exists(module_root) {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "no module.yaml or .forge at {}; --source must point to a module root or consumer repo",
+                "no module.yaml or .rune at {}; --source must point to a module root or consumer repo",
                 module_root.display()
             ),
         ));

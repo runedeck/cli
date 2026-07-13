@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use crate::cli::assemble::sources::SourceFile;
-use crate::cli::dotforge::parse::ArtifactList;
+use crate::cli::dotrune::parse::ArtifactList;
 
 pub fn filter_to_requested(
     all_files: Vec<SourceFile>,
@@ -97,7 +97,7 @@ fn require_matched(
             return Err(Error::new(
                 ErrorKind::Config,
                 format!(
-                    ".forge: {kind} '{name}' requested from source '{source_label}' not found at {}",
+                    ".rune: {kind} '{name}' requested from source '{source_label}' not found at {}",
                     source_path.display()
                 ),
             ));

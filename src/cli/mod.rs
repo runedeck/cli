@@ -2,7 +2,7 @@ mod assemble;
 mod config;
 mod copy;
 mod deploy;
-mod dotforge;
+mod dotrune;
 mod drift;
 mod init;
 mod install;
@@ -50,7 +50,7 @@ enum Command {
         gemini   → <DIR>/.gemini\n    \
         opencode → <DIR>/.opencode\n  \
         Without --target, providers deploy under the current directory. \
-        In consumer mode (.forge present at --source), --target defaults to --source.")]
+        In consumer mode (.rune present at --source), --target defaults to --source.")]
     Install {
         /// Module root to install from (must contain module.yaml). Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -58,7 +58,7 @@ enum Command {
 
         /// Base directory under which each provider gets its own subdirectory.
         /// Without this flag, providers deploy under the current directory.
-        /// In consumer mode (.forge present at --source), this defaults to --source.
+        /// In consumer mode (.rune present at --source), this defaults to --source.
         #[arg(long, value_name = "DIR")]
         target: Option<String>,
 
@@ -101,7 +101,7 @@ enum Command {
 
         /// Base directory under which each provider gets its own subdirectory.
         /// Without this flag, providers deploy under the current directory.
-        /// In consumer mode (.forge present at --source), this defaults to --source.
+        /// In consumer mode (.rune present at --source), this defaults to --source.
         #[arg(long, value_name = "DIR")]
         target: Option<String>,
 

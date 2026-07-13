@@ -1,7 +1,7 @@
-//! Integration tests for `.forge` git-source resolution.
+//! Integration tests for `.rune` git-source resolution.
 //!
 //! The fixture pattern: create a bare git repo on the local filesystem,
-//! commit a small module into it, then point a consumer `.forge` at the
+//! commit a small module into it, then point a consumer `.rune` at the
 //! bare repo via `file://` URL (test-only escape hatch). The runtime uses
 //! gix to clone + materialize the pinned SHA into a tempdir cache, runs
 //! the standard assemble + deploy pipeline, and asserts the artifact
@@ -92,7 +92,7 @@ fn make_fixture_repo(bare_path: &Path, scratch: &Path) -> String {
 }
 
 #[test]
-fn dotforge_git_source_clones_and_deploys_pinned_sha() {
+fn dotrune_git_source_clones_and_deploys_pinned_sha() {
     let bare = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
@@ -102,7 +102,7 @@ fn dotforge_git_source_clones_and_deploys_pinned_sha() {
     let sha = make_fixture_repo(&bare_path, scratch.path());
 
     fs::write(
-        consumer.path().join(".forge"),
+        consumer.path().join(".rune"),
         format!(
             "version: 1\n\
              sources:\n  \
@@ -120,8 +120,8 @@ fn dotforge_git_source_clones_and_deploys_pinned_sha() {
 
     rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
-        .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
-        .env("FORGE_GIT_CACHE_DIR", cache.path())
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env("RUNE_GIT_CACHE_DIR", cache.path())
         .assert()
         .success();
 
@@ -135,7 +135,46 @@ fn dotforge_git_source_clones_and_deploys_pinned_sha() {
 }
 
 #[test]
-fn dotforge_git_source_rejects_uncached_sha_without_match() {
+fn legacy_forge_git_cache_dir_is_honored_when_rune_var_is_unset() {
+    let bare = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+
+    let bare_path = bare.path().join("producer.git");
+    let sha = make_fixture_repo(&bare_path, scratch.path());
+    fs::write(
+        consumer.path().join(".rune"),
+        format!(
+            "version: 1\n\
+             sources:\n  \
+                producer:\n    \
+                    git: file://{bare}\n    \
+                    ref: {sha}\n\
+             artifacts:\n  \
+                producer:\n    \
+                    skills: [GitSkill]\n",
+            bare = bare_path.display(),
+        ),
+    )
+    .unwrap();
+
+    rune()
+        .args(["install", "--source", consumer.path().to_str().unwrap()])
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env_remove("RUNE_GIT_CACHE_DIR")
+        .env("FORGE_GIT_CACHE_DIR", cache.path())
+        .assert()
+        .success();
+
+    assert!(
+        fs::read_dir(cache.path()).unwrap().next().is_some(),
+        "legacy FORGE_GIT_CACHE_DIR must select the cache root"
+    );
+}
+
+#[test]
+fn dotrune_git_source_rejects_uncached_sha_without_match() {
     let bare = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
@@ -146,7 +185,7 @@ fn dotforge_git_source_rejects_uncached_sha_without_match() {
 
     let bogus_sha = "0123456789abcdef0123456789abcdef01234567";
     fs::write(
-        consumer.path().join(".forge"),
+        consumer.path().join(".rune"),
         format!(
             "version: 1\n\
              sources:\n  \
@@ -163,8 +202,8 @@ fn dotforge_git_source_rejects_uncached_sha_without_match() {
 
     let output = rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
-        .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
-        .env("FORGE_GIT_CACHE_DIR", cache.path())
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env("RUNE_GIT_CACHE_DIR", cache.path())
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
@@ -175,7 +214,7 @@ fn dotforge_git_source_rejects_uncached_sha_without_match() {
 }
 
 #[test]
-fn dotforge_git_source_is_cache_idempotent() {
+fn dotrune_git_source_is_cache_idempotent() {
     let bare = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
@@ -195,20 +234,20 @@ fn dotforge_git_source_is_cache_idempotent() {
                 skills: [GitSkill]\n",
         bare = bare_path.display(),
     );
-    fs::write(consumer.path().join(".forge"), &manifest).unwrap();
+    fs::write(consumer.path().join(".rune"), &manifest).unwrap();
 
     rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
-        .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
-        .env("FORGE_GIT_CACHE_DIR", cache.path())
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env("RUNE_GIT_CACHE_DIR", cache.path())
         .assert()
         .success();
     let first = fs::read(consumer.path().join(".claude/.manifest")).unwrap();
 
     rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
-        .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
-        .env("FORGE_GIT_CACHE_DIR", cache.path())
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env("RUNE_GIT_CACHE_DIR", cache.path())
         .assert()
         .success();
     let second = fs::read(consumer.path().join(".claude/.manifest")).unwrap();

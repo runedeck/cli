@@ -1,4 +1,4 @@
-//! Schema and parser for `.forge`.
+//! Schema and parser for `.rune`.
 
 use commands::error::{Error, ErrorKind};
 use serde::{Deserialize, Deserializer};
@@ -12,11 +12,12 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// without spinning up an HTTPS server. Never set in production: the
 /// HTTPS-only rule defends against `git://` MITM and accidental local-path
 /// pulls that bypass SHA pinning.
-const ALLOW_FILE_URLS_ENV: &str = "FORGE_GIT_ALLOW_FILE_URLS";
+const ALLOW_FILE_URLS_ENV: &str = "RUNE_GIT_ALLOW_FILE_URLS";
+const LEGACY_ALLOW_FILE_URLS_ENV: &str = "FORGE_GIT_ALLOW_FILE_URLS";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DotForge {
+pub struct DotRune {
     pub version: u32,
     pub sources: BTreeMap<String, Source>,
     #[serde(default)]
@@ -86,7 +87,9 @@ struct GitFields {
 }
 
 pub fn validate_git_url(url: &str) -> Result<(), String> {
-    let allow_file = std::env::var(ALLOW_FILE_URLS_ENV).is_ok();
+    let allow_file = std::env::var_os(ALLOW_FILE_URLS_ENV)
+        .or_else(|| std::env::var_os(LEGACY_ALLOW_FILE_URLS_ENV))
+        .is_some();
     if allow_file && url.starts_with("file://") {
         return Ok(());
     }
@@ -124,7 +127,7 @@ pub fn validate_commit_sha(sha: &str) -> Result<(), String> {
 }
 
 /// Per-source list of requested artifact names. Each kind defaults to empty
-/// so `.forge` can request only one kind per source.
+/// so `.rune` can request only one kind per source.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ArtifactList {
@@ -139,15 +142,15 @@ impl ArtifactList {
     }
 }
 
-pub fn parse(content: &str) -> Result<DotForge, Error> {
-    let manifest: DotForge = serde_yaml::from_str(content)
-        .map_err(|error| Error::new(ErrorKind::Parse, format!(".forge: {error}")))?;
+pub fn parse(content: &str) -> Result<DotRune, Error> {
+    let manifest: DotRune = serde_yaml::from_str(content)
+        .map_err(|error| Error::new(ErrorKind::Parse, format!(".rune: {error}")))?;
 
     if manifest.version != SCHEMA_VERSION {
         return Err(Error::new(
             ErrorKind::Parse,
             format!(
-                ".forge: schema version {} is not supported (this build only understands version {})",
+                ".rune: schema version {} is not supported (this build only understands version {})",
                 manifest.version, SCHEMA_VERSION
             ),
         ));
@@ -157,7 +160,7 @@ pub fn parse(content: &str) -> Result<DotForge, Error> {
         if !manifest.sources.contains_key(source_label) {
             return Err(Error::new(
                 ErrorKind::Parse,
-                format!(".forge: artifacts entry '{source_label}' has no matching `sources` entry"),
+                format!(".rune: artifacts entry '{source_label}' has no matching `sources` entry"),
             ));
         }
     }
