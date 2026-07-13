@@ -31,9 +31,9 @@ fn quest_binds_by_name_under_quests_root() {
 
     quest_cmd(home.path(), quests.path(), &["inventory"])
         .success()
-        .stdout(
-            predicates::str::contains("quest bound:").and(predicates::str::contains("inventory")),
-        );
+        .stdout(predicates::str::contains("bound quest 'inventory'"))
+        .stdout(predicates::str::contains("next: rune add <deck-or-rune>"))
+        .stdout(predicates::str::contains("state.yaml").not());
 
     let state = fs::read_to_string(home.path().join(".config/rune/state.yaml")).unwrap();
     assert!(
@@ -72,9 +72,7 @@ fn quest_dash_switches_to_the_previous_binding() {
     quest_cmd(home.path(), quests.path(), &["signals"]).success();
     quest_cmd(home.path(), quests.path(), &["-"])
         .success()
-        .stdout(
-            predicates::str::contains("quest bound:").and(predicates::str::contains("inventory")),
-        );
+        .stdout(predicates::str::contains("bound quest 'inventory'"));
     quest_cmd(home.path(), quests.path(), &["--list"])
         .success()
         .stdout(predicates::str::contains("* ").and(predicates::str::contains("inventory")))
@@ -202,7 +200,11 @@ fn add_falls_back_to_bound_quest_when_cwd_has_no_manifest() {
         .args(["add", "science", "--source", &deck])
         .assert()
         .success()
-        .stdout(predicates::str::contains("using bound quest"));
+        .stdout(
+            predicates::str::contains("staged")
+                .and(predicates::str::contains("inventory"))
+                .and(predicates::str::contains("next:")),
+        );
 
     assert!(
         quest_dir.join(".rune").is_file(),

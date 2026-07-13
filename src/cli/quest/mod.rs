@@ -33,10 +33,15 @@ pub fn execute(quest: Option<&str>, clone: bool, unbind: bool, list: bool) -> Re
         resolve_quest(requested, clone)?
     };
     write_binding(&state_path, &resolved)?;
-    println!("updated {}", state_path.display());
-    println!("quest bound: {}", resolved.display());
-    if !resolved.join(".rune").is_file() {
-        println!("note: no .rune manifest yet; `rune add <deck-or-rune>` creates it");
+    let label = resolved
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(requested);
+    println!("bound quest '{label}' → {}", resolved.display());
+    if resolved.join(".rune").is_file() {
+        println!("next: rune tui --edit to review (or: rune install)");
+    } else {
+        println!("next: rune add <deck-or-rune> to stage runes (no .rune manifest yet)");
     }
     Ok(0)
 }
@@ -48,11 +53,25 @@ pub(crate) fn bind_existing(quest: &Path) -> Result<(), Error> {
 
 /// The bound quest root, if a binding exists and still points at a directory.
 pub fn bound_quest() -> Option<PathBuf> {
+    bound_quest_with_warnings(true)
+}
+
+pub(crate) fn bound_quest_silent() -> Option<PathBuf> {
+    bound_quest_with_warnings(false)
+}
+
+fn bound_quest_with_warnings(show_warning: bool) -> Option<PathBuf> {
     let state_path = state_path().ok()?;
     let content = std::fs::read_to_string(&state_path).ok()?;
-    let document: serde_yaml::Value = serde_yaml::from_str(&content)
-        .map_err(|error| eprintln!("warning: {} is malformed: {error}", state_path.display()))
-        .ok()?;
+    let document: serde_yaml::Value = match serde_yaml::from_str(&content) {
+        Ok(document) => document,
+        Err(error) => {
+            if show_warning {
+                eprintln!("warning: {} is malformed: {error}", state_path.display());
+            }
+            return None;
+        }
+    };
     let state = state_from_document(&document);
     let quest = PathBuf::from(state.quest?);
     quest.is_dir().then_some(quest)

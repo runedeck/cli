@@ -158,3 +158,31 @@ fn execute_provider_filter_skips_unrequested_providers() {
         "every deployed file should belong to opencode"
     );
 }
+
+#[test]
+fn commitless_repository_has_no_freshness_warning() {
+    let module = TempDir::new().unwrap();
+    std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(module.path())
+        .output()
+        .unwrap();
+
+    assert!(detect_stale_source(module.path()).unwrap().is_none());
+    assert!(
+        warn_or_block_stale_source(module.path(), false)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn freshness_probe_failure_is_returned_as_a_warning() {
+    let module = TempDir::new().unwrap();
+    std::fs::create_dir(module.path().join(".git")).unwrap();
+
+    let warnings = warn_or_block_stale_source(module.path(), false).unwrap();
+
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("cannot determine git freshness"));
+}

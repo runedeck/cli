@@ -15,9 +15,17 @@ pub fn print(result: &ActionResult, json_output: bool, verb: &str) {
 
     println!();
     print_providers(&grouped, result);
+    print_warnings(result);
     print_errors(result);
     print_summary(result, verb);
     println!();
+}
+
+fn print_warnings(result: &ActionResult) {
+    let yellow = Style::new().yellow();
+    for warning in &result.warnings {
+        eprintln!("   {} {}", yellow.apply_to("!"), yellow.apply_to(warning));
+    }
 }
 
 struct ProviderGroup<'a> {

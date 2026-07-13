@@ -19,7 +19,6 @@ pub fn execute(
     let repo_root = if current_dir.join(".rune").is_file() {
         current_dir
     } else if let Some(quest) = crate::cli::quest::bound_quest() {
-        println!("using bound quest {}", quest.display());
         quest
     } else {
         current_dir
@@ -51,18 +50,26 @@ pub fn execute(
     let source_label = select_source(&mut manifest, selected_source, reference)?;
     let entry = manifest.runes.entry(source_label).or_default();
     let mut changed = false;
-    if let Some(cast) = cast {
-        for cast in split_comma_list(cast, "cast")? {
-            if !entry.casts.contains(&cast) {
-                entry.casts.push(cast);
+    let (selection_kind, selections) = if let Some(cast) = cast {
+        ("cast", split_comma_list(cast, "cast")?)
+    } else {
+        let runes = split_comma_list(rune.unwrap_or_default(), "rune")?
+            .into_iter()
+            .map(|selection| normalize_rune_id(&selection))
+            .collect::<Result<Vec<_>, _>>()?;
+        ("rune selection", runes)
+    };
+    if selection_kind == "cast" {
+        for selection in &selections {
+            if !entry.casts.contains(selection) {
+                entry.casts.push(selection.clone());
                 changed = true;
             }
         }
     } else {
-        for selection in split_comma_list(rune.unwrap_or_default(), "rune")? {
-            let selection = normalize_rune_id(&selection)?;
-            if !entry.include.contains(&selection) {
-                entry.include.push(selection);
+        for selection in &selections {
+            if !entry.include.contains(selection) {
+                entry.include.push(selection.clone());
                 changed = true;
             }
         }
@@ -76,9 +83,18 @@ pub fn execute(
 
     if changed || !manifest_path.is_file() {
         crate::cli::dotrune::write_atomic(&repo_root, &manifest)?;
-        println!("updated {}", manifest_path.display());
     }
-    println!("rune install --source {}", repo_root.display());
+    let quest_label = repo_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("quest");
+    let selection_label = selections.join(", ");
+    println!(
+        "{} {selection_kind} '{selection_label}' in {quest_label} → {}",
+        if changed { "staged" } else { "already staged" },
+        manifest_path.display()
+    );
+    println!("next: rune install (or: rune tui --edit to review)");
     Ok(0)
 }
 

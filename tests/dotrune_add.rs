@@ -56,7 +56,9 @@ fn add_creates_minimal_manifest_with_deck_token_without_installing() {
     );
     assert!(!consumer.path().join(".claude").exists());
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    assert!(stdout.contains("rune install --source"), "{stdout}");
+    assert!(stdout.contains("staged"), "{stdout}");
+    assert!(stdout.contains("next:"), "{stdout}");
+    assert!(!stdout.contains("rune install --source"), "{stdout}");
 }
 
 #[test]

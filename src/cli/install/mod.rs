@@ -33,9 +33,9 @@ pub fn execute(
     model: Option<&str>,
     allow_stale: bool,
 ) -> Result<ActionResult, Error> {
-    warn_or_block_stale_source(Path::new(path), allow_stale)?;
+    let warnings = warn_or_block_stale_source(Path::new(path), allow_stale)?;
     assemble::execute_with_options(path, requested_providers, model)?;
-    deploy::execute(
+    let mut result = deploy::execute(
         path,
         target,
         requested_providers,
@@ -44,19 +44,20 @@ pub fn execute(
         interactive,
         dry_run,
         only,
-    )
+    )?;
+    result.warnings.extend(warnings);
+    Ok(result)
 }
 
-fn warn_or_block_stale_source(module_root: &Path, allow_stale: bool) -> Result<(), Error> {
+fn warn_or_block_stale_source(module_root: &Path, allow_stale: bool) -> Result<Vec<String>, Error> {
     let module_label = module_label(module_root);
     let stale = match detect_stale_source(module_root) {
         Ok(Some(stale)) => stale,
-        Ok(None) => return Ok(()),
+        Ok(None) => return Ok(Vec::new()),
         Err(error) => {
-            eprintln!(
-                "warning: cannot determine git freshness for {module_label}: {error}; continuing"
-            );
-            return Ok(());
+            return Ok(vec![format!(
+                "cannot determine git freshness for {module_label}: {error}; continuing"
+            )]);
         }
     };
 
@@ -68,10 +69,9 @@ fn warn_or_block_stale_source(module_root: &Path, allow_stale: bool) -> Result<(
         "WARNING: source module {module_label} is {count} behind {}; deploying it may resurrect stale content",
         stale.trunk
     );
-    eprintln!("{warning}");
 
     if allow_stale {
-        return Ok(());
+        return Ok(vec![warning]);
     }
 
     Err(Error::new(
@@ -95,6 +95,10 @@ fn detect_stale_source(module_root: &Path) -> Result<Option<StaleSource>, String
     }
 
     let repo = gix::open(module_root).map_err(|error| error.to_string())?;
+    let head = repo.head().map_err(|error| error.to_string())?;
+    if head.is_unborn() {
+        return Ok(None);
+    }
     let head_id = repo.head_id().map_err(|error| error.to_string())?.detach();
 
     // Deliberately do not fetch here. `rune install` compares against the
