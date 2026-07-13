@@ -1,6 +1,6 @@
 ---
 title: "Direct Copy Fallback"
-description: "Zero-dependency forge copy command for basic deployment without external tools"
+description: "Zero-dependency rune copy command for basic deployment without external tools"
 type: adr
 category: assembly
 tags:
@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-04-04
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0005 Rulesync Interoperability"
     - "ASSEMBLY-0004 Assembly and Deployment Pipeline"
@@ -38,30 +38,30 @@ The assembly pipeline produces a `build/` directory with provider-specific outpu
 ## Considered Options
 
 1. **Require rulesync** — mandatory Node.js dependency for deployment. Blocks users without Node.js.
-2. **Built-in forge copy** — minimal file copy command reading provider config. Zero external dependencies.
+2. **Built-in rune copy** — minimal file copy command reading provider config. Zero external dependencies.
 
 ## Decision Outcome
 
 Two commands handle deployment:
 
-- `forge deploy` copies assembled output from `build/` to provider directories with manifest tracking, provenance, and incremental install. This is the normal deployment path after `forge assemble`.
-- `forge copy` copies source files directly to a target directory — no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline isn't needed.
+- `rune deploy` copies assembled output from `build/` to provider directories with manifest tracking, provenance, and incremental install. This is the normal deployment path after `rune assemble`.
+- `rune copy` copies source files directly to a target directory — no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline isn't needed.
 
 ```sh
-forge install .                    # assemble + deploy (convenience wrapper)
-forge assemble .                   # assemble only → build/
-forge deploy .                     # deploy from build/ → provider dirs
-forge copy . --target ~/project    # raw copy, no assembly or transforms
+rune install .                    # assemble + deploy (convenience wrapper)
+rune assemble .                   # assemble only → build/
+rune deploy .                     # deploy from build/ → provider dirs
+rune copy . --target ~/project    # raw copy, no assembly or transforms
 ```
 
-`forge copy` is deliberately named to signal that it does nothing smart — it copies source files as-is to a single target directory. `forge deploy` is the manifest-tracked deployment path.
+`rune copy` is deliberately named to signal that it does nothing smart — it copies source files as-is to a single target directory. `rune deploy` is the manifest-tracked deployment path.
 
 ## Consequences
 
 - [+] Zero external dependencies for basic deployment
 - [+] `build/` is inspectable before deployment
-- [+] rulesync, native CLIs, and `forge copy` all work interchangeably
-- [-] `forge copy` only covers providers defined in defaults.yaml
+- [+] rulesync, native CLIs, and `rune copy` all work interchangeably
+- [-] `rune copy` only covers providers defined in defaults.yaml
 
 ## More Information
 

@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "RUST-0007 Feature Flags"
     - "RUST-0010 Dependency and Lint Configuration"

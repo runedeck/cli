@@ -10,7 +10,7 @@ status: accepted
 created: 2026-03-21
 updated: 2026-03-21
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "RUST-0003 Code Style and Tooling"
 responsible: ["@N4M3Z"]

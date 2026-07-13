@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related: []
 responsible: ["@N4M3Z"]
 accountable: ["@N4M3Z"]
@@ -69,14 +69,14 @@ opencode:                       # uses provider models, no own identifiers
 
 ### Validation
 
-During `forge assemble` and `forge validate`, every qualifier directory name is checked against `models.yaml`:
+During `rune assemble` and `rune validate`, every qualifier directory name is checked against `models.yaml`:
 - Top-level qualifiers must match a provider key or `user`
 - Nested qualifiers must match a model identifier for that provider
 - Unknown names produce an error with the closest match suggestion
 
 ### Updating
 
-When a provider releases a new model, add it to `models.yaml`. No code change, no recompilation. The config ships with forge-cli and can be overridden via the standard `config.yaml` deep merge.
+When a provider releases a new model, add it to `models.yaml`. No code change, no recompilation. The config ships with rune-cli and can be overridden via the standard `config.yaml` deep merge.
 
 ## Consequences
 

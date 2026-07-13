@@ -11,7 +11,7 @@ status: proposed
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0008 Adopt Rulesync Deployment Conventions"
     - "ASSEMBLY-0009 Direct Copy Fallback"
@@ -26,7 +26,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync tool (900+ stars, 200+ releases, 21+ providers) that routes rules, skills, agents, hooks, and commands to provider-specific directories. It uses JSONC config, frontmatter-based targeting, and a lockfile for reproducible installs from git repos. forge-cli assembles and validates content — a different concern. The two tools are complementary.
+rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync tool (900+ stars, 200+ releases, 21+ providers) that routes rules, skills, agents, hooks, and commands to provider-specific directories. It uses JSONC config, frontmatter-based targeting, and a lockfile for reproducible installs from git repos. rune-cli assembles and validates content — a different concern. The two tools are complementary.
 
 ## Decision Drivers
 
@@ -37,13 +37,13 @@ rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync
 
 ## Considered Options
 
-1. **Require rulesync** — forge-cli outputs to `.rulesync/`, users run `rulesync generate`. Hard dependency on a Node.js tool.
-2. **Ignore rulesync** — forge-cli does its own deployment. Duplicate effort, limited to 4 providers.
-3. **Optional integration** — forge-cli assembles to `build/`, deploys with a minimal built-in deployer. If rulesync is present, can optionally output in rulesync-compatible format for broader provider coverage.
+1. **Require rulesync** — rune-cli outputs to `.rulesync/`, users run `rulesync generate`. Hard dependency on a Node.js tool.
+2. **Ignore rulesync** — rune-cli does its own deployment. Duplicate effort, limited to 4 providers.
+3. **Optional integration** — rune-cli assembles to `build/`, deploys with a minimal built-in deployer. If rulesync is present, can optionally output in rulesync-compatible format for broader provider coverage.
 
 ## Decision Outcome
 
-Chosen option: **Optional integration**. forge-cli assembles content and deploys with its own minimal deployer (reads provider config, copies files). rulesync is not required. For teams that use rulesync, forge-cli can output assembled content in a format rulesync can consume.
+Chosen option: **Optional integration**. rune-cli assembles content and deploys with its own minimal deployer (reads provider config, copies files). rulesync is not required. For teams that use rulesync, rune-cli can output assembled content in a format rulesync can consume.
 
 What rulesync handles that we don't need to build:
 

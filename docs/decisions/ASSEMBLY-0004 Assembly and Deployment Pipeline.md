@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0001 Content Assembly Pipeline"
     - "ASSEMBLY-0005 Rulesync Interoperability"
@@ -51,7 +51,7 @@ source/         -->    assemble    -->    build/          -->    provider dirs
 (authored)             (transform)                  (assembled)           (deployed)
 ```
 
-### Stage 1: Assembly (forge-cli)
+### Stage 1: Assembly (rune-cli)
 
 Transforms source content into provider-specific output:
 
@@ -60,7 +60,7 @@ Transforms source content into provider-specific output:
 3. Merge — combine base + variant body using variant's `mode` (append, prepend, replace)
 4. Strip frontmatter — remove `---` delimiters, H1 heading from body
 5. Strip reference links — remove `[N]: url` definitions and `[N]` inline markers
-6. Format per provider — YAML frontmatter (Claude/Gemini/OpenCode), TOML (Codex), kebab-case names (Gemini/OpenCode), tool remapping (Gemini)
+6. Format per provider — YAML frontmatter (Claude/Gemini/OpenCode), TOML for Codex agents only (skills and rules stay markdown), kebab-case names (Gemini/OpenCode), tool remapping (Gemini)
 7. Write sidecar — `.yaml` companion preserving stripped frontmatter + provenance
 
 Output structure:
@@ -88,7 +88,7 @@ repository/
         MySkill/claude/SKILL.md                     claude-specific variant
         MySkill/gemini/SKILL.md                     gemini-specific variant
         MySkill/user/SKILL.md                       user override of SKILL.md
-        MySkill/user/ForgeADR.md                    user-only companion (flattened)
+        MySkill/user/RuneADR.md                    user-only companion (flattened)
 ```
 
 Resolution precedence (highest first): `user/` > `provider/model/` > `provider/` > base.
@@ -102,8 +102,8 @@ skills/ArchitectureDecision/         skills/ArchitectureDecision/        skills/
 ├── SKILL.md                    ──→  ├── SKILL.md (pipeline)        ──→  ├── SKILL.md
 ├── TemplateReference.md        ──→  ├── TemplateReference.md       ──→  ├── TemplateReference.md
 ├── SchemaValidation.md         ──→  ├── SchemaValidation.md        ──→  ├── SchemaValidation.md
-└── user/                            ├── ForgeADR.md  ← flattened   ──→  ├── ForgeADR.md
-    ├── ForgeADR.md             ──→  └── ContextKeeper.md           ──→  └── ContextKeeper.md
+└── user/                            ├── RuneADR.md  ← flattened   ──→  ├── RuneADR.md
+    ├── RuneADR.md             ──→  └── ContextKeeper.md           ──→  └── ContextKeeper.md
     └── ContextKeeper.md        ──→
 ```
 
@@ -177,6 +177,6 @@ agents/SecurityArchitect.md       build/claude/agents/SecurityArchitect.md    (Y
 
 - [+] Assembly is a pure function — testable without filesystem side effects
 - [+] `build/` directory is inspectable before deployment
-- [+] Deployment is decoupled — replaceable by rulesync, native CLIs, or `forge copy`
+- [+] Deployment is decoupled — replaceable by rulesync, native CLIs, or `rune copy`
 - [+] Provenance tracks the full transform chain
 - [-] Two-stage adds a build step vs. direct copy (direct copy remains as fallback per ASSEMBLY-0009)

@@ -11,7 +11,7 @@ status: proposed
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "CLI-0002 Module Layout"
 responsible: ["@N4M3Z"]
@@ -31,7 +31,7 @@ Module validation hardcodes frontmatter field requirements, naming patterns, and
 
 - JSON Schema is a universal standard with tooling in every language
 - `yq` extracts YAML frontmatter from markdown natively
-- `forge yaml` ships with forge-cli and can serve as a fallback when `yq` is unavailable
+- `rune yaml` ships with rune-cli and can serve as a fallback when `yq` is unavailable
 - Skills should validate against the upstream Agent Skills spec
 - Validation rules should be editable without recompilation
 
@@ -75,15 +75,15 @@ properties:
 ### Validation chain
 
 ```
-forge validate .
+rune validate .
     │
-    ├── frontmatter:  forge yaml / yq  →  check-jsonschema --schemafile schemas/agent.schema.json
+    ├── frontmatter:  rune yaml / yq  →  check-jsonschema --schemafile schemas/agent.schema.json
     ├── structure:    markdownlint / mdschema
     ├── naming:       ls-lint / shell glob
     └── content:      DCI regex checks (custom, minimal)
 ```
 
-Tool precedence: prefer external tools when installed (`yq`, `check-jsonschema`, `markdownlint`, `ls-lint`). Fall back to `forge yaml` for extraction and minimal built-in checks when external tools are unavailable.
+Tool precedence: prefer external tools when installed (`yq`, `check-jsonschema`, `markdownlint`, `ls-lint`). Fall back to `rune yaml` for extraction and minimal built-in checks when external tools are unavailable.
 
 ### What validates where
 

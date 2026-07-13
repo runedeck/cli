@@ -1,6 +1,6 @@
 ---
 title: "Repository Structure"
-description: "Conventions and upstream references governing forge-cli repo layout"
+description: "Conventions and upstream references governing rune-cli repo layout"
 type: adr
 category: cli
 tags:
@@ -10,7 +10,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related: []
 responsible: ["@N4M3Z"]
 accountable: ["@N4M3Z"]
@@ -23,7 +23,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-forge-cli is a Rust binary crate that assembles, validates, and deploys AI coding tool content (skills, agents, rules). It needs a clear structure that documents where things go and which upstream decisions apply.
+rune-cli is a Rust binary crate that assembles, validates, and deploys AI coding tool content (skills, agents, rules). It needs a clear structure that documents where things go and which upstream decisions apply.
 
 ## Considered Options
 
@@ -72,12 +72,12 @@ EUPL-1.2. Per CORE-0015 [8].
 
 ## More Information
 
-[1]: https://github.com/N4M3Z/forge-core "CORE-0007 YAML Configuration with Deep Merge"
-[2]: https://github.com/N4M3Z/forge-core "CORE-0008 Skills Agents and Rules"
-[3]: https://github.com/N4M3Z/forge-core "CORE-0005 mdschema for Structural Validation"
-[4]: https://github.com/N4M3Z/forge-core "CORE-0017 GFM Reference Links for Prompt Provenance"
-[5]: https://github.com/N4M3Z/forge-core "CORE-0020 W3C PROV Provenance Records"
-[6]: https://github.com/N4M3Z/forge-core "CORE-0018 Qualifier Directories for Model Targeting"
-[7]: https://github.com/N4M3Z/forge-core "CORE-0019 Dual SHA Manifest"
-[8]: https://github.com/N4M3Z/forge-core "CORE-0015 EUPL-1.2 Licensing"
-[9]: https://github.com/N4M3Z/forge-core "CORE-0024 Directories Direct"
+[1]: https://github.com/N4M3Z/rune-core "CORE-0007 YAML Configuration with Deep Merge"
+[2]: https://github.com/N4M3Z/rune-core "CORE-0008 Skills Agents and Rules"
+[3]: https://github.com/N4M3Z/rune-core "CORE-0005 mdschema for Structural Validation"
+[4]: https://github.com/N4M3Z/rune-core "CORE-0017 GFM Reference Links for Prompt Provenance"
+[5]: https://github.com/N4M3Z/rune-core "CORE-0020 W3C PROV Provenance Records"
+[6]: https://github.com/N4M3Z/rune-core "CORE-0018 Qualifier Directories for Model Targeting"
+[7]: https://github.com/N4M3Z/rune-core "CORE-0019 Dual SHA Manifest"
+[8]: https://github.com/N4M3Z/rune-core "CORE-0015 EUPL-1.2 Licensing"
+[9]: https://github.com/N4M3Z/rune-core "CORE-0024 Directories Direct"

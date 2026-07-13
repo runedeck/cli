@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-20
 updated: 2026-03-20
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0003 Manifest-Based Deployment Tracking"
 responsible: ["@N4M3Z"]
@@ -25,7 +25,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-When `forge install` deploys assembled content to provider directories, a previously deployed file may have been edited by the user. Silently overwriting loses their changes. Silently skipping leaves stale content. The manifest (ASSEMBLY-0003) tracks deployed file digests, making detection possible.
+When `rune install` deploys assembled content to provider directories, a previously deployed file may have been edited by the user. Silently overwriting loses their changes. Silently skipping leaves stale content. The manifest (ASSEMBLY-0003) tracks deployed file digests, making detection possible.
 
 ## Decision Drivers
 
@@ -59,7 +59,7 @@ When reporting conflicts, print the provenance chain so the user can trace what 
 Skip modified files. Report them with provenance. Exit 0 (partial install is acceptable).
 
 ```sh
-forge install .
+rune install .
 # Installed 12 agents, 8 skills across claude, gemini, codex
 # Skipped 2 (user-modified):
 #   .claude/agents/SecurityArchitect.md

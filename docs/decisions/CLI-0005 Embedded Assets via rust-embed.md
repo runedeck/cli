@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-20
 updated: 2026-03-20
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "RUST-0007 Feature Flags"
 responsible: ["@N4M3Z"]
@@ -25,7 +25,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-forge-cli normally reads content from the filesystem (module repos, `defaults.yaml`). For standalone distribution — where a single binary must work without the source repo — content needs to be compiled into the binary. proton-agents uses rust-embed [1] for this: agent markdown, skill files, hooks, and rules are baked into the binary at compile time.
+rune-cli normally reads content from the filesystem (module repos, `defaults.yaml`). For standalone distribution — where a single binary must work without the source repo — content needs to be compiled into the binary. proton-agents uses rust-embed [1] for this: agent markdown, skill files, hooks, and rules are baked into the binary at compile time.
 
 ## Decision Drivers
 
@@ -58,23 +58,23 @@ embed = ["dep:rust-embed"]
 struct EmbeddedAgents;
 ```
 
-The `embed` feature is opt-in. Development builds read from disk. The user-facing interface is a flag on `forge release`:
+The `embed` feature is opt-in. Development builds read from disk. The user-facing interface is a flag on `rune release`:
 
 ```sh
-forge release .                # tarballs only (per provider)
-forge release . --embed        # tarballs + standalone binary with content baked in
+rune release .                # tarballs only (per provider)
+rune release . --embed        # tarballs + standalone binary with content baked in
 ```
 
-`--embed` triggers a `cargo build --features embed` under the hood, producing a binary that carries the module's content internally. That binary can then `forge install --embedded` on any machine without a source repo.
+`--embed` triggers a `cargo build --features embed` under the hood, producing a binary that carries the module's content internally. That binary can then `rune install --embedded` on any machine without a source repo.
 
 The assembly pipeline works identically in both modes — the only difference is where source bytes come from (filesystem vs compiled-in).
 
 ## Consequences
 
-- [+] Single-binary distribution via `forge release --embed`
+- [+] Single-binary distribution via `rune release --embed`
 - [+] No impact on development workflow (feature disabled by default)
 - [+] Same assembly pipeline regardless of content source
-- [+] No separate `forge embed` command — just a flag on release
+- [+] No separate `rune embed` command — just a flag on release
 - [-] Embedded content is a frozen snapshot — stale until recompiled
 - [-] Binary size grows with embedded content
 

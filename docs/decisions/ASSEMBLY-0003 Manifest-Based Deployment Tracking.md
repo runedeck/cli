@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-23
 updated: 2026-04-17
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0002 Provenance Tracking"
     - "CLI-0003 Conflict Resolution on Install"
@@ -31,7 +31,7 @@ Installing skills, agents, and rules to provider directories is a multi-step pro
 ## Decision Drivers
 
 - Incremental installs — skip unchanged files
-- User modification detection — distinguish "forge installed this" from "user edited this"
+- User modification detection — distinguish "rune installed this" from "user edited this"
 - Simple format — no spec overhead for what is fundamentally a hash lookup table
 
 ## Considered Options
@@ -76,7 +76,7 @@ Source-level staleness (has the source changed since last build?) is detected by
 
 ### Release tarballs
 
-`forge release` reuses install to stage content, so each provider's `.manifest` lands inside the release tarball at `.{provider}/.manifest`. When end users extract a tarball and `make install`, the manifest copies to `~/.{provider}/.manifest` — exactly where install would have placed it. Round-trip consistent: a tarball is byte-identical to a fresh install of the same module version.
+`rune release` reuses install to stage content, so each provider's `.manifest` lands inside the release tarball at `.{provider}/.manifest`. When end users extract a tarball and `make install`, the manifest copies to `~/.{provider}/.manifest` — exactly where install would have placed it. Round-trip consistent: a tarball is byte-identical to a fresh install of the same module version.
 
 ## Consequences
 
@@ -84,5 +84,5 @@ Source-level staleness (has the source changed since last build?) is detected by
 - [+] Lives at the target — survives `build/` cleanup
 - [+] Per-provider — each target directory tracks its own deployments
 - [+] No spec overhead — this is not an attestation, just a cache
-- [+] Ships inside release tarballs — `forge provenance` works against extracted tarballs
+- [+] Ships inside release tarballs — `rune provenance` works against extracted tarballs
 - [-] Manifest corruption means full reinstall (acceptable risk)

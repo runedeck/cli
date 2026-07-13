@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-04-04
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0005 Rulesync Interoperability"
 responsible: ["@N4M3Z"]

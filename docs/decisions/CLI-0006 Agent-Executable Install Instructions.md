@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-25
 updated: 2026-03-25
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "CLI-0008 Validation Script Distribution"
 responsible: ["@N4M3Z"]

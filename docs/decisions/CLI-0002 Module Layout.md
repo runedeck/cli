@@ -10,7 +10,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-04-17
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "RUST-0012 Separated Test Files"
     - "RUST-0004 Test Infrastructure"
@@ -26,7 +26,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-forge-cli assembles, validates, and deploys markdown content for AI coding tools. The codebase needs clear module boundaries where each module has one job, is easy to read, and has separated tests with external fixtures.
+rune-cli assembles, validates, and deploys markdown content for AI coding tools. The codebase needs clear module boundaries where each module has one job, is easy to read, and has separated tests with external fixtures.
 
 ## Decision Drivers
 
@@ -114,14 +114,14 @@ tests/
 
 | Command             | What it does                                                          |
 | ------------------- | --------------------------------------------------------------------- |
-| `forge install`     | assemble + deploy (daily workflow, all-in-one)                        |
-| `forge assemble`    | source → `build/` (assembly only, inspect before deploy)              |
-| `forge deploy`      | `build/` → provider dirs with manifest tracking and provenance        |
-| `forge validate`    | structure + mdschema + external tools (shellcheck, cargo, tsc, gitleaks) |
-| `forge drift`       | compare module against upstream, report frontmatter/body differences  |
-| `forge provenance`  | show source chain for a deployed file or scan a directory             |
-| `forge copy`        | raw source → target directory (no assembly, no transforms)            |
-| `forge release`     | assemble + package as tarballs (+ optional `--embed`)                 |
+| `rune install`     | assemble + deploy (daily workflow, all-in-one)                        |
+| `rune assemble`    | source → `build/` (assembly only, inspect before deploy)              |
+| `rune deploy`      | `build/` → provider dirs with manifest tracking and provenance        |
+| `rune validate`    | structure + mdschema + external tools (shellcheck, cargo, tsc, gitleaks) |
+| `rune drift`       | compare module against upstream, report frontmatter/body differences  |
+| `rune provenance`  | show source chain for a deployed file or scan a directory             |
+| `rune copy`        | raw source → target directory (no assembly, no transforms)            |
+| `rune release`     | assemble + package as tarballs (+ optional `--embed`)                 |
 
 ### Growth rule
 

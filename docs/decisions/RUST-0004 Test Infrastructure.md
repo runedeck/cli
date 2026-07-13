@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "RUST-0012 Separated Test Files"
     - "RUST-0007 Feature Flags"
@@ -71,7 +71,7 @@ Test utilities live in `src/` behind `cfg(feature = "testing")`. Dev-dependencie
 
 ```toml
 [dev-dependencies]
-forge-cli = { path = ".", features = ["testing"] }
+rune-cli = { path = ".", features = ["testing"] }
 ```
 
 ### TestDispatcher

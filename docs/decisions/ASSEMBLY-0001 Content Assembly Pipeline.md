@@ -10,7 +10,7 @@ status: accepted
 created: 2026-03-19
 updated: 2026-03-19
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0004 Assembly and Deployment Pipeline"
 responsible: ["@N4M3Z"]
@@ -49,7 +49,7 @@ Steps:
 2. **Resolve variant** — check qualifier directories (user/ > provider/model/ > provider/ > base) for overrides
 3. **Merge** — combine base + variant body using the variant's `mode` field (append, prepend, replace)
 4. **Strip** — remove frontmatter delimiters, H1 heading, and reference-style link definitions from the assembled body
-5. **Format** — apply provider-specific output formatting (YAML frontmatter for Claude/Gemini/OpenCode, TOML for Codex)
+5. **Format** — apply provider-specific output formatting (YAML frontmatter for Claude/Gemini/OpenCode; TOML for Codex agents only, while Codex skills and rules stay markdown)
 
 ## Consequences
 
@@ -62,5 +62,5 @@ Steps:
 
 [1]: https://agentskills.io/specification "Agent Skills spec — markdown with YAML frontmatter"
 [2]: https://help.obsidian.md/Editing+and+formatting/Properties "Obsidian Properties — YAML frontmatter"
-[3]: https://github.com/N4M3Z/forge-core "CORE-0018 Qualifier Directories for Model Targeting"
+[3]: https://github.com/N4M3Z/rune-core "CORE-0018 Qualifier Directories for Model Targeting"
 [4]: https://www.chezmoi.io/ "chezmoi — closest analogue, but no frontmatter-aware assembly"

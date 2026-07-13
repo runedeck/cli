@@ -11,7 +11,7 @@ status: accepted
 created: 2026-03-23
 updated: 2026-04-17
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "ASSEMBLY-0003 Manifest-Based Deployment Tracking"
 responsible: ["@N4M3Z"]
@@ -46,13 +46,13 @@ Chosen option: **in-toto/SLSA v1.0**, serialized as YAML. in-toto is the industr
 
 Provenance is a **build record** — it answers "what sources produced this built file?" Each assembled file in `build/` gets a `.yaml` sidecar containing the SLSA statement.
 
-Sidecars deploy alongside content to per-directory `.provenance/` subdirectories at the target (e.g., `~/.claude/agents/.provenance/SystemArchitect.yaml`). The `.manifest` references each sidecar via its `provenance` field. `forge provenance` reads these to verify deployed integrity.
+Sidecars deploy alongside content to per-directory `.provenance/` subdirectories at the target (e.g., `~/.claude/agents/.provenance/SystemArchitect.yaml`). The `.manifest` references each sidecar via its `provenance` field. `rune provenance` reads these to verify deployed integrity.
 
 Source-level staleness detection reads provenance sidecars to compare recorded source hashes against current source files. Deployment-level staleness is handled separately by `.manifest` at the target (see ASSEMBLY-0003).
 
 ### Release tarballs
 
-`forge release` reuses install, so `.provenance/` subdirectories ship inside release tarballs alongside `.manifest`. Extracted tarballs preserve the full source-to-output chain, enabling `forge provenance` to verify a tarball's contents without re-running assembly.
+`rune release` reuses install, so `.provenance/` subdirectories ship inside release tarballs alongside `.manifest`. Extracted tarballs preserve the full source-to-output chain, enabling `rune provenance` to verify a tarball's contents without re-running assembly.
 
 ```yaml
 _type: https://in-toto.io/Statement/v1
@@ -63,7 +63,7 @@ subject:
 predicateType: https://slsa.dev/provenance/v1
 predicate:
     buildDefinition:
-        buildType: https://forge-cli/assemble/v1
+        buildType: https://rune-cli/assemble/v1
         resolvedDependencies:
             - uri: rules/AgentTeams.md
               digest:
@@ -73,14 +73,14 @@ predicate:
                   sha256: 789ghi...
     runDetails:
         builder:
-            id: forge-cli
+            id: rune-cli
             version:
-                forge: 0.1.0
+                rune: 0.1.0
         metadata:
             startedOn: "2026-03-23T10:00:00Z"
 ```
 
-For standardized in-toto `.link` attestations, `in-toto-run` can wrap `forge assemble` as an observer without changing the assembly pipeline [3].
+For standardized in-toto `.link` attestations, `in-toto-run` can wrap `rune assemble` as an observer without changing the assembly pipeline [3].
 
 ## Consequences
 
@@ -88,7 +88,7 @@ For standardized in-toto `.link` attestations, `in-toto-run` can wrap `forge ass
 - [+] Compact — one self-contained statement per output file
 - [+] Source hashes enable source-level staleness detection
 - [+] YAML serialization consistent with ecosystem
-- [+] Sidecars deploy to `.provenance/` subdirs — referenced by `.manifest`, used by `forge provenance`
+- [+] Sidecars deploy to `.provenance/` subdirs — referenced by `.manifest`, used by `rune provenance`
 - [-] in-toto envelope adds structural overhead vs flat hashes
 
 ## More Information

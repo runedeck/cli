@@ -10,7 +10,7 @@ status: accepted
 created: 2026-03-20
 updated: 2026-03-20
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "CLI-0003 Conflict Resolution on Install"
 responsible: ["@N4M3Z"]
@@ -64,7 +64,7 @@ pub enum SkipReason {
 CLI output:
 
 ```sh
-forge install .
+rune install .
 # claude: 12 agents, 8 skills, 5 rules
 # gemini: 12 agents, 8 skills
 # codex:  12 agents, 8 skills

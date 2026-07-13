@@ -11,7 +11,7 @@ status: proposed
 created: 2026-03-26
 updated: 2026-03-26
 author: "@N4M3Z"
-project: forge-cli
+project: rune-cli
 related:
     - "CLI-0003 Conflict Resolution on Install"
 responsible: ["@N4M3Z"]
@@ -25,7 +25,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-`forge install --force` overwrites user-modified files without confirmation. A middle ground between "skip everything modified" and "overwrite everything" requires per-file prompts. Beyond that, a terminal UI would make assembly inspection, manifest diffing, and provider selection visual.
+`rune install --force` overwrites user-modified files without confirmation. A middle ground between "skip everything modified" and "overwrite everything" requires per-file prompts. Beyond that, a terminal UI would make assembly inspection, manifest diffing, and provider selection visual.
 
 ## Decision Drivers
 
@@ -49,7 +49,7 @@ Deferred to a future release. The `--interactive` flag was removed from v0.1.0 t
 
 ### Phase 2: TUI
 
-A `forge tui` subcommand providing:
+A `rune tui` subcommand providing:
 - Build output browser (tree view of build/ per provider)
 - Manifest diff (deployed vs built, highlighting Stale/Modified)
 - Provider picker (checkbox selection for which providers to deploy)
