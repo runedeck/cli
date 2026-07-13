@@ -12,6 +12,8 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
+use super::modal_editor::{ModalAction, ModalState};
+
 pub(super) enum EditorAction {
     Continue,
     Save,
@@ -25,8 +27,7 @@ pub(super) struct FileEditor {
     original: String,
     state: EditorState,
     events: EditorEventHandler,
-    command: Option<String>,
-    discard_armed: bool,
+    modal: ModalState,
 }
 
 impl FileEditor {
@@ -49,8 +50,7 @@ impl FileEditor {
             original,
             state,
             events: EditorEventHandler::default(),
-            command: None,
-            discard_armed: false,
+            modal: ModalState::default(),
         })
     }
 
@@ -86,10 +86,10 @@ impl FileEditor {
     }
 
     pub(super) fn mode_label(&self) -> String {
-        if let Some(command) = &self.command {
+        if let Some(command) = self.modal.command() {
             return format!(":{command}");
         }
-        if self.discard_armed {
+        if self.modal.discard_armed() {
             return "Esc/q again to discard".to_string();
         }
         match self.state.mode {
@@ -105,66 +105,22 @@ impl FileEditor {
         if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return EditorAction::Save;
         }
-        if self.command.is_some() {
-            return self.command_key(key);
+        if self.modal.command().is_some() {
+            let dirty = self.is_dirty();
+            return editor_action(&self.modal.command_key(key, dirty));
         }
         if self.state.mode == EditorMode::Normal {
             if key.code == KeyCode::Char(':') {
-                self.discard_armed = false;
-                self.command = Some(String::new());
+                self.modal.begin_command();
                 return EditorAction::Continue;
             }
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                return self.request_discard();
+                let dirty = self.is_dirty();
+                return editor_action(&self.modal.request_discard(dirty));
             }
         }
-        self.discard_armed = false;
+        self.modal.clear_discard();
         self.events.on_key_event(key, &mut self.state);
-        EditorAction::Continue
-    }
-
-    fn command_key(&mut self, key: KeyEvent) -> EditorAction {
-        match key.code {
-            KeyCode::Enter => {
-                let command = self.command.take().unwrap_or_default();
-                match command.trim() {
-                    "w" => EditorAction::Save,
-                    "wq" | "x" => EditorAction::SaveAndClose,
-                    "q" => self.request_discard(),
-                    "q!" => EditorAction::Discard,
-                    _ => EditorAction::Continue,
-                }
-            }
-            KeyCode::Esc => {
-                self.command = None;
-                EditorAction::Continue
-            }
-            KeyCode::Backspace => {
-                if let Some(command) = self.command.as_mut() {
-                    if command.is_empty() {
-                        self.command = None;
-                    } else {
-                        command.pop();
-                    }
-                }
-                EditorAction::Continue
-            }
-            KeyCode::Char(character) if key.modifiers.is_empty() => {
-                if let Some(command) = self.command.as_mut() {
-                    command.push(character);
-                }
-                EditorAction::Continue
-            }
-            _ => EditorAction::Continue,
-        }
-    }
-
-    fn request_discard(&mut self) -> EditorAction {
-        if !self.is_dirty() || self.discard_armed {
-            return EditorAction::Discard;
-        }
-        self.command = None;
-        self.discard_armed = true;
         EditorAction::Continue
     }
 
@@ -194,6 +150,15 @@ impl FileEditor {
                 .wrap(false),
             area,
         );
+    }
+}
+
+fn editor_action(action: &ModalAction) -> EditorAction {
+    match action {
+        ModalAction::Continue | ModalAction::Unknown(_) => EditorAction::Continue,
+        ModalAction::Save => EditorAction::Save,
+        ModalAction::SaveAndClose => EditorAction::SaveAndClose,
+        ModalAction::Discard => EditorAction::Discard,
     }
 }
 

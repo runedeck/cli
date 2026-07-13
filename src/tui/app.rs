@@ -43,6 +43,7 @@ use super::components::{
     preview::{ArtifactPreview, wrapped_rows},
 };
 use super::file_editor::{EditorAction as FileEditorAction, FileEditor};
+use super::modal_editor::{ModalAction, ModalState};
 use super::rich;
 use super::word_wrap::expand_gutter_wrapped;
 
@@ -535,8 +536,7 @@ struct CommentPrompt {
     cursor: usize,
     mode: CommentEditorMode,
     pending_delete: bool,
-    command: Option<String>,
-    cancel_armed: bool,
+    modal: ModalState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,6 +609,7 @@ pub struct App {
     code_source_override: Option<(String, PathBuf)>,
     file_editor: Option<FileEditor>,
     comments: CommentMap,
+    comments_load_failed: bool,
     comment_navigator_state: CommentNavigatorState,
     comment_prompt: Option<CommentPrompt>,
     visual_selection: Option<VisualSelection>,
@@ -715,7 +716,7 @@ impl App {
         view: DashboardView,
         file_sections: FileSections,
     ) -> Self {
-        let (comments, comment_warning) = load_comments(&root);
+        let (comments, comment_warning, comments_load_failed) = load_comments(&root);
         let mut app = Self {
             root,
             providers,
@@ -739,6 +740,7 @@ impl App {
             code_source_override: None,
             file_editor: None,
             comments,
+            comments_load_failed,
             comment_navigator_state: CommentNavigatorState::default(),
             comment_prompt: None,
             visual_selection: None,
@@ -1208,7 +1210,7 @@ impl App {
                 || prompt.line_number.to_string(),
                 |end| format!("{}-{end}", prompt.line_number),
             );
-            let mode = prompt.command.as_ref().map_or_else(
+            let mode = prompt.modal.command().map_or_else(
                 || {
                     format!(
                         "{}{}",
@@ -1222,18 +1224,22 @@ impl App {
                 },
                 |command| format!(":{command}"),
             );
-            let hint = if prompt.cancel_armed {
+            let hint = if prompt.modal.discard_armed() {
                 " · Esc/q again discards changes"
             } else {
                 ""
             };
-            format!(
-                " comment [{mode}] [{}] {}:{} > {}{hint}",
-                prompt.kind.label(),
-                prompt.path,
-                location,
-                comment_prompt_display(prompt)
-            )
+            if let Some(toast) = &self.toast {
+                format!(" comment [{mode}] · {toast}")
+            } else {
+                format!(
+                    " comment [{mode}] [{}] {}:{} > {}{hint}",
+                    prompt.kind.label(),
+                    prompt.path,
+                    location,
+                    comment_prompt_display(prompt)
+                )
+            }
         } else if let Some(selection) = self.visual_selection {
             let (start, end) = selection.ordered();
             format!(
@@ -4002,7 +4008,7 @@ impl App {
         if self
             .comment_prompt
             .as_ref()
-            .is_some_and(|prompt| prompt.command.is_some())
+            .is_some_and(|prompt| prompt.modal.command().is_some())
         {
             self.comment_command_key(key);
             return;
@@ -4021,34 +4027,24 @@ impl App {
     }
 
     fn comment_command_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Enter => self.run_comment_command(),
-            KeyCode::Esc => {
-                if let Some(prompt) = self.comment_prompt.as_mut() {
-                    prompt.command = None;
-                }
+        let Some(prompt) = self.comment_prompt.as_mut() else {
+            return;
+        };
+        let dirty = prompt.text != prompt.original_text;
+        let action = prompt.modal.command_key(key, dirty);
+        if prompt.modal.discard_armed() {
+            prompt.pending_delete = false;
+        }
+        match action {
+            ModalAction::Continue => {}
+            ModalAction::Save | ModalAction::SaveAndClose => self.save_comment_prompt(),
+            ModalAction::Discard => {
+                self.comment_prompt = None;
+                self.toast = Some("comment cancelled".to_string());
             }
-            KeyCode::Backspace => {
-                if let Some(prompt) = self.comment_prompt.as_mut()
-                    && let Some(command) = prompt.command.as_mut()
-                {
-                    if command.is_empty() {
-                        prompt.command = None;
-                    } else {
-                        command.pop();
-                    }
-                }
+            ModalAction::Unknown(command) => {
+                self.toast = Some(format!("unknown comment command: :{command}"));
             }
-            KeyCode::Char(character) if key.modifiers.is_empty() => {
-                if let Some(command) = self
-                    .comment_prompt
-                    .as_mut()
-                    .and_then(|prompt| prompt.command.as_mut())
-                {
-                    command.push(character);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -4056,7 +4052,7 @@ impl App {
         let Some(prompt) = self.comment_prompt.as_mut() else {
             return;
         };
-        prompt.cancel_armed = false;
+        prompt.modal.clear_discard();
         prompt.pending_delete = false;
         match key.code {
             KeyCode::Esc => prompt.mode = CommentEditorMode::Normal,
@@ -4080,10 +4076,10 @@ impl App {
         let Some(prompt) = self.comment_prompt.as_mut() else {
             return;
         };
-        prompt.cancel_armed = false;
+        prompt.modal.clear_discard();
         match key.code {
             KeyCode::Tab => prompt.kind = prompt.kind.next(),
-            KeyCode::Char(':') => prompt.command = Some(String::new()),
+            KeyCode::Char(':') => prompt.modal.begin_command(),
             KeyCode::Char('i') => prompt.mode = CommentEditorMode::Insert,
             KeyCode::Char('a') => {
                 prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor);
@@ -4124,31 +4120,13 @@ impl App {
         let Some(prompt) = self.comment_prompt.as_mut() else {
             return;
         };
-        if prompt.text != prompt.original_text && !prompt.cancel_armed {
-            prompt.cancel_armed = true;
+        let dirty = prompt.text != prompt.original_text;
+        if prompt.modal.request_discard(dirty) == ModalAction::Continue {
             prompt.pending_delete = false;
             return;
         }
         self.comment_prompt = None;
         self.toast = Some("comment cancelled".to_string());
-    }
-
-    fn run_comment_command(&mut self) {
-        let command = self
-            .comment_prompt
-            .as_mut()
-            .and_then(|prompt| prompt.command.take())
-            .unwrap_or_default();
-        match command.trim() {
-            "w" | "wq" | "x" => self.save_comment_prompt(),
-            "q" => self.request_comment_cancel(),
-            "q!" => {
-                self.comment_prompt = None;
-                self.toast = Some("comment cancelled".to_string());
-            }
-            "" => {}
-            other => self.toast = Some(format!("unknown comment command: :{other}")),
-        }
     }
 
     #[cfg(test)]
@@ -4439,12 +4417,15 @@ impl App {
             text,
             mode: CommentEditorMode::Insert,
             pending_delete: false,
-            command: None,
-            cancel_armed: false,
+            modal: ModalState::default(),
         });
     }
 
     fn save_comment_prompt(&mut self) {
+        if let Some(error) = self.comments_persistence_error() {
+            self.toast = Some(error);
+            return;
+        }
         let Some(prompt) = self.comment_prompt.take() else {
             return;
         };
@@ -4473,6 +4454,23 @@ impl App {
             ),
             Err(error) => format!("comment saved in memory; persistence failed: {error}"),
         });
+    }
+
+    fn comments_persistence_error(&mut self) -> Option<String> {
+        if !self.comments_load_failed {
+            return None;
+        }
+        match review::load(&self.root) {
+            Ok(comments) => {
+                self.comments = comment_map(comments);
+                self.comments_load_failed = false;
+                None
+            }
+            Err(_) => Some(format!(
+                "comments file unreadable; resolve {} first",
+                self.root.join(".rune-comments.yaml").display()
+            )),
+        }
     }
 
     fn section_key(&mut self, key: KeyEvent) {
@@ -6598,27 +6596,28 @@ fn previous_comment_word(text: &str, cursor: usize) -> usize {
     characters.get(index).map_or(0, |(byte, _)| *byte)
 }
 
-fn load_comments(root: &Path) -> (CommentMap, Option<String>) {
+fn comment_map(comments: Vec<ReviewComment>) -> CommentMap {
+    comments
+        .into_iter()
+        .map(|comment| {
+            (
+                (comment.module, comment.path, comment.line),
+                LineComment {
+                    kind: comment.kind,
+                    text: comment.text,
+                    end_line: comment.end_line,
+                },
+            )
+        })
+        .collect()
+}
+
+fn load_comments(root: &Path) -> (CommentMap, Option<String>, bool) {
     let comments = match review::load(root) {
         Ok(comments) => comments,
-        Err(error) => return (BTreeMap::new(), Some(error)),
+        Err(error) => return (BTreeMap::new(), Some(error), true),
     };
-    (
-        comments
-            .into_iter()
-            .map(|comment| {
-                (
-                    (comment.module, comment.path, comment.line),
-                    LineComment {
-                        kind: comment.kind,
-                        text: comment.text,
-                        end_line: comment.end_line,
-                    },
-                )
-            })
-            .collect(),
-        None,
-    )
+    (comment_map(comments), None, false)
 }
 
 fn persist_comments(root: &Path, comments: &CommentMap) -> Result<(), String> {

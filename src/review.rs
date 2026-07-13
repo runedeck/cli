@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
+use crate::services::editing;
+
 const STORE_VERSION: u32 = 1;
 const SIDECAR_NAME: &str = ".rune-comments.yaml";
 
@@ -117,25 +119,12 @@ pub fn load(root: &Path) -> Result<Vec<ReviewComment>, String> {
 /// Atomically persist review comments to `.rune-comments.yaml`.
 pub fn persist(root: &Path, comments: &[ReviewComment]) -> Result<(), String> {
     let path = root.join(SIDECAR_NAME);
-    if std::fs::metadata(&path).is_ok_and(|metadata| metadata.permissions().readonly()) {
-        return Err(format!("{} is read-only", path.display()));
-    }
     let store = CommentStore {
         version: STORE_VERSION,
         comments: comments.to_vec(),
     };
     let content = serde_yaml::to_string(&store).map_err(|error| error.to_string())?;
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temporary = root.join(format!("{SIDECAR_NAME}.tmp-{}-{nonce}", std::process::id()));
-    std::fs::write(&temporary, content).map_err(|error| error.to_string())?;
-    if let Err(error) = std::fs::rename(&temporary, &path) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error.to_string());
-    }
-    Ok(())
+    editing::atomic_write(&path, &content)
 }
 
 /// Render persisted comments grouped by file with their selected source lines.
@@ -334,6 +323,33 @@ mod tests {
 
         assert_eq!(comments[0].end_line, None);
         assert_eq!(comments[0].location(), "src/lib.rs:2");
+    }
+
+    #[test]
+    fn persist_matches_the_shared_atomic_writer_byte_for_byte() {
+        let review_root = tempfile::tempdir().unwrap();
+        let editing_root = tempfile::tempdir().unwrap();
+        let comments = vec![ReviewComment {
+            module: "rune".to_string(),
+            path: "src/lib.rs".to_string(),
+            line: 7,
+            end_line: Some(9),
+            kind: CommentKind::Suggestion,
+            text: "share the writer".to_string(),
+        }];
+        let expected = serde_yaml::to_string(&CommentStore {
+            version: STORE_VERSION,
+            comments: comments.clone(),
+        })
+        .unwrap();
+
+        persist(review_root.path(), &comments).unwrap();
+        editing::atomic_write(&editing_root.path().join(SIDECAR_NAME), &expected).unwrap();
+
+        assert_eq!(
+            std::fs::read(review_root.path().join(SIDECAR_NAME)).unwrap(),
+            std::fs::read(editing_root.path().join(SIDECAR_NAME)).unwrap()
+        );
     }
 
     #[test]

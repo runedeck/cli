@@ -4,6 +4,7 @@ mod comment_navigator;
 pub mod components;
 pub mod event;
 mod file_editor;
+mod modal_editor;
 mod rich;
 mod word_wrap;
 

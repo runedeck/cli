@@ -1034,6 +1034,45 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
 }
 
 #[test]
+fn corrupt_comment_sidecar_survives_a_comment_save_attempt() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(root.path().join(source_path), "source line\n").unwrap();
+    let sidecar = root.path().join(".rune-comments.yaml");
+    let corrupt_bytes = b"version: [unterminated\n";
+    std::fs::write(&sidecar, corrupt_bytes).unwrap();
+
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "do not clobber".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+
+    event::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    );
+
+    assert_eq!(std::fs::read(&sidecar).unwrap(), corrupt_bytes);
+    assert!(
+        app.is_comment_prompt_open(),
+        "blocked save keeps the editor open"
+    );
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("comments file unreadable"));
+    assert!(snapshot.contains("resolve"));
+}
+
+#[test]
 fn file_editor_w_saves_in_place_and_wq_closes() {
     let root = tempfile::tempdir().unwrap();
     let source_path = "skills/BuildSkill/SKILL.md";
