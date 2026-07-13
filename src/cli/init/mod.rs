@@ -203,7 +203,7 @@ fn scaffold_project(
         });
     }
 
-    let git_initialized = initialize_git(&destination)?;
+    let git_initialized = initialize_git(&destination, &owner)?;
     let quest_bound = bind_quest_if_requested(&destination, bind_quest)?;
 
     Ok(ProjectResult {
@@ -503,7 +503,7 @@ fn make_executable_if_needed(_target: &Path, _relative: &Path) -> Result<(), Err
     Ok(())
 }
 
-fn initialize_git(destination: &Path) -> Result<bool, Error> {
+fn initialize_git(destination: &Path, owner: &str) -> Result<bool, Error> {
     let has_git = destination.join(".git").exists();
     let has_jj = destination.join(".jj").exists();
     let initialized = if has_git || has_jj {
@@ -513,9 +513,53 @@ fn initialize_git(destination: &Path) -> Result<bool, Error> {
         true
     };
     if destination.join(".git").exists() {
+        if !git_has_head(destination)? {
+            run_git(["add", "-A"], Some(destination))?;
+            commit_scaffold(destination, owner)?;
+        }
         run_git(["config", "core.hooksPath", ".githooks"], Some(destination))?;
     }
     Ok(initialized)
+}
+
+fn git_has_head(directory: &Path) -> Result<bool, Error> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(directory)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    Ok(output.status.success())
+}
+
+fn commit_scaffold(directory: &Path, owner: &str) -> Result<(), Error> {
+    let user_name = if owner.trim().is_empty() {
+        "Rune Scaffolder"
+    } else {
+        owner.trim()
+    };
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            &format!("user.name={user_name}"),
+            "-c",
+            "user.email=rune@localhost",
+            "commit",
+            "-m",
+            "chore: scaffold from skeleton",
+        ])
+        .current_dir(directory)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(Error::new(
+        ErrorKind::Io,
+        format!("git failed: {}", stderr.trim()),
+    ))
 }
 
 fn run_git<const N: usize>(args: [&str; N], directory: Option<&Path>) -> Result<(), Error> {

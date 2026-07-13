@@ -73,6 +73,27 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         String::from_utf8(hooks_path.stdout).unwrap().trim(),
         ".githooks"
     );
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&destination)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(branch.stdout).unwrap().trim(), "main");
+    let commits = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(&destination)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(commits.stdout).unwrap().trim(), "1");
+    let subject = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%s"])
+        .current_dir(&destination)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(subject.stdout).unwrap().trim(),
+        "chore: scaffold from skeleton"
+    );
 
     #[cfg(unix)]
     for executable in [".githooks/pre-commit", "bin/signal-lamp"] {
@@ -82,6 +103,27 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
             .mode();
         assert_ne!(mode & 0o111, 0, "{executable} should be executable");
     }
+}
+
+#[test]
+fn project_init_repo_is_silent_during_install_freshness_check() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("quiet-main");
+
+    init(
+        home.path(),
+        quests.path(),
+        &["quiet-main", "--lang", "shell", "--purpose", "tool"],
+    )
+    .success();
+
+    rune()
+        .env("HOME", home.path())
+        .args(["install", "--source", destination.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("git freshness").not());
 }
 
 #[test]
