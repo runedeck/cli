@@ -82,6 +82,11 @@ pub fn execute(
             &mut result,
             provider_name,
             force,
+            if crate::cli::dotrune::exists(module_root) {
+                commands::provider::ContentKind::DECK_ALL
+            } else {
+                commands::provider::ContentKind::ALL
+            },
         )?;
 
         // Stale detection only when prune enabled. Pruned files are
@@ -214,6 +219,7 @@ pub fn execute(
 }
 
 /// Deploy all content kinds (agents, skills, rules) for a single provider.
+#[allow(clippy::too_many_arguments)]
 fn deploy_provider_files(
     build_provider_dir: &Path,
     target_base: &Path,
@@ -222,8 +228,9 @@ fn deploy_provider_files(
     result: &mut ActionResult,
     provider_name: &str,
     force: bool,
+    kinds: &[commands::provider::ContentKind],
 ) -> Result<(), Error> {
-    for kind in commands::provider::ContentKind::ALL {
+    for kind in kinds {
         let kind_dir = build_provider_dir.join(kind.as_str());
         if !kind_dir.is_dir() {
             continue;

@@ -8,16 +8,19 @@ pub enum ContentKind {
     Agents,
     Skills,
     Rules,
+    Hooks,
 }
 
 impl ContentKind {
     pub const ALL: &[ContentKind] = &[Self::Agents, Self::Skills, Self::Rules];
+    pub const DECK_ALL: &[ContentKind] = &[Self::Skills, Self::Agents, Self::Rules, Self::Hooks];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Agents => "agents",
             Self::Skills => "skills",
             Self::Rules => "rules",
+            Self::Hooks => "hooks",
         }
     }
 }

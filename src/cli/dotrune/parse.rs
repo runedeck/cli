@@ -184,11 +184,23 @@ pub struct ArtifactList {
     pub skills: Vec<String>,
     pub agents: Vec<String>,
     pub rules: Vec<String>,
+    pub hooks: Vec<String>,
 }
 
 impl ArtifactList {
     pub fn is_empty(&self) -> bool {
-        self.skills.is_empty() && self.agents.is_empty() && self.rules.is_empty()
+        self.skills.is_empty()
+            && self.agents.is_empty()
+            && self.rules.is_empty()
+            && self.hooks.is_empty()
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = &String> {
+        self.skills
+            .iter()
+            .chain(&self.agents)
+            .chain(&self.rules)
+            .chain(&self.hooks)
     }
 }
 

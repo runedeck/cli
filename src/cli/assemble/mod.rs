@@ -35,6 +35,13 @@ use crate::cli::config;
 ///   gemini/agents/security-architect.yaml
 /// ```
 pub fn execute(path: &str) -> Result<ActionResult, Error> {
+    execute_with_provider_overrides(path, &[])
+}
+
+pub fn execute_with_provider_overrides(
+    path: &str,
+    requested_providers: &[String],
+) -> Result<ActionResult, Error> {
     let module_root = Path::new(path);
     if !module_root.is_dir() {
         return Err(Error::new(
@@ -80,8 +87,16 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
     }
 
     for (provider_name, provider_config) in &providers {
+        if !requested_providers.is_empty()
+            && !requested_providers
+                .iter()
+                .any(|requested| provider_config.matches_target(requested, provider_name))
+        {
+            continue;
+        }
         let provider_build_dir = build_dir.join(provider_name);
         let tool_mappings = config::load_tool_mappings(remap_content.as_ref(), provider_name)?;
+        let mut deploy_paths = std::collections::HashMap::new();
 
         // Parse assembly rules for this provider
         let assembly_rules: Vec<commands::provider::AssemblyRule> = provider_config
@@ -108,6 +123,8 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
                 &effort_tiers,
                 &models,
                 &source_uri,
+                !requested_providers.is_empty(),
+                &mut deploy_paths,
             )? {
                 result.installed.push(deployed);
             }
@@ -130,7 +147,17 @@ fn assemble_source_for_provider(
     effort_tiers: &std::collections::HashMap<String, String>,
     models: &std::collections::HashMap<String, Vec<String>>,
     source_uri: &str,
+    providers_overridden: bool,
+    deploy_paths: &mut std::collections::HashMap<String, String>,
 ) -> Result<Option<DeployedFile>, Error> {
+    if !providers_overridden
+        && source
+            .providers
+            .as_ref()
+            .is_some_and(|providers| !providers.iter().any(|provider| provider == provider_name))
+    {
+        return Ok(None);
+    }
     if source
         .qualifier
         .as_ref()
@@ -200,6 +227,20 @@ fn assemble_source_for_provider(
     let output_path = provider_build_dir
         .join(source.kind.as_str())
         .join(&transformed_filename);
+    let deploy_relative = format!("{}/{transformed_filename}", source.kind);
+    let artifact_id = source
+        .artifact_id
+        .as_deref()
+        .unwrap_or(&source.relative_path);
+    if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), artifact_id.to_string())
+    {
+        return Err(commands::error::Error::new(
+            commands::error::ErrorKind::Config,
+            format!(
+                "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {existing_id} and {artifact_id}"
+            ),
+        ));
+    }
     let manifest_key = format!("{}/{}/{}", provider_name, source.kind, transformed_filename);
 
     output::write_file(&output_path, &assembled)?;

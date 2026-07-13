@@ -387,3 +387,27 @@ artifacts:
     assert!(manifest.artifacts["a"].agents.is_empty());
     assert_eq!(manifest.artifacts["a"].rules, vec!["OnlyRule"]);
 }
+
+#[test]
+fn resolved_deck_artifacts_store_canonical_ids() {
+    let deck = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
+    let content = format!(
+        "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [OnlyScience]\n",
+        deck.display()
+    );
+    let manifest = parse(&content).unwrap();
+
+    let files = super::resolve_sources(
+        &manifest,
+        std::path::Path::new("."),
+        &std::collections::HashSet::default(),
+    )
+    .unwrap();
+
+    assert!(!files.is_empty());
+    assert!(
+        files
+            .iter()
+            .all(|file| file.artifact_id.as_deref() == Some("science/skills/OnlyScience"))
+    );
+}

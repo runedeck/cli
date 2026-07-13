@@ -118,3 +118,24 @@ fn domain_provider_list_overrides_deck_default() {
     );
     assert_eq!(deck.providers_for(&deck.domains[1]).unwrap(), ["gemini"]);
 }
+
+#[test]
+fn domain_defaults_provider_keys_override_deck_default() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &root.path().join("deck.yaml"),
+        &deck_yaml("providers: [claude, codex]\n"),
+    );
+    write(
+        &root.path().join("runes/science/module.yaml"),
+        &module_yaml("science", ""),
+    );
+    write(
+        &root.path().join("runes/science/defaults.yaml"),
+        "providers:\n    gemini:\n        target: .gemini\n",
+    );
+
+    let deck = load(root.path()).unwrap();
+
+    assert_eq!(deck.providers_for(&deck.domains[0]).unwrap(), ["gemini"]);
+}

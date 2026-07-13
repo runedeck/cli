@@ -37,6 +37,10 @@ pub struct SourceFile {
     /// Target providers from frontmatter (e.g., `claudecode`, `geminicli`).
     /// None means deploy to all providers.
     pub targets: Option<Vec<String>>,
+    /// Canonical deck artifact id after resolution. Single modules leave this unset.
+    pub artifact_id: Option<String>,
+    /// Effective provider list inherited from the domain or deck.
+    pub providers: Option<Vec<String>>,
 }
 
 /// Walk agents/, skills/, rules/ and collect all .md source files.
@@ -65,9 +69,33 @@ pub fn collect(
     module_root: &Path,
     valid_qualifiers: &HashSet<String>,
 ) -> Result<Vec<SourceFile>, Error> {
+    collect_kinds(
+        module_root,
+        valid_qualifiers,
+        commands::provider::ContentKind::ALL,
+    )
+}
+
+/// Collect the closed v1 deck kinds in their specified output order.
+pub fn collect_deck(
+    module_root: &Path,
+    valid_qualifiers: &HashSet<String>,
+) -> Result<Vec<SourceFile>, Error> {
+    collect_kinds(
+        module_root,
+        valid_qualifiers,
+        commands::provider::ContentKind::DECK_ALL,
+    )
+}
+
+fn collect_kinds(
+    module_root: &Path,
+    valid_qualifiers: &HashSet<String>,
+    kinds: &[commands::provider::ContentKind],
+) -> Result<Vec<SourceFile>, Error> {
     let mut sources = Vec::new();
 
-    for kind in commands::provider::ContentKind::ALL {
+    for kind in kinds {
         let dir = module_root.join(kind.as_str());
         if !dir.is_dir() {
             continue;
@@ -161,6 +189,8 @@ fn walk_content_dir(
             passthrough: false,
             qualifier: None,
             targets,
+            artifact_id: None,
+            providers: None,
         });
     }
 
@@ -224,6 +254,8 @@ fn walk_qualifier_dir(
             passthrough: false,
             qualifier: Some(qualifier_name.to_string()),
             targets,
+            artifact_id: None,
+            providers: None,
         });
     }
 
@@ -314,6 +346,8 @@ fn collect_skill_files(
                 passthrough: !is_skill_file,
                 qualifier: None,
                 targets,
+                artifact_id: None,
+                providers: None,
             },
         );
     }

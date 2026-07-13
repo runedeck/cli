@@ -63,6 +63,21 @@ fn install(consumer_root: &Path) -> assert_cmd::assert::Assert {
         .assert()
 }
 
+fn install_local_deck(
+    consumer_root: &Path,
+    artifact_kind: &str,
+    ids: &str,
+) -> assert_cmd::assert::Assert {
+    write_dotrune(
+        consumer_root,
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    {artifact_kind}: [{ids}]\n",
+            support::deck_fixture().display()
+        ),
+    );
+    install(consumer_root)
+}
+
 #[test]
 fn dotrune_deploys_requested_artifacts_across_providers() {
     let producer_a = tempfile::tempdir().unwrap();
@@ -313,4 +328,203 @@ fn dotrune_local_deck_subpath_resolves_one_domain() {
             .is_file()
     );
     assert!(!consumer.path().join(".claude/skills/OnlyWriting").exists());
+}
+
+#[test]
+fn deck_resolves_canonical_artifact_id() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    install_local_deck(consumer.path(), "skills", "science/skills/OnlyScience").success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn deck_resolves_canonical_hook_id() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    install_local_deck(consumer.path(), "hooks", "science/hooks/OnEvent").success();
+
+    assert!(consumer.path().join(".claude/hooks/OnEvent.md").is_file());
+}
+
+#[test]
+fn deck_resolves_unique_domain_short_form() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    install_local_deck(consumer.path(), "skills", "science/OnlyScience").success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn deck_resolves_globally_unique_bare_name() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    install_local_deck(consumer.path(), "skills", "OnlyScience").success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn deck_rejects_ambiguous_domain_short_form_with_candidates() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    let output = install_local_deck(consumer.path(), "skills", "science/SharedName").failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert!(stderr.contains("science/skills/SharedName"), "{stderr}");
+    assert!(stderr.contains("science/agents/SharedName"), "{stderr}");
+}
+
+#[test]
+fn deck_rejects_ambiguous_bare_name_with_candidates() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    let output = install_local_deck(consumer.path(), "rules", "GlobalName").failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert!(stderr.contains("science/rules/GlobalName"), "{stderr}");
+    assert!(stderr.contains("writing/rules/GlobalName"), "{stderr}");
+}
+
+#[test]
+fn deck_rejects_cross_domain_deploy_path_collision() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    let output = install_local_deck(
+        consumer.path(),
+        "rules",
+        "science/rules/Collision, writing/rules/Collision",
+    )
+    .failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert!(stderr.contains("science/rules/Collision"), "{stderr}");
+    assert!(stderr.contains("writing/rules/Collision"), "{stderr}");
+}
+
+#[test]
+fn deck_domain_provider_list_overrides_deck_default() {
+    let deck = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    support::copy_deck_fixture(deck.path());
+    fs::write(
+        deck.path().join("deck.yaml"),
+        "name: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
+    )
+    .unwrap();
+    fs::write(
+        deck.path().join("runes/science/module.yaml"),
+        "name: science\nversion: 0.1.0\ndescription: Fixture.\nevents: []\nproviders: [gemini]\n",
+    )
+    .unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [science/skills/OnlyScience, writing/skills/OnlyWriting]\n",
+            deck.path().display()
+        ),
+    );
+
+    install(consumer.path()).success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".gemini/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+    assert!(!consumer.path().join(".claude/skills/OnlyScience").exists());
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyWriting/SKILL.md")
+            .is_file()
+    );
+    assert!(!consumer.path().join(".gemini/skills/OnlyWriting").exists());
+}
+
+#[test]
+fn target_provider_selection_overrides_deck_and_domain_defaults() {
+    let deck = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    support::copy_deck_fixture(deck.path());
+    fs::write(
+        deck.path().join("deck.yaml"),
+        "name: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
+    )
+    .unwrap();
+    fs::write(
+        deck.path().join("runes/science/module.yaml"),
+        "name: science\nversion: 0.1.0\ndescription: Fixture.\nevents: []\nproviders: [gemini]\n",
+    )
+    .unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [science/skills/OnlyScience]\n",
+            deck.path().display()
+        ),
+    );
+
+    rune()
+        .args([
+            "install",
+            "--source",
+            consumer.path().to_str().unwrap(),
+            "--target",
+            consumer.path().to_str().unwrap(),
+            "--provider",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".codex/skills/OnlyScience/SKILL.toml")
+            .is_file()
+    );
+    assert!(!consumer.path().join(".gemini/skills/OnlyScience").exists());
+}
+
+#[test]
+fn single_module_source_still_resolves_bare_name() {
+    let producer = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    scaffold_producer(producer.path(), "producer");
+    write_skill(producer.path(), "LegacyBareName");
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  producer:\n    path: {}\nartifacts:\n  producer:\n    skills: [LegacyBareName]\n",
+            producer.path().display()
+        ),
+    );
+
+    install(consumer.path()).success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/LegacyBareName/SKILL.md")
+            .is_file()
+    );
 }

@@ -3,12 +3,12 @@
 //! into the existing per-provider assemble loop.
 
 use commands::error::{Error, ErrorKind};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::assemble::sources::{self, SourceFile};
-use crate::cli::dotrune::filter::filter_to_requested;
+use crate::cli::dotrune::filter::{filter_deck_to_requested, filter_to_requested};
 use crate::cli::dotrune::parse::{DotRune, Source};
 
 enum CanonicalSource {
@@ -22,7 +22,6 @@ pub fn resolve_sources(
     valid_qualifiers: &HashSet<String>,
 ) -> Result<Vec<SourceFile>, Error> {
     let mut collected: Vec<SourceFile> = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
 
     for (source_label, source) in &manifest.sources {
         let canonical = canonicalize_source(source, source_label, repo_root)?;
@@ -33,36 +32,53 @@ pub fn resolve_sources(
             continue;
         }
 
-        let (all_files, display_path) = match &canonical {
-            CanonicalSource::Module(module_root) => (
+        let filtered = match &canonical {
+            CanonicalSource::Module(module_root) => filter_to_requested(
                 sources::collect(module_root, valid_qualifiers)?,
-                module_root.as_path(),
-            ),
+                artifact_list,
+                source_label,
+                module_root,
+            )?,
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();
                 for domain in &deck.domains {
-                    files.extend(sources::collect(&domain.root, valid_qualifiers)?);
+                    let providers = deck.providers_for(domain).map(<[String]>::to_vec);
+                    for mut file in sources::collect_deck(&domain.root, valid_qualifiers)? {
+                        file.artifact_id = Some(canonical_artifact_id(&domain.name, &file)?);
+                        file.providers.clone_from(&providers);
+                        files.push(file);
+                    }
                 }
-                (files, deck.root.as_path())
+                filter_deck_to_requested(files, artifact_list, source_label, &deck.root)?
             }
         };
-        let filtered = filter_to_requested(all_files, artifact_list, source_label, display_path)?;
-
-        for file in filtered {
-            if !seen.insert(file.relative_path.clone()) {
-                return Err(Error::new(
-                    ErrorKind::Config,
-                    format!(
-                        ".rune: artifact {} requested from more than one source",
-                        file.relative_path
-                    ),
-                ));
-            }
-            collected.push(file);
-        }
+        collected.extend(filtered);
     }
 
     Ok(collected)
+}
+
+fn canonical_artifact_id(domain: &str, file: &SourceFile) -> Result<String, Error> {
+    let name = if file.kind == commands::provider::ContentKind::Skills {
+        file.relative_path
+            .strip_prefix("skills/")
+            .and_then(|path| path.split('/').next())
+    } else {
+        Path::new(&file.relative_path)
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+    }
+    .filter(|name| !name.is_empty())
+    .ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            format!(
+                "cannot derive artifact id for {} in domain {domain}",
+                file.relative_path
+            ),
+        )
+    })?;
+    Ok(format!("{domain}/{}/{name}", file.kind))
 }
 
 fn canonicalize_source(

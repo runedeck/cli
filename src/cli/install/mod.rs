@@ -22,7 +22,7 @@ pub fn execute(
     interactive: bool,
     dry_run: bool,
 ) -> Result<ActionResult, Error> {
-    assemble::execute(path)?;
+    assemble::execute_with_provider_overrides(path, requested_providers)?;
     deploy::execute(
         path,
         target,

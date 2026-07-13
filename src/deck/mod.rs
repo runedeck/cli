@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::module::ModuleManifest;
@@ -11,11 +12,17 @@ pub struct DeckManifest {
     pub providers: Option<Vec<String>>,
 }
 
+#[derive(Deserialize)]
+struct DomainDefaults {
+    providers: Option<BTreeMap<String, serde_yaml::Value>>,
+}
+
 #[derive(Debug)]
 pub struct Domain {
     pub name: String,
     pub root: PathBuf,
     pub manifest: ModuleManifest,
+    providers: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -29,7 +36,6 @@ pub struct Deck {
 impl Deck {
     pub fn providers_for<'a>(&'a self, domain: &'a Domain) -> Option<&'a [String]> {
         domain
-            .manifest
             .providers
             .as_deref()
             .or(self.manifest.providers.as_deref())
@@ -81,10 +87,15 @@ pub fn load(root: &Path) -> Result<Deck, String> {
                 domain_manifest.name
             ));
         }
+        let providers = domain_manifest
+            .providers
+            .clone()
+            .or(load_default_provider_names(&domain_root)?);
         domains.push(Domain {
             name,
             root: domain_root,
             manifest: domain_manifest,
+            providers,
         });
     }
 
@@ -94,6 +105,23 @@ pub fn load(root: &Path) -> Result<Deck, String> {
         domains,
         warnings,
     })
+}
+
+fn load_default_provider_names(domain_root: &Path) -> Result<Option<Vec<String>>, String> {
+    let defaults_yaml = domain_root.join("defaults.yaml");
+    if !defaults_yaml.is_file() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&defaults_yaml)
+        .map_err(|error| format!("cannot read {}: {error}", defaults_yaml.display()))?;
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+    let defaults: DomainDefaults = serde_yaml::from_str(&content)
+        .map_err(|error| format!("invalid {}: {error}", defaults_yaml.display()))?;
+    Ok(defaults
+        .providers
+        .map(|providers| providers.into_keys().collect()))
 }
 
 #[cfg(test)]
