@@ -1,0 +1,2 @@
+# Seed templates resolve ${RUNE_REF} to a pinned tag or SHA before emission.
+templates/init/.github/workflows/*.yaml
