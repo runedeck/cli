@@ -141,7 +141,7 @@ fn assemble_source_maps_agent_model_and_effort_tiers() {
         qualifier: None,
         passthrough: false,
         targets: None,
-        artifact_id: None,
+        rune_id: None,
         providers: None,
         source_uri: None,
         content: "---\nname: TestAgent\ndescription: test\nmodel: strong\n---\n\nBody.\n"
@@ -200,7 +200,7 @@ fn assemble_source_maps_all_codex_tiers() {
             qualifier: None,
             passthrough: false,
             targets: None,
-            artifact_id: None,
+            rune_id: None,
             providers: None,
             source_uri: None,
             content: format!(
@@ -256,7 +256,7 @@ fn assemble_source_keeps_explicit_effort_over_tier_effort() {
         qualifier: None,
         passthrough: false,
         targets: None,
-        artifact_id: None,
+        rune_id: None,
         providers: None,
         source_uri: None,
         content:

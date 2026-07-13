@@ -1,0 +1,51 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<div class="detail-header">
+    <div class="detail-title-row">
+        <h1 class="detail-name">Decks</h1>
+        <span class="detail-module">{{ deck.name }} {{ deck.version }}</span>
+    </div>
+    <p class="detail-description">Rune inventory and validation state for each deck.</p>
+</div>
+
+{% if deck.entries.is_empty() %}
+<div class="detail-panel"><p class="detail-description">This deck has no decks.</p></div>
+{% else %}
+<div class="cards">
+{% for entry in deck.entries %}
+    <section class="detail-panel">
+        <div class="card-header">
+            <div>
+                <span class="card-name">{{ entry.name }}</span>
+                <span class="module-version">{{ entry.version }}</span>
+            </div>
+            {% if entry.validation.valid %}
+            <span class="status-chip ok">valid</span>
+            {% else %}
+            <span class="status-chip broken">invalid</span>
+            {% endif %}
+        </div>
+        {% if !entry.description.is_empty() %}<p class="card-desc">{{ entry.description }}</p>{% endif %}
+        <p class="results-count">{{ entry.rune_count() }} runes</p>
+        <table class="status-table">
+            <thead><tr><th>Kind</th><th>Count</th></tr></thead>
+            <tbody>
+            {% for (kind, count) in entry.rune_counts %}
+                <tr><td>{{ kind }}</td><td class="mono">{{ count }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if !entry.providers.is_empty() %}
+        <p class="mono">providers: {{ entry.providers|join(", ") }}</p>
+        {% endif %}
+        {% if !entry.validation.valid %}
+        <ul class="variant-note">
+        {% for error in entry.validation.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+    </section>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

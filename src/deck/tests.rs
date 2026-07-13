@@ -14,11 +14,11 @@ fn deck_yaml(providers: &str) -> String {
 }
 
 fn module_yaml(name: &str, providers: &str) -> String {
-    format!("name: {name}\nversion: 0.1.0\ndescription: Fixture domain.\nevents: []\n{providers}")
+    format!("name: {name}\nversion: 0.1.0\ndescription: Fixture deck.\nevents: []\n{providers}")
 }
 
 #[test]
-fn discovers_deck_modules() {
+fn discovers_deck_entries() {
     let root = tempfile::tempdir().unwrap();
     write(&root.path().join("deck.yaml"), &deck_yaml(""));
     write(
@@ -34,9 +34,9 @@ fn discovers_deck_modules() {
 
     assert_eq!(deck.manifest.name, "fixture-deck");
     assert_eq!(
-        deck.domains
+        deck.entries
             .iter()
-            .map(|domain| domain.name.as_str())
+            .map(|deck_entry| deck_entry.name.as_str())
             .collect::<Vec<_>>(),
         ["science", "writing"]
     );
@@ -53,7 +53,7 @@ fn skips_entry_without_module_manifest() {
 
     let deck = load(root.path()).unwrap();
 
-    assert!(deck.domains.is_empty());
+    assert!(deck.entries.is_empty());
     assert_eq!(deck.warnings.len(), 1);
     assert!(deck.warnings[0].contains("notes"));
     assert!(deck.warnings[0].contains("module.yaml"));
@@ -71,7 +71,7 @@ fn skips_dotfiles_under_runes_without_warning() {
 
     let deck = load(root.path()).unwrap();
 
-    assert!(deck.domains.is_empty());
+    assert!(deck.entries.is_empty());
     assert!(deck.warnings.is_empty());
 }
 
@@ -81,17 +81,17 @@ fn skips_root_readme_under_runes_without_warning() {
     write(&root.path().join("deck.yaml"), &deck_yaml(""));
     write(
         &root.path().join("runes/README.md"),
-        "Deck domain documentation.\n",
+        "Deck documentation.\n",
     );
 
     let deck = load(root.path()).unwrap();
 
-    assert!(deck.domains.is_empty());
+    assert!(deck.entries.is_empty());
     assert!(deck.warnings.is_empty());
 }
 
 #[test]
-fn rejects_domain_name_that_differs_from_directory() {
+fn rejects_deck_name_that_differs_from_directory() {
     let root = tempfile::tempdir().unwrap();
     write(&root.path().join("deck.yaml"), &deck_yaml(""));
     write(
@@ -106,7 +106,7 @@ fn rejects_domain_name_that_differs_from_directory() {
 }
 
 #[test]
-fn discovers_domains_in_lexicographic_order() {
+fn discovers_deck_entries_in_lexicographic_order() {
     let root = tempfile::tempdir().unwrap();
     write(&root.path().join("deck.yaml"), &deck_yaml(""));
     for name in ["zoology", "astronomy", "botany"] {
@@ -119,16 +119,16 @@ fn discovers_domains_in_lexicographic_order() {
     let deck = load(root.path()).unwrap();
 
     assert_eq!(
-        deck.domains
+        deck.entries
             .iter()
-            .map(|domain| domain.name.as_str())
+            .map(|deck_entry| deck_entry.name.as_str())
             .collect::<Vec<_>>(),
         ["astronomy", "botany", "zoology"]
     );
 }
 
 #[test]
-fn domain_provider_list_overrides_deck_default() {
+fn deck_entry_provider_list_overrides_deck_default() {
     let root = tempfile::tempdir().unwrap();
     write(
         &root.path().join("deck.yaml"),
@@ -146,14 +146,14 @@ fn domain_provider_list_overrides_deck_default() {
     let deck = load(root.path()).unwrap();
 
     assert_eq!(
-        deck.providers_for(&deck.domains[0]).unwrap(),
+        deck.providers_for(&deck.entries[0]).unwrap(),
         ["claude", "codex"]
     );
-    assert_eq!(deck.providers_for(&deck.domains[1]).unwrap(), ["gemini"]);
+    assert_eq!(deck.providers_for(&deck.entries[1]).unwrap(), ["gemini"]);
 }
 
 #[test]
-fn domain_defaults_provider_keys_override_deck_default() {
+fn deck_entry_defaults_provider_keys_override_deck_default() {
     let root = tempfile::tempdir().unwrap();
     write(
         &root.path().join("deck.yaml"),
@@ -170,7 +170,7 @@ fn domain_defaults_provider_keys_override_deck_default() {
 
     let deck = load(root.path()).unwrap();
 
-    assert_eq!(deck.providers_for(&deck.domains[0]).unwrap(), ["gemini"]);
+    assert_eq!(deck.providers_for(&deck.entries[0]).unwrap(), ["gemini"]);
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn rejects_cast_pattern_that_matches_no_artifact() {
     write(&root.path().join("deck.yaml"), &deck_yaml(""));
     write(
         &root.path().join("casts/stale.yaml"),
-        "name: stale\ndescription: Removed artifact.\nrunes: ['science/skills/Removed']\n",
+        "name: stale\ndescription: Removed rune.\nrunes: ['science/skills/Removed']\n",
     );
     let deck = load(root.path()).unwrap();
 
@@ -340,5 +340,5 @@ fn rejects_cast_pattern_that_matches_no_artifact() {
         .unwrap_err();
 
     assert!(error.contains("science/skills/Removed"), "{error}");
-    assert!(error.contains("matches no artifact"), "{error}");
+    assert!(error.contains("matches no rune"), "{error}");
 }

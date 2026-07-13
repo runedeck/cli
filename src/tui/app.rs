@@ -71,7 +71,7 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("o s a r", "overview, skills, agents, rules"),
             ("R d p v", "repositories, ADRs, provenance, variants"),
             ("f t h c m", "search, settings, hooks, config, schemas"),
-            ("n x y", "domains, casts, deck history"),
+            ("n x y", "decks, casts, deck history"),
             ("H", "history for selected artifact"),
         ],
     ),
@@ -117,7 +117,7 @@ pub enum Section {
     Hooks = 10,
     Config = 11,
     Schemas = 12,
-    Domains = 13,
+    Decks = 13,
     Casts = 14,
     DeckHistory = 15,
 }
@@ -137,7 +137,7 @@ impl Section {
         Self::Hooks,
         Self::Config,
         Self::Schemas,
-        Self::Domains,
+        Self::Decks,
         Self::Casts,
         Self::DeckHistory,
     ];
@@ -157,7 +157,7 @@ impl Section {
             Self::Hooks => "Hooks",
             Self::Config => "Config",
             Self::Schemas => "Schemas",
-            Self::Domains => "Domains",
+            Self::Decks => "Decks",
             Self::Casts => "Casts",
             Self::DeckHistory => "History",
         }
@@ -182,7 +182,7 @@ impl Section {
             "hooks" | "hook" => Some(Self::Hooks),
             "config" | "configuration" => Some(Self::Config),
             "schemas" | "schema" | "manifests" | "manifest" => Some(Self::Schemas),
-            "domains" | "domain" => Some(Self::Domains),
+            "decks" | "deck" => Some(Self::Decks),
             "casts" | "cast" => Some(Self::Casts),
             "deck-history" | "deck_history" | "history" => Some(Self::DeckHistory),
             _ => None,
@@ -206,7 +206,7 @@ impl Section {
             Self::Hooks => "h",
             Self::Config => "c",
             Self::Schemas => "m",
-            Self::Domains => "n",
+            Self::Decks => "n",
             Self::Casts => "x",
             Self::DeckHistory => "y",
         }
@@ -227,7 +227,7 @@ impl Section {
             'h' | 'H' => Some(Self::Hooks),
             'c' | 'C' => Some(Self::Config),
             'm' | 'M' => Some(Self::Schemas),
-            'n' | 'N' => Some(Self::Domains),
+            'n' | 'N' => Some(Self::Decks),
             'x' | 'X' => Some(Self::Casts),
             'y' => Some(Self::DeckHistory),
             _ => None,
@@ -358,7 +358,7 @@ enum ListTarget {
         group: usize,
         index: usize,
     },
-    Domain(String),
+    DeckEntry(String),
     Cast(String),
     HistoryCommit(String),
 }
@@ -592,7 +592,7 @@ pub struct App {
     history_walker: Option<services::HistoryWalker>,
     history_update: services::HistoryUpdate,
     history_received: bool,
-    deck_domain_selected: usize,
+    deck_entry_selected: usize,
     deck_kind_selected: usize,
     deck_artifact_selected: usize,
     deck_offsets: [usize; 3],
@@ -682,7 +682,7 @@ impl App {
             history_walker: None,
             history_update: services::HistoryUpdate::default(),
             history_received: false,
-            deck_domain_selected: 0,
+            deck_entry_selected: 0,
             deck_kind_selected: 0,
             deck_artifact_selected: 0,
             deck_offsets: [0; 3],
@@ -941,8 +941,8 @@ impl App {
         self.mouse_regions.detail = columns[2];
         self.mouse_regions.tabs = Rect::default();
         self.mouse_regions.detail_body = Rect::default();
-        if self.section == Section::Domains && self.view.deck.is_some() {
-            self.render_deck_domains(frame, columns[0]);
+        if self.section == Section::Decks && self.view.deck.is_some() {
+            self.render_deck_entries(frame, columns[0]);
             self.render_deck_kinds(frame, columns[1]);
             self.render_deck_artifacts(frame, columns[2]);
         } else {
@@ -994,7 +994,7 @@ impl App {
             format!(
                 " {} {} in cast {}?  Enter confirms · Esc cancels",
                 if edit.include { "include" } else { "exclude" },
-                edit.artifact_id,
+                edit.rune_id,
                 edit.cast_name
             )
         } else if let Some(prompt) = &self.comment_prompt {
@@ -1047,34 +1047,34 @@ impl App {
     }
 
     /// Deck inventory uses the three existing Miller panes as
-    /// domains -> kinds -> artifacts. Section shortcuts remain active, so the
+    /// deck entries -> kinds -> runes. Section shortcuts remain active, so the
     /// user can leave this focused inventory without adding a fourth column.
-    fn render_deck_domains(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let block = column_block(" Domains ", self.focused == ColumnFocus::Sections);
+    fn render_deck_entries(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let block = column_block(" Decks ", self.focused == ColumnFocus::Sections);
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let len = self.view.deck.as_ref().map_or(0, |deck| deck.domains.len());
-        self.update_deck_viewport(0, self.deck_domain_selected, len, inner.height);
+        let len = self.view.deck.as_ref().map_or(0, |deck| deck.entries.len());
+        self.update_deck_viewport(0, self.deck_entry_selected, len, inner.height);
         let offset = self.deck_offsets[0];
         let items = self
             .view
             .deck
             .as_ref()
             .into_iter()
-            .flat_map(|deck| deck.domains.iter())
+            .flat_map(|deck| deck.entries.iter())
             .enumerate()
             .skip(offset)
             .take(usize::from(inner.height))
-            .map(|(index, domain)| {
-                let style = if index == self.deck_domain_selected {
+            .map(|(index, deck_entry)| {
+                let style = if index == self.deck_entry_selected {
                     selected_style(self.focused == ColumnFocus::Sections)
                 } else {
                     Style::default()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(domain.name.clone(), style),
+                    Span::styled(deck_entry.name.clone(), style),
                     Span::styled(
-                        format!("  {}", domain.artifact_count()),
+                        format!("  {}", deck_entry.rune_count()),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]))
@@ -1112,12 +1112,12 @@ impl App {
     }
 
     fn render_deck_artifacts(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let block = column_block(" Artifacts ", self.focused == ColumnFocus::Detail);
+        let block = column_block(" Runes ", self.focused == ColumnFocus::Detail);
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let artifact_count = self.selected_deck_artifacts().len();
+        let rune_count = self.selected_deck_artifacts().len();
         let body_height = inner.height.saturating_sub(1);
-        self.update_deck_viewport(2, self.deck_artifact_selected, artifact_count, body_height);
+        self.update_deck_viewport(2, self.deck_artifact_selected, rune_count, body_height);
         let offset = self.deck_offsets[2];
         let target_names = self
             .view
@@ -1373,36 +1373,35 @@ impl App {
             Some(ListTarget::HistoryCommit(sha)) => {
                 self.render_history_detail(frame, inner, &sha);
             }
-            Some(ListTarget::Domain(name)) => self.render_domain_detail(frame, inner, &name),
+            Some(ListTarget::DeckEntry(name)) => self.render_deck_detail(frame, inner, &name),
             _ => self.render_overview_detail(frame, inner),
         }
     }
 
-    fn render_domain_detail(&self, frame: &mut Frame<'_>, area: Rect, name: &str) {
-        let Some(domain) = self
-            .view
-            .deck
-            .as_ref()
-            .and_then(|deck| deck.domains.iter().find(|domain| domain.name == name))
-        else {
-            frame.render_widget(Paragraph::new("domain not found"), area);
+    fn render_deck_detail(&self, frame: &mut Frame<'_>, area: Rect, name: &str) {
+        let Some(deck_entry) = self.view.deck.as_ref().and_then(|deck| {
+            deck.entries
+                .iter()
+                .find(|deck_entry| deck_entry.name == name)
+        }) else {
+            frame.render_widget(Paragraph::new("deck not found"), area);
             return;
         };
-        let validation = if domain.validation.valid {
+        let validation = if deck_entry.validation.valid {
             "valid".to_string()
         } else {
-            format!("invalid: {}", domain.validation.errors.join("; "))
+            format!("invalid: {}", deck_entry.validation.errors.join("; "))
         };
         let mut lines = vec![
             Line::from(Span::styled(
-                domain.name.clone(),
+                deck_entry.name.clone(),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            Line::from(domain.description.clone()),
-            Line::from(format!("version {} · {validation}", domain.version)),
+            Line::from(deck_entry.description.clone()),
+            Line::from(format!("version {} · {validation}", deck_entry.version)),
             Line::from(""),
         ];
-        for (kind, count) in &domain.artifact_counts {
+        for (kind, count) in &deck_entry.rune_counts {
             lines.push(Line::from(format!("{kind:<12} {count}")));
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
@@ -1420,7 +1419,7 @@ impl App {
             return;
         };
         self.mouse_regions.detail_body = area;
-        let artifacts = self.all_deck_artifact_ids();
+        let artifacts = self.all_deck_rune_ids();
         self.detail_cursor = self.detail_cursor.min(artifacts.len().saturating_sub(1));
         let viewport = usize::from(area.height.max(1));
         self.detail_viewport = viewport;
@@ -1437,7 +1436,7 @@ impl App {
         }
         let mut lines = vec![
             Line::from(Span::styled(
-                format!("{} · {} resolved", cast.name, cast.resolved_artifacts.len()),
+                format!("{} · {} resolved", cast.name, cast.resolved_runes.len()),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(cast.description.clone()),
@@ -1454,18 +1453,18 @@ impl App {
                 .enumerate()
                 .skip(scroll)
                 .take(viewport.saturating_sub(4))
-                .map(|(index, artifact_id)| {
+                .map(|(index, rune_id)| {
                     let included = cast
-                        .resolved_artifacts
+                        .resolved_runes
                         .iter()
-                        .any(|resolved| resolved == artifact_id);
+                        .any(|resolved| resolved == rune_id);
                     let style = if index == self.detail_cursor {
                         selected_style(self.focused == ColumnFocus::Detail)
                     } else {
                         Style::default()
                     };
                     Line::from(Span::styled(
-                        format!("[{}] {artifact_id}", if included { "x" } else { " " }),
+                        format!("[{}] {rune_id}", if included { "x" } else { " " }),
                         style,
                     ))
                 }),
@@ -2178,7 +2177,7 @@ impl App {
     /// Esc walks focus back toward Sections and quits only from there —
     /// backing out of a pane must never kill the session.
     pub fn escape(&mut self) {
-        if self.section == Section::Domains && self.focused == ColumnFocus::Sections {
+        if self.section == Section::Decks && self.focused == ColumnFocus::Sections {
             self.set_section(Section::Overview);
             return;
         }
@@ -2511,7 +2510,7 @@ impl App {
             return;
         }
         let position = Position { x, y };
-        if self.section == Section::Domains && self.view.deck.is_some() {
+        if self.section == Section::Decks && self.view.deck.is_some() {
             let pane = if self.mouse_regions.sections.contains(position) {
                 Some(0)
             } else if self.mouse_regions.list.contains(position) {
@@ -3006,8 +3005,8 @@ impl App {
         let Some(ListTarget::Cast(cast_name)) = self.selected_target() else {
             return;
         };
-        let artifacts = self.all_deck_artifact_ids();
-        let Some(artifact_id) = artifacts.get(self.detail_cursor) else {
+        let artifacts = self.all_deck_rune_ids();
+        let Some(rune_id) = artifacts.get(self.detail_cursor) else {
             return;
         };
         let Some(deck) = self.view.deck.as_ref() else {
@@ -3018,11 +3017,11 @@ impl App {
             .iter()
             .find(|cast| cast.name == cast_name)
             .is_some_and(|cast| {
-                cast.resolved_artifacts
+                cast.resolved_runes
                     .iter()
-                    .any(|resolved| resolved == artifact_id)
+                    .any(|resolved| resolved == rune_id)
             });
-        match services::prepare_cast_toggle(&deck.root, &cast_name, artifact_id, !included) {
+        match services::prepare_cast_toggle(&deck.root, &cast_name, rune_id, !included) {
             Ok(edit) => self.pending_cast_edit = Some(edit),
             Err(error) => self.toast = Some(format!("could not edit cast: {error}")),
         }
@@ -3198,23 +3197,23 @@ impl App {
     }
 
     fn section_key(&mut self, key: KeyEvent) {
-        if self.section == Section::Domains && self.view.deck.is_some() {
-            let domain_count = self.view.deck.as_ref().map_or(0, |deck| deck.domains.len());
+        if self.section == Section::Decks && self.view.deck.is_some() {
+            let deck_count = self.view.deck.as_ref().map_or(0, |deck| deck.entries.len());
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    self.deck_domain_selected =
-                        (self.deck_domain_selected + 1).min(domain_count.saturating_sub(1));
+                    self.deck_entry_selected =
+                        (self.deck_entry_selected + 1).min(deck_count.saturating_sub(1));
                     self.deck_kind_selected = 0;
                     self.deck_artifact_selected = 0;
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.deck_domain_selected = self.deck_domain_selected.saturating_sub(1);
+                    self.deck_entry_selected = self.deck_entry_selected.saturating_sub(1);
                     self.deck_kind_selected = 0;
                     self.deck_artifact_selected = 0;
                 }
-                KeyCode::Home | KeyCode::Char('g') => self.deck_domain_selected = 0,
+                KeyCode::Home | KeyCode::Char('g') => self.deck_entry_selected = 0,
                 KeyCode::End | KeyCode::Char('G') => {
-                    self.deck_domain_selected = domain_count.saturating_sub(1);
+                    self.deck_entry_selected = deck_count.saturating_sub(1);
                 }
                 _ => {}
             }
@@ -3240,7 +3239,7 @@ impl App {
     }
 
     fn list_key(&mut self, key: KeyEvent) {
-        if self.section == Section::Domains && self.view.deck.is_some() {
+        if self.section == Section::Decks && self.view.deck.is_some() {
             let count = self.selected_deck_kinds().len();
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -3278,7 +3277,7 @@ impl App {
     }
 
     fn detail_key(&mut self, key: KeyEvent) {
-        if self.section == Section::Domains && self.view.deck.is_some() {
+        if self.section == Section::Decks && self.view.deck.is_some() {
             let count = self.selected_deck_artifacts().len();
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -3297,7 +3296,7 @@ impl App {
             return;
         }
         if self.section == Section::Casts {
-            let count = self.all_deck_artifact_ids().len();
+            let count = self.all_deck_rune_ids().len();
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.detail_cursor = (self.detail_cursor + 1).min(count.saturating_sub(1));
@@ -3536,30 +3535,30 @@ impl App {
             Section::Hooks => self.hook_rows(),
             Section::Config => self.config_rows(),
             Section::Schemas => self.schema_rows(),
-            Section::Domains => self.domain_rows(),
+            Section::Decks => self.deck_rows(),
             Section::Casts => self.cast_rows(),
             Section::DeckHistory => self.history_rows(),
         }
     }
 
-    fn domain_rows(&self) -> Vec<ListRow> {
+    fn deck_rows(&self) -> Vec<ListRow> {
         self.view.deck.as_ref().map_or_else(Vec::new, |deck| {
-            deck.domains
+            deck.entries
                 .iter()
-                .map(|domain| {
+                .map(|deck_entry| {
                     ListRow::item(
-                        domain.name.clone(),
+                        deck_entry.name.clone(),
                         format!(
                             "{} artifacts · {}",
-                            domain.artifact_count(),
-                            if domain.validation.valid {
+                            deck_entry.rune_count(),
+                            if deck_entry.validation.valid {
                                 "valid"
                             } else {
                                 "invalid"
                             }
                         ),
-                        ListTarget::Domain(domain.name.clone()),
-                        if domain.validation.valid {
+                        ListTarget::DeckEntry(deck_entry.name.clone()),
+                        if deck_entry.validation.valid {
                             "ok"
                         } else {
                             "stale"
@@ -3578,7 +3577,7 @@ impl App {
                     let (detail, status) = cast.resolution_error.as_ref().map_or_else(
                         || {
                             (
-                                format!("{} resolved artifacts", cast.resolved_artifacts.len()),
+                                format!("{} resolved artifacts", cast.resolved_runes.len()),
                                 "ok",
                             )
                         },
@@ -3921,23 +3920,23 @@ impl App {
         }
     }
 
-    fn selected_deck_domain_name(&self) -> Option<&str> {
+    fn selected_deck_entry_name(&self) -> Option<&str> {
         self.view
             .deck
             .as_ref()?
-            .domains
-            .get(self.deck_domain_selected)
-            .map(|domain| domain.name.as_str())
+            .entries
+            .get(self.deck_entry_selected)
+            .map(|deck_entry| deck_entry.name.as_str())
     }
 
     fn selected_deck_kinds(&self) -> Vec<(String, usize)> {
-        let Some(domain) = self.selected_deck_domain_name() else {
+        let Some(deck_entry) = self.selected_deck_entry_name() else {
             return Vec::new();
         };
         self.view
             .modules
             .iter()
-            .find(|module| module.name == domain)
+            .find(|module| module.name == deck_entry)
             .map(|module| {
                 commands::view::KIND_ORDER
                     .iter()
@@ -3955,7 +3954,7 @@ impl App {
     }
 
     fn selected_deck_artifacts(&self) -> Vec<(&str, &ArtifactView)> {
-        let Some(domain) = self.selected_deck_domain_name() else {
+        let Some(deck_entry) = self.selected_deck_entry_name() else {
             return Vec::new();
         };
         let kinds = self.selected_deck_kinds();
@@ -3965,7 +3964,7 @@ impl App {
         self.view
             .modules
             .iter()
-            .find(|module| module.name == domain)
+            .find(|module| module.name == deck_entry)
             .map(|module| {
                 module
                     .artifacts
@@ -3977,7 +3976,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    fn all_deck_artifact_ids(&self) -> Vec<String> {
+    fn all_deck_rune_ids(&self) -> Vec<String> {
         let mut ids =
             self.view
                 .modules
@@ -3988,9 +3987,7 @@ impl App {
                     })
                 })
                 .collect::<Vec<_>>();
-        ids.sort_by(|left, right| {
-            deck_artifact_order_key(left).cmp(&deck_artifact_order_key(right))
-        });
+        ids.sort_by(|left, right| deck_rune_order_key(left).cmp(&deck_rune_order_key(right)));
         ids
     }
 
@@ -4103,7 +4100,7 @@ impl App {
     }
 
     fn selected_target(&self) -> Option<ListTarget> {
-        if self.section == Section::Domains {
+        if self.section == Section::Decks {
             let (module, artifact) = self
                 .selected_deck_artifacts()
                 .get(self.deck_artifact_selected)
@@ -4639,7 +4636,7 @@ fn artifact_table_header(targets: &[String]) -> String {
     let mut columns = vec![
         format!("{:<18}", "NAME"),
         format!("{:<9}", "KIND"),
-        format!("{:<12}", "DOMAIN"),
+        format!("{:<12}", "DECK"),
     ];
     columns.extend(
         targets
@@ -4658,16 +4655,16 @@ fn short_file_status(status: FileStatus) -> &'static str {
     }
 }
 
-fn deck_artifact_order_key(id: &str) -> (&str, usize, &str) {
+fn deck_rune_order_key(id: &str) -> (&str, usize, &str) {
     let mut parts = id.splitn(3, '/');
-    let domain = parts.next().unwrap_or_default();
+    let deck_entry = parts.next().unwrap_or_default();
     let kind = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default();
     let kind_index = commands::view::KIND_ORDER
         .iter()
         .position(|candidate| *candidate == kind)
         .unwrap_or(commands::view::KIND_ORDER.len());
-    (domain, kind_index, name)
+    (deck_entry, kind_index, name)
 }
 
 fn truncate_to_width(text: &str, width: usize) -> String {

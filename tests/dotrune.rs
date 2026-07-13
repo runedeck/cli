@@ -89,7 +89,7 @@ fn deck_install_ships_domain_hooks_and_rewrites_plugin_paths() {
     let manifest = fs::read_to_string(hooks_root.join("hooks.json")).unwrap();
     assert!(
         manifest.contains("bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/science/safety-net.sh"),
-        "hook command must point at the deployed domain bundle: {manifest}"
+        "hook command must point at the deployed deck_entry bundle: {manifest}"
     );
     assert!(
         !manifest.contains("${CLAUDE_PLUGIN_ROOT}"),
@@ -360,7 +360,7 @@ fn dotrune_local_deck_subpath_resolves_one_domain() {
 }
 
 #[test]
-fn deck_resolves_canonical_artifact_id() {
+fn deck_resolves_canonical_rune_id() {
     let consumer = tempfile::tempdir().unwrap();
 
     install_local_deck(consumer.path(), "skills", "science/skills/OnlyScience").success();
@@ -463,7 +463,7 @@ fn consumer_cast_referencing_removed_artifact_is_a_resolve_error() {
     let output = install(consumer.path()).failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(stderr.contains("science/rules/RemovedArtifact"), "{stderr}");
-    assert!(stderr.contains("matches no artifact"), "{stderr}");
+    assert!(stderr.contains("matches no rune"), "{stderr}");
 }
 
 #[test]
@@ -533,7 +533,7 @@ fn deck_rejects_cross_domain_deploy_path_collision() {
 }
 
 #[test]
-fn deck_domain_provider_list_overrides_deck_default() {
+fn deck_entry_provider_list_overrides_deck_default() {
     let deck = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
     support::copy_deck_fixture(deck.path());
@@ -574,7 +574,7 @@ fn deck_domain_provider_list_overrides_deck_default() {
 }
 
 #[test]
-fn target_provider_selection_overrides_deck_and_domain_defaults() {
+fn target_provider_selection_overrides_deck_and_deck_entry_defaults() {
     let deck = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();
     support::copy_deck_fixture(deck.path());

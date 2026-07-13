@@ -27,11 +27,11 @@
         {% if let Some(error) = cast.resolution_error %}
         <p class="variant-note">{{ error }}</p>
         {% else %}
-        <p class="results-count">{{ cast.resolved_artifacts.len() }} resolved artifacts</p>
-        {% if !cast.resolved_artifacts.is_empty() %}
+        <p class="results-count">{{ cast.resolved_runes.len() }} resolved artifacts</p>
+        {% if !cast.resolved_runes.is_empty() %}
         <ul class="module-artifact-list">
-        {% for artifact in cast.resolved_artifacts %}
-            <li class="module-artifact-row"><span class="mono">{{ artifact }}</span></li>
+        {% for rune in cast.resolved_runes %}
+            <li class="module-artifact-row"><span class="mono">{{ rune }}</span></li>
         {% endfor %}
         </ul>
         {% endif %}

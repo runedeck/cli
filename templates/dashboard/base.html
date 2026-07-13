@@ -32,10 +32,10 @@
                     <span class="nav-icon">&#9654;</span> Repositories
                 </a>
             </nav>
-            <div class="sidebar-section-title">Deck</div>
+            <div class="sidebar-section-title">Runedeck</div>
             <nav class="sidebar-nav">
-                <a href="/domains" class="nav-item{% if tab == "domains" %} active{% endif %}">
-                    <span class="nav-icon">&#9635;</span> Domains
+                <a href="/decks" class="nav-item{% if tab == "decks" %} active{% endif %}">
+                    <span class="nav-icon">&#9635;</span> Decks
                 </a>
                 <a href="/casts" class="nav-item{% if tab == "casts" %} active{% endif %}">
                     <span class="nav-icon">&#10022;</span> Casts
@@ -102,7 +102,7 @@
     var COMMANDS = [
         { label: 'Go to Overview', hint: 'g o', run: function(){ location.href = '/'; } },
         { label: 'Go to Repositories', hint: 'g r', run: function(){ location.href = '/repositories'; } },
-        { label: 'Go to Domains', hint: 'g d', run: function(){ location.href = '/domains'; } },
+        { label: 'Go to Decks', hint: 'g d', run: function(){ location.href = '/decks'; } },
         { label: 'Go to Casts', run: function(){ location.href = '/casts'; } },
         { label: 'Go to Targets', run: function(){ location.href = '/targets'; } },
         { label: 'Go to Provenance', hint: 'g p', run: function(){ location.href = '/provenance'; } },

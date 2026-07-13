@@ -54,8 +54,8 @@ pub struct ModulesTemplate<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "dashboard/pages/domains.html")]
-pub struct DomainsTemplate<'a> {
+#[template(path = "dashboard/pages/decks.html")]
+pub struct DecksTemplate<'a> {
     pub tab: &'a str,
     pub version: &'a str,
     pub deck: &'a DeckView,

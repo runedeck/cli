@@ -130,38 +130,40 @@ fn execute_deck_upstream(
 ) -> Result<i32, Error> {
     let upstream = commands::deck::load(Path::new(upstream_path))
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
-    let upstream_domains = upstream
-        .domains
+    let upstream_entries = upstream
+        .entries
         .iter()
-        .map(|domain| (domain.name.as_str(), domain.root.as_path()))
+        .map(|deck_entry| (deck_entry.name.as_str(), deck_entry.root.as_path()))
         .collect::<BTreeMap<_, _>>();
     let mut failed = false;
     let mut aggregate = DriftResult::default();
-    for domain in &deck.domains {
-        let Some(upstream_root) = upstream_domains.get(domain.name.as_str()) else {
+    for deck_entry in &deck.entries {
+        let Some(upstream_root) = upstream_entries.get(deck_entry.name.as_str()) else {
             aggregate.errors.push(format!(
-                "{}: upstream deck has no matching domain",
-                domain.name
+                "{}: upstream deck has no matching deck",
+                deck_entry.name
             ));
             failed = true;
             continue;
         };
         match build_upstream_result(
-            &domain.root.to_string_lossy(),
+            &deck_entry.root.to_string_lossy(),
             &upstream_root.to_string_lossy(),
             ignore_keys,
             ContentKind::DECK_ALL,
         ) {
             Ok(mut result) => {
                 for entry in &mut result.entries {
-                    entry.category = format!("{}/{}", domain.name, entry.category);
+                    entry.category = format!("{}/{}", deck_entry.name, entry.category);
                 }
                 failed |= has_drift(&result);
                 aggregate.entries.append(&mut result.entries);
                 aggregate.errors.append(&mut result.errors);
             }
             Err(error) => {
-                aggregate.errors.push(format!("{}: {error}", domain.name));
+                aggregate
+                    .errors
+                    .push(format!("{}: {error}", deck_entry.name));
                 failed = true;
             }
         }

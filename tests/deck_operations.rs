@@ -11,18 +11,24 @@ fn assert_domain_order(output: &[u8]) {
     let stdout = String::from_utf8_lossy(output);
     let science = stdout
         .find("== science ==")
-        .expect("science domain heading");
+        .expect("science deck_entry heading");
     let writing = stdout
         .find("== writing ==")
-        .expect("writing domain heading");
-    assert!(science < writing, "domains must be lexicographic: {stdout}");
+        .expect("writing deck_entry heading");
+    assert!(
+        science < writing,
+        "deck_entries must be lexicographic: {stdout}"
+    );
 }
 
 fn assert_domain_prefix_order(output: &[u8]) {
     let stdout = String::from_utf8_lossy(output);
-    let science = stdout.find("science/").expect("science domain item");
-    let writing = stdout.find("writing/").expect("writing domain item");
-    assert!(science < writing, "domains must be lexicographic: {stdout}");
+    let science = stdout.find("science/").expect("science deck_entry item");
+    let writing = stdout.find("writing/").expect("writing deck_entry item");
+    assert!(
+        science < writing,
+        "deck_entries must be lexicographic: {stdout}"
+    );
 }
 
 #[test]
@@ -80,9 +86,12 @@ fn aggregate_drift_reports_all_domains_and_fails_for_one_domain() {
         .assert()
         .failure();
     let stdout = String::from_utf8_lossy(&drift.get_output().stdout);
-    let science = stdout.find("science/").expect("science domain report");
-    let writing = stdout.find("writing/").expect("writing domain report");
-    assert!(science < writing, "domains must be lexicographic: {stdout}");
+    let science = stdout.find("science/").expect("science deck_entry report");
+    let writing = stdout.find("writing/").expect("writing deck_entry report");
+    assert!(
+        science < writing,
+        "deck_entries must be lexicographic: {stdout}"
+    );
 }
 
 #[test]
@@ -177,7 +186,7 @@ fn empty_module_defaults_merge_without_a_warning() {
 }
 
 #[test]
-fn deck_release_requires_and_packages_one_domain() {
+fn deck_release_requires_and_packages_one_deck() {
     let deck = tempfile::tempdir().unwrap();
     support::copy_deck_fixture(deck.path());
 
@@ -187,8 +196,8 @@ fn deck_release_requires_and_packages_one_domain() {
         .failure();
     let stderr = String::from_utf8_lossy(&missing.get_output().stderr);
     assert!(
-        stderr.contains("requires a domain argument"),
-        "deck release must explain the missing domain: {stderr}"
+        stderr.contains("requires a deck argument"),
+        "deck release must explain the missing deck: {stderr}"
     );
 
     rune()
@@ -211,6 +220,6 @@ fn deck_release_requires_and_packages_one_domain() {
     );
     assert!(
         !deck.path().join("runes/writing/dist").exists(),
-        "unselected domains must not be released"
+        "unselected deck_entries must not be released"
     );
 }

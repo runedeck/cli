@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::cli::dotrune::{DotRune, SCHEMA_VERSION, Source};
 
 pub fn execute(
-    artifact: Option<&str>,
+    rune: Option<&str>,
     cast: Option<&str>,
     source: Option<&str>,
     reference: Option<&str>,
@@ -53,7 +53,7 @@ pub fn execute(
             }
         }
     } else {
-        for selection in split_comma_list(artifact.unwrap_or_default(), "rune")? {
+        for selection in split_comma_list(rune.unwrap_or_default(), "rune")? {
             let selection = normalize_rune_id(&selection)?;
             if !entry.include.contains(&selection) {
                 entry.include.push(selection);

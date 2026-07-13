@@ -53,7 +53,7 @@ pub fn execute(
         Some(module_source_uri)
     };
     let is_consumer = crate::cli::dotrune::exists(module_root);
-    let module_domain = module_root
+    let module_deck = module_root
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
@@ -139,7 +139,7 @@ pub fn execute(
                     provider_name,
                     module_name.as_deref(),
                     is_consumer,
-                    &module_domain,
+                    &module_deck,
                     force,
                     dry_run,
                 );
@@ -317,7 +317,7 @@ fn prune_stale_files(
     provider_name: &str,
     module_name: Option<&str>,
     is_consumer: bool,
-    module_domain: &str,
+    module_deck: &str,
     force: bool,
     dry_run: bool,
 ) {
@@ -331,7 +331,7 @@ fn prune_stale_files(
         })
         .filter(|(key, entry)| {
             if key.starts_with("hooks/") && !is_consumer {
-                key.starts_with(&format!("hooks/{module_domain}/"))
+                key.starts_with(&format!("hooks/{module_deck}/"))
             } else {
                 is_owned_by_module(entry, target_base, module_name)
             }

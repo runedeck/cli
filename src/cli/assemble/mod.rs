@@ -240,13 +240,13 @@ fn assemble_source_for_provider(
 
     // Apply transformation rules (kebab-case, kebab-case-agents, remap-tools, etc.)
     let (transformed_content, transformed_filename) = if is_hook {
-        let domain = hook_domain(source)?;
+        let deck = hook_deck(source)?;
         let content = if relative_within_kind == "hooks.json" {
-            rewrite_hook_commands(&assembled, provider_config.default_target(), domain)?
+            rewrite_hook_commands(&assembled, provider_config.default_target(), deck)?
         } else {
             assembled.clone()
         };
-        (content, format!("{domain}/{relative_within_kind}"))
+        (content, format!("{deck}/{relative_within_kind}"))
     } else {
         commands::transform::apply_rules(
             &assembled,
@@ -270,16 +270,12 @@ fn assemble_source_for_provider(
         .join(source.kind.as_str())
         .join(&transformed_filename);
     let deploy_relative = format!("{}/{transformed_filename}", source.kind);
-    let artifact_id = source
-        .artifact_id
-        .as_deref()
-        .unwrap_or(&source.relative_path);
-    if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), artifact_id.to_string())
-    {
+    let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
+    if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
         return Err(commands::error::Error::new(
             commands::error::ErrorKind::Config,
             format!(
-                "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {existing_id} and {artifact_id}"
+                "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {existing_id} and {rune_id}"
             ),
         ));
     }
@@ -302,16 +298,16 @@ fn assemble_source_for_provider(
     }))
 }
 
-fn hook_domain(source: &sources::SourceFile) -> Result<&str, Error> {
+fn hook_deck(source: &sources::SourceFile) -> Result<&str, Error> {
     source
-        .artifact_id
+        .rune_id
         .as_deref()
         .and_then(|id| id.split('/').next())
-        .filter(|domain| !domain.is_empty())
+        .filter(|deck| !deck.is_empty())
         .ok_or_else(|| {
             commands::error::Error::new(
                 commands::error::ErrorKind::Config,
-                format!("hook {} has no deck domain", source.relative_path),
+                format!("hook {} has no deck", source.relative_path),
             )
         })
 }
@@ -319,7 +315,7 @@ fn hook_domain(source: &sources::SourceFile) -> Result<&str, Error> {
 fn rewrite_hook_commands(
     content: &str,
     provider_target: &str,
-    domain: &str,
+    deck: &str,
 ) -> Result<String, Error> {
     let mut manifest: serde_json::Value = serde_json::from_str(content).map_err(|error| {
         commands::error::Error::new(
@@ -328,7 +324,7 @@ fn rewrite_hook_commands(
         )
     })?;
     let deployed_root = format!(
-        "${{CLAUDE_PROJECT_DIR}}/{}/hooks/{domain}",
+        "${{CLAUDE_PROJECT_DIR}}/{}/hooks/{deck}",
         provider_target.trim_end_matches('/')
     );
     rewrite_command_values(&mut manifest, &deployed_root);

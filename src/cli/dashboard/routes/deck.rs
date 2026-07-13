@@ -6,14 +6,14 @@ use super::AppState;
 use crate::cli::dashboard::templates;
 use commands::view::DeckTargetView;
 
-pub(super) async fn domains_page(State(app): State<AppState>) -> Response {
+pub(super) async fn decks_page(State(app): State<AppState>) -> Response {
     let state = app.shared.read().await;
     let Some(deck) = state.view.deck.as_ref() else {
         return deck_required().into_response();
     };
     Html(
-        templates::DomainsTemplate {
-            tab: "domains",
+        templates::DecksTemplate {
+            tab: "decks",
             version: &state.version,
             deck,
         }
@@ -92,8 +92,8 @@ mod tests {
     use axum::body::to_bytes;
     use commands::manifest::FileStatus;
     use commands::view::{
-        CastView, DashboardView, DeckTargetArtifactView, DeckView, DomainValidationView,
-        DomainView, StatusSummary,
+        CastView, DashboardView, DeckEntryValidationView, DeckEntryView, DeckTargetArtifactView,
+        DeckView, StatusSummary,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -125,9 +125,9 @@ mod tests {
     }
 
     fn fixture_deck() -> DeckView {
-        let mut artifact_counts = BTreeMap::new();
-        artifact_counts.insert("skills".to_string(), 3);
-        artifact_counts.insert("rules".to_string(), 2);
+        let mut rune_counts = BTreeMap::new();
+        rune_counts.insert("skills".to_string(), 3);
+        rune_counts.insert("rules".to_string(), 2);
 
         let mut providers = BTreeMap::new();
         providers.insert("codex".to_string(), FileStatus::Stale);
@@ -145,14 +145,14 @@ mod tests {
             name: "test-deck".to_string(),
             version: "1.2.3".to_string(),
             description: "Fixture deck".to_string(),
-            domains: vec![DomainView {
+            entries: vec![DeckEntryView {
                 name: "core".to_string(),
                 version: "1.0.0".to_string(),
                 description: "Core runes".to_string(),
                 source_uri: "https://example.test/core".to_string(),
                 providers: vec!["codex".to_string()],
-                artifact_counts,
-                validation: DomainValidationView {
+                rune_counts,
+                validation: DeckEntryValidationView {
                     valid: false,
                     errors: vec!["missing schema field".to_string()],
                 },
@@ -164,7 +164,7 @@ mod tests {
                     extends: Vec::new(),
                     runes: vec!["core/**".to_string()],
                     exclude: Vec::new(),
-                    resolved_artifacts: vec![
+                    resolved_runes: vec![
                         "core/skills/DeckDiscovery".to_string(),
                         "core/rules/DeckContract".to_string(),
                     ],
@@ -176,7 +176,7 @@ mod tests {
                     extends: Vec::new(),
                     runes: vec!["missing/**".to_string()],
                     exclude: Vec::new(),
-                    resolved_artifacts: Vec::new(),
+                    resolved_runes: Vec::new(),
                     resolution_error: Some("cast matched no artifacts".to_string()),
                 },
             ],
@@ -200,13 +200,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn domains_route_renders_counts_and_validation() {
-        let response = domains_page(State(app_state(Some(fixture_deck())))).await;
+    async fn decks_route_renders_counts_and_validation() {
+        let response = decks_page(State(app_state(Some(fixture_deck())))).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = response_body(response).await;
-        assert!(body.contains("Domains"));
+        assert!(body.contains("Decks"));
         assert!(body.contains("core"));
-        assert!(body.contains("5 artifacts"));
+        assert!(body.contains("5 runes"));
         assert!(body.contains("missing schema field"));
     }
 
@@ -233,7 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn deck_routes_are_not_available_outside_deck_mode() {
-        let response = domains_page(State(app_state(None))).await;
+        let response = decks_page(State(app_state(None))).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

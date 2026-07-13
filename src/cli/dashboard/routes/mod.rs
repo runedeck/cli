@@ -39,7 +39,7 @@ pub fn router(shared: SharedState, root: PathBuf) -> Router {
         .route("/chrome", get(browse::chrome))
         .route("/repositories", get(browse::modules_page))
         .route("/repositories/{name}", get(browse::module_detail))
-        .route("/domains", get(deck::domains_page))
+        .route("/decks", get(deck::decks_page))
         .route("/casts", get(deck::casts_page))
         .route("/targets", get(deck::targets_page))
         .route(

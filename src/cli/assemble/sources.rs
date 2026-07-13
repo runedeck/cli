@@ -36,11 +36,11 @@ pub struct SourceFile {
     /// Target providers from frontmatter (e.g., `claudecode`, `geminicli`).
     /// None means deploy to all providers.
     pub targets: Option<Vec<String>>,
-    /// Canonical deck artifact id after resolution. Single modules leave this unset.
-    pub artifact_id: Option<String>,
-    /// Effective provider list inherited from the domain or deck.
+    /// Canonical rune id after deck resolution. Single modules leave this unset.
+    pub rune_id: Option<String>,
+    /// Effective provider list inherited from the deck entry or deck root.
     pub providers: Option<Vec<String>>,
-    /// Domain identity used in provenance for deck artifacts.
+    /// Deck identity used in provenance for rune source files.
     pub source_uri: Option<String>,
 }
 
@@ -199,7 +199,7 @@ fn walk_content_dir(
             passthrough: false,
             qualifier: None,
             targets,
-            artifact_id: None,
+            rune_id: None,
             providers: None,
             source_uri: None,
         });
@@ -260,7 +260,7 @@ fn walk_hook_dir(
             passthrough: true,
             qualifier: None,
             targets: None,
-            artifact_id: None,
+            rune_id: None,
             providers: None,
             source_uri: None,
         });
@@ -378,7 +378,7 @@ fn walk_qualifier_dir(
             passthrough: false,
             qualifier: Some(qualifier_name.to_string()),
             targets,
-            artifact_id: None,
+            rune_id: None,
             providers: None,
             source_uri: None,
         });
@@ -502,7 +502,7 @@ fn collect_skill_files(
                 passthrough: !is_skill_file,
                 qualifier: None,
                 targets,
-                artifact_id: None,
+                rune_id: None,
                 providers: None,
                 source_uri: None,
             },

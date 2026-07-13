@@ -85,10 +85,10 @@ enum Command {
     Add {
         /// Domain or domain/name selection. Domain-only stores `<domain>/**`.
         #[arg(value_name = "DOMAIN[/NAME]", required_unless_present = "cast")]
-        artifact: Option<String>,
+        rune: Option<String>,
 
         /// Add a cast reference instead of an artifact selection.
-        #[arg(long, value_name = "NAME", conflicts_with = "artifact")]
+        #[arg(long, value_name = "NAME", conflicts_with = "rune")]
         cast: Option<String>,
 
         /// Deck path or HTTPS git URL. Required when creating `.rune`.
@@ -382,7 +382,7 @@ enum Command {
     Release {
         /// Deck domain to package. Required when --source is a deck root.
         #[arg(value_name = "DOMAIN")]
-        domain: Option<String>,
+        deck: Option<String>,
 
         /// Module root to package (must contain module.yaml). Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -471,13 +471,13 @@ pub fn run() -> i32 {
         }
         Command::Init { target } => (init::execute(&target), "initialized"),
         Command::Add {
-            artifact,
+            rune,
             cast,
             source,
             reference,
         } => {
             return exit_code(add::execute(
-                artifact.as_deref(),
+                rune.as_deref(),
                 cast.as_deref(),
                 source.as_deref(),
                 reference.as_deref(),
@@ -620,11 +620,11 @@ pub fn run() -> i32 {
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => return exit_code(dashboard::execute(&root, port)),
         Command::Release {
-            domain,
+            deck,
             source,
             embed,
         } => (
-            release::execute_source(&source, domain.as_deref(), embed),
+            release::execute_source(&source, deck.as_deref(), embed),
             "released",
         ),
         Command::Watch { action } => return run_watch(action, args.json),
@@ -638,10 +638,10 @@ fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error>
     let deck = commands::deck::load(std::path::Path::new(source))
         .map_err(|message| Error::new(commands::error::ErrorKind::Config, message))?;
     let mut aggregate = ActionResult::new();
-    for domain in deck.domains {
-        println!("== {} ==", domain.name);
+    for deck_entry in deck.entries {
+        println!("== {} ==", deck_entry.name);
         let mut result = match deploy::execute(
-            &domain.root.to_string_lossy(),
+            &deck_entry.root.to_string_lossy(),
             target,
             &[],
             false,
@@ -652,7 +652,9 @@ fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error>
         ) {
             Ok(result) => result,
             Err(error) => {
-                aggregate.errors.push(format!("{}: {error}", domain.name));
+                aggregate
+                    .errors
+                    .push(format!("{}: {error}", deck_entry.name));
                 continue;
             }
         };

@@ -31,8 +31,8 @@ use crate::error::{Error, ErrorKind};
 use crate::manifest::FileStatus;
 use crate::provider::ContentKind;
 use crate::view::{
-    CastView, DashboardView, DeckTargetArtifactView, DeckTargetView, DeckView,
-    DomainValidationView, DomainView, ModuleView, StatusSummary, Variant,
+    CastView, DashboardView, DeckEntryValidationView, DeckEntryView, DeckTargetArtifactView,
+    DeckTargetView, DeckView, ModuleView, StatusSummary, Variant,
 };
 use adr::discover_adrs;
 use discovery::{discover_targets, scan_deck_source_module, scan_source_module};
@@ -188,35 +188,35 @@ fn build_deck_view(
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
     let mut modules = Vec::new();
-    let mut domains = Vec::new();
-    let mut artifact_ids = Vec::new();
+    let mut deck_entries = Vec::new();
+    let mut rune_ids = Vec::new();
 
-    for (index, domain) in deck.domains.iter().enumerate() {
-        let (module, domain_view, ids) = build_deck_domain(
+    for (index, deck_entry) in deck.entries.iter().enumerate() {
+        let (module, deck_entry_view, ids) = build_deck_entry(
             &root,
             &deck,
-            domain,
+            deck_entry,
             index,
             repo_vcs.as_ref(),
             &repo_log,
             &provider_names,
         );
-        domains.push(domain_view);
-        artifact_ids.extend(ids);
+        deck_entries.push(deck_entry_view);
+        rune_ids.extend(ids);
         modules.push(module);
     }
 
     let casts = deck
         .casts()
         .map(
-            |cast| match deck.resolve_cast(&cast.name, artifact_ids.iter().map(String::as_str)) {
-                Ok(resolved_artifacts) => CastView {
+            |cast| match deck.resolve_cast(&cast.name, rune_ids.iter().map(String::as_str)) {
+                Ok(resolved_runes) => CastView {
                     name: cast.name.clone(),
                     description: cast.description.clone(),
                     extends: cast.extends.clone(),
                     runes: cast.runes.clone(),
                     exclude: cast.exclude.clone(),
-                    resolved_artifacts,
+                    resolved_runes,
                     resolution_error: None,
                 },
                 Err(message) => CastView {
@@ -225,7 +225,7 @@ fn build_deck_view(
                     extends: cast.extends.clone(),
                     runes: cast.runes.clone(),
                     exclude: cast.exclude.clone(),
-                    resolved_artifacts: Vec::new(),
+                    resolved_runes: Vec::new(),
                     resolution_error: Some(message),
                 },
             },
@@ -252,47 +252,49 @@ fn build_deck_view(
             name: deck.manifest.name,
             version: deck.manifest.version,
             description: deck.manifest.description,
-            domains,
+            entries: deck_entries,
             casts,
             targets,
         }),
     })
 }
 
-fn build_deck_domain(
+fn build_deck_entry(
     root: &Path,
     deck: &crate::deck::Deck,
-    domain: &crate::deck::Domain,
+    deck_entry: &crate::deck::DeckEntry,
     index: usize,
     repo_vcs: Option<&vcs::RepoVcs>,
     repo_log: &[crate::view::GitCommit],
     provider_names: &[String],
-) -> (ModuleView, DomainView, Vec<String>) {
+) -> (ModuleView, DeckEntryView, Vec<String>) {
     let root_path = root.to_path_buf();
-    let mut module = scan_deck_source_module(&domain.root).unwrap_or_else(|| ModuleView {
-        name: domain.name.clone(),
-        version: domain.manifest.version.clone(),
-        description: domain.manifest.description.clone(),
-        source_uri: domain.manifest.source_uri().to_string(),
+    let mut module = scan_deck_source_module(&deck_entry.root).unwrap_or_else(|| ModuleView {
+        name: deck_entry.name.clone(),
+        version: deck_entry.manifest.version.clone(),
+        description: deck_entry.manifest.description.clone(),
+        source_uri: deck_entry.manifest.source_uri().to_string(),
         is_target: false,
         artifacts: Vec::new(),
         local_path: Some(root_path.clone()),
         vcs: None,
         git_log: Vec::new(),
     });
-    module.name.clone_from(&domain.name);
-    module.version.clone_from(&domain.manifest.version);
-    module.description.clone_from(&domain.manifest.description);
-    module.source_uri = domain.manifest.source_uri().to_string();
+    module.name.clone_from(&deck_entry.name);
+    module.version.clone_from(&deck_entry.manifest.version);
+    module
+        .description
+        .clone_from(&deck_entry.manifest.description);
+    module.source_uri = deck_entry.manifest.source_uri().to_string();
     module.is_target = false;
     module.local_path = Some(root_path.clone());
     module.vcs = repo_vcs.map(vcs::RepoVcs::module_state);
     module.git_log = repo_log.to_vec();
 
     for artifact in &mut module.artifacts {
-        artifact.module.clone_from(&domain.name);
+        artifact.module.clone_from(&deck_entry.name);
         artifact.module_tint = index % 8;
-        artifact.source_path = format!("runes/{}/{}", domain.name, artifact.relative_path);
+        artifact.source_path = format!("runes/{}/{}", deck_entry.name, artifact.relative_path);
         artifact.vcs = repo_vcs.map(|state| state.state_for(&artifact.source_path));
         let (broken, age) = artifact_staleness(
             Some(&root_path),
@@ -302,7 +304,8 @@ fn build_deck_domain(
         );
         artifact.broken_refs = broken;
         artifact.age_days = age;
-        artifact.variants = collect_variants(&domain.root, &artifact.relative_path, provider_names);
+        artifact.variants =
+            collect_variants(&deck_entry.root, &artifact.relative_path, provider_names);
     }
     module.artifacts.sort_by(|left, right| {
         kind_order(&left.kind)
@@ -310,28 +313,28 @@ fn build_deck_domain(
             .then_with(|| left.name.cmp(&right.name))
     });
 
-    let mut artifact_counts = BTreeMap::new();
-    let artifact_ids = module
+    let mut rune_counts = BTreeMap::new();
+    let rune_ids = module
         .artifacts
         .iter()
         .map(|artifact| {
-            *artifact_counts.entry(artifact.kind.clone()).or_insert(0) += 1;
-            format!("{}/{}/{}", domain.name, artifact.kind, artifact.name)
+            *rune_counts.entry(artifact.kind.clone()).or_insert(0) += 1;
+            format!("{}/{}/{}", deck_entry.name, artifact.kind, artifact.name)
         })
         .collect();
-    let domain_view = DomainView {
-        name: domain.name.clone(),
-        version: domain.manifest.version.clone(),
-        description: domain.manifest.description.clone(),
-        source_uri: domain.manifest.source_uri().to_string(),
-        providers: deck.providers_for(domain).unwrap_or_default().to_vec(),
-        artifact_counts,
-        validation: validate_domain_inventory(&module),
+    let deck_entry_view = DeckEntryView {
+        name: deck_entry.name.clone(),
+        version: deck_entry.manifest.version.clone(),
+        description: deck_entry.manifest.description.clone(),
+        source_uri: deck_entry.manifest.source_uri().to_string(),
+        providers: deck.providers_for(deck_entry).unwrap_or_default().to_vec(),
+        rune_counts,
+        validation: validate_deck_entry_inventory(&module),
     };
-    (module, domain_view, artifact_ids)
+    (module, deck_entry_view, rune_ids)
 }
 
-fn validate_domain_inventory(module: &ModuleView) -> DomainValidationView {
+fn validate_deck_entry_inventory(module: &ModuleView) -> DeckEntryValidationView {
     let mut errors = Vec::new();
     for artifact in &module.artifacts {
         for broken in &artifact.broken_refs {
@@ -360,7 +363,7 @@ fn validate_domain_inventory(module: &ModuleView) -> DomainValidationView {
             errors.push(format!("{}: {error}", artifact.relative_path));
         }
     }
-    DomainValidationView {
+    DeckEntryValidationView {
         valid: errors.is_empty(),
         errors,
     }
@@ -381,14 +384,14 @@ fn discover_deck_targets(
     let deck_root = fs::canonicalize(&deck.root).unwrap_or_else(|_| deck.root.clone());
     let deck_remote = discovery::git_remote(&deck_root);
     let mut source_roots = std::collections::HashMap::new();
-    for domain in &deck.domains {
+    for deck_entry in &deck.entries {
         source_roots.insert(
-            domain
+            deck_entry
                 .manifest
                 .source_uri()
                 .trim_end_matches(".git")
                 .to_string(),
-            domain.root.clone(),
+            deck_entry.root.clone(),
         );
     }
     if let Some(remote) = deck_remote.as_ref() {
@@ -423,14 +426,14 @@ fn discover_deck_targets(
                     };
                     let source_uri = source::resolve_source(&provider_path, &deployed_path, &entry);
                     let source_path = source::resolve_source_path(&provider_path, &entry);
-                    let Some(domain) =
-                        deck_domain_for_source(deck, &source_uri, source_path.as_deref())
-                            .or_else(|| deck_domain_for_deployed_path(deck, kind, &deployed_path))
+                    let Some(deck_entry) =
+                        deck_entry_for_source(deck, &source_uri, source_path.as_deref())
+                            .or_else(|| deck_entry_for_deployed_path(deck, kind, &deployed_path))
                     else {
                         continue;
                     };
-                    let Some(artifact_id) = canonical_deck_artifact_id(
-                        &domain.name,
+                    let Some(rune_id) = canonical_deck_rune_id(
+                        &deck_entry.name,
                         kind,
                         source_path.as_deref(),
                         &deployed_path,
@@ -447,7 +450,7 @@ fn discover_deck_targets(
                     );
                     let artifact =
                         artifacts
-                            .entry(artifact_id)
+                            .entry(rune_id)
                             .or_insert_with(|| DeckTargetArtifactView {
                                 status,
                                 providers: BTreeMap::new(),
@@ -517,39 +520,39 @@ fn target_points_at_deck(target: &Path, deck_root: &Path, deck_remote: Option<&s
     })
 }
 
-fn deck_domain_for_source<'a>(
+fn deck_entry_for_source<'a>(
     deck: &'a crate::deck::Deck,
     source_uri: &str,
     source_path: Option<&str>,
-) -> Option<&'a crate::deck::Domain> {
+) -> Option<&'a crate::deck::DeckEntry> {
     if let Some(path) = source_path
-        && let Some(domain_name) = path
+        && let Some(deck_name) = path
             .strip_prefix("runes/")
             .and_then(|path| path.split('/').next())
-        && let Some(domain) = deck
-            .domains
+        && let Some(deck_entry) = deck
+            .entries
             .iter()
-            .find(|domain| domain.name == domain_name)
+            .find(|deck_entry| deck_entry.name == deck_name)
     {
-        return Some(domain);
+        return Some(deck_entry);
     }
     let normalized = source_uri.trim_end_matches(".git");
-    deck.domains.iter().find(|domain| {
-        domain.name == normalized
-            || domain.manifest.source_uri().trim_end_matches(".git") == normalized
+    deck.entries.iter().find(|deck_entry| {
+        deck_entry.name == normalized
+            || deck_entry.manifest.source_uri().trim_end_matches(".git") == normalized
     })
 }
 
-fn deck_domain_for_deployed_path<'a>(
+fn deck_entry_for_deployed_path<'a>(
     deck: &'a crate::deck::Deck,
     kind: &str,
     deployed_path: &str,
-) -> Option<&'a crate::deck::Domain> {
+) -> Option<&'a crate::deck::DeckEntry> {
     let matches = deck
-        .domains
+        .entries
         .iter()
-        .filter(|domain| {
-            scan_deck_source_module(&domain.root).is_some_and(|module| {
+        .filter(|deck_entry| {
+            scan_deck_source_module(&deck_entry.root).is_some_and(|module| {
                 module.artifacts.iter().any(|artifact| {
                     artifact.kind == kind && artifact.relative_path == deployed_path
                 })
@@ -559,15 +562,15 @@ fn deck_domain_for_deployed_path<'a>(
     (matches.len() == 1).then(|| matches[0])
 }
 
-fn canonical_deck_artifact_id(
-    domain: &str,
+fn canonical_deck_rune_id(
+    deck: &str,
     kind: &str,
     source_path: Option<&str>,
     deployed_path: &str,
 ) -> Option<String> {
     let path = source_path.unwrap_or(deployed_path);
-    let domain_prefix = format!("runes/{domain}/");
-    let path = path.strip_prefix(&domain_prefix).unwrap_or(path);
+    let deck_prefix = format!("runes/{deck}/");
+    let path = path.strip_prefix(&deck_prefix).unwrap_or(path);
     let within_kind = path.strip_prefix(&format!("{kind}/"))?;
     let name = match kind {
         "skills" => within_kind.split('/').next()?.to_string(),
@@ -581,7 +584,7 @@ fn canonical_deck_artifact_id(
             .into_owned(),
         _ => return None,
     };
-    (!name.is_empty()).then(|| format!("{domain}/{kind}/{name}"))
+    (!name.is_empty()).then(|| format!("{deck}/{kind}/{name}"))
 }
 
 fn worse_status(left: FileStatus, right: FileStatus) -> FileStatus {
@@ -604,7 +607,7 @@ fn worse_status(left: FileStatus, right: FileStatus) -> FileStatus {
 #[derive(Debug, Clone)]
 pub struct CastEdit {
     pub cast_name: String,
-    pub artifact_id: String,
+    pub rune_id: String,
     pub include: bool,
     pub before: Vec<String>,
     pub after: Vec<String>,
@@ -625,57 +628,50 @@ impl CastEdit {
 pub fn prepare_cast_toggle(
     deck_root: &Path,
     cast_name: &str,
-    artifact_id: &str,
+    rune_id: &str,
     include: bool,
 ) -> Result<CastEdit, Error> {
     let deck =
         crate::deck::load(deck_root).map_err(|message| Error::new(ErrorKind::Config, message))?;
-    let artifact_ids = deck_artifact_ids(&deck);
-    if !artifact_ids
-        .iter()
-        .any(|candidate| candidate == artifact_id)
-    {
+    let rune_ids = deck_rune_ids(&deck);
+    if !rune_ids.iter().any(|candidate| candidate == rune_id) {
         return Err(Error::new(
             ErrorKind::Config,
-            format!("unknown deck artifact '{artifact_id}'"),
+            format!("unknown deck rune '{rune_id}'"),
         ));
     }
     let cast = deck
         .cast(cast_name)
         .ok_or_else(|| Error::new(ErrorKind::Config, format!("unknown cast '{cast_name}'")))?;
     let before = deck
-        .resolve_cast(cast_name, artifact_ids.iter().map(String::as_str))
+        .resolve_cast(cast_name, rune_ids.iter().map(String::as_str))
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
     let mut edited = cast.clone();
     if include {
-        edited.exclude.retain(|pattern| pattern != artifact_id);
-        if !before.iter().any(|selected| selected == artifact_id)
-            && !edited.runes.iter().any(|rune| rune == artifact_id)
+        edited.exclude.retain(|pattern| pattern != rune_id);
+        if !before.iter().any(|selected| selected == rune_id)
+            && !edited.runes.iter().any(|rune| rune == rune_id)
         {
-            edited.runes.push(artifact_id.to_string());
+            edited.runes.push(rune_id.to_string());
         }
     } else {
-        edited.runes.retain(|rune| rune != artifact_id);
-        if !edited
-            .exclude
-            .iter()
-            .any(|excluded| excluded == artifact_id)
-        {
-            edited.exclude.push(artifact_id.to_string());
+        edited.runes.retain(|rune| rune != rune_id);
+        if !edited.exclude.iter().any(|excluded| excluded == rune_id) {
+            edited.exclude.push(rune_id.to_string());
         }
     }
     let after = deck
         .resolve_cast_with_override(
             cast_name,
-            artifact_ids.iter().map(String::as_str),
+            rune_ids.iter().map(String::as_str),
             Some(&edited),
         )
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
-    if include && !after.iter().any(|selected| selected == artifact_id) {
+    if include && !after.iter().any(|selected| selected == rune_id) {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "cannot include '{artifact_id}' while a wildcard or inherited cast exclusion still matches it"
+                "cannot include '{rune_id}' while a wildcard or inherited cast exclusion still matches it"
             ),
         ));
     }
@@ -690,7 +686,7 @@ pub fn prepare_cast_toggle(
         .into_bytes();
     Ok(CastEdit {
         cast_name: cast_name.to_string(),
-        artifact_id: artifact_id.to_string(),
+        rune_id: rune_id.to_string(),
         include,
         before,
         after,
@@ -720,16 +716,13 @@ pub fn persist_cast_edit(edit: &CastEdit) -> Result<(), Error> {
     atomic_write(&edit.path, &edit.replacement)
 }
 
-fn deck_artifact_ids(deck: &crate::deck::Deck) -> Vec<String> {
+fn deck_rune_ids(deck: &crate::deck::Deck) -> Vec<String> {
     let mut ids = Vec::new();
-    for domain in &deck.domains {
-        if let Some(module) = scan_deck_source_module(&domain.root) {
-            ids.extend(
-                module
-                    .artifacts
-                    .into_iter()
-                    .map(|artifact| format!("{}/{}/{}", domain.name, artifact.kind, artifact.name)),
-            );
+    for deck_entry in &deck.entries {
+        if let Some(module) = scan_deck_source_module(&deck_entry.root) {
+            ids.extend(module.artifacts.into_iter().map(|artifact| {
+                format!("{}/{}/{}", deck_entry.name, artifact.kind, artifact.name)
+            }));
         }
     }
     ids.sort_by(|left, right| {
@@ -948,16 +941,16 @@ mod tests {
     }
 
     #[test]
-    fn build_view_discovers_deck_domains_kinds_and_casts() {
+    fn build_view_discovers_deck_entries_kinds_and_casts() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
 
         let view = build_view(&fixture, &[], &[]).unwrap();
         let deck = view.deck.as_ref().unwrap();
 
         assert_eq!(
-            deck.domains
+            deck.entries
                 .iter()
-                .map(|domain| domain.name.as_str())
+                .map(|deck_entry| deck_entry.name.as_str())
                 .collect::<Vec<_>>(),
             ["science", "writing"]
         );
@@ -980,7 +973,7 @@ mod tests {
             .iter()
             .find(|cast| cast.name == "science")
             .unwrap();
-        assert_eq!(science_cast.resolved_artifacts.len(), 3);
+        assert_eq!(science_cast.resolved_runes.len(), 3);
         assert!(
             deck.casts
                 .iter()

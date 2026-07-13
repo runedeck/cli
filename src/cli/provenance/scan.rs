@@ -207,25 +207,25 @@ pub fn print_source_summary(
     i32::from(reports.iter().any(|report| !report.is_clean()))
 }
 
-/// Verify every domain in a deck and emit one combined report. Subjects are
-/// domain-qualified so sorting remains stable even when two modules use the
-/// same relative artifact path.
+/// Verify every deck entry and emit one combined report. Subjects are
+/// deck-qualified so sorting remains stable even when two modules use the same
+/// relative deployed-file path.
 pub fn print_deck_source_summary(
     deck: &commands::deck::Deck,
     source_filter: Option<&str>,
     json_output: bool,
 ) -> i32 {
     let mut reports = Vec::new();
-    for domain in &deck.domains {
+    for deck_entry in &deck.entries {
         if !json_output {
-            println!("== {} ==", domain.name);
+            println!("== {} ==", deck_entry.name);
         }
-        let mut domain_reports = Vec::new();
-        collect_source_sidecars(&domain.root, &domain.root, &mut domain_reports);
-        for report in &mut domain_reports {
-            report.subject = format!("{}/{}", domain.name, report.subject);
+        let mut deck_entry_reports = Vec::new();
+        collect_source_sidecars(&deck_entry.root, &deck_entry.root, &mut deck_entry_reports);
+        for report in &mut deck_entry_reports {
+            report.subject = format!("{}/{}", deck_entry.name, report.subject);
         }
-        reports.append(&mut domain_reports);
+        reports.append(&mut deck_entry_reports);
     }
     reports.sort_by(|left, right| left.subject.cmp(&right.subject));
     if let Some(filter) = source_filter {

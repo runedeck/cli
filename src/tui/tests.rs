@@ -288,20 +288,20 @@ fn adrs_section_lists_fixture_adr() {
 }
 
 #[test]
-fn deck_domains_use_three_miller_columns_and_artifact_table() {
+fn deck_entries_use_three_miller_columns_and_artifact_table() {
     let mut app = deck_fixture_app();
     app.set_section_by_number(14);
 
     let output = rendered(&mut app);
 
-    assert!(output.contains("Domains"));
+    assert!(output.contains("Decks"));
     assert!(output.contains("Kinds"));
-    assert!(output.contains("Artifacts"));
+    assert!(output.contains("Runes"));
     assert!(output.contains("science"));
     assert!(output.contains("writing"));
     assert!(output.contains("NAME"));
     assert!(output.contains("KIND"));
-    assert!(output.contains("DOMAIN"));
+    assert!(output.contains("DECK"));
     assert!(output.contains("laptop"));
     assert!(output.contains("SharedName"));
 }

@@ -122,24 +122,24 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
         let deck = commands::deck::load(module_root)
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
         let mut aggregate = ValidationReport::default();
-        for domain in deck.domains {
-            let mut domain_report = match validate_module(&domain.root) {
+        for deck_entry in deck.entries {
+            let mut deck_entry_report = match validate_module(&deck_entry.root) {
                 Ok(result) => result,
                 Err(error) => {
-                    aggregate.fail(&domain.name, format!("{}: {error}", domain.name));
+                    aggregate.fail(&deck_entry.name, format!("{}: {error}", deck_entry.name));
                     continue;
                 }
             };
-            domain_report.result.errors = domain_report
+            deck_entry_report.result.errors = deck_entry_report
                 .result
                 .errors
                 .into_iter()
-                .map(|error| format!("{}: {error}", domain.name))
+                .map(|error| format!("{}: {error}", deck_entry.name))
                 .collect();
-            for item in &mut domain_report.items {
-                item.name = format!("{}/{}", domain.name, item.name);
+            for item in &mut deck_entry_report.items {
+                item.name = format!("{}/{}", deck_entry.name, item.name);
             }
-            append_report(&mut aggregate, domain_report);
+            append_report(&mut aggregate, deck_entry_report);
         }
         return Ok(aggregate);
     }
@@ -206,19 +206,19 @@ fn validate_module(module_root: &Path) -> Result<ValidationReport, Error> {
     Ok(report)
 }
 
-fn append_report(aggregate: &mut ValidationReport, mut domain: ValidationReport) {
+fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport) {
     aggregate
         .result
         .installed
-        .append(&mut domain.result.installed);
-    aggregate.result.skipped.append(&mut domain.result.skipped);
-    aggregate.result.pruned.append(&mut domain.result.pruned);
+        .append(&mut report.result.installed);
+    aggregate.result.skipped.append(&mut report.result.skipped);
+    aggregate.result.pruned.append(&mut report.result.pruned);
     aggregate
         .result
         .warnings
-        .append(&mut domain.result.warnings);
-    aggregate.result.errors.append(&mut domain.result.errors);
-    aggregate.items.append(&mut domain.items);
+        .append(&mut report.result.warnings);
+    aggregate.result.errors.append(&mut report.result.errors);
+    aggregate.items.append(&mut report.items);
 }
 
 fn check_module_structure(module_root: &Path, report: &mut ValidationReport) {

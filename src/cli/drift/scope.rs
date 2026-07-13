@@ -168,9 +168,9 @@ pub fn execute_deck(
     let mut providers = providers.iter().collect::<Vec<_>>();
     providers.sort_by_key(|(name, _)| *name);
 
-    for domain in &deck.domains {
-        println!("== {} ==", domain.name);
-        let source_uri = domain.manifest.source_uri();
+    for deck_entry in &deck.entries {
+        println!("== {} ==", deck_entry.name);
+        let source_uri = deck_entry.manifest.source_uri();
         for (provider_name, provider_config) in &providers {
             for target_root in provider_config.target_roots() {
                 let deployed_base = base.join(target_root);
@@ -182,11 +182,11 @@ pub fn execute_deck(
                         continue;
                     };
                     if base.join(provider_config.target_for_kind(kind)) != deployed_base
-                        || !entry_belongs_to_domain(
+                        || !entry_belongs_to_deck(
                             &key,
                             &entry,
                             &deployed_base,
-                            domain,
+                            deck_entry,
                             source_uri,
                         )
                     {
@@ -205,7 +205,7 @@ pub fn execute_deck(
                     result.entries.push(only_entry(
                         &key,
                         status,
-                        &format!("{}/{}", domain.name, provider_name),
+                        &format!("{}/{}", deck_entry.name, provider_name),
                     ));
                 }
             }
@@ -232,14 +232,14 @@ pub fn execute_deck(
     Ok(i32::from(has_drift))
 }
 
-fn entry_belongs_to_domain(
+fn entry_belongs_to_deck(
     key: &str,
     entry: &commands::manifest::ManifestEntry,
     deployed_base: &Path,
-    domain: &commands::deck::Domain,
+    deck_entry: &commands::deck::DeckEntry,
     source_uri: &str,
 ) -> bool {
-    if key.starts_with(&format!("hooks/{}/", domain.name)) {
+    if key.starts_with(&format!("hooks/{}/", deck_entry.name)) {
         return true;
     }
     if entry.provenance.is_some() && is_owned_by_module(entry, deployed_base, Some(source_uri)) {
@@ -257,7 +257,7 @@ fn entry_belongs_to_domain(
         .build_definition
         .resolved_dependencies
         .iter()
-        .any(|dependency| domain.root.join(&dependency.uri).is_file())
+        .any(|dependency| deck_entry.root.join(&dependency.uri).is_file())
 }
 
 fn compare_provider(

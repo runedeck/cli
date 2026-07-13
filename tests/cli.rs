@@ -90,7 +90,7 @@ fn no_args_exits_with_error() {
 
 #[cfg(feature = "tui")]
 #[test]
-fn tui_snapshot_renders_deck_domain_columns() {
+fn tui_snapshot_renders_deck_entry_columns() {
     let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
     rune()
         .args([
@@ -105,14 +105,14 @@ fn tui_snapshot_renders_deck_domain_columns() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Domains"))
+        .stdout(predicate::str::contains("Decks"))
         .stdout(predicate::str::contains("Kinds"))
-        .stdout(predicate::str::contains("Artifacts"))
+        .stdout(predicate::str::contains("Runes"))
         .stdout(predicate::str::contains("science"))
         .stdout(predicate::str::contains("writing"))
         .stdout(predicate::str::contains("NAME"))
         .stdout(predicate::str::contains("KIND"))
-        .stdout(predicate::str::contains("DOMAIN"));
+        .stdout(predicate::str::contains("DECK"));
 }
 
 #[cfg(feature = "tui")]

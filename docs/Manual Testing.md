@@ -22,7 +22,7 @@ rune --help           # subcommands include add, install, validate, drift, tui, 
 cd "$DECK" && rune validate
 ```
 
-Expected: an aggregate report over the four domains (council, development, meta, research); ADR schema checks pass; no errors.
+Expected: an aggregate report over the four decks (council, development, meta, research); ADR schema checks pass; no errors.
 
 ## 3. Fresh consumer, development cast
 
@@ -99,7 +99,7 @@ mkdir .rune && rune install          # a directory named .rune does not shadow .
 cd "$DECK" && rune tui
 ```
 
-Expected: header shows 4 modules; sections include Domains, Casts, History. Try: Miller-column navigation domains → kinds → artifacts; `/` filters in-panel; `!` shows problems only; the casts section resolves membership; History renders the commit list batched (scroll keeps loading); wheel scroll moves the viewport without dragging the selection. Non-interactive render: `rune tui --snapshot`.
+Expected: header shows 4 modules; sections include Decks, Casts, History. Try: Miller-column navigation decks → kinds → runes; `/` filters in-panel; `!` shows problems only; the casts section resolves membership; History renders the commit list batched (scroll keeps loading); wheel scroll moves the viewport without dragging the selection. Non-interactive render: `rune tui --snapshot`.
 
 ## 9. Dashboard
 
@@ -107,7 +107,7 @@ Expected: header shows 4 modules; sections include Domains, Casts, History. Try:
 cd "$DECK" && rune dashboard
 ```
 
-Expected: a loopback URL; panels for domains (counts, validation), casts (resolved sizes), and target deploy status; entirely read-only; deck routes 404 outside a deck.
+Expected: a loopback URL; panels for decks (counts, validation), casts (resolved sizes), and target deploy status; entirely read-only; deck routes 404 outside a deck.
 
 ## 10. Repo hooks
 

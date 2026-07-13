@@ -1,5 +1,5 @@
 //! Walk each declared source module on disk and feed its content through
-//! the artifact filter. The output flat `Vec<SourceFile>` plugs straight
+//! the rune filter. The output flat `Vec<SourceFile>` plugs straight
 //! into the existing per-provider assemble loop.
 
 use commands::error::{Error, ErrorKind};
@@ -59,12 +59,12 @@ pub fn resolve_sources(
             }
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();
-                for domain in &deck.domains {
-                    let providers = deck.providers_for(domain).map(<[String]>::to_vec);
-                    for mut file in sources::collect_deck(&domain.root, valid_qualifiers)? {
-                        file.artifact_id = Some(canonical_artifact_id(&domain.name, &file)?);
+                for deck_entry in &deck.entries {
+                    let providers = deck.providers_for(deck_entry).map(<[String]>::to_vec);
+                    for mut file in sources::collect_deck(&deck_entry.root, valid_qualifiers)? {
+                        file.rune_id = Some(canonical_rune_id(&deck_entry.name, &file)?);
                         file.providers.clone_from(&providers);
-                        file.source_uri = Some(domain.manifest.source_uri().to_string());
+                        file.source_uri = Some(deck_entry.manifest.source_uri().to_string());
                         files.push(file);
                     }
                 }
@@ -77,7 +77,7 @@ pub fn resolve_sources(
     Ok(collected)
 }
 
-fn canonical_artifact_id(domain: &str, file: &SourceFile) -> Result<String, Error> {
+fn canonical_rune_id(deck: &str, file: &SourceFile) -> Result<String, Error> {
     let name = if file.kind == commands::provider::ContentKind::Skills {
         file.relative_path
             .strip_prefix("skills/")
@@ -100,12 +100,12 @@ fn canonical_artifact_id(domain: &str, file: &SourceFile) -> Result<String, Erro
         Error::new(
             ErrorKind::Config,
             format!(
-                "cannot derive artifact id for {} in domain {domain}",
+                "cannot derive rune id for {} in deck '{deck}'",
                 file.relative_path
             ),
         )
     })?;
-    Ok(format!("{domain}/{}/{name}", file.kind))
+    Ok(format!("{deck}/{}/{name}", file.kind))
 }
 
 fn canonicalize_source(

@@ -14,12 +14,12 @@ pub struct DeckManifest {
 }
 
 #[derive(Deserialize)]
-struct DomainDefaults {
+struct DeckEntryDefaults {
     providers: Option<BTreeMap<String, serde_yaml::Value>>,
 }
 
 #[derive(Debug)]
-pub struct Domain {
+pub struct DeckEntry {
     pub name: String,
     pub root: PathBuf,
     pub manifest: ModuleManifest,
@@ -30,7 +30,7 @@ pub struct Domain {
 pub struct Deck {
     pub root: PathBuf,
     pub manifest: DeckManifest,
-    pub domains: Vec<Domain>,
+    pub entries: Vec<DeckEntry>,
     pub warnings: Vec<String>,
     casts: BTreeMap<String, Cast>,
 }
@@ -63,8 +63,8 @@ impl Deck {
         self.casts.get(name)
     }
 
-    pub fn providers_for<'a>(&'a self, domain: &'a Domain) -> Option<&'a [String]> {
-        domain
+    pub fn providers_for<'a>(&'a self, entry: &'a DeckEntry) -> Option<&'a [String]> {
+        entry
             .providers
             .as_deref()
             .or(self.manifest.providers.as_deref())
@@ -73,36 +73,36 @@ impl Deck {
     pub fn resolve_cast<'a>(
         &self,
         name: &str,
-        artifact_ids: impl IntoIterator<Item = &'a str>,
+        rune_ids: impl IntoIterator<Item = &'a str>,
     ) -> Result<Vec<String>, String> {
-        self.resolve_cast_with_override(name, artifact_ids, None)
+        self.resolve_cast_with_override(name, rune_ids, None)
     }
 
     /// Resolves a cast while substituting one in-memory manifest.
     ///
     /// This supports confirmation-first editors without mutating the deck on
-    /// disk merely to preview the resulting artifact set.
+    /// disk merely to preview the resulting rune set.
     pub fn resolve_cast_with_override<'a>(
         &self,
         name: &str,
-        artifact_ids: impl IntoIterator<Item = &'a str>,
+        rune_ids: impl IntoIterator<Item = &'a str>,
         cast_override: Option<&Cast>,
     ) -> Result<Vec<String>, String> {
-        let artifacts = artifact_ids
+        let runes = rune_ids
             .into_iter()
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
         let mut stack = Vec::new();
-        let selected = self.resolve_cast_inner(name, &artifacts, &mut stack, cast_override)?;
+        let selected = self.resolve_cast_inner(name, &runes, &mut stack, cast_override)?;
         let mut ordered = selected.into_iter().collect::<Vec<_>>();
-        ordered.sort_by_key(|id| artifact_order_key(id));
+        ordered.sort_by_key(|id| rune_order_key(id));
         Ok(ordered)
     }
 
     fn resolve_cast_inner(
         &self,
         name: &str,
-        artifacts: &BTreeSet<String>,
+        runes: &BTreeSet<String>,
         stack: &mut Vec<String>,
         cast_override: Option<&Cast>,
     ) -> Result<BTreeSet<String>, String> {
@@ -118,24 +118,24 @@ impl Deck {
         stack.push(name.to_string());
         let mut selected = BTreeSet::new();
         for parent in &cast.extends {
-            selected.extend(self.resolve_cast_inner(parent, artifacts, stack, cast_override)?);
+            selected.extend(self.resolve_cast_inner(parent, runes, stack, cast_override)?);
         }
         for pattern in &cast.runes {
-            let matched = artifacts
+            let matched = runes
                 .iter()
-                .filter(|id| matches_artifact_glob(pattern, id))
+                .filter(|id| matches_rune_glob(pattern, id))
                 .cloned()
                 .collect::<Vec<_>>();
             if matched.is_empty() {
                 return Err(format!(
-                    "cast '{}' rune pattern '{pattern}' matches no artifact",
+                    "cast '{}' rune pattern '{pattern}' matches no rune",
                     cast.name
                 ));
             }
             selected.extend(matched);
         }
         for pattern in &cast.exclude {
-            selected.retain(|id| !matches_artifact_glob(pattern, id));
+            selected.retain(|id| !matches_rune_glob(pattern, id));
         }
         let popped = stack.pop();
         debug_assert_eq!(popped.as_deref(), Some(name));
@@ -183,40 +183,40 @@ pub fn load(root: &Path) -> Result<Deck, String> {
     };
     entries.sort_by_key(std::fs::DirEntry::file_name);
 
-    let mut domains = Vec::new();
+    let mut deck_entries = Vec::new();
     let mut warnings = Vec::new();
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') || (name == "README.md" && entry.path().is_file()) {
             continue;
         }
-        let domain_root = entry.path();
-        let module_yaml = domain_root.join("module.yaml");
-        if !domain_root.is_dir() || !module_yaml.is_file() {
+        let deck_root = entry.path();
+        let module_yaml = deck_root.join("module.yaml");
+        if !deck_root.is_dir() || !module_yaml.is_file() {
             let warning = format!(
                 "warning: skipping deck entry {} without module.yaml",
-                domain_root.display()
+                deck_root.display()
             );
             eprintln!("{warning}");
             warnings.push(warning);
             continue;
         }
 
-        let domain_manifest = crate::module::load(&domain_root)?;
-        if domain_manifest.name != name {
+        let deck_manifest = crate::module::load(&deck_root)?;
+        if deck_manifest.name != name {
             return Err(format!(
-                "deck domain directory '{name}' does not match module.yaml name '{}'",
-                domain_manifest.name
+                "deck entry directory '{name}' does not match module.yaml name '{}'",
+                deck_manifest.name
             ));
         }
-        let providers = domain_manifest
+        let providers = deck_manifest
             .providers
             .clone()
-            .or(load_default_provider_names(&domain_root)?);
-        domains.push(Domain {
+            .or(load_default_provider_names(&deck_root)?);
+        deck_entries.push(DeckEntry {
             name,
-            root: domain_root,
-            manifest: domain_manifest,
+            root: deck_root,
+            manifest: deck_manifest,
             providers,
         });
     }
@@ -224,7 +224,7 @@ pub fn load(root: &Path) -> Result<Deck, String> {
     Ok(Deck {
         root: root.to_path_buf(),
         manifest,
-        domains,
+        entries: deck_entries,
         warnings,
         casts,
     })
@@ -263,9 +263,9 @@ fn load_casts(root: &Path) -> Result<BTreeMap<String, Cast>, String> {
     Ok(casts)
 }
 
-fn artifact_order_key(id: &str) -> (String, u8, String, String) {
+fn rune_order_key(id: &str) -> (String, u8, String, String) {
     let mut parts = id.splitn(4, '/');
-    let domain = parts.next().unwrap_or_default();
+    let deck = parts.next().unwrap_or_default();
     let kind = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default();
     let remainder = parts.next().unwrap_or_default();
@@ -277,14 +277,14 @@ fn artifact_order_key(id: &str) -> (String, u8, String, String) {
         _ => 4,
     };
     (
-        domain.to_string(),
+        deck.to_string(),
         kind_order,
         name.to_string(),
         remainder.to_string(),
     )
 }
 
-pub fn matches_artifact_glob(pattern: &str, value: &str) -> bool {
+pub fn matches_rune_glob(pattern: &str, value: &str) -> bool {
     fn matches(pattern: &[u8], value: &[u8], memo: &mut BTreeMap<(usize, usize), bool>) -> bool {
         let key = (pattern.len(), value.len());
         if let Some(result) = memo.get(&key) {
@@ -316,8 +316,8 @@ pub fn matches_artifact_glob(pattern: &str, value: &str) -> bool {
     matches(pattern.as_bytes(), value.as_bytes(), &mut BTreeMap::new())
 }
 
-fn load_default_provider_names(domain_root: &Path) -> Result<Option<Vec<String>>, String> {
-    let defaults_yaml = domain_root.join("defaults.yaml");
+fn load_default_provider_names(deck_root: &Path) -> Result<Option<Vec<String>>, String> {
+    let defaults_yaml = deck_root.join("defaults.yaml");
     if !defaults_yaml.is_file() {
         return Ok(None);
     }
@@ -326,7 +326,7 @@ fn load_default_provider_names(domain_root: &Path) -> Result<Option<Vec<String>>
     if content.trim().is_empty() {
         return Ok(None);
     }
-    let defaults: DomainDefaults = serde_yaml::from_str(&content)
+    let defaults: DeckEntryDefaults = serde_yaml::from_str(&content)
         .map_err(|error| format!("invalid {}: {error}", defaults_yaml.display()))?;
     Ok(defaults
         .providers

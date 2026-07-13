@@ -25,32 +25,32 @@ pub struct DeckView {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub domains: Vec<DomainView>,
+    pub entries: Vec<DeckEntryView>,
     pub casts: Vec<CastView>,
     /// Persistent target locations whose consumer manifest points at this deck.
     pub targets: Vec<DeckTargetView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DomainView {
+pub struct DeckEntryView {
     pub name: String,
     pub version: String,
     pub description: String,
     pub source_uri: String,
     pub providers: Vec<String>,
-    pub artifact_counts: BTreeMap<String, usize>,
-    pub validation: DomainValidationView,
+    pub rune_counts: BTreeMap<String, usize>,
+    pub validation: DeckEntryValidationView,
 }
 
-impl DomainView {
+impl DeckEntryView {
     #[must_use]
-    pub fn artifact_count(&self) -> usize {
-        self.artifact_counts.values().sum()
+    pub fn rune_count(&self) -> usize {
+        self.rune_counts.values().sum()
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct DomainValidationView {
+pub struct DeckEntryValidationView {
     pub valid: bool,
     pub errors: Vec<String>,
 }
@@ -62,7 +62,7 @@ pub struct CastView {
     pub extends: Vec<String>,
     pub runes: Vec<String>,
     pub exclude: Vec<String>,
-    pub resolved_artifacts: Vec<String>,
+    pub resolved_runes: Vec<String>,
     pub resolution_error: Option<String>,
 }
 

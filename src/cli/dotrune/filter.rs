@@ -78,7 +78,7 @@ pub fn filter_deck_to_requested(
 ) -> Result<Vec<SourceFile>, Error> {
     let canonical_ids: BTreeSet<String> = all_files
         .iter()
-        .filter_map(|file| file.artifact_id.clone())
+        .filter_map(|file| file.rune_id.clone())
         .collect();
     let mut selected = BTreeSet::new();
 
@@ -98,7 +98,7 @@ pub fn filter_deck_to_requested(
             .iter()
             .filter(|candidate| {
                 if requested.contains(['*', '?']) {
-                    commands::deck::matches_artifact_glob(requested, candidate)
+                    commands::deck::matches_rune_glob(requested, candidate)
                 } else {
                     id_matches(requested, candidate)
                 }
@@ -134,38 +134,38 @@ pub fn filter_deck_to_requested(
         }
     }
 
-    let selected_domains = selected
+    let selected_decks = selected
         .iter()
         .filter_map(|id| {
             let mut parts = id.split('/');
-            let domain = parts.next()?;
+            let deck_entry = parts.next()?;
             let kind = parts.next()?;
-            (kind != "hooks").then_some(domain.to_string())
+            (kind != "hooks").then_some(deck_entry.to_string())
         })
         .collect::<BTreeSet<_>>();
     for id in &canonical_ids {
         let mut parts = id.split('/');
-        let domain = parts.next().unwrap_or_default();
+        let deck_entry = parts.next().unwrap_or_default();
         let kind = parts.next().unwrap_or_default();
-        if kind == "hooks" && selected_domains.contains(domain) {
+        if kind == "hooks" && selected_decks.contains(deck_entry) {
             selected.insert(id.clone());
         }
     }
     selected.retain(|id| {
         let mut parts = id.split('/');
-        let domain = parts.next().unwrap_or_default();
+        let deck_entry = parts.next().unwrap_or_default();
         let kind = parts.next().unwrap_or_default();
-        kind != "hooks" || selected_domains.contains(domain)
+        kind != "hooks" || selected_decks.contains(deck_entry)
     });
     selected.retain(|id| {
         !list
             .exclude
             .iter()
-            .any(|pattern| commands::deck::matches_artifact_glob(pattern, id))
+            .any(|pattern| commands::deck::matches_rune_glob(pattern, id))
     });
 
     all_files.retain(|file| {
-        file.artifact_id
+        file.rune_id
             .as_ref()
             .is_some_and(|id| selected.contains(id))
     });
@@ -184,9 +184,9 @@ fn whole_deck_selection(
     if requested.contains('/') || requested.contains(['*', '?']) {
         return None;
     }
-    deck.domains
+    deck.entries
         .iter()
-        .any(|domain| domain.name == requested)
+        .any(|deck_entry| deck_entry.name == requested)
         .then(|| {
             canonical_ids
                 .iter()
@@ -200,11 +200,11 @@ fn id_matches(requested: &str, canonical: &str) -> bool {
     let requested_parts: Vec<&str> = requested.split('/').collect();
     let canonical_parts: Vec<&str> = canonical.split('/').collect();
     match (requested_parts.as_slice(), canonical_parts.as_slice()) {
-        ([domain, kind, name], [candidate_domain, candidate_kind, candidate_name]) => {
-            domain == candidate_domain && kind == candidate_kind && name == candidate_name
+        ([deck, kind, name], [candidate_deck, candidate_kind, candidate_name]) => {
+            deck == candidate_deck && kind == candidate_kind && name == candidate_name
         }
-        ([domain, name], [candidate_domain, _, candidate_name]) => {
-            domain == candidate_domain && name == candidate_name
+        ([deck, name], [candidate_deck, _, candidate_name]) => {
+            deck == candidate_deck && name == candidate_name
         }
         ([name], [_, _, candidate_name]) => name == candidate_name,
         _ => false,
@@ -212,9 +212,9 @@ fn id_matches(requested: &str, canonical: &str) -> bool {
 }
 
 fn deck_output_key(file: &SourceFile) -> (String, u8, String, String) {
-    let id = file.artifact_id.as_deref().unwrap_or_default();
+    let id = file.rune_id.as_deref().unwrap_or_default();
     let mut parts = id.split('/');
-    let domain = parts.next().unwrap_or_default().to_string();
+    let deck = parts.next().unwrap_or_default().to_string();
     let kind = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default().to_string();
     let kind_order = match kind {
@@ -224,7 +224,7 @@ fn deck_output_key(file: &SourceFile) -> (String, u8, String, String) {
         "hooks" => 3,
         _ => 4,
     };
-    (domain, kind_order, name, file.relative_path.clone())
+    (deck, kind_order, name, file.relative_path.clone())
 }
 
 fn skill_name(relative_path: &str) -> Option<String> {

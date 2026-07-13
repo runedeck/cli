@@ -3,7 +3,7 @@
 //! A consumer repo (a non-module project that wants to use rune artifacts)
 //! drops a `.rune` YAML file at its root listing which skills, agents, and
 //! rules it needs and from which producer modules. `rune install` run from
-//! that repo reads `.rune`, locates each requested artifact in the named
+//! that repo reads `.rune`, locates each requested rune in the named
 //! producer module on disk, and runs them through the regular assemble +
 //! deploy pipeline scoped to the consumer's own `.claude/`, `.gemini/`,
 //! `.codex/`, `.opencode/` directories.

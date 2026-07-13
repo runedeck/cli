@@ -394,7 +394,7 @@ fn resolved_deck_artifacts_store_canonical_ids() {
     assert_eq!(
         files
             .iter()
-            .filter_map(|file| file.artifact_id.as_deref())
+            .filter_map(|file| file.rune_id.as_deref())
             .collect::<Vec<_>>(),
         [
             "science/skills/OnlyScience",
