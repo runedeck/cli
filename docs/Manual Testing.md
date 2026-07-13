@@ -16,7 +16,28 @@ rune --version        # rune 0.3.2
 rune --help           # subcommands include add, install, validate, drift, tui, dashboard, adopt, find, launch, watch
 ```
 
-## 2. Validate the deck
+## 2. Scaffold and bind a quest
+
+```sh
+export RUNE_QUESTS="$(mktemp -d)"
+rune init demo --lang shell --purpose tool --brief "Manual init quest"
+cd "$RUNE_QUESTS/demo"
+test -x bin/demo && test -x .githooks/pre-commit
+! grep -E '\${(NAME|TITLE|BRIEF|OWNER)}' bin/demo Makefile
+git config --get core.hooksPath       # .githooks
+rune quest .                          # binds this working repo as the quest
+rune add --source "$DECK" --cast development
+rune tui --edit                       # opens the checkbox editor with the cast selected
+rune install
+```
+
+Expected: init lists `base`, `lang/shell`, and `purpose/tool`, creates the quest
+under `RUNE_QUESTS`, substitutes `demo` in the shell command and Makefile,
+marks hooks and `bin/demo` executable, initializes `main`, and activates
+`.githooks`. Quest binding records this repo; the editor shows the development
+cast selected and installs the checked runes into the four provider targets.
+
+## 3. Validate the deck
 
 ```sh
 cd "$DECK" && rune validate
@@ -24,7 +45,7 @@ cd "$DECK" && rune validate
 
 Expected: an aggregate report over the four decks (council, development, meta, research); ADR schema checks pass; no errors.
 
-## 3. Fresh consumer, development cast
+## 4. Fresh consumer, development cast
 
 ```sh
 T=$(mktemp -d) && cd "$T"
@@ -51,7 +72,7 @@ echo tamper >> .claude/rules/Deslop.md
 rune drift --target .claude                 # flags Deslop.md as modified
 ```
 
-## 4. Four providers, all cast
+## 5. Four providers, all cast
 
 ```sh
 T=$(mktemp -d) && cd "$T"
@@ -61,7 +82,7 @@ for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -
 
 Expected: 99 files in each provider directory.
 
-## 5. Qualified ids and the ambiguity guard
+## 6. Qualified ids and the ambiguity guard
 
 ```sh
 T=$(mktemp -d) && cd "$T"
@@ -71,7 +92,7 @@ rune add development/Deslop
 
 Expected: the second command fails loudly — `development/Deslop` is ambiguous (a rule and a skill share the name) and the error lists both candidates. Retry with `development/rules/Deslop`.
 
-## 6. Pinned git install (the remote-consumer path)
+## 7. Pinned git install (the remote-consumer path)
 
 ```sh
 T=$(mktemp -d) && cd "$T"
@@ -82,7 +103,7 @@ RUNE_GIT_ALLOW_FILE_URLS=1 rune install
 
 Expected: same deployment as step 3, materialized from the pinned commit. Over HTTPS only the transport differs.
 
-## 7. Legacy compatibility
+## 8. Legacy compatibility
 
 ```sh
 T=$(mktemp -d) && cd "$T"
@@ -93,7 +114,7 @@ mkdir .rune && rune install          # a directory named .rune does not shadow .
 
 `FORGE_GIT_CACHE_DIR` is honored when `RUNE_GIT_CACHE_DIR` is unset; old provenance sidecars with forge URIs still verify.
 
-## 8. TUI
+## 9. TUI
 
 ```sh
 cd "$DECK" && rune tui
@@ -101,7 +122,7 @@ cd "$DECK" && rune tui
 
 Expected: header shows 4 modules; sections include Decks, Casts, History. Try: Miller-column navigation decks → kinds → runes; `/` filters in-panel; `!` shows problems only; the casts section resolves membership; History renders the commit list batched (scroll keeps loading); wheel scroll moves the viewport without dragging the selection. Non-interactive render: `rune tui --snapshot`.
 
-## 9. Dashboard
+## 10. Dashboard
 
 ```sh
 cd "$DECK" && rune dashboard
@@ -109,7 +130,7 @@ cd "$DECK" && rune dashboard
 
 Expected: a loopback URL; panels for decks (counts, validation), casts (resolved sizes), and target deploy status; entirely read-only; deck routes 404 outside a deck.
 
-## 10. Repo hooks
+## 11. Repo hooks
 
 ```sh
 cd ~/Developer/runedeck/rune
@@ -118,7 +139,7 @@ echo >> README.md && git add README.md && git commit -m "test: hook check"
 
 Expected: prek runs whitespace/yaml/shellcheck/fmt/clippy/test/semgrep, gitleaks scans staged content, `rune validate` checks ADR schemas — all before the commit lands. Undo: `git reset --hard HEAD~1` (or ask the resident agent).
 
-## 11. Guardrails worth seeing fail
+## 12. Guardrails worth seeing fail
 
 ```sh
 cd "$DECK"

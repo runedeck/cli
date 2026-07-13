@@ -123,7 +123,37 @@ providers:
 
 ## Usage
 
-Every command takes its inputs as named flags. Source modules use `--source <DIR>` (defaults to `.` for in-tree commands), targets use `--target <DIR>`, upstreams use `--upstream <DIR>`. There are no positional path arguments.
+Source modules use `--source <DIR>` (defaults to `.` for in-tree commands), targets use `--target <DIR>`, and upstreams use `--upstream <DIR>`. Project initialization takes a positional slug or directory because creating a quest is the flagship entry point.
+
+### Start a project
+
+Scaffold a project, bind it as the active quest, select deck content in the
+editor, and install it:
+
+```sh
+rune init ./signal-lamp --lang shell --purpose tool --brief "Warns the crew"
+cd signal-lamp
+rune quest .
+rune add development --source ~/Developer/runedeck/runedeck
+rune tui --edit
+rune install
+```
+
+`rune init` composes `base`, `lang/<lang>`, and `purpose/<purpose>` from the
+skeleton repository. It substitutes `${NAME}`, `${TITLE}`, `${OWNER}`, and
+`${BRIEF}` in file names and contents, leaves unknown placeholders verbatim,
+and never overwrites an existing destination file. The skeleton resolves in
+this order: `--skeleton`, `RUNE_SKELETON`, the `skeleton` config key, then
+`~/Developer/N4M3Z/skeleton`. Bare names and `<owner>/<name>` slugs resolve
+under `RUNE_QUESTS` (or the configured quests root); explicit existing
+directories are scaffolded in place. Add `--quest` to bind the new repository
+during initialization.
+
+The specialized deck-authoring scaffold remains available separately:
+
+```sh
+rune init --module ./my-rune-module
+```
 
 Set a default deck once, then add selections without repeating `--source`:
 
