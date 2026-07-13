@@ -43,6 +43,7 @@ chrono = "0.4"
 # utils
 regex = "1"
 console = "0.15"
+base64 = "0.22"
 dirs = "6"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 
