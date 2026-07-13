@@ -28,10 +28,11 @@ fn parse_minimal_happy_path() {
     let manifest = parse(MINIMAL).expect("minimal manifest must parse");
     assert_eq!(manifest.version, 1);
     assert_eq!(manifest.sources.len(), 1);
-    let Source::Local { path } = &manifest.sources["rune-core"] else {
+    let Source::Local { local, path } = &manifest.sources["rune-core"] else {
         panic!("expected Local source for rune-core");
     };
-    assert_eq!(path.to_string_lossy(), "../rune-core");
+    assert_eq!(local.to_string_lossy(), "../rune-core");
+    assert!(path.is_none());
     assert_eq!(manifest.artifacts["rune-core"].skills, vec!["BuildSkill"]);
     assert!(manifest.artifacts["rune-core"].agents.is_empty());
     assert!(manifest.artifacts["rune-core"].rules.is_empty());
@@ -187,11 +188,59 @@ sources:
         ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
 ";
     let manifest = parse(content).expect("git source manifest must parse");
-    let Source::Git { git, commit } = &manifest.sources["rune-core"] else {
+    let Source::Git { git, commit, path } = &manifest.sources["rune-core"] else {
         panic!("expected Git source for rune-core");
     };
     assert_eq!(git, "https://github.com/N4M3Z/rune-core");
     assert_eq!(commit, "0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d");
+    assert!(path.is_none());
+}
+
+#[test]
+fn parse_accepts_local_source_with_inner_path() {
+    let content = r"
+version: 1
+sources:
+    deck:
+        local: ../runedeck
+        path: runes/science
+";
+    let manifest = parse(content).unwrap();
+    let Source::Local { local, path } = &manifest.sources["deck"] else {
+        panic!("expected local source");
+    };
+    assert_eq!(local, &std::path::PathBuf::from("../runedeck"));
+    assert_eq!(path.as_deref(), Some(std::path::Path::new("runes/science")));
+}
+
+#[test]
+fn parse_accepts_git_source_with_inner_path() {
+    let content = r"
+version: 1
+sources:
+    deck:
+        git: https://github.com/example/deck
+        ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
+        path: runes/science
+";
+    let manifest = parse(content).unwrap();
+    let Source::Git { path, .. } = &manifest.sources["deck"] else {
+        panic!("expected git source");
+    };
+    assert_eq!(path.as_deref(), Some(std::path::Path::new("runes/science")));
+}
+
+#[test]
+fn parse_rejects_inner_path_that_escapes_source() {
+    let content = r"
+version: 1
+sources:
+    deck:
+        local: ../runedeck
+        path: ../outside
+";
+    let error = parse(content).unwrap_err();
+    assert!(error.to_string().contains("inside the materialized source"));
 }
 
 #[test]

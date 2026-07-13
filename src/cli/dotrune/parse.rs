@@ -27,14 +27,19 @@ pub struct DotRune {
 /// Where to find a producer module. `Local` for a sibling checkout on disk,
 /// `Git` for a remote HTTPS repository pinned to a 40-hex commit SHA.
 ///
-/// A custom `Deserialize` picks the variant by which key is present (`path:`
-/// vs `git:`) so per-variant validation errors propagate cleanly to the
-/// user. `serde(untagged)` would swallow them into a generic "did not match
-/// any variant" message.
+/// A custom `Deserialize` preserves legacy `path: ../module` local sources
+/// while allowing `local: ../deck` and git sources to carry an inner `path`.
 #[derive(Debug)]
 pub enum Source {
-    Local { path: PathBuf },
-    Git { git: String, commit: String },
+    Local {
+        local: PathBuf,
+        path: Option<PathBuf>,
+    },
+    Git {
+        git: String,
+        commit: String,
+        path: Option<PathBuf>,
+    },
 }
 
 impl<'de> Deserialize<'de> for Source {
@@ -46,27 +51,42 @@ impl<'de> Deserialize<'de> for Source {
                 "source entry must be a mapping (e.g. `path: ../foo` or `git: https://...`)",
             )
         })?;
-        let has_path = mapping.contains_key(serde_yaml::Value::from("path"));
+        let has_local = mapping.contains_key(serde_yaml::Value::from("local"));
         let has_git = mapping.contains_key(serde_yaml::Value::from("git"));
-        match (has_path, has_git) {
-            (true, true) => Err(D::Error::custom(
-                "source entry cannot have both `path` and `git`; pick one",
+        let has_path = mapping.contains_key(serde_yaml::Value::from("path"));
+        match (has_local, has_git, has_path) {
+            (true, true, _) => Err(D::Error::custom(
+                "source entry cannot have both `local` and `git`; pick one",
             )),
-            (true, false) => {
-                let local: LocalFields = serde_yaml::from_value(value).map_err(D::Error::custom)?;
-                Ok(Source::Local { path: local.path })
-            }
-            (false, true) => {
+            (false, true, _) => {
                 let git: GitFields = serde_yaml::from_value(value).map_err(D::Error::custom)?;
                 validate_git_url(&git.git).map_err(D::Error::custom)?;
                 validate_commit_sha(&git.commit).map_err(D::Error::custom)?;
+                validate_subpath(git.path.as_deref()).map_err(D::Error::custom)?;
                 Ok(Source::Git {
                     git: git.git,
                     commit: git.commit,
+                    path: git.path,
                 })
             }
-            (false, false) => Err(D::Error::custom(
-                "source entry must contain either `path:` (local checkout) or `git:` (remote URL)",
+            (true, false, _) => {
+                let local: LocalFields = serde_yaml::from_value(value).map_err(D::Error::custom)?;
+                validate_subpath(local.path.as_deref()).map_err(D::Error::custom)?;
+                Ok(Source::Local {
+                    local: local.local,
+                    path: local.path,
+                })
+            }
+            (false, false, true) => {
+                let legacy: LegacyLocalFields =
+                    serde_yaml::from_value(value).map_err(D::Error::custom)?;
+                Ok(Source::Local {
+                    local: legacy.path,
+                    path: None,
+                })
+            }
+            (false, false, false) => Err(D::Error::custom(
+                "source entry must contain `path:` (legacy local source), `local:`, or `git:`",
             )),
         }
     }
@@ -75,6 +95,13 @@ impl<'de> Deserialize<'de> for Source {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LocalFields {
+    local: PathBuf,
+    path: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyLocalFields {
     path: PathBuf,
 }
 
@@ -84,6 +111,29 @@ struct GitFields {
     git: String,
     #[serde(rename = "ref")]
     commit: String,
+    path: Option<PathBuf>,
+}
+
+fn validate_subpath(path: Option<&std::path::Path>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "source path must be a non-empty directory inside the materialized source: {}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_git_url(url: &str) -> Result<(), String> {

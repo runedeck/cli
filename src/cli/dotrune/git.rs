@@ -25,7 +25,7 @@ pub fn ensure_cached(url: &str, commit: &str, source_label: &str) -> Result<Path
     let bare_dir = module_root.join(".bare.git");
     let work_dir = module_root.join(commit);
 
-    if work_dir.join("module.yaml").is_file() {
+    if work_dir.join("module.yaml").is_file() || work_dir.join("deck.yaml").is_file() {
         return Ok(work_dir);
     }
 

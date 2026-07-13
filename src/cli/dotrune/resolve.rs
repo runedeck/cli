@@ -11,6 +11,11 @@ use crate::cli::assemble::sources::{self, SourceFile};
 use crate::cli::dotrune::filter::filter_to_requested;
 use crate::cli::dotrune::parse::{DotRune, Source};
 
+enum CanonicalSource {
+    Module(PathBuf),
+    Deck(commands::deck::Deck),
+}
+
 pub fn resolve_sources(
     manifest: &DotRune,
     repo_root: &Path,
@@ -28,8 +33,20 @@ pub fn resolve_sources(
             continue;
         }
 
-        let all_files = sources::collect(&canonical, valid_qualifiers)?;
-        let filtered = filter_to_requested(all_files, artifact_list, source_label, &canonical)?;
+        let (all_files, display_path) = match &canonical {
+            CanonicalSource::Module(module_root) => (
+                sources::collect(module_root, valid_qualifiers)?,
+                module_root.as_path(),
+            ),
+            CanonicalSource::Deck(deck) => {
+                let mut files = Vec::new();
+                for domain in &deck.domains {
+                    files.extend(sources::collect(&domain.root, valid_qualifiers)?);
+                }
+                (files, deck.root.as_path())
+            }
+        };
+        let filtered = filter_to_requested(all_files, artifact_list, source_label, display_path)?;
 
         for file in filtered {
             if !seen.insert(file.relative_path.clone()) {
@@ -52,23 +69,41 @@ fn canonicalize_source(
     source: &Source,
     source_label: &str,
     repo_root: &Path,
-) -> Result<PathBuf, Error> {
-    let materialized = match source {
-        Source::Local { path } => canonicalize_local(path, source_label, repo_root)?,
-        Source::Git { git, commit } => {
-            crate::cli::dotrune::git::ensure_cached(git, commit, source_label)?
-        }
+) -> Result<CanonicalSource, Error> {
+    let (materialized, subpath) = match source {
+        Source::Local { local, path } => (
+            canonicalize_local(local, source_label, repo_root)?,
+            path.as_deref(),
+        ),
+        Source::Git { git, commit, path } => (
+            crate::cli::dotrune::git::ensure_cached(git, commit, source_label)?,
+            path.as_deref(),
+        ),
     };
-    if !materialized.join("module.yaml").is_file() {
+    let canonical = canonicalize_subpath(&materialized, subpath, source_label)?;
+
+    if subpath.is_some() {
+        return require_module(canonical, source_label);
+    }
+    if commands::deck::is_deck(&canonical) {
+        let deck = commands::deck::load(&canonical)
+            .map_err(|message| Error::new(ErrorKind::Config, format!(".rune: {message}")))?;
+        return Ok(CanonicalSource::Deck(deck));
+    }
+    require_module(canonical, source_label)
+}
+
+fn require_module(path: PathBuf, source_label: &str) -> Result<CanonicalSource, Error> {
+    if !path.join("module.yaml").is_file() {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
                 ".rune: source '{source_label}' at {} has no module.yaml",
-                materialized.display()
+                path.display()
             ),
         ));
     }
-    Ok(materialized)
+    Ok(CanonicalSource::Module(path))
 }
 
 fn canonicalize_local(path: &Path, source_label: &str, repo_root: &Path) -> Result<PathBuf, Error> {
@@ -86,4 +121,43 @@ fn canonicalize_local(path: &Path, source_label: &str, repo_root: &Path) -> Resu
             ),
         )
     })
+}
+
+fn canonicalize_subpath(
+    materialized: &Path,
+    subpath: Option<&Path>,
+    source_label: &str,
+) -> Result<PathBuf, Error> {
+    let materialized = fs::canonicalize(materialized).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!(
+                ".rune: source '{source_label}' at {} does not exist: {error}",
+                materialized.display()
+            ),
+        )
+    })?;
+    let Some(subpath) = subpath else {
+        return Ok(materialized);
+    };
+    let joined = materialized.join(subpath);
+    let canonical = fs::canonicalize(&joined).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!(
+                ".rune: source '{source_label}' path {} does not exist: {error}",
+                joined.display()
+            ),
+        )
+    })?;
+    if !canonical.starts_with(&materialized) {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                ".rune: source '{source_label}' path {} escapes the materialized source",
+                subpath.display()
+            ),
+        ));
+    }
+    Ok(canonical)
 }

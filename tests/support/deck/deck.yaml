@@ -1,0 +1,4 @@
+name: stage-a-fixture
+version: 0.1.0
+description: Reusable deck fixture for source model tests.
+providers: [claude, gemini, codex, opencode]

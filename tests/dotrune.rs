@@ -8,6 +8,8 @@ use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
+mod support;
+
 fn rune() -> Command {
     Command::cargo_bin("rune").unwrap()
 }
@@ -289,4 +291,26 @@ fn dotrune_errors_on_oversized_file() {
         stderr.contains("limit is") && stderr.contains("bytes"),
         "error must name the size cap: {stderr}"
     );
+}
+
+#[test]
+fn dotrune_local_deck_subpath_resolves_one_domain() {
+    let consumer = tempfile::tempdir().unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\n    path: runes/science\nartifacts:\n  deck:\n    skills: [OnlyScience]\n",
+            support::deck_fixture().display()
+        ),
+    );
+
+    install(consumer.path()).success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+    assert!(!consumer.path().join(".claude/skills/OnlyWriting").exists());
 }

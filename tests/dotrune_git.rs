@@ -12,6 +12,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command as StdCommand;
 
+mod support;
+
 fn rune() -> Command {
     Command::cargo_bin("rune").unwrap()
 }
@@ -91,6 +93,56 @@ fn make_fixture_repo(bare_path: &Path, scratch: &Path) -> String {
     String::from_utf8(sha.stdout).unwrap().trim().to_string()
 }
 
+fn make_deck_fixture_repo(bare_path: &Path, scratch: &Path) -> String {
+    git(&["init", "--bare", bare_path.to_str().unwrap()], scratch);
+    git(
+        &["init", "--initial-branch=main", scratch.to_str().unwrap()],
+        scratch,
+    );
+    support::copy_deck_fixture(scratch);
+    git(&["add", "."], scratch);
+    git(&["commit", "-m", "fixture deck commit"], scratch);
+    git(
+        &[
+            "remote",
+            "add",
+            "origin",
+            &format!("file://{}", bare_path.display()),
+        ],
+        scratch,
+    );
+    git(&["push", "origin", "main"], scratch);
+    let sha = git(&["rev-parse", "HEAD"], scratch);
+    String::from_utf8(sha.stdout).unwrap().trim().to_string()
+}
+
+fn install_deck_source(
+    consumer: &Path,
+    cache: &Path,
+    bare_path: &Path,
+    sha: &str,
+    source_path: Option<&str>,
+    skills: &str,
+) -> assert_cmd::assert::Assert {
+    let path_line = source_path
+        .map(|path| format!("    path: {path}\n"))
+        .unwrap_or_default();
+    fs::write(
+        consumer.join(".rune"),
+        format!(
+            "version: 1\nsources:\n  deck:\n    git: file://{}\n    ref: {sha}\n{path_line}artifacts:\n  deck:\n    skills: [{skills}]\n",
+            bare_path.display()
+        ),
+    )
+    .unwrap();
+
+    rune()
+        .args(["install", "--source", consumer.to_str().unwrap()])
+        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
+        .env("RUNE_GIT_CACHE_DIR", cache)
+        .assert()
+}
+
 #[test]
 fn dotrune_git_source_clones_and_deploys_pinned_sha() {
     let bare = tempfile::tempdir().unwrap();
@@ -132,6 +184,64 @@ fn dotrune_git_source_clones_and_deploys_pinned_sha() {
             .is_file(),
         "consumer/.claude must receive GitSkill from the git source"
     );
+}
+
+#[test]
+fn dotrune_git_deck_subpath_resolves_one_domain() {
+    let bare = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let bare_path = bare.path().join("deck.git");
+    let sha = make_deck_fixture_repo(&bare_path, scratch.path());
+
+    install_deck_source(
+        consumer.path(),
+        cache.path(),
+        &bare_path,
+        &sha,
+        Some("runes/science"),
+        "OnlyScience",
+    )
+    .success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/OnlyScience/SKILL.md")
+            .is_file()
+    );
+    assert!(!consumer.path().join(".claude/skills/OnlyWriting").exists());
+}
+
+#[test]
+fn dotrune_git_deck_without_subpath_exposes_all_domains() {
+    let bare = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let bare_path = bare.path().join("deck.git");
+    let sha = make_deck_fixture_repo(&bare_path, scratch.path());
+
+    install_deck_source(
+        consumer.path(),
+        cache.path(),
+        &bare_path,
+        &sha,
+        None,
+        "OnlyScience, OnlyWriting",
+    )
+    .success();
+
+    for name in ["OnlyScience", "OnlyWriting"] {
+        assert!(
+            consumer
+                .path()
+                .join(format!(".claude/skills/{name}/SKILL.md"))
+                .is_file(),
+            "{name} must resolve from the deck root"
+        );
+    }
 }
 
 #[test]
