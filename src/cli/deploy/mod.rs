@@ -47,6 +47,12 @@ pub fn execute(
     } else {
         Some(module_source_uri)
     };
+    let is_consumer = crate::cli::dotrune::exists(module_root);
+    let module_domain = module_root
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
     // Consumer mode (.rune present): the consumer dir IS the target the user wants
     // provider trees written into, so an omitted --target defaults to --source.
@@ -82,7 +88,7 @@ pub fn execute(
             &mut result,
             provider_name,
             force,
-            if crate::cli::dotrune::exists(module_root) {
+            if is_consumer {
                 commands::provider::ContentKind::DECK_ALL
             } else {
                 commands::provider::ContentKind::ALL
@@ -101,8 +107,12 @@ pub fn execute(
                         .iter()
                         .any(|prefix| key.starts_with(prefix))
                 })
-                .filter(|(_, entry)| {
-                    is_owned_by_module(entry, &target_base, module_name.as_deref())
+                .filter(|(key, entry)| {
+                    if key.starts_with("hooks/") && !is_consumer {
+                        key.starts_with(&format!("hooks/{module_domain}/"))
+                    } else {
+                        is_owned_by_module(entry, &target_base, module_name.as_deref())
+                    }
                 })
                 .map(|(key, _)| key.clone())
                 .collect();

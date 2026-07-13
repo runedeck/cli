@@ -207,6 +207,38 @@ pub fn print_source_summary(
     i32::from(reports.iter().any(|report| !report.is_clean()))
 }
 
+/// Verify every domain in a deck and emit one combined report. Subjects are
+/// domain-qualified so sorting remains stable even when two modules use the
+/// same relative artifact path.
+pub fn print_deck_source_summary(
+    deck: &commands::deck::Deck,
+    source_filter: Option<&str>,
+    json_output: bool,
+) -> i32 {
+    let mut reports = Vec::new();
+    for domain in &deck.domains {
+        if !json_output {
+            println!("== {} ==", domain.name);
+        }
+        let mut domain_reports = Vec::new();
+        collect_source_sidecars(&domain.root, &domain.root, &mut domain_reports);
+        for report in &mut domain_reports {
+            report.subject = format!("{}/{}", domain.name, report.subject);
+        }
+        reports.append(&mut domain_reports);
+    }
+    reports.sort_by(|left, right| left.subject.cmp(&right.subject));
+    if let Some(filter) = source_filter {
+        reports.retain(|report| report.source.contains(filter) || report.subject.contains(filter));
+    }
+    if json_output {
+        print_source_json(&reports);
+    } else {
+        print_source_console(&deck.root, &reports);
+    }
+    i32::from(reports.iter().any(|report| !report.is_clean()))
+}
+
 /// Verify a single source artifact by resolving its `.provenance/<stem>.yaml`
 /// sidecar. Returns a nonzero exit code when stale, dangling, or unparseable.
 pub fn print_source_file(module_root: &Path, file_path: &Path, json_output: bool) -> i32 {

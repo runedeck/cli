@@ -22,7 +22,7 @@ pub fn build_statement(
         env!("CARGO_PKG_REPOSITORY"),
         &format!("{}/assemble/v1", env!("CARGO_PKG_REPOSITORY")),
         env!("CARGO_PKG_VERSION"),
-        source_uri,
+        source.source_uri.as_deref().unwrap_or(source_uri),
     )
 }
 

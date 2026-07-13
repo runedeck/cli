@@ -140,7 +140,12 @@ fn check_shellcheck(module_root: &Path, result: &mut ActionResult) {
     let mut arguments = vec!["-S", "warning"];
     let paths: Vec<String> = shell_files
         .iter()
-        .map(|path| path.to_string_lossy().to_string())
+        .map(|path| {
+            path.strip_prefix(module_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
     for path in &paths {
         arguments.push(path);

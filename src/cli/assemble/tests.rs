@@ -143,6 +143,7 @@ fn assemble_source_maps_agent_model_and_effort_tiers() {
         targets: None,
         artifact_id: None,
         providers: None,
+        source_uri: None,
         content: "---\nname: TestAgent\ndescription: test\nmodel: strong\n---\n\nBody.\n"
             .to_string(),
     };
@@ -201,6 +202,7 @@ fn assemble_source_maps_all_codex_tiers() {
             targets: None,
             artifact_id: None,
             providers: None,
+            source_uri: None,
             content: format!(
                 "---\nname: TestAgent\ndescription: test\nmodel: {source_model}\n---\n\nBody.\n"
             ),
@@ -256,6 +258,7 @@ fn assemble_source_keeps_explicit_effort_over_tier_effort() {
         targets: None,
         artifact_id: None,
         providers: None,
+        source_uri: None,
         content:
             "---\nname: TestAgent\ndescription: test\nmodel: strong\neffort: high\n---\n\nBody.\n"
                 .to_string(),

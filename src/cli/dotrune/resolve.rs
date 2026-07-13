@@ -64,6 +64,7 @@ pub fn resolve_sources(
                     for mut file in sources::collect_deck(&domain.root, valid_qualifiers)? {
                         file.artifact_id = Some(canonical_artifact_id(&domain.name, &file)?);
                         file.providers.clone_from(&providers);
+                        file.source_uri = Some(domain.manifest.source_uri().to_string());
                         files.push(file);
                     }
                 }

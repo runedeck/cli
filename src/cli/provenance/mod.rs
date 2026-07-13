@@ -7,6 +7,7 @@ use std::path::Path;
 
 mod scan;
 
+#[allow(clippy::too_many_lines)]
 pub fn execute(
     path: &str,
     source_filter: Option<&str>,
@@ -14,6 +15,16 @@ pub fn execute(
     json_output: bool,
 ) -> Result<i32, Error> {
     let target = Path::new(path);
+
+    if commands::deck::is_deck(target) {
+        let deck = commands::deck::load(target)
+            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+        return Ok(scan::print_deck_source_summary(
+            &deck,
+            source_filter,
+            json_output,
+        ));
+    }
 
     // A repository with a `module.yaml` carries source-side `.provenance/`
     // sidecars (adopt/v1, init/v1) that name repo-relative subjects; a

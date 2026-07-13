@@ -55,6 +55,24 @@ pub fn execute(
     ignore_keys: &[String],
     json_output: bool,
 ) -> Result<i32, Error> {
+    if commands::deck::is_deck(Path::new(module_path)) {
+        let deck = commands::deck::load(Path::new(module_path))
+            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+        return match (upstream_path, target_path) {
+            (Some(upstream), None) => {
+                execute_deck_upstream(&deck, upstream, ignore_keys, json_output)
+            }
+            (None, Some(target)) => scope::execute_deck(&deck, target, ignore_keys, json_output),
+            (Some(_), Some(_)) => Err(Error::new(
+                ErrorKind::Config,
+                "--upstream and --target are mutually exclusive".to_string(),
+            )),
+            (None, None) => Err(Error::new(
+                ErrorKind::Config,
+                "provide --upstream <DIR> or --target <DIR>".to_string(),
+            )),
+        };
+    }
     match (upstream_path, target_path) {
         (Some(upstream), None) => {
             execute_upstream(module_path, upstream, ignore_keys, json_output)
@@ -71,12 +89,87 @@ pub fn execute(
     }
 }
 
+fn execute_deck_upstream(
+    deck: &commands::deck::Deck,
+    upstream_path: &str,
+    ignore_keys: &[String],
+    json_output: bool,
+) -> Result<i32, Error> {
+    let upstream = commands::deck::load(Path::new(upstream_path))
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let upstream_domains = upstream
+        .domains
+        .iter()
+        .map(|domain| (domain.name.as_str(), domain.root.as_path()))
+        .collect::<BTreeMap<_, _>>();
+    let mut failed = false;
+    let mut aggregate = DriftResult::default();
+    for domain in &deck.domains {
+        let Some(upstream_root) = upstream_domains.get(domain.name.as_str()) else {
+            aggregate.errors.push(format!(
+                "{}: upstream deck has no matching domain",
+                domain.name
+            ));
+            failed = true;
+            continue;
+        };
+        match build_upstream_result(
+            &domain.root.to_string_lossy(),
+            &upstream_root.to_string_lossy(),
+            ignore_keys,
+            ContentKind::DECK_ALL,
+        ) {
+            Ok(mut result) => {
+                for entry in &mut result.entries {
+                    entry.category = format!("{}/{}", domain.name, entry.category);
+                }
+                failed |= has_drift(&result);
+                aggregate.entries.append(&mut result.entries);
+                aggregate.errors.append(&mut result.errors);
+            }
+            Err(error) => {
+                aggregate.errors.push(format!("{}: {error}", domain.name));
+                failed = true;
+            }
+        }
+    }
+    if json_output {
+        match serde_json::to_string_pretty(&aggregate) {
+            Ok(json) => println!("{json}"),
+            Err(error) => eprintln!("failed to serialize drift result: {error}"),
+        }
+    } else {
+        print_drift_result(&aggregate);
+    }
+    Ok(i32::from(failed))
+}
+
 fn execute_upstream(
     module_path: &str,
     upstream_path: &str,
     ignore_keys: &[String],
     json_output: bool,
 ) -> Result<i32, Error> {
+    let result = build_upstream_result(module_path, upstream_path, ignore_keys, ContentKind::ALL)?;
+
+    if json_output {
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => println!("{json}"),
+            Err(error) => eprintln!("failed to serialize drift result: {error}"),
+        }
+    } else {
+        print_drift_result(&result);
+    }
+
+    Ok(i32::from(has_drift(&result)))
+}
+
+fn build_upstream_result(
+    module_path: &str,
+    upstream_path: &str,
+    ignore_keys: &[String],
+    kinds: &[ContentKind],
+) -> Result<DriftResult, Error> {
     let module_root = Path::new(module_path);
     let upstream_root = Path::new(upstream_path);
 
@@ -97,22 +190,17 @@ fn execute_upstream(
 
     let mut result = DriftResult::default();
 
-    for kind in ContentKind::ALL {
+    for kind in kinds {
         compare_content_directory(&mut result, module_root, upstream_root, *kind, &ignored);
     }
 
     compare_decisions_directory(&mut result, module_root, upstream_root, &ignored);
 
-    if json_output {
-        match serde_json::to_string_pretty(&result) {
-            Ok(json) => println!("{json}"),
-            Err(error) => eprintln!("failed to serialize drift result: {error}"),
-        }
-    } else {
-        print_drift_result(&result);
-    }
+    Ok(result)
+}
 
-    let has_drift = result.entries.iter().any(|entry| {
+fn has_drift(result: &DriftResult) -> bool {
+    result.entries.iter().any(|entry| {
         matches!(
             entry.status,
             DriftStatus::FrontmatterOnly
@@ -120,9 +208,7 @@ fn execute_upstream(
                 | DriftStatus::Both
                 | DriftStatus::UpstreamOnly
         )
-    });
-
-    Ok(i32::from(has_drift))
+    })
 }
 
 // --- Comparison ---
@@ -177,8 +263,16 @@ fn compare_directory_pair(
     relative_root: &str,
     ignored: &HashSet<&str>,
 ) {
-    let module_files = collect_markdown_files(module_directory);
-    let upstream_files = collect_markdown_files(upstream_directory);
+    let module_files = if category == "hooks" {
+        collect_text_files(module_directory)
+    } else {
+        collect_markdown_files(module_directory)
+    };
+    let upstream_files = if category == "hooks" {
+        collect_text_files(upstream_directory)
+    } else {
+        collect_markdown_files(upstream_directory)
+    };
 
     let module_provenance = collect_provenance(module_directory);
     let upstream_provenance = collect_provenance(upstream_directory);
@@ -502,6 +596,43 @@ fn collect_markdown_files(directory: &Path) -> BTreeMap<String, String> {
 
     collect_markdown_recursive(directory, directory, &mut files);
     files
+}
+
+fn collect_text_files(directory: &Path) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
+    if directory.is_dir() {
+        collect_text_recursive(directory, directory, &mut files);
+    }
+    files
+}
+
+fn collect_text_recursive(
+    base_directory: &Path,
+    current_directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) {
+    let Ok(entries) = fs::read_dir(current_directory) else {
+        return;
+    };
+    let mut entries = entries.flatten().collect::<Vec<_>>();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            collect_text_recursive(base_directory, &path, files);
+        } else if let Ok(content) = fs::read_to_string(&path) {
+            let relative = path
+                .strip_prefix(base_directory)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            files.insert(relative, content);
+        }
+    }
 }
 
 fn collect_markdown_recursive(

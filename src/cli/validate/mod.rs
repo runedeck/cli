@@ -27,6 +27,32 @@ const OPTIONAL_FILES: &[&str] = &[
 ///   - skills/ — recurses into subdirectories, checks `.mdschema`
 pub fn execute(path: &str) -> Result<ActionResult, Error> {
     let module_root = Path::new(path);
+    if commands::deck::is_deck(module_root) {
+        let deck = commands::deck::load(module_root)
+            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+        let mut aggregate = ActionResult::new();
+        for domain in deck.domains {
+            println!("== {} ==", domain.name);
+            let mut domain_result = match execute_module(&domain.root) {
+                Ok(result) => result,
+                Err(error) => {
+                    aggregate.errors.push(format!("{}: {error}", domain.name));
+                    continue;
+                }
+            };
+            domain_result.errors = domain_result
+                .errors
+                .into_iter()
+                .map(|error| format!("{}: {error}", domain.name))
+                .collect();
+            append_result(&mut aggregate, domain_result);
+        }
+        return Ok(aggregate);
+    }
+    execute_module(module_root)
+}
+
+fn execute_module(module_root: &Path) -> Result<ActionResult, Error> {
     let mut result = ActionResult::new();
 
     check_module_structure(module_root, &mut result);
@@ -79,6 +105,14 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
     tools::run_external_checks(module_root, &mut result);
 
     Ok(result)
+}
+
+fn append_result(aggregate: &mut ActionResult, mut domain: ActionResult) {
+    aggregate.installed.append(&mut domain.installed);
+    aggregate.skipped.append(&mut domain.skipped);
+    aggregate.pruned.append(&mut domain.pruned);
+    aggregate.warnings.append(&mut domain.warnings);
+    aggregate.errors.append(&mut domain.errors);
 }
 
 fn check_module_structure(module_root: &Path, result: &mut ActionResult) {

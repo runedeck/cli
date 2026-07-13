@@ -92,6 +92,99 @@ pub fn execute(
     Ok(i32::from(has_drift))
 }
 
+/// Verify only the subset recorded in the deployment manifests. A cast does
+/// not materialize unselected deck artifacts, so the target manifest is the
+/// authoritative comparison scope.
+pub fn execute_deck(
+    deck: &commands::deck::Deck,
+    target_base: &str,
+    _ignore: &[String],
+    json_output: bool,
+) -> Result<i32, Error> {
+    let merged_config = config::load_merged_config(&deck.root)?;
+    let providers = config::load_providers(&merged_config)?;
+    let base = Path::new(target_base);
+    let mut result = DriftResult::default();
+    let mut providers = providers.iter().collect::<Vec<_>>();
+    providers.sort_by_key(|(name, _)| *name);
+
+    for domain in &deck.domains {
+        println!("== {} ==", domain.name);
+        let source_uri = domain.manifest.source_uri();
+        for (provider_name, provider_config) in &providers {
+            let deployed_base = base.join(&provider_config.target);
+            for (key, entry) in load_deployed_manifest(&deployed_base) {
+                if !is_content_key(&key)
+                    || !entry_belongs_to_domain(&key, &entry, &deployed_base, domain, source_uri)
+                {
+                    continue;
+                }
+                let status = match fs::read_to_string(deployed_base.join(&key)) {
+                    Ok(content)
+                        if commands::manifest::content_sha256(&content) == entry.fingerprint =>
+                    {
+                        DriftStatus::Identical
+                    }
+                    Ok(_) => DriftStatus::BodyOnly,
+                    Err(_) => DriftStatus::UpstreamOnly,
+                };
+                result.entries.push(only_entry(
+                    &key,
+                    status,
+                    &format!("{}/{}", domain.name, provider_name),
+                ));
+            }
+        }
+    }
+
+    if json_output {
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => println!("{json}"),
+            Err(error) => eprintln!("failed to serialize drift result: {error}"),
+        }
+    } else {
+        print_drift_result(&result);
+    }
+    let has_drift = result.entries.iter().any(|entry| {
+        matches!(
+            entry.status,
+            DriftStatus::FrontmatterOnly
+                | DriftStatus::BodyOnly
+                | DriftStatus::Both
+                | DriftStatus::UpstreamOnly
+        )
+    });
+    Ok(i32::from(has_drift))
+}
+
+fn entry_belongs_to_domain(
+    key: &str,
+    entry: &commands::manifest::ManifestEntry,
+    deployed_base: &Path,
+    domain: &commands::deck::Domain,
+    source_uri: &str,
+) -> bool {
+    if key.starts_with(&format!("hooks/{}/", domain.name)) {
+        return true;
+    }
+    if entry.provenance.is_some() && is_owned_by_module(entry, deployed_base, Some(source_uri)) {
+        return true;
+    }
+    let Some(provenance) = &entry.provenance else {
+        return false;
+    };
+    let Ok(sidecar) = commands::manifest::provenance::read(&deployed_base.join(provenance)) else {
+        return false;
+    };
+    sidecar
+        .provenance
+        .predicate
+        .build_definition
+        .resolved_dependencies
+        .iter()
+        .any(|dependency| domain.root.join(&dependency.uri).is_file())
+}
+
 fn compare_provider(
     result: &mut DriftResult,
     build_dir: &Path,

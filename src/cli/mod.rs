@@ -490,10 +490,15 @@ pub fn run() -> i32 {
                 args.json,
             ));
         }
-        Command::Clean { source, target } => (
-            deploy::execute(&source, target.as_deref(), &[], false, true, false, false),
-            "cleaned",
-        ),
+        Command::Clean { source, target } => {
+            if commands::deck::is_deck(std::path::Path::new(&source)) {
+                return report(clean_deck(&source, target.as_deref()), args.json, "cleaned");
+            }
+            (
+                deploy::execute(&source, target.as_deref(), &[], false, true, false, false),
+                "cleaned",
+            )
+        }
         Command::Config => return exit_code(ontology::show(args.json)),
         Command::Adopt {
             url,
@@ -527,6 +532,36 @@ pub fn run() -> i32 {
     };
 
     report(result, args.json, verb)
+}
+
+fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error> {
+    let deck = commands::deck::load(std::path::Path::new(source))
+        .map_err(|message| Error::new(commands::error::ErrorKind::Config, message))?;
+    let mut aggregate = ActionResult::new();
+    for domain in deck.domains {
+        println!("== {} ==", domain.name);
+        let mut result = match deploy::execute(
+            &domain.root.to_string_lossy(),
+            target,
+            &[],
+            false,
+            true,
+            false,
+            false,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                aggregate.errors.push(format!("{}: {error}", domain.name));
+                continue;
+            }
+        };
+        aggregate.installed.append(&mut result.installed);
+        aggregate.skipped.append(&mut result.skipped);
+        aggregate.pruned.append(&mut result.pruned);
+        aggregate.warnings.append(&mut result.warnings);
+        aggregate.errors.append(&mut result.errors);
+    }
+    Ok(aggregate)
 }
 
 #[cfg(feature = "tui")]

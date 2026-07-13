@@ -40,6 +40,8 @@ pub struct SourceFile {
     pub artifact_id: Option<String>,
     /// Effective provider list inherited from the domain or deck.
     pub providers: Option<Vec<String>>,
+    /// Domain identity used in provenance for deck artifacts.
+    pub source_uri: Option<String>,
 }
 
 /// Walk agents/, skills/, rules/ and collect all .md source files.
@@ -199,6 +201,7 @@ fn walk_content_dir(
             targets,
             artifact_id: None,
             providers: None,
+            source_uri: None,
         });
     }
 
@@ -259,6 +262,7 @@ fn walk_hook_dir(
             targets: None,
             artifact_id: None,
             providers: None,
+            source_uri: None,
         });
     }
     Ok(())
@@ -376,6 +380,7 @@ fn walk_qualifier_dir(
             targets,
             artifact_id: None,
             providers: None,
+            source_uri: None,
         });
     }
 
@@ -476,6 +481,7 @@ fn collect_skill_files(
                 targets,
                 artifact_id: None,
                 providers: None,
+                source_uri: None,
             },
         );
     }
