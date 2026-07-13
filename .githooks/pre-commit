@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# forge module pre-commit hook
+# Canonical source: https://github.com/N4M3Z/forge-cli/blob/main/templates/git/pre-commit
+
+if command -v prek >/dev/null 2>&1; then
+    prek run --all-files
+elif command -v forge >/dev/null 2>&1; then
+    forge validate
+else
+    echo ""
+    echo "  ⚠  Neither prek nor forge found — using validate.sh fallback"
+    echo "     Install: cargo install --locked forge-cli   or   cargo binstall prek"
+    echo ""
+    bash scripts/validate.sh .
+fi

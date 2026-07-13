@@ -1,0 +1,4 @@
+name: ${MODULE_NAME}
+version: ${VERSION}
+description: ""
+events: []

@@ -1,0 +1,36 @@
+name: Quality
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    quality:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+
+            - uses: dtolnay/rust-toolchain@stable
+              if: hashFiles('Cargo.toml') != ''
+
+            - uses: actions/setup-node@v4
+              if: hashFiles('**/*.ts') != ''
+              with:
+                  node-version: "22"
+
+            - name: Setup forge
+              uses: N4M3Z/forge-cli/.github/actions/setup-forge@main
+
+            - name: Install tools
+              run: |
+                  pip install ruff semgrep
+                  sudo apt-get install -y gitleaks
+
+            - name: Validate
+              uses: j178/prek-action@v2

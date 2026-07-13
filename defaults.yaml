@@ -1,0 +1,73 @@
+# forge-cli default configuration.
+# Override: create config.yaml (gitignored) with only the fields you want to change.
+
+validate:
+    exclude:
+        - "templates/*"
+
+providers:
+    claude:
+        target: ".claude"
+        aliases:
+            - claudecode
+        keep_fields:
+            agents: [name, description, model, allowedTools]
+            skills: [name, description, version]
+            rules: []
+        models:
+            strong: [opus]
+            fast: [sonnet]
+            light: [haiku]
+
+    gemini:
+        target: ".gemini"
+        aliases:
+            - geminicli
+        assembly:
+            - kebab-case-agents
+            - remap-tools
+            - strip-links
+        keep_fields:
+            agents: [name, description]
+            skills: [name, description, version]
+            rules: []
+        models:
+            strong: [gemini-2.5-pro]
+            fast: [gemini-2.5-flash]
+            light: [gemini-2.0-flash]
+
+    codex:
+        target: ".codex"
+        aliases:
+            - codexcli
+        assembly:
+            - agents-to-toml
+            - strip-links
+        deploy:
+            - rulesync
+        keep_fields:
+            agents: [name, description, model, effort]
+            skills: [name, description, version]
+            rules: []
+        models:
+            strong: [gpt-5.5]
+            fast: [gpt-5.4]
+            light: [gpt-5.3-codex]
+        effort:
+            strong: medium
+            fast: low
+            light: low
+
+    opencode:
+        target: ".opencode"
+        assembly:
+            - kebab-case-agents
+            - strip-links
+        keep_fields:
+            agents: [name, description]
+            skills: [name, description, version]
+            rules: []
+        models:
+            strong: [claude-opus-4-6]
+            fast: [claude-sonnet-4-6]
+            light: [claude-sonnet-4-6]
