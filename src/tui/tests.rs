@@ -305,6 +305,30 @@ fn deck_entries_use_three_miller_columns_and_artifact_table() {
     assert!(output.contains("DECK"));
     assert!(output.contains("laptop"));
     assert!(output.contains("SharedName"));
+    assert!(output.contains("j/k"));
+    assert!(!output.contains("warning:"));
+}
+
+#[test]
+fn code_tab_reads_rule_and_agent_bytes_from_the_real_deck() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
+    for (section, relative) in [
+        (3, "runes/science/agents/SharedName.md"),
+        (4, "runes/science/rules/Collision.md"),
+    ] {
+        let expected = std::fs::read_to_string(root.join(relative)).unwrap();
+        let mut app = deck_fixture_app();
+        app.set_section_by_number(section);
+        app.drill_or_expand();
+        app.drill_or_expand();
+        app.set_detail_tab(DetailTab::Code);
+
+        let snapshot = rendered(&mut app);
+
+        assert_eq!(app.code_source_for_test(), expected);
+        assert!(!snapshot.contains("source unavailable"));
+        assert!(snapshot.contains("Descriptive fixture"));
+    }
 }
 
 #[test]
@@ -1306,6 +1330,57 @@ fn count_motion_numbered_g_and_pending_commands_match_vim() {
     }
     assert_eq!(app.detail_cursor_for_test(), 25);
     assert!(app.detail_scroll_for_test() > 0);
+}
+
+#[test]
+fn pending_count_has_a_hint_and_escape_cancels_it() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(
+        root.path().join(source_path),
+        (1..=30)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+
+    for character in ['1', '2'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    let count_footer = rendered(&mut app);
+    assert!(count_footer.contains("count: 12"));
+    assert!(count_footer.contains("Esc to cancel"));
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.detail_cursor_for_test(), 1);
+}
+
+#[test]
+fn code_footer_names_edit_override_and_comment_actions() {
+    let mut app = fixture_app();
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+
+    let snapshot = rendered(&mut app);
+
+    assert!(snapshot.contains("c comment"));
+    assert!(snapshot.contains("e edit"));
+    assert!(snapshot.contains("E $EDITOR"));
+    assert!(snapshot.contains("o override"));
 }
 
 #[test]

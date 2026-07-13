@@ -155,6 +155,11 @@ pub(super) fn build_deployed_artifact(
     providers.insert(provider.0.to_string(), provider.1);
     let source_content = read_source_content(source_uri, source_path, local_repos);
     let deployed_content = read_artifact_content(provider_path, relative_key);
+    let raw_source = if source_content.raw.is_empty() {
+        fs::read_to_string(provider_path.join(relative_key)).unwrap_or_default()
+    } else {
+        source_content.raw.clone()
+    };
     let description = if source_content.description.is_empty() {
         deployed_content.description
     } else {
@@ -181,7 +186,7 @@ pub(super) fn build_deployed_artifact(
         description,
         content_preview,
         content_body,
-        raw_source: source_content.raw,
+        raw_source,
         metadata: source_content.metadata,
         providers,
         git_log: git_log_for_artifact(source_uri, source_path, local_repos),
@@ -343,4 +348,37 @@ pub(super) fn is_stale(
         return false;
     };
     manifest::content_sha256(&current) != recorded_sha
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deployed_artifact_uses_deployed_bytes_when_source_repo_is_unavailable() {
+        let target = tempfile::tempdir().unwrap();
+        let rules = target.path().join("rules");
+        fs::create_dir(&rules).unwrap();
+        let raw = "---\ndescription: Raw deployed rule\n---\n\nRule body.\n";
+        fs::write(rules.join("Demo.md"), raw).unwrap();
+
+        let artifact = build_deployed_artifact(
+            target.path(),
+            "rules/Demo.md",
+            "rules",
+            "Demo".to_string(),
+            "https://example.invalid/missing",
+            Some("rules/Demo.md"),
+            (
+                "claude",
+                ProviderStatus {
+                    status: FileStatus::Unchanged,
+                    fingerprint: None,
+                },
+            ),
+            &HashMap::new(),
+        );
+
+        assert_eq!(artifact.raw_source, raw);
+    }
 }

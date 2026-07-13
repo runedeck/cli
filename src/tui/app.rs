@@ -509,6 +509,7 @@ struct CodeCache {
     path: String,
     origin: String,
     lines: Vec<Line<'static>>,
+    raw_source: String,
     source_lines: Vec<String>,
     sections: Vec<usize>,
 }
@@ -1258,7 +1259,7 @@ impl App {
                 PendingNavigation::PreviousSection => " [".to_string(),
             }
         } else if let Some(count) = self.pending_count {
-            format!(" {count}")
+            format!(" count: {count} — press j/k to repeat, Esc to cancel")
         } else if self.palette.is_open() || self.palette_error.is_some() {
             self.palette.display_text(self.palette_error.as_deref())
         } else if let Some(toast) = &self.toast {
@@ -1272,7 +1273,9 @@ impl App {
                 .code_cache
                 .as_ref()
                 .map_or("source unavailable", |cache| cache.origin.as_str());
-            format!("j/k line · [[/]] section · / search · n/N match · c comment · {origin}")
+            format!(
+                "j/k line · [[/]] section · / search · n/N match · c comment · e edit · E $EDITOR · o override · {origin}"
+            )
         } else {
             hint_row(self.focused)
         };
@@ -2294,6 +2297,7 @@ impl App {
             path: key,
             origin: source_path,
             lines,
+            raw_source: source,
             source_lines,
             sections,
         });
@@ -3051,6 +3055,11 @@ impl App {
             let digit = usize::from(digit as u8 - b'0');
             let count = self.pending_count.unwrap_or(0);
             self.pending_count = Some(count.saturating_mul(10).saturating_add(digit).min(999_999));
+            return true;
+        }
+
+        if self.pending_count.is_some() && key.code == KeyCode::Esc {
+            self.pending_count = None;
             return true;
         }
 
@@ -4847,6 +4856,15 @@ impl App {
     #[must_use]
     pub fn code_cache_build_count(&self) -> usize {
         self.code_cache_build_count
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn code_source_for_test(&self) -> String {
+        self.code_cache
+            .as_ref()
+            .map(|cache| cache.raw_source.clone())
+            .unwrap_or_default()
     }
 
     fn build_list_rows(&self) -> Vec<ListRow> {

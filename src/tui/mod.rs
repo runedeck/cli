@@ -93,6 +93,9 @@ pub fn run_snapshot(
     if let Some(detail_tab) = tab.and_then(detail_tab_from_name) {
         app.set_detail_tab(detail_tab);
     }
+    // Snapshot mode describes the steady-state interface. In the interactive
+    // TUI the next keypress clears the transient background-scan toast.
+    app.clear_toast();
     let backend = TestBackend::new(width, height);
     let mut terminal = match Terminal::new(backend) {
         Ok(terminal) => terminal,

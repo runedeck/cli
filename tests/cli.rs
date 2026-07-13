@@ -192,6 +192,61 @@ fn tui_snapshot_renders_deck_entry_columns() {
 
 #[cfg(feature = "tui")]
 #[test]
+fn tui_edit_snapshot_keeps_action_footer_visible() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    let home = tempfile::tempdir().unwrap();
+    rune()
+        .env("HOME", home.path())
+        .args([
+            "tui",
+            "--snapshot",
+            "--edit",
+            "--source",
+            &deck,
+            "--width",
+            "120",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Space toggle"))
+        .stdout(predicate::str::contains("n/p deck"))
+        .stdout(predicate::str::contains("I install"))
+        .stdout(predicate::str::contains("q quit"));
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_code_snapshot_renders_raw_agent_and_edit_footer() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--section",
+            "3",
+            "--drill",
+            "2",
+            "--tab",
+            "code",
+            "--width",
+            "160",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Descriptive fixture placeholder for an agent.",
+        ))
+        .stdout(predicate::str::contains("c comment"))
+        .stdout(predicate::str::contains("e edit"))
+        .stdout(predicate::str::contains("E $EDITOR"))
+        .stdout(predicate::str::contains("o override"))
+        .stdout(predicate::str::contains("source unavailable").not());
+}
+
+#[cfg(feature = "tui")]
+#[test]
 fn tui_snapshot_renders_deck_casts() {
     let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
     rune()

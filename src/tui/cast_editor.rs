@@ -350,13 +350,7 @@ impl CastEditor {
             false,
         ) {
             Ok(result) => {
-                self.status = format!(
-                    "Install complete: {} installed, {} unchanged/skipped, {} pruned, {} errors",
-                    result.installed.len(),
-                    result.skipped.len(),
-                    result.pruned.len(),
-                    result.errors.len()
-                );
+                self.status = install_result_status(&result);
             }
             Err(error) => self.status = format!("Install failed: {error}"),
         }
@@ -413,11 +407,11 @@ impl CastEditor {
             .collect::<Vec<_>>();
         frame.render_widget(List::new(visible), inner);
 
+        let hints = "Space toggle · j/k move · n/p deck · I install · q quit";
         let footer = if self.status.is_empty() {
-            " Space toggle · j/k line · n/p deck · Ctrl-d/u half-page · I/Enter [Install] · Esc close"
-                .to_string()
+            format!(" {hints}")
         } else {
-            format!(" {}", self.status)
+            format!(" {hints} │ {}", self.status)
         };
         frame.render_widget(
             Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
@@ -465,6 +459,24 @@ impl CastEditor {
     }
 }
 
+fn install_result_status(result: &commands::result::ActionResult) -> String {
+    let summary = format!(
+        "{} installed, {} unchanged/skipped, {} pruned, {} errors",
+        result.installed.len(),
+        result.skipped.len(),
+        result.pruned.len(),
+        result.errors.len()
+    );
+    if result.warnings.is_empty() {
+        format!("Install complete: {summary}")
+    } else {
+        format!(
+            "Install warning: {} · {summary}",
+            result.warnings.join("; ")
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorAction {
     Stay,
@@ -476,7 +488,7 @@ fn manifest_root() -> Option<PathBuf> {
     if cwd.join(".rune").is_file() {
         return Some(cwd);
     }
-    crate::cli::quest::bound_quest().filter(|quest| quest.join(".rune").is_file())
+    crate::cli::quest::bound_quest_silent().filter(|quest| quest.join(".rune").is_file())
 }
 
 fn fallback_deck_source(source: &Path) -> Result<PathBuf, String> {
@@ -612,6 +624,48 @@ mod tests {
         assert!(output.contains("[ ] Researcher (agent)"));
         assert!(output.contains("[ ] Observe (skill)"));
         assert!(output.contains("read-only"));
+        assert!(output.contains("Space toggle"));
+        assert!(output.contains("I install"));
+        assert!(output.contains("q quit"));
+    }
+
+    #[test]
+    fn install_warning_is_surfaced_in_the_editor_status() {
+        let mut result = commands::result::ActionResult::new();
+        result
+            .warnings
+            .push("cannot determine git freshness for fixture".to_string());
+
+        let status = install_result_status(&result);
+
+        assert!(status.contains("Install warning"));
+        assert!(status.contains("cannot determine git freshness"));
+    }
+
+    #[test]
+    fn install_warning_never_overwrites_rune_list_rows() {
+        let (_root, deck, _quest) = fixture();
+        let mut editor = CastEditor::load_with_manifest_root(&deck, None).unwrap();
+        let mut result = commands::result::ActionResult::new();
+        result
+            .warnings
+            .push("cannot determine git freshness for fixture".to_string());
+        editor.status = install_result_status(&result);
+        let backend = ratatui::backend::TestBackend::new(120, 14);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| editor.render(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let list_rows = (1..13)
+            .flat_map(|y| (0..120).map(move |x| buffer[(x, y)].symbol()))
+            .collect::<String>();
+        let footer = (0..120)
+            .map(|x| buffer[(x, 13)].symbol())
+            .collect::<String>();
+
+        assert!(!list_rows.contains("warning"));
+        assert!(footer.contains("Install warning"));
     }
 
     #[test]
