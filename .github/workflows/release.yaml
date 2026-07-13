@@ -14,11 +14,11 @@ jobs:
     test:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
               with:
                   ref: ${{ inputs.tag }}
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   components: rustfmt, clippy
 
@@ -45,11 +45,11 @@ jobs:
 
         runs-on: ${{ matrix.runner }}
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
               with:
                   ref: ${{ inputs.tag }}
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   targets: ${{ matrix.target }}
 
@@ -76,7 +76,7 @@ jobs:
               shell: pwsh
 
             - name: Upload artifact
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ${{ matrix.archive }}
                   path: ${{ matrix.archive }}
@@ -85,12 +85,12 @@ jobs:
         needs: build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
               with:
                   ref: ${{ inputs.tag }}
 
             - name: Download artifacts
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
 
             - name: Create release
               env:

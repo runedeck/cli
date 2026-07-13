@@ -9,6 +9,6 @@ permissions:
 
 jobs:
     release:
-        uses: runedeck/rune/.github/workflows/module-release.yaml@main
+        uses: runedeck/rune/.github/workflows/module-release.yaml@${RUNE_REF}
         permissions:
             contents: write

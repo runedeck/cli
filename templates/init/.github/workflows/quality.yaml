@@ -10,22 +10,22 @@ jobs:
     quality:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-            - uses: actions/setup-python@v6
+            - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
               with:
                   python-version: "3.12"
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               if: hashFiles('Cargo.toml') != ''
 
-            - uses: actions/setup-node@v4
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
               if: hashFiles('**/*.ts') != ''
               with:
                   node-version: "22"
 
             - name: Setup rune
-              uses: runedeck/rune/.github/actions/setup-rune@main
+              uses: runedeck/rune/.github/actions/setup-rune@${RUNE_REF}
 
             - name: Install tools
               run: |
@@ -33,7 +33,7 @@ jobs:
                   sudo apt-get install -y gitleaks
 
             - name: Validate (commit stage)
-              uses: j178/prek-action@v2
+              uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2
 
             - name: Validate (pre-push stage)
               run: prek run --all-files --stage pre-push

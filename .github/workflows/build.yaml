@@ -10,9 +10,9 @@ jobs:
     build:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   components: rustfmt, clippy
 
@@ -20,7 +20,7 @@ jobs:
               run: cargo build --release
 
             - name: Upload binary
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: rune
                   path: target/release/rune
@@ -28,9 +28,9 @@ jobs:
     dashboard:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   components: clippy
 
@@ -47,14 +47,14 @@ jobs:
         needs: build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   components: rustfmt, clippy
 
             - name: Download rune
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
               with:
                   name: rune
                   path: /usr/local/bin
@@ -66,7 +66,7 @@ jobs:
                   pip install semgrep
 
             - name: Validate
-              uses: j178/prek-action@v2
+              uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2
 
     # End-to-end guard: scaffold a fresh module via `rune init` and run
     # `make validate` against it. Catches any change that produces a broken
@@ -75,16 +75,16 @@ jobs:
         needs: build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
             - name: Download rune
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
               with:
                   name: rune
                   path: /usr/local/bin
 
             - name: Install prek
-              uses: taiki-e/install-action@v2
+              uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
               with:
                   tool: prek
 
