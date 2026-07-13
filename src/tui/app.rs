@@ -15,6 +15,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use serde::{Deserialize, Serialize};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use commands::{
@@ -31,6 +32,7 @@ use commands::{
 
 use crate::cli::{config, watchlist};
 
+use super::cast_editor::{CastEditor, EditorAction};
 use super::components::{
     palette::{Palette, PaletteCommand},
     preview::{ArtifactPreview, wrapped_rows},
@@ -85,7 +87,7 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("Tab", "next detail tab"),
             ("p c d v f i", "detail tabs (outside Sections focus)"),
             ("!", "toggle problems-only"),
-            ("m", "comment line (from any detail tab)"),
+            ("c/m", "comment current line (Code/Diff)"),
             ("Y", "copy tuicr comments"),
             ("o/O", "open gitui / jjui on repository"),
             ("D", "deploy module to a target"),
@@ -474,10 +476,23 @@ struct DetailCache {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodeCache {
     path: String,
+    origin: String,
     lines: Vec<Line<'static>>,
+    sections: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize
+)]
+#[serde(rename_all = "lowercase")]
 pub enum CommentKind {
     Issue,
     Note,
@@ -505,11 +520,28 @@ impl CommentKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 struct LineComment {
     kind: CommentKind,
     text: String,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StoredComment {
+    module: String,
+    path: String,
+    line: usize,
+    kind: CommentKind,
+    text: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct CommentStore {
+    version: u32,
+    comments: Vec<StoredComment>,
+}
+
+type CommentMap = BTreeMap<(String, String, usize), LineComment>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommentPrompt {
@@ -538,7 +570,7 @@ pub struct App {
     row_build_count: usize,
     preview_cache: Option<DetailCache>,
     code_cache: Option<CodeCache>,
-    comments: BTreeMap<(String, String, usize), LineComment>,
+    comments: CommentMap,
     comment_prompt: Option<CommentPrompt>,
     #[cfg(test)]
     preview_cache_build_count: usize,
@@ -588,6 +620,8 @@ pub struct App {
     problems_only: bool,
     /// Confirmation-ready cast edit. Enter persists it; Esc discards it.
     pending_cast_edit: Option<services::CastEdit>,
+    /// Consumer `.rune` checkbox editor, rendered as a focused full-screen mode.
+    cast_editor: Option<CastEditor>,
     /// Request-driven, bounded deck history loader and its latest window.
     history_walker: Option<services::HistoryWalker>,
     history_update: services::HistoryUpdate,
@@ -630,6 +664,7 @@ impl App {
         view: DashboardView,
         file_sections: FileSections,
     ) -> Self {
+        let (comments, comment_warning) = load_comments(&root);
         let mut app = Self {
             root,
             providers,
@@ -647,7 +682,7 @@ impl App {
             row_build_count: 0,
             preview_cache: None,
             code_cache: None,
-            comments: BTreeMap::new(),
+            comments,
             comment_prompt: None,
             #[cfg(test)]
             preview_cache_build_count: 0,
@@ -660,7 +695,7 @@ impl App {
             search: builders::SearchFilters::empty(),
             run_state: RunState::Running,
             palette_error: None,
-            toast: None,
+            toast: comment_warning,
             preview: None,
             help_state: HelpState::Closed,
             palette: Palette::new(),
@@ -679,6 +714,7 @@ impl App {
             synthesized: None,
             search_typing: false,
             pending_cast_edit: None,
+            cast_editor: None,
             history_walker: None,
             history_update: services::HistoryUpdate::default(),
             history_received: false,
@@ -866,6 +902,10 @@ impl App {
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
         self.poll_history();
+        if let Some(editor) = self.cast_editor.as_mut() {
+            editor.render(frame, frame.area());
+            return;
+        }
         if self.preview.is_some() {
             let area = frame.area();
             let inner_width = area.width.saturating_sub(2).max(1);
@@ -1010,7 +1050,13 @@ impl App {
         } else if let Some(toast) = &self.toast {
             format!(" {toast}")
         } else if let Some((current, total)) = self.hunk_position() {
-            format!("hunk {current}/{total}  ·  ] next hunk  ·  [ previous hunk  ·  j/k scroll")
+            format!("hunk {current}/{total} · n/p hunk · j/k line · Ctrl-d/u half-page · c comment")
+        } else if self.focused == ColumnFocus::Detail && self.detail_tab == DetailTab::Code {
+            let origin = self
+                .code_cache
+                .as_ref()
+                .map_or("source unavailable", |cache| cache.origin.as_str());
+            format!("j/k line · n/p section · Ctrl-d/u half-page · c comment · {origin}")
         } else {
             hint_row(self.focused)
         };
@@ -1887,8 +1933,19 @@ impl App {
             if needs_build {
                 self.detail_scroll = 0;
                 self.detail_cursor = 0;
-                let lines = rich::highlight_code(&artifact.relative_path, &artifact.raw_source);
-                self.code_cache = Some(CodeCache { path: key, lines });
+                let (source_path, source) = artifact_source(module, artifact);
+                let sections = source
+                    .lines()
+                    .enumerate()
+                    .filter_map(|(index, line)| line.trim_start().starts_with('#').then_some(index))
+                    .collect();
+                let lines = rich::highlight_code(&source_path, &source);
+                self.code_cache = Some(CodeCache {
+                    path: key,
+                    origin: source_path,
+                    lines,
+                    sections,
+                });
                 #[cfg(test)]
                 {
                     self.code_cache_build_count += 1;
@@ -1970,7 +2027,13 @@ impl App {
             DetailTab::Preview => preview_lines_for_width(artifact, width),
             DetailTab::Code => (
                 expand_gutter_wrapped(
-                    rich::highlight_code(&artifact.relative_path, &artifact.raw_source),
+                    {
+                        let (path, source) = module.map_or_else(
+                            || (artifact.relative_path.clone(), artifact.raw_source.clone()),
+                            |module| artifact_source(module, artifact),
+                        );
+                        rich::highlight_code(&path, &source)
+                    },
                     CODE_GUTTER,
                     usize::from(width),
                 ),
@@ -2007,7 +2070,7 @@ impl App {
 
     fn code_window(&self, artifact: &ArtifactView, viewport: usize) -> Vec<Line<'static>> {
         let scroll = usize::from(self.detail_scroll);
-        let current_line = self.current_code_line(artifact);
+        let current_line = self.current_code_line();
         let module = &artifact.module;
         let path = &artifact.relative_path;
         self.code_cache.as_ref().map_or_else(Vec::new, |cache| {
@@ -2017,12 +2080,17 @@ impl App {
                 .enumerate()
                 .skip(scroll)
                 .take(viewport)
-                .map(|(index, cached_line)| {
+                .flat_map(|(index, cached_line)| {
                     let mut line = cached_line.clone();
                     let line_number = index + 1;
-                    let has_comment =
-                        self.comments
-                            .contains_key(&(module.clone(), path.clone(), line_number));
+                    let key = (module.clone(), path.clone(), line_number);
+                    let comment = self.comments.get(&key);
+                    let prompt = self.comment_prompt.as_ref().filter(|prompt| {
+                        prompt.module == *module
+                            && prompt.path == *path
+                            && prompt.line_number == line_number
+                    });
+                    let has_comment = comment.is_some();
                     if let Some(marker) = line.spans.first_mut() {
                         *marker = Span::styled(
                             if has_comment { "◆ " } else { "  " },
@@ -2036,7 +2104,25 @@ impl App {
                     if line_number == current_line {
                         line.style = selected_style(self.focused == ColumnFocus::Detail);
                     }
-                    line
+                    let mut rows = vec![line];
+                    if let Some(prompt) = prompt {
+                        rows.push(Line::from(vec![
+                            Span::styled("  ✎    ", Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                format!("[{}] > {}", prompt.kind.label(), prompt.text),
+                                Style::default().fg(Color::Yellow),
+                            ),
+                        ]));
+                    } else if let Some(comment) = comment {
+                        rows.push(Line::from(vec![
+                            Span::styled("  ◆    ", Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                format!("[{}] {}", comment.kind.label(), comment.text),
+                                Style::default().fg(Color::Yellow),
+                            ),
+                        ]));
+                    }
+                    rows
                 })
                 .collect()
         })
@@ -2336,20 +2422,32 @@ impl App {
         }
     }
 
-    /// Jumps the diff viewport to the next or previous hunk header.
-    fn jump_hunk(&mut self, forward: bool) {
-        let Some(cache) = self.preview_cache.as_ref() else {
+    /// Jumps to the next or previous structural boundary: Markdown heading in
+    /// raw Code, or hunk header in Diff.
+    fn jump_section(&mut self, forward: bool) {
+        let positions = match self.detail_tab {
+            DetailTab::Code => self
+                .code_cache
+                .as_ref()
+                .map(|cache| cache.sections.as_slice()),
+            DetailTab::Diff => self
+                .preview_cache
+                .as_ref()
+                .map(|cache| cache.hunks.as_slice()),
+            _ => None,
+        };
+        let Some(positions) = positions else {
             return;
         };
-        let current = usize::from(self.detail_scroll);
+        let current = self.detail_cursor;
         let target = if forward {
-            cache.hunks.iter().find(|&&offset| offset > current)
+            positions.iter().find(|&&offset| offset > current)
         } else {
-            cache.hunks.iter().rev().find(|&&offset| offset < current)
+            positions.iter().rev().find(|&&offset| offset < current)
         };
         if let Some(&offset) = target {
-            self.detail_scroll = u16::try_from(offset).unwrap_or(u16::MAX);
             self.detail_cursor = offset;
+            self.detail_scroll = u16::try_from(offset).unwrap_or(u16::MAX);
         }
     }
 
@@ -2498,6 +2596,10 @@ impl App {
     /// selection: passive trackpad gestures must not drag application state.
     pub fn mouse_scroll(&mut self, x: u16, y: u16, down: bool) {
         const WHEEL_STEP: u16 = 3;
+        if let Some(editor) = self.cast_editor.as_mut() {
+            editor.scroll_viewport(down);
+            return;
+        }
         if self.preview.is_some() {
             if down {
                 self.preview_scroll_down(WHEEL_STEP);
@@ -2568,6 +2670,29 @@ impl App {
 
     pub fn set_toast(&mut self, message: String) {
         self.toast = Some(message);
+    }
+
+    #[must_use]
+    pub fn is_cast_editor_open(&self) -> bool {
+        self.cast_editor.is_some()
+    }
+
+    pub fn open_cast_editor(&mut self) {
+        if self.section != Section::Decks && self.view.deck.is_some() {
+            self.toast = Some("Open Decks first, then press e to edit the cast".to_string());
+            return;
+        }
+        self.cast_editor = Some(CastEditor::load(&self.root));
+    }
+
+    pub fn cast_editor_key(&mut self, key: KeyEvent) {
+        let action = self
+            .cast_editor
+            .as_mut()
+            .map_or(EditorAction::Stay, |editor| editor.handle_key(key));
+        if action == EditorAction::Close {
+            self.cast_editor = None;
+        }
     }
 
     /// Queue gitui (or jjui) for the selected repository; the event loop
@@ -2879,6 +3004,26 @@ impl App {
         self.detail_scroll = 0;
     }
 
+    pub fn comment_or_code(&mut self) {
+        if self.focused == ColumnFocus::Detail
+            && matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff)
+        {
+            self.open_comment_prompt();
+        } else {
+            self.set_detail_tab(DetailTab::Code);
+        }
+    }
+
+    pub fn preview_or_previous_section(&mut self) {
+        if self.focused == ColumnFocus::Detail
+            && matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff)
+        {
+            self.jump_section(false);
+        } else {
+            self.set_detail_tab(DetailTab::Preview);
+        }
+    }
+
     #[cfg(test)]
     #[must_use]
     pub fn detail_tab(&self) -> DetailTab {
@@ -2907,6 +3052,12 @@ impl App {
     #[must_use]
     pub fn detail_scroll_for_test(&self) -> u16 {
         self.detail_scroll
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn detail_cursor_for_test(&self) -> usize {
+        self.detail_cursor
     }
 
     #[cfg(test)]
@@ -3137,13 +3288,11 @@ impl App {
     }
 
     fn open_comment_prompt(&mut self) {
-        let Some((module, path, code_line)) = self.selected_artifact().map(|artifact| {
-            (
-                artifact.module.clone(),
-                artifact.relative_path.clone(),
-                self.current_code_line(artifact),
-            )
-        }) else {
+        let code_line = self.current_code_line();
+        let Some((module, path)) = self
+            .selected_artifact()
+            .map(|artifact| (artifact.module.clone(), artifact.relative_path.clone()))
+        else {
             return;
         };
         let line_number = if self.detail_tab == DetailTab::Diff {
@@ -3183,7 +3332,10 @@ impl App {
         if text.is_empty() {
             self.comments
                 .remove(&(prompt.module, prompt.path, prompt.line_number));
-            self.toast = Some("comment cleared".to_string());
+            self.toast = Some(match persist_comments(&self.root, &self.comments) {
+                Ok(()) => "comment cleared".to_string(),
+                Err(error) => format!("comment cleared in memory; persistence failed: {error}"),
+            });
             return;
         }
         self.comments.insert(
@@ -3193,7 +3345,13 @@ impl App {
                 text,
             },
         );
-        self.toast = Some("comment saved".to_string());
+        self.toast = Some(match persist_comments(&self.root, &self.comments) {
+            Ok(()) => format!(
+                "comment saved to {}",
+                self.root.join(".rune-comments.yaml").display()
+            ),
+            Err(error) => format!("comment saved in memory; persistence failed: {error}"),
+        });
     }
 
     fn section_key(&mut self, key: KeyEvent) {
@@ -3339,8 +3497,11 @@ impl App {
                 self.detail_scroll = u16::MAX;
                 self.move_detail_cursor(0);
             }
-            KeyCode::Char(']') if self.detail_tab == DetailTab::Diff => self.jump_hunk(true),
-            KeyCode::Char('[') if self.detail_tab == DetailTab::Diff => self.jump_hunk(false),
+            KeyCode::Char('n') if matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff) => {
+                self.jump_section(true);
+            }
+            KeyCode::Char(']') if self.detail_tab == DetailTab::Diff => self.jump_section(true),
+            KeyCode::Char('[') if self.detail_tab == DetailTab::Diff => self.jump_section(false),
             KeyCode::Char('p') => self.set_detail_tab(DetailTab::Preview),
             KeyCode::Char('c') => self.set_detail_tab(DetailTab::Code),
             KeyCode::Char('d') => self.set_detail_tab(DetailTab::Diff),
@@ -4126,8 +4287,11 @@ impl App {
         }
     }
 
-    fn current_code_line(&self, artifact: &ArtifactView) -> usize {
-        let line_count = artifact.raw_source.lines().count().max(1);
+    fn current_code_line(&self) -> usize {
+        let line_count = self
+            .code_cache
+            .as_ref()
+            .map_or(1, |cache| cache.lines.len().max(1));
         self.detail_cursor.saturating_add(1).min(line_count)
     }
 
@@ -5024,6 +5188,108 @@ fn expand_home(raw: &str) -> PathBuf {
 /// modules (every module has a `skills/...` tree).
 fn detail_cache_key(tab: DetailTab, module: &str, path: &str) -> String {
     format!("{tab:?}:{module}:{path}")
+}
+
+/// Reads the artifact from its current source origin. The scan-time payload is
+/// retained as a fallback for deployed-only artifacts and vanished worktrees.
+fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, String) {
+    let relative = if artifact.source_path.is_empty() {
+        artifact.relative_path.as_str()
+    } else {
+        artifact.source_path.as_str()
+    };
+    if let Some(repo) = module.local_path.as_ref()
+        && let (Ok(repo), Ok(candidate)) = (
+            std::fs::canonicalize(repo),
+            std::fs::canonicalize(repo.join(relative)),
+        )
+        && candidate.starts_with(&repo)
+        && let Ok(source) = std::fs::read_to_string(&candidate)
+    {
+        return (candidate.to_string_lossy().into_owned(), source);
+    }
+    (relative.to_string(), artifact.raw_source.clone())
+}
+
+fn load_comments(root: &Path) -> (CommentMap, Option<String>) {
+    let path = root.join(".rune-comments.yaml");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (BTreeMap::new(), None);
+        }
+        Err(error) => {
+            return (
+                BTreeMap::new(),
+                Some(format!("could not read {}: {error}", path.display())),
+            );
+        }
+    };
+    let store: CommentStore = match serde_yaml::from_str(&content) {
+        Ok(store) => store,
+        Err(error) => {
+            return (
+                BTreeMap::new(),
+                Some(format!("could not parse {}: {error}", path.display())),
+            );
+        }
+    };
+    if store.version != 1 {
+        return (
+            BTreeMap::new(),
+            Some(format!(
+                "unsupported comment sidecar version {} in {}",
+                store.version,
+                path.display()
+            )),
+        );
+    }
+    let comments = store
+        .comments
+        .into_iter()
+        .map(|comment| {
+            (
+                (comment.module, comment.path, comment.line),
+                LineComment {
+                    kind: comment.kind,
+                    text: comment.text,
+                },
+            )
+        })
+        .collect();
+    (comments, None)
+}
+
+fn persist_comments(root: &Path, comments: &CommentMap) -> Result<(), String> {
+    let path = root.join(".rune-comments.yaml");
+    let store = CommentStore {
+        version: 1,
+        comments: comments
+            .iter()
+            .map(|((module, path, line), comment)| StoredComment {
+                module: module.clone(),
+                path: path.clone(),
+                line: *line,
+                kind: comment.kind,
+                text: comment.text.clone(),
+            })
+            .collect(),
+    };
+    let content = serde_yaml::to_string(&store).map_err(|error| error.to_string())?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = root.join(format!(
+        ".rune-comments.yaml.tmp-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::write(&temporary, content).map_err(|error| error.to_string())?;
+    if let Err(error) = std::fs::rename(&temporary, &path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 /// Whether unprocessed terminal input is queued. Errors (no terminal, as in

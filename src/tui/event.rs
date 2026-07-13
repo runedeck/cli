@@ -19,6 +19,10 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     app.clear_toast();
+    if app.is_cast_editor_open() {
+        app.cast_editor_key(key);
+        return;
+    }
     if app.is_preview_open() {
         handle_preview_key(app, key);
         return;
@@ -94,6 +98,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('/') => app.begin_list_filter(),
         KeyCode::Char('!') => app.toggle_problems_only(),
         KeyCode::Char('r') => app.refresh(),
+        KeyCode::Char('e') => app.open_cast_editor(),
         KeyCode::Char('Y') => app.copy_tuicr_review(),
         KeyCode::Char('y') => app.copy_selected(),
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => app.drill_or_expand(),
@@ -101,8 +106,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
         KeyCode::BackTab => app.focus_previous(),
         KeyCode::Tab => app.focus_next(),
-        KeyCode::Char('p') => app.set_detail_tab(super::app::DetailTab::Preview),
-        KeyCode::Char('c') => app.set_detail_tab(super::app::DetailTab::Code),
+        KeyCode::Char('p') => app.preview_or_previous_section(),
+        KeyCode::Char('c') => app.comment_or_code(),
         KeyCode::Char('d') => app.set_detail_tab(super::app::DetailTab::Diff),
         KeyCode::Char('v') => app.set_detail_tab(super::app::DetailTab::Provenance),
         KeyCode::Char('f') => app.set_detail_tab(super::app::DetailTab::Frontmatter),

@@ -717,6 +717,73 @@ fn comment_prompt_opens_from_preview_tab() {
 }
 
 #[test]
+fn code_view_reads_origin_and_persists_inline_line_comment() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(temp.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(
+        temp.path().join(source_path),
+        "# Live source\nSecond line from disk\nThird line\n",
+    )
+    .unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(temp.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    view.modules[0].artifacts[0].raw_source = "stale scan payload".to_string();
+    let mut app = App::from_view(
+        temp.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        view.clone(),
+    );
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+
+    let code = rendered(&mut app);
+    assert!(code.contains("Live source"));
+    assert!(!code.contains("stale scan payload"));
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "needs context".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    assert!(rendered(&mut app).contains("[ISSUE] > needs context"));
+    event::handle_key(&mut app, key(KeyCode::Enter));
+
+    let sidecar = std::fs::read_to_string(temp.path().join(".rune-comments.yaml")).unwrap();
+    assert!(sidecar.contains("line: 2"));
+    assert!(sidecar.contains("needs context"));
+
+    let mut reloaded = App::from_view(temp.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    reloaded.set_section_by_number(2);
+    reloaded.drill_or_expand();
+    reloaded.drill_or_expand();
+    reloaded.set_detail_tab(DetailTab::Code);
+    event::handle_key(&mut reloaded, key(KeyCode::Char('j')));
+    let snapshot = rendered(&mut reloaded);
+    assert!(snapshot.contains("◆"));
+    assert!(snapshot.contains("[ISSUE] needs context"));
+}
+
+#[test]
+fn code_mouse_wheel_moves_viewport_without_moving_line_cursor() {
+    let mut app = fixture_app();
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let output = rendered(&mut app);
+    let (x, y) = buffer_position(&output, "Code");
+
+    app.mouse_scroll(x, y + 3, true);
+
+    assert_eq!(app.detail_scroll_for_test(), 3);
+    assert_eq!(app.detail_cursor_for_test(), 0);
+}
+
+#[test]
 fn diff_gutter_maps_rows_to_new_file_lines() {
     use ratatui::text::{Line, Span};
     let lines = vec![
