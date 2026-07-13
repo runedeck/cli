@@ -47,6 +47,19 @@ pub fn ensure_cached(url: &str, commit: &str, source_label: &str) -> Result<Path
     Ok(work_dir)
 }
 
+/// Return an already-materialized pinned worktree without network access.
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+pub fn cached_worktree(url: &str, commit: &str, source_label: &str) -> Option<PathBuf> {
+    let cache_root = cache_root().ok()?;
+    let (host, owner, repo) = parse_url(url, source_label).ok()?;
+    let work_dir = cache_root.join(host).join(owner).join(repo).join(commit);
+    if work_dir.join("module.yaml").is_file() || work_dir.join("deck.yaml").is_file() {
+        Some(work_dir)
+    } else {
+        None
+    }
+}
+
 fn cache_root() -> Result<PathBuf, Error> {
     if let Some(override_dir) =
         std::env::var_os("RUNE_GIT_CACHE_DIR").or_else(|| std::env::var_os("FORGE_GIT_CACHE_DIR"))

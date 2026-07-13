@@ -11,16 +11,28 @@ use sha2::{Digest, Sha256};
 
 pub use read::read;
 pub use staleness::check_sources;
-pub use statement::generate_statement;
+pub use statement::{generate_adopt_statement, generate_statement};
 pub use status::status;
 pub use write::write;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FileStatus {
     New,
     Unchanged,
     Stale,
     Modified,
+}
+
+impl FileStatus {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            FileStatus::New => "new",
+            FileStatus::Unchanged => "unchanged",
+            FileStatus::Stale => "stale",
+            FileStatus::Modified => "modified",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

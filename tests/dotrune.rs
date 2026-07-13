@@ -147,13 +147,13 @@ fn dotrune_deploys_requested_artifacts_across_providers() {
             "{provider}: unrequested rule must not deploy"
         );
     }
-    // Codex converts skill .md to .toml via agents-to-toml.
+    // Codex skills deploy as SKILL.md; agents-to-toml converts agents only.
     assert!(
         consumer
             .path()
-            .join(".codex/skills/AlphaSkill/SKILL.toml")
+            .join(".codex/skills/AlphaSkill/SKILL.md")
             .is_file(),
-        "codex: AlphaSkill must deploy as .toml"
+        "codex: AlphaSkill must deploy as SKILL.md"
     );
 }
 
@@ -526,7 +526,7 @@ fn target_provider_selection_overrides_deck_and_domain_defaults() {
     assert!(
         consumer
             .path()
-            .join(".codex/skills/OnlyScience/SKILL.toml")
+            .join(".codex/skills/OnlyScience/SKILL.md")
             .is_file()
     );
     assert!(!consumer.path().join(".gemini/skills/OnlyScience").exists());

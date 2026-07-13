@@ -5,14 +5,45 @@ validate:
     exclude:
         - "templates/*"
 
+dashboard:
+    # Allowlisted settings filenames surfaced in the per-harness Settings view.
+    # Anything not listed (caches, runtime state, credentials) stays hidden.
+    settings_files:
+        - settings.json
+        - config.json
+        - config.toml
+        - config.yaml
+        - config.yml
+        - opencode.json
+
 providers:
     claude:
         target: ".claude"
+        model: claude-opus-4-6
         aliases:
             - claudecode
         keep_fields:
             agents: [name, description, model, allowedTools]
-            skills: [name, description, version]
+            # Claude Code reads these SKILL.md fields natively; stripping any
+            # of them breaks the deployed skill (allowed-tools gates tool
+            # pre-approval and dynamic context injection). Mirrors the skill
+            # mdschema whitelist.
+            skills:
+                - name
+                - description
+                - version
+                - when_to_use
+                - argument-hint
+                - arguments
+                - allowed-tools
+                - disable-model-invocation
+                - user-invocable
+                - model
+                - effort
+                - context
+                - agent
+                - paths
+                - shell
             rules: []
         models:
             strong: [opus]
@@ -21,6 +52,7 @@ providers:
 
     gemini:
         target: ".gemini"
+        model: gemini-2.5-pro
         aliases:
             - geminicli
         assembly:
@@ -36,8 +68,20 @@ providers:
             fast: [gemini-2.5-flash]
             light: [gemini-2.0-flash]
 
+    agentskills:
+        target: ".agents"
+        aliases:
+            - agents
+        assembly:
+            - strip-links
+        keep_fields:
+            agents: [name, description]
+            skills: [name, description, license, compatibility, metadata, allowed-tools]
+            rules: []
+
     codex:
         target: ".codex"
+        model: gpt-5.5
         aliases:
             - codexcli
         assembly:
@@ -60,6 +104,7 @@ providers:
 
     opencode:
         target: ".opencode"
+        model: claude-opus-4-6
         assembly:
             - kebab-case-agents
             - strip-links

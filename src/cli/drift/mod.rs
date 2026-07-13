@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
 
+mod scope;
+
 const BODY_KEY: &str = "body";
 
 // --- Types ---
@@ -44,7 +46,32 @@ pub struct DriftResult {
 
 // --- Execution ---
 
+/// Route to upstream comparison (`--upstream`) or manifest-scoped deployment
+/// verification (`--target`). Exactly one of the two must be provided.
 pub fn execute(
+    module_path: &str,
+    upstream_path: Option<&str>,
+    target_path: Option<&str>,
+    ignore_keys: &[String],
+    json_output: bool,
+) -> Result<i32, Error> {
+    match (upstream_path, target_path) {
+        (Some(upstream), None) => {
+            execute_upstream(module_path, upstream, ignore_keys, json_output)
+        }
+        (None, Some(target)) => scope::execute(module_path, target, ignore_keys, json_output),
+        (Some(_), Some(_)) => Err(Error::new(
+            ErrorKind::Config,
+            "--upstream and --target are mutually exclusive".to_string(),
+        )),
+        (None, None) => Err(Error::new(
+            ErrorKind::Config,
+            "provide --upstream <DIR> (compare two module trees) or --target <DIR> (verify build against a deployment)".to_string(),
+        )),
+    }
+}
+
+fn execute_upstream(
     module_path: &str,
     upstream_path: &str,
     ignore_keys: &[String],
@@ -577,7 +604,7 @@ fn print_drift_entry(entry: &DriftEntry) {
             println!(
                 "   {} {} {} {}{}",
                 cyan.apply_to("●"),
-                &entry.name,
+                entry.name,
                 dim.apply_to("—"),
                 cyan.apply_to("local only"),
                 lineage,
@@ -622,7 +649,7 @@ fn print_drift_card(entry: &DriftEntry, lineage: &str) {
     );
     let body_drifted = matches!(entry.status, DriftStatus::BodyOnly | DriftStatus::Both);
 
-    println!("   {} {}{}", dim.apply_to("┌"), &entry.name, lineage);
+    println!("   {} {}{}", dim.apply_to("┌"), entry.name, lineage);
 
     if frontmatter_drifted {
         let keys_display = if entry.changed_keys.is_empty() {

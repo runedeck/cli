@@ -6,10 +6,13 @@ pub mod deck;
 pub mod error;
 pub mod manifest;
 pub mod module;
+pub mod ontology;
 pub mod parse;
 pub mod provider;
 pub mod result;
+pub mod services;
 pub mod target;
+pub mod view;
 pub mod yaml;
 
 #[cfg(feature = "assemble")]
