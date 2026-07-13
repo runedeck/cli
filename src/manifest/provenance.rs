@@ -135,8 +135,9 @@ pub struct Builder {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuilderVersion {
-    #[serde(default, alias = "forge")]
+    #[serde(default)]
     pub rune: String,
 }
 

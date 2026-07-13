@@ -30,13 +30,10 @@ fn resolve_external_prefers_root_commands_then_extensions() {
 }
 
 #[test]
-fn rune_env_includes_canonical_and_legacy_root_names() {
+fn rune_env_includes_canonical_root_name() {
     let root = Path::new("/tmp/rune-root");
     let config = ontology::ResolvedConfig::default();
     let environment = rune_env(root, &config);
     assert!(environment.contains(&(OsString::from("RUNE_ROOT"), root.as_os_str().to_os_string())));
-    assert!(environment.contains(&(
-        OsString::from("FORGE_ROOT"),
-        root.as_os_str().to_os_string()
-    )));
+    assert_eq!(environment.len(), 2);
 }

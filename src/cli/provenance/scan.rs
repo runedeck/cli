@@ -570,36 +570,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_forge_cli_build_type_parses_and_verifies() {
-        let target = TempDir::new().unwrap();
-        let rules_dir = target.path().join("rules");
-        std::fs::create_dir_all(&rules_dir).unwrap();
-        let content = "# Legacy sidecar\n";
-        std::fs::write(rules_dir.join("Legacy.md"), content).unwrap();
-        let digest = manifest::content_sha256(content);
-        write_sidecar_for(
-            target.path(),
-            "rules",
-            "Legacy.md",
-            "rules/Legacy.md",
-            &digest,
-            "https://example.test/upstream",
-            "https://github.com/N4M3Z/forge-cli/assemble/v1",
-        );
-
-        let sidecar = read_sidecar(&rules_dir.join(".provenance/Legacy.yaml"))
-            .expect("legacy buildType URI must parse");
-        assert_eq!(
-            sidecar.provenance.predicate.build_definition.build_type,
-            "https://github.com/N4M3Z/forge-cli/assemble/v1"
-        );
-
-        let (by_source, orphans) = collect(target.path());
-        assert!(orphans.is_empty());
-        assert_eq!(by_source["https://example.test/upstream"], (1, 1));
-    }
-
-    #[test]
     fn collect_reports_files_without_sidecars_as_orphans() {
         let target = TempDir::new().unwrap();
         let agents_dir = target.path().join("agents");

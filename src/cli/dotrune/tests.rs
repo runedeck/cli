@@ -1,27 +1,14 @@
-use super::load;
 use super::parse::{Source, parse};
 
 const MINIMAL: &str = r"
 version: 1
 sources:
     rune-core:
-        path: ../rune-core
+        local: ../rune-core
 artifacts:
     rune-core:
         skills: [BuildSkill]
 ";
-
-#[test]
-fn load_prefers_dotrune_when_both_manifest_names_exist() {
-    let repo = tempfile::tempdir().unwrap();
-    std::fs::write(repo.path().join(".rune"), "version: 1\nsources: {}\n").unwrap();
-    std::fs::write(repo.path().join(".forge"), "not valid yaml: [").unwrap();
-
-    let manifest = load(repo.path())
-        .expect("current .rune must take precedence over legacy .forge")
-        .expect("current .rune must load");
-    assert_eq!(manifest.version, 1);
-}
 
 #[test]
 fn parse_minimal_happy_path() {
@@ -44,7 +31,7 @@ fn parse_full_artifact_list() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 artifacts:
     a:
         skills: [S1, S2]
@@ -63,7 +50,7 @@ fn parse_rejects_unknown_top_level_field() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 typo_field: oops
 ";
     let error = parse(content).expect_err("unknown field must error");
@@ -79,7 +66,7 @@ fn parse_rejects_unknown_source_field() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
         bogus_key: 42
 ";
     // serde's untagged-enum error message says "did not match any variant"
@@ -95,7 +82,7 @@ fn parse_rejects_unknown_artifact_kind() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 artifacts:
     a:
         plugins: [SomePlugin]
@@ -114,7 +101,7 @@ fn parse_rejects_wrong_schema_version() {
 version: 99
 sources:
     a:
-        path: ./a
+        local: ./a
 ";
     let error = parse(content).expect_err("version 99 must be rejected");
     assert!(
@@ -128,7 +115,7 @@ fn parse_rejects_missing_version() {
     let content = r"
 sources:
     a:
-        path: ./a
+        local: ./a
 ";
     let error = parse(content).expect_err("missing version must be rejected");
     assert!(
@@ -143,7 +130,7 @@ fn parse_rejects_artifacts_without_matching_source() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 artifacts:
     b:
         skills: [Something]
@@ -158,7 +145,7 @@ artifacts:
 
 #[test]
 fn parse_rejects_malformed_yaml() {
-    let content = "version: 1\nsources:\n  a:\n   path: bad\n  - dangling";
+    let content = "version: 1\nsources:\n  a:\n   local: bad\n  - dangling";
     let error = parse(content).expect_err("malformed YAML must be rejected");
     assert!(
         error.to_string().contains(".rune"),
@@ -172,7 +159,7 @@ fn parse_accepts_empty_artifacts() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 ";
     let manifest = parse(content).unwrap();
     assert!(manifest.artifacts.is_empty());
@@ -377,7 +364,7 @@ fn parse_accepts_artifact_list_with_only_one_kind() {
 version: 1
 sources:
     a:
-        path: ./a
+        local: ./a
 artifacts:
     a:
         rules: [OnlyRule]

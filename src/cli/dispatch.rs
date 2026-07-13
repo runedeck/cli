@@ -96,12 +96,6 @@ pub(crate) fn rune_env(
 ) -> Vec<(OsString, OsString)> {
     let mut env = vec![
         (OsString::from("RUNE_ROOT"), root.as_os_str().to_os_string()),
-        // Legacy extensions may still read FORGE_ROOT. New integrations must
-        // use RUNE_ROOT; both names carry the same canonical value.
-        (
-            OsString::from("FORGE_ROOT"),
-            root.as_os_str().to_os_string(),
-        ),
         (OsString::from("CI"), OsString::from("1")),
     ];
     env.extend(

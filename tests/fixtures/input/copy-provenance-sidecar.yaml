@@ -17,7 +17,6 @@ provenance:
             builder:
                 id: https://github.com/runedeck/rune
                 version:
-                    # Legacy version-key compatibility fixture.
-                    forge: 0.0.0-fixture
+                    rune: 0.0.0-fixture
             metadata:
                 startedOn: "2026-01-01T00:00:00Z"

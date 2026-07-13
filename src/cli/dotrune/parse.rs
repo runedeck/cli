@@ -13,7 +13,6 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// HTTPS-only rule defends against `git://` MITM and accidental local-path
 /// pulls that bypass SHA pinning.
 const ALLOW_FILE_URLS_ENV: &str = "RUNE_GIT_ALLOW_FILE_URLS";
-const LEGACY_ALLOW_FILE_URLS_ENV: &str = "FORGE_GIT_ALLOW_FILE_URLS";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -27,8 +26,7 @@ pub struct DotRune {
 /// Where to find a producer module. `Local` for a sibling checkout on disk,
 /// `Git` for a remote HTTPS repository pinned to a 40-hex commit SHA.
 ///
-/// A custom `Deserialize` preserves legacy `path: ../module` local sources
-/// while allowing `local: ../deck` and git sources to carry an inner `path`.
+/// A custom `Deserialize` allows local and git sources to carry an inner `path`.
 #[derive(Debug)]
 pub enum Source {
     Local {
@@ -100,16 +98,8 @@ impl<'de> Deserialize<'de> for Source {
                     path: local.path,
                 })
             }
-            (false, false, true) => {
-                let legacy: LegacyLocalFields =
-                    serde_yaml::from_value(value).map_err(D::Error::custom)?;
-                Ok(Source::Local {
-                    local: legacy.path,
-                    path: None,
-                })
-            }
-            (false, false, false) => Err(D::Error::custom(
-                "source entry must contain `path:` (legacy local source), `local:`, or `git:`",
+            (false, false, _) => Err(D::Error::custom(
+                "source entry must contain exactly one of `local:` or `git:`",
             )),
         }
     }
@@ -120,12 +110,6 @@ impl<'de> Deserialize<'de> for Source {
 struct LocalFields {
     local: PathBuf,
     path: Option<PathBuf>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyLocalFields {
-    path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -160,9 +144,7 @@ fn validate_subpath(path: Option<&std::path::Path>) -> Result<(), String> {
 }
 
 pub fn validate_git_url(url: &str) -> Result<(), String> {
-    let allow_file = std::env::var_os(ALLOW_FILE_URLS_ENV)
-        .or_else(|| std::env::var_os(LEGACY_ALLOW_FILE_URLS_ENV))
-        .is_some();
+    let allow_file = std::env::var_os(ALLOW_FILE_URLS_ENV).is_some();
     if allow_file && url.starts_with("file://") {
         return Ok(());
     }

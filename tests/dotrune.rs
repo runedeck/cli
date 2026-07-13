@@ -140,9 +140,9 @@ fn dotrune_deploys_requested_artifacts_across_providers() {
             "version: 1\n\
              sources:\n  \
                 producer-a:\n    \
-                    path: {a}\n  \
+                    local: {a}\n  \
                 producer-b:\n    \
-                    path: {b}\n\
+                    local: {b}\n\
              artifacts:\n  \
                 producer-a:\n    \
                     skills: [AlphaSkill]\n  \
@@ -204,7 +204,7 @@ fn dotrune_errors_on_missing_source_path() {
     let consumer = tempfile::tempdir().unwrap();
     write_dotrune(
         consumer.path(),
-        "version: 1\nsources:\n  ghost:\n    path: /definitely/does/not/exist\nartifacts:\n  ghost:\n    skills: [X]\n",
+        "version: 1\nsources:\n  ghost:\n    local: /definitely/does/not/exist\nartifacts:\n  ghost:\n    skills: [X]\n",
     );
 
     let output = install(consumer.path()).failure();
@@ -225,7 +225,7 @@ fn dotrune_errors_on_missing_artifact_in_source() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [DoesNotExist]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [DoesNotExist]\n",
             p = producer.path().display(),
         ),
     );
@@ -248,7 +248,7 @@ fn dotrune_install_is_idempotent() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
             p = producer.path().display(),
         ),
     );
@@ -282,7 +282,7 @@ fn dotrune_defaults_target_to_source_when_omitted() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
             p = producer.path().display(),
         ),
     );
@@ -310,55 +310,15 @@ fn dotrune_defaults_target_to_source_when_omitted() {
 }
 
 #[test]
-fn legacy_dotforge_resolves_when_dotrune_is_absent() {
-    let producer = tempfile::tempdir().unwrap();
+fn dotrune_rejects_directory_named_like_manifest() {
     let consumer = tempfile::tempdir().unwrap();
-    scaffold_producer(producer.path(), "producer");
-    write_skill(producer.path(), "LegacySkill");
-
-    fs::write(
-        consumer.path().join(".forge"),
-        format!(
-            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [LegacySkill]\n",
-            p = producer.path().display(),
-        ),
-    )
-    .unwrap();
-
-    install(consumer.path()).success();
-    let deployed = consumer.path().join(".claude/skills/LegacySkill/SKILL.md");
-    let body = fs::read_to_string(&deployed)
-        .expect("a repo containing only legacy .forge must still resolve");
-    assert!(
-        body.contains("LegacySkill"),
-        "deployed skill body must carry the source content, got: {body}"
-    );
-}
-
-#[test]
-fn dotrune_ignores_directory_named_like_manifest() {
-    let producer = tempfile::tempdir().unwrap();
-    let consumer = tempfile::tempdir().unwrap();
-    scaffold_producer(producer.path(), "producer");
-    write_skill(producer.path(), "LegacySkill");
-
     fs::create_dir(consumer.path().join(".rune")).unwrap();
-    fs::write(
-        consumer.path().join(".forge"),
-        format!(
-            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [LegacySkill]\n",
-            p = producer.path().display(),
-        ),
-    )
-    .unwrap();
 
-    install(consumer.path()).success();
+    let output = install(consumer.path()).failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(
-        consumer
-            .path()
-            .join(".claude/skills/LegacySkill/SKILL.md")
-            .is_file(),
-        "a .rune directory must not shadow a valid legacy .forge file"
+        stderr.contains(".rune") && stderr.contains("directory"),
+        "error must name the invalid .rune directory: {stderr}"
     );
 }
 
@@ -667,7 +627,7 @@ fn single_module_source_still_resolves_bare_name() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    path: {}\nartifacts:\n  producer:\n    skills: [LegacyBareName]\n",
+            "version: 1\nsources:\n  producer:\n    local: {}\nartifacts:\n  producer:\n    skills: [LegacyBareName]\n",
             producer.path().display()
         ),
     );

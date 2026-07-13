@@ -56,9 +56,6 @@ pub struct FileSections {
 }
 
 /// Rune-cli's own config files surfaced from `~/.config/rune`.
-///
-/// The legacy `~/.config/forge` directory is consulted only when the canonical
-/// Rune config directory does not exist.
 const RUNE_CONFIG_FILES: &[&str] = &[
     "config.yaml",
     "config.yml",
@@ -146,22 +143,12 @@ pub fn collect_rune_config_files_with_home(root: &Path, home: Option<&Path>) -> 
             files.push(file);
         }
     }
-    let rune_manifest = root.join(".rune");
-    let (manifest_label, manifest_path) = if rune_manifest.is_file() {
-        ("Consumer manifest", rune_manifest)
-    } else {
-        ("Legacy consumer manifest (.forge)", root.join(".forge"))
-    };
-    if let Some(file) = read_config_file(manifest_label, &manifest_path, "yaml", home) {
+    let manifest_path = root.join(".rune");
+    if let Some(file) = read_config_file("Consumer manifest", &manifest_path, "yaml", home) {
         files.push(file);
     }
     if let Some(home) = home {
-        let rune_dir = home.join(".config/rune");
-        let (config_label, config_dir) = if rune_dir.is_dir() {
-            ("~/.config/rune", rune_dir)
-        } else {
-            ("~/.config/forge (legacy)", home.join(".config/forge"))
-        };
+        let config_dir = home.join(".config/rune");
         if let Ok(entries) = std::fs::read_dir(&config_dir) {
             let mut names: Vec<_> = entries
                 .flatten()
@@ -180,7 +167,7 @@ pub fn collect_rune_config_files_with_home(root: &Path, home: Option<&Path>) -> 
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
                 let lang = if is_toml { "toml" } else { "yaml" };
                 if let Some(file) =
-                    read_config_file(config_label, &config_dir.join(&name), lang, Some(home))
+                    read_config_file("~/.config/rune", &config_dir.join(&name), lang, Some(home))
                 {
                     files.push(file);
                 }
@@ -584,66 +571,26 @@ mod tests {
     }
 
     #[test]
-    fn rune_config_and_manifest_take_precedence_over_legacy_paths() {
+    fn forge_paths_are_ignored() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = temp.path().join("home");
         let root = temp.path().join("project");
-        std::fs::create_dir_all(home.join(".config/rune")).expect("rune config dir");
-        std::fs::create_dir_all(home.join(".config/forge")).expect("legacy config dir");
+        std::fs::create_dir_all(home.join(".config/forge")).expect("forge config dir");
         std::fs::create_dir_all(&root).expect("project dir");
-        std::fs::write(root.join(".rune"), "version: 1\n").expect("rune manifest");
-        std::fs::write(root.join(".forge"), "version: legacy\n").expect("legacy manifest");
-        std::fs::write(home.join(".config/rune/config.yaml"), "brand: rune\n")
-            .expect("rune config");
-        std::fs::write(home.join(".config/forge/config.yaml"), "brand: legacy\n")
-            .expect("legacy config");
+        std::fs::write(root.join(".forge"), "version: 1\n").expect("forge manifest");
+        std::fs::write(
+            home.join(".config/forge/watchlist.yaml"),
+            "locations: [/forge]\n",
+        )
+        .expect("forge watchlist");
 
         let files = collect_rune_config_files_with_home(&root, Some(&home));
 
-        assert!(files.iter().any(|file| {
-            Path::new(&file.path)
-                .file_name()
-                .is_some_and(|name| name == ".rune")
-        }));
         assert!(!files.iter().any(|file| {
             Path::new(&file.path)
                 .file_name()
                 .is_some_and(|name| name == ".forge")
         }));
-        assert!(
-            files
-                .iter()
-                .any(|file| file.content.contains("brand: rune"))
-        );
-        assert!(
-            !files
-                .iter()
-                .any(|file| file.content.contains("brand: legacy"))
-        );
-    }
-
-    #[test]
-    fn legacy_config_and_manifest_are_used_as_fallbacks() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = temp.path().join("home");
-        let root = temp.path().join("project");
-        std::fs::create_dir_all(home.join(".config/forge")).expect("legacy config dir");
-        std::fs::create_dir_all(&root).expect("project dir");
-        std::fs::write(root.join(".forge"), "version: 1\n").expect("legacy manifest");
-        std::fs::write(home.join(".config/forge/config.yaml"), "brand: legacy\n")
-            .expect("legacy config");
-
-        let files = collect_rune_config_files_with_home(&root, Some(&home));
-
-        assert!(files.iter().any(|file| {
-            Path::new(&file.path)
-                .file_name()
-                .is_some_and(|name| name == ".forge")
-        }));
-        assert!(
-            files
-                .iter()
-                .any(|file| file.content.contains("brand: legacy"))
-        );
+        assert!(!files.iter().any(|file| file.content.contains("/forge")));
     }
 }

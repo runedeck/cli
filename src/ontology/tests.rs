@@ -73,34 +73,6 @@ fn config_beats_default() {
 }
 
 #[test]
-fn rune_env_beats_legacy_forge_env() {
-    let resolved = resolve_config(
-        &Config::default(),
-        &env_from(&[("RUNE_OWNER", "Runedeck"), ("FORGE_OWNER", "Legacy owner")]),
-    );
-    assert_eq!(
-        resolved.ontology.owner.expect("owner resolved").value,
-        "Runedeck"
-    );
-}
-
-#[test]
-fn legacy_forge_env_is_a_fallback() {
-    let resolved = resolve_config(
-        &Config::default(),
-        &env_from(&[("FORGE_OWNER", "Legacy owner")]),
-    );
-    assert_eq!(
-        resolved
-            .ontology
-            .owner
-            .expect("legacy owner resolved")
-            .value,
-        "Legacy owner"
-    );
-}
-
-#[test]
 fn missing_config_uses_default() {
     let resolved = resolve_config(&Config::default(), &no_env);
     let domain = resolved.ontology.domain.expect("domain default");

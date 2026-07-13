@@ -61,9 +61,7 @@ pub fn cached_worktree(url: &str, commit: &str, source_label: &str) -> Option<Pa
 }
 
 fn cache_root() -> Result<PathBuf, Error> {
-    if let Some(override_dir) =
-        std::env::var_os("RUNE_GIT_CACHE_DIR").or_else(|| std::env::var_os("FORGE_GIT_CACHE_DIR"))
-    {
+    if let Some(override_dir) = std::env::var_os("RUNE_GIT_CACHE_DIR") {
         return Ok(PathBuf::from(override_dir));
     }
     let base = dirs::cache_dir().ok_or_else(|| {

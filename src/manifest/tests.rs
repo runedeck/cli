@@ -134,6 +134,16 @@ fn statement_carries_builder_metadata() {
     assert!(run_details["metadata"]["startedOn"].as_str().is_some());
 }
 
+#[test]
+fn provenance_rejects_removed_forge_version_key() {
+    let yaml = "provenance:\n    _type: https://in-toto.io/Statement/v1\n    subject: []\n    predicate:\n        runDetails:\n            builder:\n                version:\n                    forge: 0.0.0\n";
+    let error = provenance::parse(yaml).expect_err("forge version key must be rejected");
+    assert!(
+        error.contains("forge"),
+        "error must name removed key: {error}"
+    );
+}
+
 // --- read ---
 
 #[test]

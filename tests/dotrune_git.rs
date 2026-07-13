@@ -246,45 +246,6 @@ fn dotrune_git_deck_without_subpath_exposes_all_domains() {
 }
 
 #[test]
-fn legacy_forge_git_cache_dir_is_honored_when_rune_var_is_unset() {
-    let bare = tempfile::tempdir().unwrap();
-    let scratch = tempfile::tempdir().unwrap();
-    let consumer = tempfile::tempdir().unwrap();
-    let cache = tempfile::tempdir().unwrap();
-
-    let bare_path = bare.path().join("producer.git");
-    let sha = make_fixture_repo(&bare_path, scratch.path());
-    fs::write(
-        consumer.path().join(".rune"),
-        format!(
-            "version: 1\n\
-             sources:\n  \
-                producer:\n    \
-                    git: file://{bare}\n    \
-                    ref: {sha}\n\
-             artifacts:\n  \
-                producer:\n    \
-                    skills: [GitSkill]\n",
-            bare = bare_path.display(),
-        ),
-    )
-    .unwrap();
-
-    rune()
-        .args(["install", "--source", consumer.path().to_str().unwrap()])
-        .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
-        .env_remove("RUNE_GIT_CACHE_DIR")
-        .env("FORGE_GIT_CACHE_DIR", cache.path())
-        .assert()
-        .success();
-
-    assert!(
-        fs::read_dir(cache.path()).unwrap().next().is_some(),
-        "legacy FORGE_GIT_CACHE_DIR must select the cache root"
-    );
-}
-
-#[test]
 fn dotrune_git_source_rejects_uncached_sha_without_match() {
     let bare = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();

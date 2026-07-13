@@ -434,11 +434,6 @@ fn build_env(
         OsString::from("RUNE_SKILL_DIR"),
         skill_dir.as_os_str().to_os_string(),
     ));
-    // Preserve the old child-process contract while Rune consumers migrate.
-    env.push((
-        OsString::from("FORGE_SKILL_DIR"),
-        skill_dir.as_os_str().to_os_string(),
-    ));
     if let Value::Object(object) = input {
         env.extend(object.iter().map(|(key, value)| {
             (
@@ -548,11 +543,7 @@ fn format_dry_run(argv: &[OsString], env: &[(OsString, OsString)]) -> String {
     let mut lines = vec![format!("argv: {argv}"), "env:".to_string()];
     lines.extend(env.iter().filter_map(|(key, value)| {
         let key = key.to_string_lossy();
-        if key == "CI"
-            || key.starts_with("RUNE_")
-            || key.starts_with("FORGE_")
-            || key.starts_with("INPUT_")
-        {
+        if key == "CI" || key.starts_with("RUNE_") || key.starts_with("INPUT_") {
             Some(format!("  {key}={}", value.to_string_lossy()))
         } else {
             None

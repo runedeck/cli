@@ -261,22 +261,6 @@ impl Key {
         }
     }
 
-    fn legacy_env(self) -> &'static str {
-        match self {
-            Self::Workshop => "FORGE_WORKSHOP",
-            Self::Owner => "FORGE_OWNER",
-            Self::Archive => "FORGE_ARCHIVE",
-            Self::Vault => "FORGE_VAULT",
-            Self::Work => "FORGE_WORK",
-            Self::Data => "FORGE_DATA",
-            Self::Mount => "FORGE_MOUNT",
-            Self::Developer => "FORGE_DEVELOPER",
-            Self::Documents => "FORGE_DOCUMENTS",
-            Self::Githooks => "FORGE_GITHOOKS",
-            Self::Domain => "FORGE_DOMAIN",
-        }
-    }
-
     fn default(self) -> Option<&'static str> {
         match self {
             Self::Workshop => Some("~/Agents"),
@@ -489,9 +473,6 @@ fn resolve_key(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Option<ResolvedValue> {
     if let Some(value) = env(key.env()) {
-        return Some(resolved_value(key, value, Source::Env));
-    }
-    if let Some(value) = env(key.legacy_env()) {
         return Some(resolved_value(key, value, Source::Env));
     }
     if let Some(value) = key.configured(ontology) {

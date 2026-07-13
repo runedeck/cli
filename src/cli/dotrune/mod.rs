@@ -32,22 +32,29 @@ pub use resolve::resolve_sources;
 
 const MAX_BYTES: usize = 64 * 1024;
 
-/// Return whether `repo_root` has a current or legacy consumer manifest.
+/// Return whether `repo_root` has a consumer manifest.
 pub fn exists(repo_root: &Path) -> bool {
-    manifest_path(repo_root).is_some()
+    repo_root.join(".rune").exists()
 }
 
-/// Load `.rune` from `repo_root`, falling back to legacy `.forge` if absent.
+/// Load `.rune` from `repo_root`.
 ///
-/// Returns `Ok(None)` when neither manifest exists at the given root (the normal
+/// Returns `Ok(None)` when no manifest exists at the given root (the normal
 /// `module.yaml`-driven path takes over). Returns `Ok(Some(...))` after a
 /// successful parse and `Err` on size-cap violation, malformed YAML, or
 /// schema mismatch. The size cap (64 KiB) is checked before YAML parsing
 /// to defend against memory-bomb / billion-laughs shapes.
 pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
-    let Some(path) = manifest_path(repo_root) else {
+    let path = repo_root.join(".rune");
+    if path.is_dir() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("{} must be a file, not a directory", path.display()),
+        ));
+    }
+    if !path.is_file() {
         return Ok(None);
-    };
+    }
 
     let bytes = fs::read(&path).map_err(|error| {
         Error::new(
@@ -72,14 +79,4 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
     })?;
 
     parse::parse(content).map(Some)
-}
-
-fn manifest_path(repo_root: &Path) -> Option<std::path::PathBuf> {
-    let current = repo_root.join(".rune");
-    if current.is_file() {
-        return Some(current);
-    }
-
-    let legacy = repo_root.join(".forge");
-    legacy.is_file().then_some(legacy)
 }

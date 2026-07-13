@@ -475,12 +475,10 @@ fn discover_deck_targets(
 }
 
 fn target_points_at_deck(target: &Path, deck_root: &Path, deck_remote: Option<&str>) -> bool {
-    let manifest_path = [target.join(".rune"), target.join(".forge")]
-        .into_iter()
-        .find(|path| path.is_file());
-    let Some(manifest_path) = manifest_path else {
+    let manifest_path = target.join(".rune");
+    if !manifest_path.is_file() {
         return false;
-    };
+    }
     let Ok(content) = fs::read_to_string(manifest_path) else {
         return false;
     };
