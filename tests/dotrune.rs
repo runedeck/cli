@@ -284,12 +284,39 @@ fn legacy_dotforge_resolves_when_dotrune_is_absent() {
     .unwrap();
 
     install(consumer.path()).success();
+    let deployed = consumer.path().join(".claude/skills/LegacySkill/SKILL.md");
+    let body = fs::read_to_string(&deployed)
+        .expect("a repo containing only legacy .forge must still resolve");
+    assert!(
+        body.contains("LegacySkill"),
+        "deployed skill body must carry the source content, got: {body}"
+    );
+}
+
+#[test]
+fn dotrune_ignores_directory_named_like_manifest() {
+    let producer = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    scaffold_producer(producer.path(), "producer");
+    write_skill(producer.path(), "LegacySkill");
+
+    fs::create_dir(consumer.path().join(".rune")).unwrap();
+    fs::write(
+        consumer.path().join(".forge"),
+        format!(
+            "version: 1\nsources:\n  producer:\n    path: {p}\nartifacts:\n  producer:\n    skills: [LegacySkill]\n",
+            p = producer.path().display(),
+        ),
+    )
+    .unwrap();
+
+    install(consumer.path()).success();
     assert!(
         consumer
             .path()
             .join(".claude/skills/LegacySkill/SKILL.md")
             .is_file(),
-        "a repo containing only legacy .forge must still resolve"
+        "a .rune directory must not shadow a valid legacy .forge file"
     );
 }
 

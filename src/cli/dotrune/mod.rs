@@ -75,7 +75,7 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
 
 fn manifest_path(repo_root: &Path) -> Option<std::path::PathBuf> {
     let current = repo_root.join(".rune");
-    if current.exists() {
+    if current.is_file() {
         return Some(current);
     }
 
