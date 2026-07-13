@@ -1,5 +1,4 @@
 use commands::error::{Error, ErrorKind};
-use commands::result::ActionResult;
 use commands::validate;
 use std::fs;
 use std::path::Path;
@@ -28,19 +27,14 @@ pub fn flat_directory(
     let mdschema_content = schema::load_mdschema_or_fallback(dir, kind)
         .map_err(|error| Error::new(ErrorKind::Io, error))?;
 
-    let entries = fs::read_dir(dir)
-        .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
-    let mut entries = entries
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
-    entries.sort_by_key(std::fs::DirEntry::path);
+    let mut files = markdown_files(dir)?;
+    let user_dir = dir.join("user");
+    if user_dir.is_dir() {
+        files.extend(markdown_files(&user_dir)?);
+        files.sort();
+    }
 
-    for entry in entries {
-        let path = entry.path();
-        if path.is_dir() || path.extension().unwrap_or_default() != "md" {
-            continue;
-        }
-
+    for path in files {
         let content = read_file(&path)?;
         let relative = path
             .strip_prefix(module_root)
@@ -55,7 +49,7 @@ pub fn flat_directory(
             schema_content.as_ref(),
             mdschema_content.as_ref(),
             None,
-            &mut report.result,
+            report,
         );
         report.record_since(relative, checkpoint);
     }
@@ -102,7 +96,7 @@ pub fn flat_directory_with_json_schema(
             schema_content.as_ref(),
             mdschema_content.as_ref(),
             json_schema_content,
-            &mut report.result,
+            report,
         );
         report.record_since(relative, checkpoint);
     }
@@ -134,10 +128,12 @@ pub fn skill_directory(
     let mdschema_content = schema::load_mdschema_or_fallback(dir, "skills")
         .map_err(|error| Error::new(ErrorKind::Io, error))?;
 
-    // Only validate SKILL.md against the schema — companions are reference
-    // docs without skill frontmatter (name, description, version).
-    let skill_file = dir.join("SKILL.md");
-    if skill_file.is_file() {
+    // Only validate base and user-override SKILL.md files against the schema —
+    // companions are reference docs without skill frontmatter.
+    for skill_file in [dir.join("SKILL.md"), dir.join("user/SKILL.md")]
+        .into_iter()
+        .filter(|path| path.is_file())
+    {
         let content = read_file(&skill_file)?;
         let display_path = skill_file
             .strip_prefix(module_root)
@@ -154,12 +150,32 @@ pub fn skill_directory(
             skill_schema.as_ref(),
             mdschema_content.as_ref(),
             None,
-            &mut report.result,
+            report,
         );
         report.record_since(display_path, checkpoint);
     }
 
     Ok(())
+}
+
+fn markdown_files(directory: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", directory.display()),
+        )
+    })?;
+    let mut files = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("directory entry error: {error}")))?
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file() && path.extension().is_some_and(|extension| extension == "md")
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    Ok(files)
 }
 
 /// Run schema and mdschema validation, appending any diagnostics to the result.
@@ -169,25 +185,19 @@ fn collect_diagnostics(
     schema_content: Option<&String>,
     mdschema_content: Option<&String>,
     json_schema_content: Option<&String>,
-    result: &mut ActionResult,
+    report: &mut ValidationReport,
 ) {
     if let Some(schema) = schema_content {
         let diagnostics = validate::validate_frontmatter(content, schema, file_path);
         for diag in diagnostics {
-            result.errors.push(format!(
-                "{}: {} ({:?})",
-                diag.file, diag.message, diag.severity
-            ));
+            report.diagnostic(&diag);
         }
     }
 
     if let Some(mdschema) = mdschema_content {
         let diagnostics = validate::mdschema::check(content, file_path, mdschema);
         for diag in diagnostics {
-            result.errors.push(format!(
-                "{}: {} ({:?})",
-                diag.file, diag.message, diag.severity
-            ));
+            report.diagnostic(&diag);
         }
     }
 
@@ -195,10 +205,7 @@ fn collect_diagnostics(
         let diagnostics =
             validate::validate_frontmatter_against_json_schema(content, json_schema, file_path);
         for diag in diagnostics {
-            result.errors.push(format!(
-                "{}: {} ({:?})",
-                diag.file, diag.message, diag.severity
-            ));
+            report.diagnostic(&diag);
         }
     }
 }

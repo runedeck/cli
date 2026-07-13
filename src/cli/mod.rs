@@ -20,7 +20,7 @@ mod provenance;
 pub(crate) mod quest;
 mod release;
 mod review;
-mod validate;
+pub(crate) mod validate;
 pub(crate) mod watchlist;
 
 #[cfg(test)]

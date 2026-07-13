@@ -34,10 +34,31 @@ struct ValidationItem {
     detail: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ViolationSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValidationViolation {
+    pub(crate) artifact: String,
+    pub(crate) line: Option<usize>,
+    pub(crate) severity: ViolationSeverity,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SourceValidationReport {
+    pub(crate) checked: usize,
+    pub(crate) violations: Vec<ValidationViolation>,
+}
+
 #[derive(Debug, Default)]
 struct ValidationReport {
     result: ActionResult,
     items: Vec<ValidationItem>,
+    violations: Vec<ValidationViolation>,
 }
 
 impl ValidationReport {
@@ -46,14 +67,23 @@ impl ValidationReport {
     }
 
     fn record_since(&mut self, name: impl Into<String>, checkpoint: (usize, usize)) {
+        let name = name.into();
+        let new_errors = self.result.errors[checkpoint.0..].to_vec();
+        let new_warnings = self.result.warnings[checkpoint.1..].to_vec();
         let errors = self.result.errors[checkpoint.0..].join("; ");
         let warnings = self.result.warnings[checkpoint.1..].join("; ");
         if !errors.is_empty() {
-            self.record(name, ValidationStatus::Failed, Some(errors));
+            self.record(&name, ValidationStatus::Failed, Some(errors));
         } else if !warnings.is_empty() {
-            self.record(name, ValidationStatus::Warning, Some(warnings));
+            self.record(&name, ValidationStatus::Warning, Some(warnings));
         } else {
-            self.record(name, ValidationStatus::Passed, None);
+            self.record(&name, ValidationStatus::Passed, None);
+        }
+        for message in new_errors {
+            self.push_violation_if_missing(&name, ViolationSeverity::Error, message, None);
+        }
+        for message in new_warnings {
+            self.push_violation_if_missing(&name, ViolationSeverity::Warning, message, None);
         }
     }
 
@@ -62,12 +92,16 @@ impl ValidationReport {
     }
 
     fn warn(&mut self, name: impl Into<String>, message: String) {
+        let name = name.into();
         self.result.warnings.push(message.clone());
+        self.push_violation_if_missing(&name, ViolationSeverity::Warning, message.clone(), None);
         self.record(name, ValidationStatus::Warning, Some(message));
     }
 
     fn fail(&mut self, name: impl Into<String>, message: String) {
+        let name = name.into();
         self.result.errors.push(message.clone());
+        self.push_violation_if_missing(&name, ViolationSeverity::Error, message.clone(), None);
         self.record(name, ValidationStatus::Failed, Some(message));
     }
 
@@ -101,6 +135,50 @@ impl ValidationReport {
             detail,
         });
     }
+
+    fn push_violation_if_missing(
+        &mut self,
+        artifact: &str,
+        severity: ViolationSeverity,
+        message: String,
+        line: Option<usize>,
+    ) {
+        if self
+            .violations
+            .iter()
+            .any(|violation| violation.severity == severity && violation.message == message)
+        {
+            return;
+        }
+        self.violations.push(ValidationViolation {
+            artifact: artifact.to_string(),
+            line,
+            severity,
+            message,
+        });
+    }
+
+    fn diagnostic(&mut self, diagnostic: &commands::validate::Diagnostic) {
+        let detail = match diagnostic.line {
+            Some(line) => format!(
+                "{}:{line}: {} ({:?})",
+                diagnostic.file, diagnostic.message, diagnostic.severity
+            ),
+            None => format!(
+                "{}: {} ({:?})",
+                diagnostic.file, diagnostic.message, diagnostic.severity
+            ),
+        };
+        let severity = match diagnostic.severity {
+            commands::validate::Severity::Error => ViolationSeverity::Error,
+            commands::validate::Severity::Warning => ViolationSeverity::Warning,
+        };
+        match severity {
+            ViolationSeverity::Error => self.result.errors.push(detail.clone()),
+            ViolationSeverity::Warning => self.result.warnings.push(detail.clone()),
+        }
+        self.push_violation_if_missing(&diagnostic.file, severity, detail, diagnostic.line);
+    }
 }
 
 /// Validate module structure and content files against schemas, print the
@@ -114,6 +192,15 @@ pub fn execute(path: &str, json: bool) -> Result<i32, Error> {
     let report = validate(path)?;
     print_report(&report, json);
     Ok(i32::from(report.result.has_errors()))
+}
+
+/// Validate a source without printing, for live consumers such as the TUI.
+pub(crate) fn validate_source(path: &Path) -> Result<SourceValidationReport, Error> {
+    let report = validate(&path.to_string_lossy())?;
+    Ok(SourceValidationReport {
+        checked: report.items.len(),
+        violations: report.violations,
+    })
 }
 
 fn validate(path: &str) -> Result<ValidationReport, Error> {
@@ -139,6 +226,9 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
             for item in &mut deck_entry_report.items {
                 item.name = format!("{}/{}", deck_entry.name, item.name);
             }
+            for violation in &mut deck_entry_report.violations {
+                violation.artifact = format!("{}/{}", deck_entry.name, violation.artifact);
+            }
             append_report(&mut aggregate, deck_entry_report);
         }
         return Ok(aggregate);
@@ -154,7 +244,7 @@ fn validate_module(
 
     check_module_structure(module_root, &mut report);
     let checkpoint = report.checkpoint();
-    check_module_yaml(module_root, &mut report.result);
+    check_module_yaml(module_root, &mut report);
     if module_root.join("module.yaml").is_file() {
         report.record_since("module.yaml", checkpoint);
     }
@@ -224,6 +314,7 @@ fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport)
         .append(&mut report.result.warnings);
     aggregate.result.errors.append(&mut report.result.errors);
     aggregate.items.append(&mut report.items);
+    aggregate.violations.append(&mut report.violations);
 }
 
 fn check_module_structure(module_root: &Path, report: &mut ValidationReport) {
@@ -305,7 +396,7 @@ fn print_item_with_detail(item: &ValidationItem, style: &Style, dim: &Style, sym
     }
 }
 
-fn check_module_yaml(module_root: &Path, result: &mut ActionResult) {
+fn check_module_yaml(module_root: &Path, report: &mut ValidationReport) {
     let module_yaml_path = module_root.join("module.yaml");
     if !module_yaml_path.is_file() {
         return;
@@ -327,10 +418,7 @@ fn check_module_yaml(module_root: &Path, result: &mut ActionResult) {
     );
 
     for diagnostic in diagnostics {
-        result.errors.push(format!(
-            "{}: {} ({:?})",
-            diagnostic.file, diagnostic.message, diagnostic.severity
-        ));
+        report.diagnostic(&diagnostic);
     }
 }
 

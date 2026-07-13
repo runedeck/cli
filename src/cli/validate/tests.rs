@@ -31,24 +31,58 @@ fn check_module_yaml_validates_against_embedded_schema() {
     let module_yaml = "name: test-module\nversion: 0.1.0\ndescription: test\nevents: []\n";
     std::fs::write(temp_directory.path().join("module.yaml"), module_yaml).unwrap();
 
-    let mut result = ActionResult::new();
-    check_module_yaml(temp_directory.path(), &mut result);
+    let mut report = ValidationReport::default();
+    check_module_yaml(temp_directory.path(), &mut report);
 
     assert!(
-        result.errors.is_empty(),
+        report.result.errors.is_empty(),
         "unexpected errors: {:?}",
-        result.errors
+        report.result.errors
     );
 }
 
 #[test]
 fn check_module_yaml_skips_when_no_module_yaml() {
     let temp_directory = TempDir::new().unwrap();
-    let mut result = ActionResult::new();
+    let mut report = ValidationReport::default();
 
-    check_module_yaml(temp_directory.path(), &mut result);
+    check_module_yaml(temp_directory.path(), &mut report);
 
-    assert!(result.errors.is_empty());
+    assert!(report.result.errors.is_empty());
+}
+
+#[test]
+fn validate_source_returns_structured_broken_adr_violations_without_printing() {
+    let root = TempDir::new().unwrap();
+    for (name, content) in [
+        (
+            "module.yaml",
+            "name: live-validation\nversion: 0.1.0\ndescription: test\nevents: []\n",
+        ),
+        ("defaults.yaml", "{}\n"),
+        ("README.md", "# Test\n"),
+        ("LICENSE", "test\n"),
+    ] {
+        std::fs::write(root.path().join(name), content).unwrap();
+    }
+    let decisions = root.path().join("docs/decisions");
+    std::fs::create_dir_all(&decisions).unwrap();
+    std::fs::write(
+        decisions.join("ADR-0001.md"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/input/adr-missing-section.md"
+        )),
+    )
+    .unwrap();
+
+    let report = validate_source(root.path()).unwrap();
+
+    assert!(report.checked > 0);
+    assert!(report.violations.iter().any(|violation| {
+        violation.artifact == "docs/decisions/ADR-0001.md"
+            && violation.severity == ViolationSeverity::Error
+    }));
 }
 
 #[test]
@@ -81,6 +115,24 @@ Body content for the test skill.\n";
         "Claude Code optional skill fields should validate cleanly: {:?}",
         report.result.errors
     );
+}
+
+#[test]
+fn skill_directory_validates_user_override() {
+    let root = TempDir::new().unwrap();
+    let skill_dir = root.path().join("skills/OverrideSkill");
+    std::fs::create_dir_all(skill_dir.join("user")).unwrap();
+    let valid = "---\nname: OverrideSkill\ndescription: Valid base skill.\nversion: 0.1.0\n---\n\n# OverrideSkill\n";
+    std::fs::write(skill_dir.join("SKILL.md"), valid).unwrap();
+    std::fs::write(skill_dir.join("user/SKILL.md"), "# Missing frontmatter\n").unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, root.path(), &mut report).unwrap();
+
+    assert!(report.violations.iter().any(|violation| {
+        violation.artifact == "skills/OverrideSkill/user/SKILL.md"
+            && violation.severity == ViolationSeverity::Error
+    }));
 }
 
 // --- tools.rs native checks ---

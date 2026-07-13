@@ -8,6 +8,7 @@
 mod adr;
 pub mod builders;
 mod discovery;
+pub mod editing;
 pub mod files;
 mod history;
 mod provenance;
