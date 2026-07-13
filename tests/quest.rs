@@ -40,6 +40,96 @@ fn quest_binds_by_name_under_quests_root() {
         state.contains("inventory"),
         "state must record the quest: {state}"
     );
+    assert!(
+        state.contains("quests:"),
+        "state must record history: {state}"
+    );
+}
+
+#[test]
+fn quest_list_marks_the_active_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    fs::create_dir(quests.path().join("inventory")).unwrap();
+    fs::create_dir(quests.path().join("signals")).unwrap();
+
+    quest_cmd(home.path(), quests.path(), &["inventory"]).success();
+    quest_cmd(home.path(), quests.path(), &["signals"]).success();
+    quest_cmd(home.path(), quests.path(), &["--list"])
+        .success()
+        .stdout(predicates::str::contains("* ").and(predicates::str::contains("signals")))
+        .stdout(predicates::str::contains("\n  ").and(predicates::str::contains("inventory")));
+}
+
+#[test]
+fn quest_dash_switches_to_the_previous_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    fs::create_dir(quests.path().join("inventory")).unwrap();
+    fs::create_dir(quests.path().join("signals")).unwrap();
+
+    quest_cmd(home.path(), quests.path(), &["inventory"]).success();
+    quest_cmd(home.path(), quests.path(), &["signals"]).success();
+    quest_cmd(home.path(), quests.path(), &["-"])
+        .success()
+        .stdout(
+            predicates::str::contains("quest bound:").and(predicates::str::contains("inventory")),
+        );
+    quest_cmd(home.path(), quests.path(), &["--list"])
+        .success()
+        .stdout(predicates::str::contains("* ").and(predicates::str::contains("inventory")))
+        .stdout(predicates::str::contains("\n  ").and(predicates::str::contains("signals")));
+}
+
+#[test]
+fn quest_history_deduplicates_and_caps_at_ten() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    for index in 0..11 {
+        fs::create_dir(quests.path().join(format!("quest-{index}"))).unwrap();
+        quest_cmd(home.path(), quests.path(), &[&format!("quest-{index}")]).success();
+    }
+    quest_cmd(home.path(), quests.path(), &["quest-5"]).success();
+
+    let state = fs::read_to_string(home.path().join(".config/rune/state.yaml")).unwrap();
+    let state: serde_yaml::Value = serde_yaml::from_str(&state).unwrap();
+    let history = state["quests"].as_sequence().unwrap();
+    assert_eq!(history.len(), 10);
+    assert_eq!(
+        history[0].as_str(),
+        Some(
+            std::fs::canonicalize(quests.path().join("quest-5"))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|quest| quest.as_str() == history[0].as_str())
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn quest_state_tolerates_unknown_and_mistyped_history_fields() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    fs::create_dir(quests.path().join("inventory")).unwrap();
+    let state_dir = home.path().join(".config/rune");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::write(
+        state_dir.join("state.yaml"),
+        "quest: 42\nquests: not-a-list\nfuture-field: preserved\n",
+    )
+    .unwrap();
+
+    quest_cmd(home.path(), quests.path(), &["inventory"]).success();
+    let state = fs::read_to_string(state_dir.join("state.yaml")).unwrap();
+    assert!(state.contains("future-field: preserved"));
+    assert!(state.contains("quests:"));
 }
 
 #[test]

@@ -55,7 +55,7 @@ enum Command {
     /// Launch the terminal dashboard
     #[cfg(feature = "tui")]
     Tui {
-        /// Module or deck root to inspect. Defaults to the current directory.
+        /// Rune source or deck root to inspect. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -137,8 +137,8 @@ enum Command {
 
     /// Bind the quest (working repo) that rune commands operate on
     Quest {
-        /// Quest slug (<owner>/<name>), directory name under the quests root, or path. Omit to show the binding.
-        #[arg(value_name = "SLUG_OR_PATH")]
+        /// Quest slug (<owner>/<name>), directory name under the quests root, path, or `-` for the previous quest. Omit to show the binding.
+        #[arg(value_name = "SLUG_OR_PATH", allow_hyphen_values = true)]
         quest: Option<String>,
 
         /// Clone `https://github.com/<owner>/<name>` into the quests root when the quest is missing.
@@ -148,14 +148,18 @@ enum Command {
         /// Remove the binding.
         #[arg(long, conflicts_with_all = ["quest", "clone"])]
         unbind: bool,
+
+        /// List recent quests with the active binding marked.
+        #[arg(long, conflicts_with_all = ["quest", "clone", "unbind"])]
+        list: bool,
     },
 
-    /// Assemble and deploy module content to provider directories
+    /// Assemble and deploy rune content to provider directories
     #[command(after_help = "EXAMPLES:\n  \
-        # Install the current directory's module for all providers under ~/\n  \
+        # Install the current rune source for all providers under ~/\n  \
         cd ~/Modules/rune-core && rune install --target ~\n  \
         \n  \
-        # Install a specific module for opencode only\n  \
+        # Install a specific rune source for opencode only\n  \
         rune install --source ~/Modules/rune-core --target ~ --provider opencode\n\n\
         TARGET LAYOUT:\n  \
         --target <DIR> deploys each provider to <DIR>/<provider-target>:\n    \
@@ -166,7 +170,7 @@ enum Command {
         Without --target, providers deploy under the current directory. \
         In consumer mode (.rune present at --source), --target defaults to --source.")]
     Install {
-        /// Module root to install from (must contain module.yaml). Defaults to `.`.
+        /// Rune source or consumer quest root to install from. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -205,7 +209,7 @@ enum Command {
         #[arg(long)]
         allow_stale: bool,
 
-        /// Deploy only files under this module-relative prefix. Implies --no-prune.
+        /// Deploy only files under this source-relative prefix. Implies --no-prune.
         #[arg(long, value_name = "PREFIX")]
         only: Option<String>,
 
@@ -216,9 +220,9 @@ enum Command {
         model: Option<String>,
     },
 
-    /// Assemble module content into build/
+    /// Assemble rune content into build/
     Assemble {
-        /// Module root to assemble (must contain module.yaml). Defaults to `.`.
+        /// Rune source root to assemble (must contain module.yaml or .rune). Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -229,9 +233,9 @@ enum Command {
         model: Option<String>,
     },
 
-    /// Deploy assembled files from build/ to provider directories
+    /// Deploy assembled runes from build/ to provider directories
     Deploy {
-        /// Module root containing build/ to deploy from. Defaults to `.`.
+        /// Rune source root containing build/ to deploy from. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -264,14 +268,14 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
 
-        /// Deploy only files under this module-relative prefix. Implies --no-prune.
+        /// Deploy only files under this source-relative prefix. Implies --no-prune.
         #[arg(long, value_name = "PREFIX")]
         only: Option<String>,
     },
 
-    /// Copy source files directly to a target directory (no assembly, no transforms)
+    /// Copy runes directly to a target directory (no assembly, no transforms)
     Copy {
-        /// Module root to copy from.
+        /// Rune source root to copy from.
         #[arg(long, value_name = "DIR")]
         source: String,
 
@@ -284,9 +288,9 @@ enum Command {
         skip_provenance: bool,
     },
 
-    /// Validate module files against schemas
+    /// Validate deck or rune source files against schemas
     Validate {
-        /// Module root to validate (must contain module.yaml). Defaults to `.`.
+        /// Rune source or deck root to validate. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
     },
@@ -297,7 +301,7 @@ enum Command {
         #[arg(long, value_name = "DIR_OR_FILE", default_value = ".")]
         target: String,
 
-        /// Filter by source module URI (e.g. <https://github.com/...>)
+        /// Filter by source rune URI (e.g. <https://github.com/...>)
         #[arg(long, value_name = "URI")]
         source_uri: Option<String>,
 
@@ -306,21 +310,21 @@ enum Command {
         show_orphans: bool,
     },
 
-    /// Compare module content against an upstream reference, or verify a build
+    /// Compare rune content against an upstream reference, or verify a build
     /// against where it was deployed
     Drift {
-        /// Module root to compare. Defaults to `.`.
+        /// Rune source root to compare. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
-        /// Upstream reference module to compare against (compares two module
+        /// Upstream rune source to compare against (compares two source
         /// trees by name). Mutually exclusive with --target.
         #[arg(long, value_name = "DIR")]
         upstream: Option<String>,
 
         /// Deploy base to verify against (e.g. `~` or `.`), mirroring `rune
         /// install --target`. Diffs each `build/<provider>` against
-        /// `<DIR>/<provider-target>`, scoped to this module's files. Mutually
+        /// `<DIR>/<provider-target>`, scoped to this rune source's files. Mutually
         /// exclusive with --upstream.
         #[arg(long, value_name = "DIR")]
         target: Option<String>,
@@ -332,7 +336,7 @@ enum Command {
 
     /// Remove stale files from previous installs
     Clean {
-        /// Module root whose manifests drive the cleanup. Defaults to `.`.
+        /// Rune source whose manifests drive the cleanup. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -348,12 +352,12 @@ enum Command {
         action: Option<ConfigAction>,
     },
 
-    /// Adopt an upstream skill artifact into a module with provenance
+    /// Adopt an upstream rune into a single-module source with provenance
     Adopt {
-        /// HTTPS URL of the upstream artifact. file:// is allowed for tests.
+        /// HTTPS URL of the upstream rune. file:// is allowed for tests.
         url: String,
 
-        /// Target module root. Defaults to the current directory.
+        /// Target single-module root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         module: String,
 
@@ -365,7 +369,7 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         companion: Option<String>,
 
-        /// Artifact kind to adopt.
+        /// Rune kind to adopt.
         #[arg(long, value_enum, default_value_t = adopt::Kind::Skill)]
         kind: adopt::Kind,
 
@@ -374,12 +378,12 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Find local skills, agents, and rules by relevance
+    /// Find local runes by relevance
     Find {
         /// Search query.
         query: String,
 
-        /// Restrict results to one artifact kind.
+        /// Restrict results to one rune kind.
         #[arg(long, value_enum)]
         kind: Option<find::KindFilter>,
     },
@@ -410,11 +414,11 @@ enum Command {
         rest: Vec<OsString>,
     },
 
-    /// Launch a read-only web dashboard showing artifact state, provenance,
+    /// Launch a read-only web dashboard showing rune state, provenance,
     /// and deployment status across all providers
     #[cfg(feature = "dashboard")]
     Dashboard {
-        /// Base directory to scan for modules (one level deep). Defaults to `.`.
+        /// Base directory to scan for rune sources (one level deep). Defaults to `.`.
         #[arg(
             long = "source",
             visible_alias = "root",
@@ -428,13 +432,13 @@ enum Command {
         port: Option<u16>,
     },
 
-    /// Assemble and package module as release tarballs
+    /// Assemble and package a rune as release tarballs
     Release {
         /// Deck domain to package. Required when --source is a deck root.
         #[arg(value_name = "DOMAIN")]
         deck: Option<String>,
 
-        /// Module root to package (must contain module.yaml). Defaults to `.`.
+        /// Rune source or deck root to package. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -443,7 +447,7 @@ enum Command {
         embed: bool,
     },
 
-    /// Manage the watchlist of module and deployment locations to monitor
+    /// Manage the watchlist of rune and deployment locations to monitor
     Watch {
         #[command(subcommand)]
         action: WatchAction,
@@ -466,7 +470,7 @@ enum WatchAction {
     List,
     /// Add a local path to the watchlist
     Add {
-        /// Path to a module or deployment target (supports a leading `~/`).
+        /// Path to a rune source or deployment target (supports a leading `~/`).
         path: String,
     },
     /// Watch a remote repo pinned to a commit SHA
@@ -488,15 +492,15 @@ enum WatchAction {
 enum ReviewAction {
     /// List persisted comments
     List {
-        /// Module or repository root containing `.rune-comments.yaml`.
-        #[arg(long, value_name = "DIR", default_value = ".")]
-        source: String,
+        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound quest.
+        #[arg(long, value_name = "DIR")]
+        target: Option<String>,
     },
     /// Render comments with their source-line context
     Export {
-        /// Module or repository root containing `.rune-comments.yaml`.
-        #[arg(long, value_name = "DIR", default_value = ".")]
-        source: String,
+        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound quest.
+        #[arg(long, value_name = "DIR")]
+        target: Option<String>,
         /// Agent-ready markdown or compact terminal output.
         #[arg(long, value_enum, default_value_t = review::Format::Markdown)]
         format: review::Format,
@@ -600,8 +604,9 @@ pub fn run() -> i32 {
             quest,
             clone,
             unbind,
+            list,
         } => {
-            return exit_code(quest::execute(quest.as_deref(), clone, unbind));
+            return exit_code(quest::execute(quest.as_deref(), clone, unbind, list));
         }
         Command::Install {
             source,
@@ -750,8 +755,10 @@ pub fn run() -> i32 {
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
             return exit_code(match action {
-                ReviewAction::List { source } => review::list(&source),
-                ReviewAction::Export { source, format } => review::export(&source, format),
+                ReviewAction::List { target } => review::list(target.as_deref()),
+                ReviewAction::Export { target, format } => {
+                    review::export(target.as_deref(), format)
+                }
             });
         }
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
@@ -856,7 +863,7 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "quest",
-        "[SLUG_OR_PATH]",
+        "[SLUG_OR_PATH|-] [--list]",
         "Bind or show the working repository",
     );
     help_command(
@@ -883,7 +890,7 @@ fn flow_help(help: &mut String) {
         help,
         "install",
         "[--source <DIR>] [--target <DIR>]",
-        "Assemble and deploy module content",
+        "Assemble and deploy rune content",
     );
     help_command(
         help,
@@ -899,7 +906,7 @@ fn deck_help(help: &mut String) {
         help,
         "validate",
         "[--source <DIR>]",
-        "Validate module files against schemas",
+        "Validate deck or rune files against schemas",
     );
     help_command(
         help,
@@ -923,19 +930,19 @@ fn deck_help(help: &mut String) {
         help,
         "release",
         "[DOMAIN] [--source <DIR>]",
-        "Package module release tarballs",
+        "Package rune release tarballs",
     );
     help_command(
         help,
         "adopt",
         "<URL> [--module <DIR>]",
-        "Adopt an upstream artifact with provenance",
+        "Adopt an upstream rune with provenance",
     );
     help_command(
         help,
         "watch",
         "<COMMAND>",
-        "Manage monitored module locations",
+        "Manage monitored rune locations",
     );
 }
 
@@ -945,19 +952,19 @@ fn plumbing_help(help: &mut String) {
         help,
         "assemble",
         "[--source <DIR>]",
-        "Assemble module content into build/",
+        "Assemble rune content into build/",
     );
     help_command(
         help,
         "deploy",
         "[--source <DIR>] [--target <DIR>]",
-        "Deploy assembled provider files",
+        "Deploy assembled runes",
     );
     help_command(
         help,
         "copy",
         "--source <DIR> --target <DIR>",
-        "Copy source files without transforms",
+        "Copy runes without transforms",
     );
     help_command(
         help,
@@ -965,7 +972,7 @@ fn plumbing_help(help: &mut String) {
         "[set <KEY> <VALUE>]",
         "Show or update resolved configuration",
     );
-    help_command(help, "find", "<QUERY>", "Find local artifacts by relevance");
+    help_command(help, "find", "<QUERY>", "Find local runes by relevance");
     help_command(
         help,
         "exec",

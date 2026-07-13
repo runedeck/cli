@@ -6,24 +6,32 @@
 
 use commands::error::{Error, ErrorKind};
 use commands::ontology;
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+const HISTORY_LIMIT: usize = 10;
+
+#[derive(Debug, Default)]
 struct State {
     quest: Option<String>,
+    quests: Vec<String>,
 }
 
-pub fn execute(quest: Option<&str>, clone: bool, unbind: bool) -> Result<i32, Error> {
+pub fn execute(quest: Option<&str>, clone: bool, unbind: bool, list: bool) -> Result<i32, Error> {
     let state_path = state_path()?;
+    if list {
+        return list_quests(&state_path);
+    }
     if unbind {
         return unbind_quest(&state_path);
     }
     let Some(requested) = quest else {
         return Ok(show_binding(&state_path));
     };
-    let resolved = resolve_quest(requested, clone)?;
+    let resolved = if requested == "-" {
+        previous_quest(&state_path)?
+    } else {
+        resolve_quest(requested, clone)?
+    };
     write_binding(&state_path, &resolved)?;
     println!("updated {}", state_path.display());
     println!("quest bound: {}", resolved.display());
@@ -42,9 +50,10 @@ pub(crate) fn bind_existing(quest: &Path) -> Result<(), Error> {
 pub fn bound_quest() -> Option<PathBuf> {
     let state_path = state_path().ok()?;
     let content = std::fs::read_to_string(&state_path).ok()?;
-    let state: State = serde_yaml::from_str(&content)
+    let document: serde_yaml::Value = serde_yaml::from_str(&content)
         .map_err(|error| eprintln!("warning: {} is malformed: {error}", state_path.display()))
         .ok()?;
+    let state = state_from_document(&document);
     let quest = PathBuf::from(state.quest?);
     quest.is_dir().then_some(quest)
 }
@@ -68,6 +77,36 @@ fn show_binding(state_path: &Path) -> i32 {
         );
     }
     0
+}
+
+fn list_quests(state_path: &Path) -> Result<i32, Error> {
+    let document = read_document(state_path)?;
+    let state = state_from_document(&document);
+    let history = normalized_history(&state);
+    if history.is_empty() {
+        println!("no recent quests");
+        return Ok(0);
+    }
+    for quest in history {
+        let marker = if state.quest.as_deref() == Some(quest.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        println!("{marker} {quest}");
+    }
+    Ok(0)
+}
+
+fn previous_quest(state_path: &Path) -> Result<PathBuf, Error> {
+    let document = read_document(state_path)?;
+    let state = state_from_document(&document);
+    normalized_history(&state)
+        .into_iter()
+        .find(|quest| Some(quest.as_str()) != state.quest.as_deref())
+        .map(PathBuf::from)
+        .filter(|quest| quest.is_dir())
+        .ok_or_else(|| Error::new(ErrorKind::Config, "no previous quest".to_string()))
 }
 
 fn unbind_quest(state_path: &Path) -> Result<i32, Error> {
@@ -109,7 +148,8 @@ fn resolve_quest(requested: &str, clone: bool) -> Result<PathBuf, Error> {
     }
     let candidate = quests_root.join(name);
     if candidate.is_dir() {
-        return Ok(candidate);
+        return std::fs::canonicalize(&candidate)
+            .map_err(|error| io_error(&candidate, "read", &error));
     }
 
     if clone {
@@ -158,31 +198,33 @@ fn clone_quest(slug: &str, destination: &Path) -> Result<PathBuf, Error> {
             format!("git clone {url} failed with {status}"),
         ));
     }
-    Ok(destination.to_path_buf())
+    std::fs::canonicalize(destination).map_err(|error| io_error(destination, "read", &error))
 }
 
 fn write_binding(state_path: &Path, quest: &Path) -> Result<(), Error> {
-    let mut document: serde_yaml::Value = match std::fs::read_to_string(state_path) {
-        Ok(content) => serde_yaml::from_str(&content).map_err(|error| {
-            Error::new(
-                ErrorKind::Config,
-                format!("{} is malformed: {error}", state_path.display()),
-            )
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-        }
-        Err(error) => return Err(io_error(state_path, "read", &error)),
-    };
+    let mut document = read_document(state_path)?;
+    let state = state_from_document(&document);
     let mapping = document.as_mapping_mut().ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
             format!("{} must contain a YAML mapping", state_path.display()),
         )
     })?;
+    let quest = quest.to_string_lossy().into_owned();
     mapping.insert(
         serde_yaml::Value::from("quest"),
-        serde_yaml::Value::from(quest.to_string_lossy().into_owned()),
+        serde_yaml::Value::from(quest.clone()),
+    );
+    let mut history = vec![quest];
+    if let Some(active) = state.quest {
+        history.push(active);
+    }
+    history.extend(state.quests);
+    deduplicate_and_cap(&mut history);
+    mapping.insert(
+        serde_yaml::Value::from("quests"),
+        serde_yaml::to_value(history)
+            .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize: {error}")))?,
     );
     if let Some(parent) = state_path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| io_error(parent, "create", &error))?;
@@ -190,6 +232,53 @@ fn write_binding(state_path: &Path, quest: &Path) -> Result<(), Error> {
     let content = serde_yaml::to_string(&document)
         .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize: {error}")))?;
     std::fs::write(state_path, content).map_err(|error| io_error(state_path, "write", &error))
+}
+
+fn read_document(state_path: &Path) -> Result<serde_yaml::Value, Error> {
+    match std::fs::read_to_string(state_path) {
+        Ok(content) => serde_yaml::from_str(&content).map_err(|error| {
+            Error::new(
+                ErrorKind::Config,
+                format!("{} is malformed: {error}", state_path.display()),
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        }
+        Err(error) => Err(io_error(state_path, "read", &error)),
+    }
+}
+
+fn state_from_document(document: &serde_yaml::Value) -> State {
+    let Some(mapping) = document.as_mapping() else {
+        return State::default();
+    };
+    let quest = mapping
+        .get(serde_yaml::Value::from("quest"))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string);
+    let quests = mapping
+        .get(serde_yaml::Value::from("quests"))
+        .and_then(serde_yaml::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_yaml::Value::as_str)
+        .map(str::to_string)
+        .collect();
+    State { quest, quests }
+}
+
+fn normalized_history(state: &State) -> Vec<String> {
+    let mut history = state.quest.iter().cloned().collect::<Vec<_>>();
+    history.extend(state.quests.iter().cloned());
+    deduplicate_and_cap(&mut history);
+    history
+}
+
+fn deduplicate_and_cap(history: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    history.retain(|quest| seen.insert(quest.clone()));
+    history.truncate(HISTORY_LIMIT);
 }
 
 fn io_error(path: &Path, action: &str, error: &dyn std::fmt::Display) -> Error {
