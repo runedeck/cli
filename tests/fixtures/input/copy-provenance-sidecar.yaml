@@ -15,7 +15,7 @@ provenance:
                       sha256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
         runDetails:
             builder:
-                id: forge-cli
+                id: https://github.com/runedeck/rune
                 version:
                     forge: 0.0.0-fixture
             metadata:

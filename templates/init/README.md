@@ -14,7 +14,7 @@ make install
 
 ## Requirements
 
-- [forge-cli](https://github.com/N4M3Z/forge-cli)
+- [rune-cli](https://github.com/runedeck/rune)
 
 ## License
 

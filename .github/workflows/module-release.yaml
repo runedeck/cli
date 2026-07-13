@@ -3,8 +3,8 @@ name: Module Release
 on:
     workflow_call:
         inputs:
-            forge-version:
-                description: "forge-cli version to use"
+            rune-version:
+                description: "rune-cli version to use"
                 type: string
                 default: "latest"
 
@@ -17,15 +17,15 @@ jobs:
         steps:
             - uses: actions/checkout@v6
 
-            - uses: N4M3Z/forge-cli/.github/actions/setup-forge@main
+            - uses: runedeck/rune/.github/actions/setup-rune@main
               with:
-                  version: ${{ inputs.forge-version }}
+                  version: ${{ inputs.rune-version }}
 
             - name: Validate
               run: make validate
 
             - name: Release
-              run: forge release
+              run: rune release
 
             - name: Create GitHub release
               env:

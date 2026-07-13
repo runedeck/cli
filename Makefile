@@ -1,12 +1,12 @@
-# forge-cli
+# rune-cli
 
-FORGE ?= forge
-BINARY = target/release/forge
+RUNE ?= rune
+BINARY = target/release/rune
 
 .PHONY: help build install validate test clean
 
 help:
-	@echo "  make build      compile the forge binary"
+	@echo "  make build      compile the rune binary"
 	@echo "  make install    build, symlink, activate git hooks"
 	@echo "  make validate   run pre-commit checks"
 	@echo "  make test       validate + cargo test"
@@ -17,9 +17,9 @@ build:
 
 install: build
 	mkdir -p ~/.local/bin
-	ln -sf "$(CURDIR)/$(BINARY)" ~/.local/bin/forge
+	ln -sf "$(CURDIR)/$(BINARY)" ~/.local/bin/rune
 	git config core.hooksPath .githooks
-	@echo "Installed: forge -> $(CURDIR)/$(BINARY)"
+	@echo "Installed: rune -> $(CURDIR)/$(BINARY)"
 
 validate:
 	@bash .githooks/pre-commit

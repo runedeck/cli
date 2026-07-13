@@ -3,8 +3,8 @@
 ## Getting Started
 
 ```sh
-git clone https://github.com/N4M3Z/forge-cli.git
-cd forge-cli
+git clone https://github.com/runedeck/rune.git
+cd rune-cli
 make build
 make test
 ```

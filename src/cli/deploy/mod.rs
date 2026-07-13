@@ -112,7 +112,7 @@ pub fn execute(
                     let trash_dest = trash_root.join(stale_key);
 
                     // Refuse to prune a file whose on-disk content no longer
-                    // matches the fingerprint forge recorded — that signals
+                    // matches the fingerprint rune recorded — that signals
                     // local edits the user might want to keep. Same semantic as
                     // the deploy path uses to skip overwriting modified files;
                     // --force overrides both.
@@ -125,7 +125,7 @@ pub fn execute(
                         && manifest::content_sha256(&current) != expected
                     {
                         eprintln!(
-                            "forge prune: skipping {} (modified locally; pass --force to prune)",
+                            "rune prune: skipping {} (modified locally; pass --force to prune)",
                             stale_path.display()
                         );
                         skipped_modified += 1;
@@ -134,7 +134,7 @@ pub fn execute(
 
                     if dry_run {
                         eprintln!(
-                            "forge prune: would move {} -> {}",
+                            "rune prune: would move {} -> {}",
                             stale_path.display(),
                             trash_dest.display()
                         );
@@ -189,7 +189,7 @@ pub fn execute(
                         "entries"
                     };
                     eprintln!(
-                        "forge prune: {action} {pruned_count} stale {entry_label} to {}/.trash/{}/; recoverable via mv",
+                        "rune prune: {action} {pruned_count} stale {entry_label} to {}/.trash/{}/; recoverable via mv",
                         target_base.display(),
                         stamp
                     );
@@ -201,7 +201,7 @@ pub fn execute(
                         "entries"
                     };
                     eprintln!(
-                        "forge prune: skipped {skipped_modified} modified {entry_label}; pass --force to prune"
+                        "rune prune: skipped {skipped_modified} modified {entry_label}; pass --force to prune"
                     );
                 }
             }
@@ -514,7 +514,7 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>, Error>
 ///
 /// Matching is structured: both source URIs are parsed into `(host, owner, repo)`
 /// tuples and compared as tuples. Bare-name equality is used only when both
-/// inputs fail to parse as URLs. This prevents two modules named `forge-core`
+/// inputs fail to parse as URLs. This prevents two modules named `rune-core`
 /// at different repositories from incorrectly pruning each other's deployed
 /// files, and stops `Prompts` from matching `PublishPrompts` via a substring.
 fn is_owned_by_module(

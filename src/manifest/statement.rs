@@ -41,7 +41,7 @@ pub fn generate_statement(
                     builder: Builder {
                         id: builder_id.to_string(),
                         version: BuilderVersion {
-                            forge: builder_version.to_string(),
+                            rune: builder_version.to_string(),
                         },
                     },
                     metadata: Metadata {

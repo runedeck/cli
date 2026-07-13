@@ -67,7 +67,7 @@ pub fn execute(
         dim.apply_to("│"),
         dim.apply_to("builder"),
         &details.builder.id,
-        dim.apply_to(&details.builder.version.forge)
+        dim.apply_to(&details.builder.version.rune)
     );
     println!(" {}", dim.apply_to("│"));
 

@@ -1,12 +1,12 @@
-# GEMINI.md - forge-cli
+# GEMINI.md - rune-cli
 
-This file provides a comprehensive overview of the `forge-cli` project, its architecture, and development conventions for the Gemini CLI agent.
+This file provides a comprehensive overview of the `rune-cli` project, its architecture, and development conventions for the Gemini CLI agent.
 
 ## Project Overview
 
-`forge-cli` is a Rust-based toolkit designed to **assemble, validate, and deploy** markdown-based content (skills, agents, and rules) across multiple AI coding providers (Claude, Gemini, Codex, OpenCode).
+`rune-cli` is a Rust-based toolkit designed to **assemble, validate, and deploy** markdown-based content (skills, agents, and rules) across multiple AI coding providers (Claude, Gemini, Codex, OpenCode).
 
-The core philosophy is "Author Once, Deploy Everywhere." Authors write provider-agnostic markdown with YAML frontmatter, and `forge-cli` handles the provider-specific transformations, path flattening, and provenance tracking.
+The core philosophy is "Author Once, Deploy Everywhere." Authors write provider-agnostic markdown with YAML frontmatter, and `rune-cli` handles the provider-specific transformations, path flattening, and provenance tracking.
 
 ### Key Features
 - **Two-Stage Pipeline:** Separates content transformation (**assemble**) from file placement (**deploy**).
@@ -29,17 +29,17 @@ The project uses a `Makefile` to orchestrate common development tasks.
 
 ### Core Commands
 - **Build:** `make build` (runs `cargo build --release`)
-- **Install:** `make install` (builds, symlinks to `~/.local/bin/forge`, and activates git hooks)
+- **Install:** `make install` (builds, symlinks to `~/.local/bin/rune`, and activates git hooks)
 - **Test:** `make test` (runs validation and `cargo test`)
 - **Validate:** `make validate` (runs pre-commit checks via `.githooks/pre-commit`)
 - **Clean:** `make clean` (removes build artifacts)
 
 ### CLI Usage Examples
-- **Full Install:** `forge install [--source <module_path>]` (defaults to `.`)
-- **Assemble Only:** `forge assemble [--source <module_path>]`
-- **Deploy Only:** `forge deploy [--source <module_path>]`
-- **Validate Module:** `forge validate [--source <module_path>]`
-- **Check for Drift:** `forge drift [--source <local_path>] --upstream <upstream_path>`
+- **Full Install:** `rune install [--source <module_path>]` (defaults to `.`)
+- **Assemble Only:** `rune assemble [--source <module_path>]`
+- **Deploy Only:** `rune deploy [--source <module_path>]`
+- **Validate Module:** `rune validate [--source <module_path>]`
+- **Check for Drift:** `rune drift [--source <local_path>] --upstream <upstream_path>`
 
 ---
 
@@ -56,7 +56,7 @@ The project uses a `Makefile` to orchestrate common development tasks.
     - `manifest/`: Manifest read/write and SLSA provenance generation.
     - `validate/`: Schema and structural validation.
     - `yaml/`: Deep merge logic for configuration files.
-- `templates/init/`: Embedded templates used by `forge init`.
+- `templates/init/`: Embedded templates used by `rune init`.
 - `schemas/`: `.mdschema` files for document validation.
 - `docs/decisions/`: ADRs (Architecture Decision Records) detailing technical choices.
 
@@ -80,12 +80,12 @@ The project uses a `Makefile` to orchestrate common development tasks.
 
 ### Contribution Workflow
 - All changes require PRs and must pass `make validate`.
-- Pre-commit hooks are mandatory and configured to use `forge` itself for validation.
+- Pre-commit hooks are mandatory and configured to use `rune` itself for validation.
 - **`defaults.yaml`** is the source of truth for configuration.
 
 ## Transformation Guide
 
-When deploying to Gemini (`.gemini/`), `forge-cli` automatically transforms content to match Gemini CLI conventions:
+When deploying to Gemini (`.gemini/`), `rune-cli` automatically transforms content to match Gemini CLI conventions:
 
 ### 1. Tool Name Remapping
 `PascalCase` tool names in backticks are remapped to their `snake_case` equivalents using `config/remap-tools.yaml`.

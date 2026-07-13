@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# forge-cli module validation script
-# Canonical source: https://github.com/N4M3Z/forge-cli/blob/main/scripts/validate.sh
-# Runs the same checks as `forge validate` without requiring the compiled binary.
+# rune-cli module validation script
+# Canonical source: https://github.com/runedeck/rune/blob/main/scripts/validate.sh
+# Runs the same checks as `rune validate` without requiring the compiled binary.
 
-UPSTREAM_URL="https://raw.githubusercontent.com/N4M3Z/forge-cli/main/scripts/validate.sh"
+UPSTREAM_URL="https://raw.githubusercontent.com/runedeck/rune/main/scripts/validate.sh"
 MODULE_ROOT="${1:-.}"
 ERRORS=0
 
@@ -31,7 +31,7 @@ check_drift() {
     upstream_hash=$(echo "$upstream_content" | shasum -a 256 | cut -d' ' -f1)
 
     if [ "$local_hash" != "$upstream_hash" ]; then
-        echo "  DRIFT bin/validate.sh differs from upstream forge-cli"
+        echo "  DRIFT bin/validate.sh differs from upstream rune-cli"
     fi
 }
 
@@ -100,7 +100,7 @@ check_adr_frontmatter() {
     fi
 
     local schema=""
-    for candidate in schemas/forge-adr.schema.json templates/forge-adr.json templates/structured-madr.json; do
+    for candidate in schemas/rune-adr.schema.json templates/rune-adr.json templates/structured-madr.json; do
         if [ -f "$candidate" ]; then
             schema="$candidate"
             break

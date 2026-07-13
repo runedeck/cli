@@ -1,12 +1,12 @@
-# forge-cli
+# rune-cli
 
 Assemble, validate, and deploy markdown content across AI coding providers.
 
-Skills, agents, and rules are authored once as markdown with YAML frontmatter. forge-cli transforms them for each provider's conventions and deploys to the right directories.
+Skills, agents, and rules are authored once as markdown with YAML frontmatter. rune-cli transforms them for each provider's conventions and deploys to the right directories.
 
 ## Why not just copy files?
 
-Copying works until instructions drift. forge-cli adds three things raw copying can't:
+Copying works until instructions drift. rune-cli adds three things raw copying can't:
 
 - **Assembly** — strips frontmatter, resolves `user/` overrides, applies provider-specific transforms (kebab-case, tool remapping). The deployed file is clean; the source keeps its metadata.
 - **Provenance** — each deployed file has an [in-toto/SLSA][6] record of what sources produced it. When something breaks, you can trace which source file and which override combined to produce the deployed instruction.
@@ -117,97 +117,97 @@ Every command takes its inputs as named flags. Source modules use `--source <DIR
 Assemble and deploy the current module to all provider directories:
 
 ```sh
-forge install
+rune install
 ```
 
 Deploy under a specific base directory (claude → `<DIR>/.claude`, opencode → `<DIR>/.opencode`, etc.):
 
 ```sh
-forge install --target ~/project
+rune install --target ~/project
 ```
 
 Deploy only one provider:
 
 ```sh
-forge install --target ~/project --provider opencode
+rune install --target ~/project --provider opencode
 ```
 
 Install from a different module:
 
 ```sh
-forge install --source path/to/module --target ~/project
+rune install --source path/to/module --target ~/project
 ```
 
 Overwrite user-modified files:
 
 ```sh
-forge install --force
+rune install --force
 ```
 
 Remove stale files from previous installs:
 
 ```sh
-forge clean
+rune clean
 ```
 
 Build only, no deployment:
 
 ```sh
-forge assemble
+rune assemble
 ```
 
 Deploy from an existing build/ directory:
 
 ```sh
-forge deploy
+rune deploy
 ```
 
 Validate module structure, schemas, linters, and tests:
 
 ```sh
-forge validate
+rune validate
 ```
 
 Compare a module against an upstream reference:
 
 ```sh
-forge drift --upstream ../forge-core
+rune drift --upstream ../rune-core
 ```
 
 Suppress expected per-project frontmatter keys:
 
 ```sh
-forge drift --upstream ../forge-core --ignore project,author
+rune drift --upstream ../rune-core --ignore project,author
 ```
 
 Show provenance chain for a deployed file:
 
 ```sh
-forge provenance --target ~/.claude/rules/UseRTK.md
+rune provenance --target ~/.claude/rules/UseRTK.md
 ```
 
 Scan a directory for files without provenance:
 
 ```sh
-forge provenance --target ~/.claude --show-orphans
+rune provenance --target ~/.claude --show-orphans
 ```
 
 Copy source files directly without assembly:
 
 ```sh
-forge copy --source path/to/module --target ~/project
+rune copy --source path/to/module --target ~/project
 ```
 
 Package assembled content as tarballs:
 
 ```sh
-forge release
+rune release
 ```
 
 Scaffold a new module:
 
 ```sh
-forge init --target path/to/new-module
+rune init --target path/to/new-module
 ```
 
 All commands support `--json` for machine-readable output.
@@ -228,8 +228,8 @@ Assembly rules transform content for each provider. Configured in `defaults.yaml
 
 ```sh
 make build      # cargo build --release
-make install    # build, symlink to ~/.local/bin/forge, activate git hooks
-make validate   # run pre-commit checks (prek → forge → validate.sh)
+make install    # build, symlink to ~/.local/bin/rune, activate git hooks
+make validate   # run pre-commit checks (prek → rune → validate.sh)
 make test       # validate + cargo test
 make clean      # remove build artifacts
 ```

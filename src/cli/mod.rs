@@ -29,7 +29,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Initialize a new forge module with required files and schemas
+    /// Initialize a new rune module with required files and schemas
     Init {
         /// Directory to scaffold the new module into (created if missing).
         #[arg(long, value_name = "DIR")]
@@ -39,10 +39,10 @@ enum Command {
     /// Assemble and deploy module content to provider directories
     #[command(after_help = "EXAMPLES:\n  \
         # Install the current directory's module for all providers under ~/\n  \
-        cd ~/Modules/forge-core && forge install --target ~\n  \
+        cd ~/Modules/rune-core && rune install --target ~\n  \
         \n  \
         # Install a specific module for opencode only\n  \
-        forge install --source ~/Modules/forge-core --target ~ --provider opencode\n\n\
+        rune install --source ~/Modules/rune-core --target ~ --provider opencode\n\n\
         TARGET LAYOUT:\n  \
         --target <DIR> deploys each provider to <DIR>/<provider-target>:\n    \
         claude   → <DIR>/.claude\n    \

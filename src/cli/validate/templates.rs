@@ -4,11 +4,11 @@ use rust_embed::RustEmbed;
 #[folder = "templates/init/"]
 pub(crate) struct InitTemplates;
 
-/// Substitute the `forge init` template placeholders. Shared by the init
+/// Substitute the `rune init` template placeholders. Shared by the init
 /// command (writes substituted files to disk) and the validate command
 /// (recomputes the expected hash to detect drift). Both call sites must
 /// substitute the same set, otherwise validate reports phantom drift on
-/// every fresh `forge init`.
+/// every fresh `rune init`.
 pub(crate) fn substitute(template: &str, module_name: &str) -> String {
     template
         .replace("${MODULE_NAME}", module_name)

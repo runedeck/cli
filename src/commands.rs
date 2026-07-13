@@ -1,5 +1,5 @@
 /// SHA-256 of `scripts/validate.sh`, computed at build time by `build.rs`.
-/// Substituted into `templates/init/.githooks/pre-commit` by `forge init`.
+/// Substituted into `templates/init/.githooks/pre-commit` by `rune init`.
 pub const VALIDATE_SH_SHA: &str = env!("VALIDATE_SH_SHA");
 
 pub mod error;

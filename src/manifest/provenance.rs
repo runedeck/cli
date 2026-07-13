@@ -4,7 +4,7 @@ pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 
 /// Typed representation of an in-toto/SLSA v1.0 provenance statement.
 ///
-/// Deserializes the `.yaml` sidecar format used by forge-cli:
+/// Deserializes the `.yaml` sidecar format used by rune-cli:
 ///
 /// ```yaml
 /// provenance:
@@ -16,18 +16,18 @@ pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 ///     predicate:
 ///         buildDefinition:
 ///             externalParameters:
-///                 source: https://github.com/N4M3Z/forge-gm
+///                 source: https://github.com/runedeck/rune-gm
 ///             resolvedDependencies:
 ///                 - uri: agents/GameMaster.md
 ///                   digest:
 ///                       sha256: def456...
 ///         runDetails:
 ///             builder:
-///                 id: forge-cli
+///                 id: https://github.com/runedeck/rune
 ///                 version:
-///                     forge: 0.1.0
+///                     rune: 0.1.0
 ///             metadata:
-///                 sourceModule: forge-gm
+///                 sourceModule: rune-gm
 ///                 startedOn: "2026-03-29T10:00:00Z"
 /// ```
 #[derive(Debug, Deserialize, Serialize)]
@@ -94,7 +94,8 @@ pub struct Builder {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BuilderVersion {
-    pub forge: String,
+    #[serde(alias = "forge")]
+    pub rune: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

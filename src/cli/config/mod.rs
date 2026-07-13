@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 /// Embedded at compile time so the binary works when symlinked away from
-/// its source tree (e.g. ~/.local/bin/forge).
+/// its source tree (e.g. ~/.local/bin/rune).
 const EMBEDDED_DEFAULTS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/defaults.yaml"));
 const EMBEDDED_REMAP_TOOLS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),

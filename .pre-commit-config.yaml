@@ -61,8 +61,8 @@ repos:
             language: system
             pass_filenames: false
 
-          - id: forge-validate
-            name: forge validate
-            entry: forge validate
+          - id: rune-validate
+            name: rune validate
+            entry: rune validate
             language: system
             pass_filenames: false

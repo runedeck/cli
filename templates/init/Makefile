@@ -1,4 +1,4 @@
-FORGE ?= forge
+RUNE ?= rune
 
 .PHONY: help install validate clean
 
@@ -8,10 +8,10 @@ help:
 	@echo "  make clean      remove build artifacts"
 
 install:
-	@command -v $(FORGE) >/dev/null 2>&1 \
-	    || { echo "forge not found — ask an AI assistant to execute INSTALL.md"; exit 1; }
+	@command -v $(RUNE) >/dev/null 2>&1 \
+	    || { echo "rune not found — ask an AI assistant to execute INSTALL.md"; exit 1; }
 	git config core.hooksPath .githooks
-	$(FORGE) install
+	$(RUNE) install
 
 validate:
 	@bash .githooks/pre-commit

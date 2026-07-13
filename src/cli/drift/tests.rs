@@ -18,8 +18,8 @@ fn split_parts_returns_full_content_as_body_without_frontmatter() {
 
 #[test]
 fn diff_frontmatter_keys_detects_changed_value() {
-    let module_yaml = "name: forge-cli\nversion: 0.2.0\n";
-    let upstream_yaml = "name: forge-cli\nversion: 0.1.0\n";
+    let module_yaml = "name: rune-cli\nversion: 0.2.0\n";
+    let upstream_yaml = "name: rune-cli\nversion: 0.1.0\n";
     let changed = diff_frontmatter_keys(module_yaml, upstream_yaml);
     assert_eq!(changed, vec!["version"]);
 }
@@ -182,7 +182,7 @@ fn drift_surfaces_source_uri_on_same_name_match() {
         &module_rules,
         "AgentTeams",
         "rules/AgentTeams.md",
-        "https://github.com/N4M3Z/forge-core",
+        "https://github.com/N4M3Z/rune-core",
     );
 
     let mut result = DriftResult::default();
@@ -201,7 +201,7 @@ fn drift_surfaces_source_uri_on_same_name_match() {
     assert_eq!(entry.status, DriftStatus::Identical);
     assert_eq!(
         entry.source_uri.as_deref(),
-        Some("https://github.com/N4M3Z/forge-core")
+        Some("https://github.com/N4M3Z/rune-core")
     );
     assert!(entry.renamed_from.is_none());
 }
@@ -221,7 +221,7 @@ fn drift_resolves_renamed_adoption() {
         &module_rules,
         "SecretsScan",
         "SecretScan.md",
-        "https://github.com/N4M3Z/forge-core",
+        "https://github.com/N4M3Z/rune-core",
     );
 
     let mut result = DriftResult::default();
@@ -246,6 +246,6 @@ fn drift_resolves_renamed_adoption() {
     assert_eq!(entry.renamed_from.as_deref(), Some("SecretScan.md"));
     assert_eq!(
         entry.source_uri.as_deref(),
-        Some("https://github.com/N4M3Z/forge-core")
+        Some("https://github.com/N4M3Z/rune-core")
     );
 }

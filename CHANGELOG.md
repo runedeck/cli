@@ -8,11 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- `.forge` consumer manifests accept `git:` sources pinned to a 40-hex commit SHA. `forge install` clones the remote via `gix` into a content-addressed cache at `~/.cache/forge/git/<host>/<owner>/<repo>/`, materializes the pinned tree, and feeds it through the standard assemble + deploy pipeline. HTTPS-only; `ssh://`, `git://`, `git@host:` shorthand, and userinfo URLs are rejected at parse time. Branch names, tags, and abbreviated SHAs are rejected in favor of explicit 40-char commit hashes. Cache hits are instant; the bare clone is reused across SHA pins within the same repository. (#53)
+- `.rune` consumer manifests accept `git:` sources pinned to a 40-hex commit SHA. `rune install` clones the remote via `gix` into a content-addressed cache at `~/.cache/rune/git/<host>/<owner>/<repo>/`, materializes the pinned tree, and feeds it through the standard assemble + deploy pipeline. HTTPS-only; `ssh://`, `git://`, `git@host:` shorthand, and userinfo URLs are rejected at parse time. Branch names, tags, and abbreviated SHAs are rejected in favor of explicit 40-char commit hashes. Cache hits are instant; the bare clone is reused across SHA pins within the same repository. Legacy `.forge` manifests and `FORGE_GIT_*` environment variables remain supported as fallbacks. (#53)
 
 ### Changed
 
-- `forge install` and `forge deploy` default `--target` to `--source` when a `.forge` consumer manifest is present and `--target` is omitted. The consumer dir IS the place the user wants provider trees written; the previous behavior forced redundant `--target .` on every consumer-mode invocation. Module-root flows (no `.forge`) are unchanged: an omitted `--target` still resolves provider directories relative to the current working directory. (#52)
+- `rune install` and `rune deploy` default `--target` to `--source` when a `.rune` consumer manifest is present and `--target` is omitted. The consumer dir IS the place the user wants provider trees written; the previous behavior forced redundant `--target .` on every consumer-mode invocation. Module-root flows (no consumer manifest) are unchanged: an omitted `--target` still resolves provider directories relative to the current working directory. (#52)
+- The package, binary, repository, provenance URIs, templates, and operational documentation are renamed from forge to rune.
 
 ## [0.3.2] - 2026-05-22
 

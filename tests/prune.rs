@@ -86,15 +86,15 @@ fn prune_respects_provenance_source_uri() {
 
     scaffold_module_with_repo(
         module_a.path(),
-        "forge-core",
-        "https://github.com/N4M3Z/forge-core",
+        "rune-core",
+        "https://github.com/N4M3Z/rune-core",
     );
     create_skill(module_a.path(), "AlphaSkill");
 
     scaffold_module_with_repo(
         module_b.path(),
-        "forge-core",
-        "https://github.com/other-org/forge-core",
+        "rune-core",
+        "https://github.com/other-org/rune-core",
     );
     create_skill(module_b.path(), "BetaSkill");
 
@@ -484,7 +484,7 @@ fn prune_ignores_files_not_in_manifest() {
     install(module.path(), target.path(), &[]).success();
 
     // Drop a hand-authored skill directly into the deployed tree; no
-    // forge install was involved, so .manifest has no entry for it.
+    // rune install was involved, so .manifest has no entry for it.
     let hand_skill_dir = target.path().join(".claude/skills/HandSkill");
     fs::create_dir_all(&hand_skill_dir).unwrap();
     let hand_file = hand_skill_dir.join("SKILL.md");

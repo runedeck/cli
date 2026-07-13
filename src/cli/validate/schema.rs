@@ -21,7 +21,7 @@ const MODULE_SCHEMA: &str = include_str!(concat!(
 ));
 const ADR_JSON_SCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/schemas/forge-adr.schema.json"
+    "/schemas/rune-adr.schema.json"
 ));
 
 pub fn embedded_schema(kind: &str) -> Option<&'static str> {

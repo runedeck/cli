@@ -1,6 +1,6 @@
 frontmatter:
     fields:
-        # forge convention: required for module skills
+        # rune convention: required for module skills
         - name: name
           type: string
         - name: description

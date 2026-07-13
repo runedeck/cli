@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 make build              # cargo build --release
-make install            # build, symlink to ~/.local/bin/forge, activate git hooks
-make validate           # run pre-commit checks (prek → forge → validate.sh)
+make install            # build, symlink to ~/.local/bin/rune, activate git hooks
+make validate           # run pre-commit checks (prek → rune → validate.sh)
 make test               # validate + cargo test
 make clean              # remove build artifacts
 ```
@@ -18,11 +18,11 @@ Run a single test:
 cargo test -- test_name
 ```
 
-Pre-commit hook cascade: `prek run --all-files` → `forge validate .` → `scripts/validate.sh`. Activated by `make install` (sets `core.hooksPath` to `.githooks`). prek config in `.pre-commit-config.yaml`.
+Pre-commit hook cascade: `prek run --all-files` → `rune validate .` → `scripts/validate.sh`. Activated by `make install` (sets `core.hooksPath` to `.githooks`). prek config in `.pre-commit-config.yaml`.
 
 ## Architecture
 
-forge-cli is a two-stage content pipeline: **assemble** (transform source → `build/`) then **deploy** (`build/` → provider directories). The `install` command runs both stages.
+rune-cli is a two-stage content pipeline: **assemble** (transform source → `build/`) then **deploy** (`build/` → provider directories). The `install` command runs both stages.
 
 ### Pipeline Flow
 
@@ -49,7 +49,7 @@ source files → assemble (strip frontmatter, resolve variants, apply transforms
 
 ### Crate Structure
 
-The `[lib]` crate is `commands` (exposed as `src/commands.rs`). The binary is `forge` (`src/main.rs` → `src/cli/`). Feature flags gate optional modules: `assemble`, `validate`, `deploy` (all on by default via `full`).
+The `[lib]` crate is `commands` (exposed as `src/commands.rs`). The binary is `rune` (`src/main.rs` → `src/cli/`). Feature flags control optional modules: `assemble`, `validate`, `deploy` (all on by default via `full`).
 
 ### Provider System
 
@@ -59,23 +59,23 @@ Variant resolution uses qualifier directories (`user/`, `claude/`, `claude-opus-
 
 ### Init Templates
 
-`templates/init/` mirrors the deploy target 1:1 — no remapping config. `forge init <path>` iterates the directory and writes each file at the same relative path, substituting `${MODULE_NAME}`, `${VERSION}`, and `${VALIDATE_SH_SHA}` (the latter computed by `build.rs` from `scripts/validate.sh` and exposed as `commands::VALIDATE_SH_SHA`). Content `.mdschema` files live inside `templates/init/` at their deploy path (e.g. `agents/.mdschema`). Document schemas (README, CONTRIBUTING) live in `schemas/` — embedded for validation fallback only, never deployed.
+`templates/init/` mirrors the deploy target 1:1 — no remapping config. `rune init <path>` iterates the directory and writes each file at the same relative path, substituting `${MODULE_NAME}`, `${VERSION}`, and `${VALIDATE_SH_SHA}` (the latter computed by `build.rs` from `scripts/validate.sh` and exposed as `commands::VALIDATE_SH_SHA`). Content `.mdschema` files live inside `templates/init/` at their deploy path (e.g. `agents/.mdschema`). Document schemas (README, CONTRIBUTING) live in `schemas/` — embedded for validation fallback only, never deployed.
 
-### Consumer Manifest (`.forge`)
+### Consumer Manifest (`.rune`)
 
-A non-module project that wants to use forge artifacts drops a `.forge` YAML file at its root listing the requested skills/agents/rules per producer source. `forge install --source <consumer-dir>` reads `.forge`, walks each declared source, filters its content to the requested subset, and runs the standard assemble + deploy pipeline scoped to the consumer's own provider directories. Parser, resolver, and git fetcher live at `src/cli/dotforge/` (`parse.rs`, `resolve.rs`, `filter.rs`, `git.rs`). `assemble::execute` branches on `.forge` presence to choose between `dotforge::resolve_sources` and the existing `sources::collect`.
+A non-module project that wants to use rune artifacts drops a `.rune` YAML file at its root listing the requested skills/agents/rules per producer source. `rune install --source <consumer-dir>` reads `.rune`, walks each declared source, filters its content to the requested subset, and runs the standard assemble + deploy pipeline scoped to the consumer's own provider directories. Parser, resolver, and git fetcher live at `src/cli/dotrune/` (`parse.rs`, `resolve.rs`, `filter.rs`, `git.rs`). `assemble::execute` branches on `.rune` presence to choose between `dotrune::resolve_sources` and the existing `sources::collect`.
 
 Two source kinds:
-- **Local** (`path: ../forge-core`) — sibling checkout on disk
-- **Git** (`git: https://github.com/N4M3Z/forge-core`, `ref: <40-hex-SHA>`) — remote HTTPS repo pinned to a full commit SHA. Cloned via `gix` into `~/.cache/forge/git/<host>/<owner>/<repo>/` (override with `FORGE_GIT_CACHE_DIR`); the pinned tree is materialized into a per-SHA worktree dir. HTTPS-only, no shorthand or userinfo URLs, no branch / tag refs. `FORGE_GIT_ALLOW_FILE_URLS=1` allows `file://` URLs in tests.
+- **Local** (`path: ../rune-core`) — sibling checkout on disk
+- **Git** (`git: https://github.com/N4M3Z/rune-core`, `ref: <40-hex-SHA>`) — remote HTTPS repo pinned to a full commit SHA. Cloned via `gix` into `~/.cache/rune/git/<host>/<owner>/<repo>/` (override with `RUNE_GIT_CACHE_DIR`); the pinned tree is materialized into a per-SHA worktree dir. HTTPS-only, no shorthand or userinfo URLs, no branch / tag refs. `RUNE_GIT_ALLOW_FILE_URLS=1` allows `file://` URLs in tests.
 
 ### Validation
 
-`forge validate` runs structural checks (module files, frontmatter, mdschema) plus manifest-based drift detection. If a `.manifest` exists, validate compares each tracked file's SHA-256 against the **current embedded template** — not the manifest fingerprint. The manifest indexes which files to check; the template is the source of truth for expected content. When forge-cli ships updated templates, validate catches modules that haven't updated.
+`rune validate` runs structural checks (module files, frontmatter, mdschema) plus manifest-based drift detection. If a `.manifest` exists, validate compares each tracked file's SHA-256 against the **current embedded template** — not the manifest fingerprint. The manifest indexes which files to check; the template is the source of truth for expected content. When rune-cli ships updated templates, validate catches modules that haven't updated.
 
-Only files whose on-disk content matched the template at `forge init` time enter the manifest. Customized files (README, Makefile, defaults.yaml) stay out — no false DRIFT, no separate infrastructure/content lists.
+Only files whose on-disk content matched the template at `rune init` time enter the manifest. Customized files (README, Makefile, defaults.yaml) stay out — no false DRIFT, no separate infrastructure/content lists.
 
-External tool checks (shellcheck, cargo fmt/clippy, gitleaks, semgrep, ruff, tsc) run as fallback when prek is not installed. When prek is the orchestrator, `forge validate` skips external tools to avoid duplication.
+External tool checks (shellcheck, cargo fmt/clippy, gitleaks, semgrep, ruff, tsc) run as fallback when prek is not installed. When prek is the orchestrator, `rune validate` skips external tools to avoid duplication.
 
 Configurable excludes in `defaults.yaml` under `validate.exclude` — glob patterns for files to skip during YAML/JSON/whitespace checks (e.g. `templates/*` for template files with placeholders).
 

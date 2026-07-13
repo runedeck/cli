@@ -89,11 +89,11 @@ fn write_then_load_manifest_roundtrips() {
 #[test]
 fn parse_repo_extracts_https_url() {
     assert_eq!(
-        parse_repo("https://github.com/N4M3Z/forge-core"),
+        parse_repo("https://github.com/N4M3Z/rune-core"),
         Some((
             "github.com".to_string(),
             "N4M3Z".to_string(),
-            "forge-core".to_string()
+            "rune-core".to_string()
         ))
     );
 }
@@ -101,11 +101,11 @@ fn parse_repo_extracts_https_url() {
 #[test]
 fn parse_repo_strips_dot_git_suffix() {
     assert_eq!(
-        parse_repo("https://github.com/N4M3Z/forge-core.git"),
+        parse_repo("https://github.com/N4M3Z/rune-core.git"),
         Some((
             "github.com".to_string(),
             "N4M3Z".to_string(),
-            "forge-core".to_string()
+            "rune-core".to_string()
         ))
     );
 }
@@ -113,11 +113,11 @@ fn parse_repo_strips_dot_git_suffix() {
 #[test]
 fn parse_repo_handles_git_at_form() {
     assert_eq!(
-        parse_repo("git@github.com:N4M3Z/forge-core.git"),
+        parse_repo("git@github.com:N4M3Z/rune-core.git"),
         Some((
             "github.com".to_string(),
             "N4M3Z".to_string(),
-            "forge-core".to_string()
+            "rune-core".to_string()
         ))
     );
 }
@@ -125,32 +125,32 @@ fn parse_repo_handles_git_at_form() {
 #[test]
 fn parse_repo_tolerates_trailing_slash() {
     assert_eq!(
-        parse_repo("https://github.com/N4M3Z/forge-core/"),
+        parse_repo("https://github.com/N4M3Z/rune-core/"),
         Some((
             "github.com".to_string(),
             "N4M3Z".to_string(),
-            "forge-core".to_string()
+            "rune-core".to_string()
         ))
     );
 }
 
 #[test]
 fn parse_repo_returns_none_for_bare_name() {
-    assert_eq!(parse_repo("forge-core"), None);
+    assert_eq!(parse_repo("rune-core"), None);
     assert_eq!(parse_repo("PublishPrompts"), None);
 }
 
 #[test]
 fn parse_repo_distinguishes_same_name_different_owner() {
-    let a = parse_repo("https://github.com/N4M3Z/forge-core").unwrap();
-    let b = parse_repo("https://github.com/other-org/forge-core").unwrap();
+    let a = parse_repo("https://github.com/N4M3Z/rune-core").unwrap();
+    let b = parse_repo("https://github.com/other-org/rune-core").unwrap();
     assert_ne!(a, b);
 }
 
 #[test]
 fn parse_repo_distinguishes_same_name_different_host() {
-    let a = parse_repo("https://github.com/N4M3Z/forge-core").unwrap();
-    let b = parse_repo("https://gitlab.com/N4M3Z/forge-core").unwrap();
+    let a = parse_repo("https://github.com/N4M3Z/rune-core").unwrap();
+    let b = parse_repo("https://gitlab.com/N4M3Z/rune-core").unwrap();
     assert_ne!(a, b);
 }
 

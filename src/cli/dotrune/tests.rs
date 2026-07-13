@@ -4,10 +4,10 @@ use super::parse::{Source, parse};
 const MINIMAL: &str = r"
 version: 1
 sources:
-    forge-core:
-        path: ../forge-core
+    rune-core:
+        path: ../rune-core
 artifacts:
-    forge-core:
+    rune-core:
         skills: [BuildSkill]
 ";
 
@@ -28,13 +28,13 @@ fn parse_minimal_happy_path() {
     let manifest = parse(MINIMAL).expect("minimal manifest must parse");
     assert_eq!(manifest.version, 1);
     assert_eq!(manifest.sources.len(), 1);
-    let Source::Local { path } = &manifest.sources["forge-core"] else {
-        panic!("expected Local source for forge-core");
+    let Source::Local { path } = &manifest.sources["rune-core"] else {
+        panic!("expected Local source for rune-core");
     };
-    assert_eq!(path.to_string_lossy(), "../forge-core");
-    assert_eq!(manifest.artifacts["forge-core"].skills, vec!["BuildSkill"]);
-    assert!(manifest.artifacts["forge-core"].agents.is_empty());
-    assert!(manifest.artifacts["forge-core"].rules.is_empty());
+    assert_eq!(path.to_string_lossy(), "../rune-core");
+    assert_eq!(manifest.artifacts["rune-core"].skills, vec!["BuildSkill"]);
+    assert!(manifest.artifacts["rune-core"].agents.is_empty());
+    assert!(manifest.artifacts["rune-core"].rules.is_empty());
 }
 
 #[test]
@@ -182,15 +182,15 @@ fn parse_accepts_git_source_with_https_url_and_full_sha() {
     let content = r"
 version: 1
 sources:
-    forge-core:
-        git: https://github.com/N4M3Z/forge-core
+    rune-core:
+        git: https://github.com/N4M3Z/rune-core
         ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
 ";
     let manifest = parse(content).expect("git source manifest must parse");
-    let Source::Git { git, commit } = &manifest.sources["forge-core"] else {
-        panic!("expected Git source for forge-core");
+    let Source::Git { git, commit } = &manifest.sources["rune-core"] else {
+        panic!("expected Git source for rune-core");
     };
-    assert_eq!(git, "https://github.com/N4M3Z/forge-core");
+    assert_eq!(git, "https://github.com/N4M3Z/rune-core");
     assert_eq!(commit, "0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d");
 }
 
@@ -200,7 +200,7 @@ fn parse_rejects_git_source_with_http_url() {
 version: 1
 sources:
     bad:
-        git: http://github.com/N4M3Z/forge-core
+        git: http://github.com/N4M3Z/rune-core
         ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
 ";
     let error = parse(content).expect_err("http:// must be rejected");
@@ -216,7 +216,7 @@ fn parse_rejects_git_source_with_ssh_shorthand() {
 version: 1
 sources:
     bad:
-        git: git@github.com:N4M3Z/forge-core.git
+        git: git@github.com:N4M3Z/rune-core.git
         ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
 ";
     let error = parse(content).expect_err("git@host: shorthand must be rejected");
@@ -232,7 +232,7 @@ fn parse_rejects_git_source_with_userinfo_in_url() {
 version: 1
 sources:
     bad:
-        git: https://attacker:pass@github.com/N4M3Z/forge-core
+        git: https://attacker:pass@github.com/N4M3Z/rune-core
         ref: 0d83a3b9f4e2c1a8b7d6e5f4c3b2a1098765432d
 ";
     let error = parse(content).expect_err("userinfo in URL must be rejected");
@@ -248,7 +248,7 @@ fn parse_rejects_git_source_with_branch_name_as_ref() {
 version: 1
 sources:
     bad:
-        git: https://github.com/N4M3Z/forge-core
+        git: https://github.com/N4M3Z/rune-core
         ref: main
 ";
     let error = parse(content).expect_err("branch name must be rejected");
@@ -265,7 +265,7 @@ fn parse_rejects_git_source_with_short_sha() {
 version: 1
 sources:
     bad:
-        git: https://github.com/N4M3Z/forge-core
+        git: https://github.com/N4M3Z/rune-core
         ref: 0d83a3b9
 ";
     let error = parse(content).expect_err("short SHA must be rejected");
@@ -281,7 +281,7 @@ fn parse_rejects_git_source_with_uppercase_sha() {
 version: 1
 sources:
     bad:
-        git: https://github.com/N4M3Z/forge-core
+        git: https://github.com/N4M3Z/rune-core
         ref: 0D83A3B9F4E2C1A8B7D6E5F4C3B2A1098765432D
 ";
     let error = parse(content).expect_err("uppercase SHA must be rejected");
@@ -297,7 +297,7 @@ fn parse_rejects_git_source_with_non_hex_sha() {
 version: 1
 sources:
     bad:
-        git: https://github.com/N4M3Z/forge-core
+        git: https://github.com/N4M3Z/rune-core
         ref: zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
 ";
     let error = parse(content).expect_err("non-hex SHA must be rejected");
@@ -313,7 +313,7 @@ fn parse_rejects_git_source_missing_ref() {
 version: 1
 sources:
     bad:
-        git: https://github.com/N4M3Z/forge-core
+        git: https://github.com/N4M3Z/rune-core
 ";
     let error = parse(content).expect_err("git source missing ref must be rejected");
     assert!(

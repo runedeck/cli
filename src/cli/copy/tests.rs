@@ -328,6 +328,6 @@ fn execute_sidecar_round_trips_typed() {
 
     let runner = &sidecar.provenance.predicate.run_details;
     assert_eq!(runner.builder.id, env!("CARGO_PKG_REPOSITORY"));
-    assert_eq!(runner.builder.version.forge, env!("CARGO_PKG_VERSION"));
+    assert_eq!(runner.builder.version.rune, env!("CARGO_PKG_VERSION"));
     assert!(!runner.metadata.started_on.is_empty());
 }

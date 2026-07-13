@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 fn write_file(root: &Path, relative_path: &str, content: &str) {
@@ -41,7 +41,7 @@ fn drift_identical_rules_reports_zero_exit() {
         &content,
     );
 
-    forge()
+    rune()
         .args([
             "drift",
             "--source",
@@ -63,7 +63,7 @@ fn drift_identical_files_shown_in_json() {
     write_file(module_directory.path(), "rules/TestRule.md", &content);
     write_file(upstream_directory.path(), "rules/TestRule.md", &content);
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -103,7 +103,7 @@ fn drift_body_difference_detected() {
         ),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -154,7 +154,7 @@ fn drift_frontmatter_difference_detected() {
         ),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -209,7 +209,7 @@ fn drift_both_frontmatter_and_body_difference() {
         "---\nname: Diverged\ndescription: different description\nversion: 2.0\n---\n\nUpstream body content.\n",
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -244,7 +244,7 @@ fn drift_local_only_file_detected() {
     // upstream has no rules/ at all
     fs::create_dir_all(upstream_directory.path().join("rules")).unwrap();
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -284,7 +284,7 @@ fn drift_upstream_only_file_detected() {
         &rule_with_frontmatter("UpstreamRule", "Only exists upstream."),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -325,7 +325,7 @@ fn drift_skill_body_difference() {
         "---\nname: ArchitectureDecision\ndescription: test skill\n---\n\nUpstream skill instructions with additions.\n",
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -368,7 +368,7 @@ fn drift_agent_model_difference_is_frontmatter() {
         &agent_with_model("CodeReviewer", "fast", body),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -407,7 +407,7 @@ fn drift_decisions_compared() {
         adr_content,
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -448,7 +448,7 @@ fn drift_files_without_frontmatter_compared_as_full_body() {
         "Different plain content.\n",
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -487,7 +487,7 @@ fn drift_nested_rules_compared() {
         &content,
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -523,7 +523,7 @@ fn drift_empty_module_against_populated_upstream() {
         &rule_with_frontmatter("SomeRule", "Upstream rule."),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -587,7 +587,7 @@ fn drift_reports_all_content_kinds() {
         skill_content,
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -631,10 +631,10 @@ fn ignore_frontmatter_keys_marks_expected() {
     write_file(
         upstream_directory.path(),
         "docs/decisions/ADR-0001 Test.md",
-        &format!("---\ntitle: Test\nproject: forge-core\nauthor: Bob\n---\n\n{body}\n"),
+        &format!("---\ntitle: Test\nproject: rune-core\nauthor: Bob\n---\n\n{body}\n"),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -675,7 +675,7 @@ fn ignore_body_marks_expected() {
         &rule_with_frontmatter("TestRule", "Upstream body."),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -714,7 +714,7 @@ fn ignore_partial_keys_keeps_drift() {
         &format!("---\nname: TestRule\nproject: upstream\nversion: 1.0\n---\n\n{body}\n"),
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -751,7 +751,7 @@ fn ignore_both_frontmatter_and_body() {
         "---\nname: TestRule\nproject: upstream\n---\n\nUpstream body.\n",
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",
@@ -788,7 +788,7 @@ fn ignore_body_on_both_drift_keeps_frontmatter() {
         "---\nname: TestRule\nversion: 1.0\n---\n\nUpstream body.\n",
     );
 
-    let output = forge()
+    let output = rune()
         .args([
             "drift",
             "--source",

@@ -24,8 +24,8 @@ jobs:
               with:
                   node-version: "22"
 
-            - name: Setup forge
-              uses: N4M3Z/forge-cli/.github/actions/setup-forge@main
+            - name: Setup rune
+              uses: runedeck/rune/.github/actions/setup-rune@main
 
             - name: Install tools
               run: |

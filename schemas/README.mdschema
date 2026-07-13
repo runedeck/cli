@@ -1,4 +1,4 @@
-# README.md schema for forge modules
+# README.md schema for rune modules
 
 heading_rules:
     no_skip_levels: true

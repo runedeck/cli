@@ -42,7 +42,7 @@ fn statement_is_valid_yaml() {
         "https://github.com/runedeck/rune",
         "https://github.com/runedeck/rune/assemble/v1",
         env!("CARGO_PKG_VERSION"),
-        "https://github.com/N4M3Z/forge-core",
+        "https://github.com/N4M3Z/rune-core",
     );
 
     let parsed: serde_yaml::Value = serde_yaml::from_str(&statement).expect("should be valid YAML");
@@ -90,7 +90,7 @@ fn statement_includes_all_dependencies() {
         "https://github.com/runedeck/rune",
         "https://github.com/runedeck/rune/assemble/v1",
         env!("CARGO_PKG_VERSION"),
-        "https://github.com/N4M3Z/forge-core",
+        "https://github.com/N4M3Z/rune-core",
     );
 
     let parsed: serde_yaml::Value = serde_yaml::from_str(&statement).unwrap();
@@ -116,7 +116,7 @@ fn statement_carries_builder_metadata() {
         "test-builder",
         "https://example.com/build/v1",
         "1.2.3",
-        "https://github.com/N4M3Z/forge-core",
+        "https://github.com/N4M3Z/rune-core",
     );
 
     let parsed: serde_yaml::Value = serde_yaml::from_str(&statement).unwrap();
@@ -128,7 +128,7 @@ fn statement_carries_builder_metadata() {
         "test-builder"
     );
     assert_eq!(
-        run_details["builder"]["version"]["forge"].as_str().unwrap(),
+        run_details["builder"]["version"]["rune"].as_str().unwrap(),
         "1.2.3"
     );
     assert!(run_details["metadata"]["startedOn"].as_str().is_some());

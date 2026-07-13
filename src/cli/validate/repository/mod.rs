@@ -7,10 +7,10 @@ use super::templates::InitTemplates;
 pub fn check_template_drift(module_root: &Path, result: &mut ActionResult) {
     let manifest_path = module_root.join(".manifest");
     if !manifest_path.is_file() {
-        println!("  MISSING .manifest — run `forge init` to establish baseline");
+        println!("  MISSING .manifest — run `rune init` to establish baseline");
         result
             .warnings
-            .push(".manifest: missing — run forge init to establish baseline".to_string());
+            .push(".manifest: missing — run rune init to establish baseline".to_string());
         return;
     }
 

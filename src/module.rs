@@ -35,21 +35,21 @@ mod tests {
     #[test]
     fn source_uri_prefers_repository() {
         let manifest = ModuleManifest {
-            name: "forge-core".to_string(),
+            name: "rune-core".to_string(),
             version: "0.5.0".to_string(),
             description: "test".to_string(),
             events: Vec::new(),
             module_type: None,
             platforms: None,
-            repository: Some("https://github.com/N4M3Z/forge-core".to_string()),
+            repository: Some("https://github.com/N4M3Z/rune-core".to_string()),
         };
-        assert_eq!(manifest.source_uri(), "https://github.com/N4M3Z/forge-core");
+        assert_eq!(manifest.source_uri(), "https://github.com/N4M3Z/rune-core");
     }
 
     #[test]
     fn source_uri_falls_back_to_name() {
         let manifest = ModuleManifest {
-            name: "forge-gm".to_string(),
+            name: "rune-gm".to_string(),
             version: "0.1.0".to_string(),
             description: "test".to_string(),
             events: Vec::new(),
@@ -57,7 +57,7 @@ mod tests {
             platforms: None,
             repository: None,
         };
-        assert_eq!(manifest.source_uri(), "forge-gm");
+        assert_eq!(manifest.source_uri(), "rune-gm");
     }
 
     #[test]
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn deserializes_full_module_yaml() {
-        let yaml_content = "name: forge-cli\nversion: 0.1.0\ntype: binary\ndescription: test\nevents: []\nrepository: https://github.com/test/repo\nplatforms: [macos, linux]\n";
+        let yaml_content = "name: rune-cli\nversion: 0.1.0\ntype: binary\ndescription: test\nevents: []\nrepository: https://github.com/test/repo\nplatforms: [macos, linux]\n";
         let manifest: ModuleManifest = serde_yaml::from_str(yaml_content).unwrap();
         assert_eq!(manifest.module_type.as_deref(), Some("binary"));
         assert_eq!(manifest.platforms.as_ref().unwrap().len(), 2);

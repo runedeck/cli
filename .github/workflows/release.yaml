@@ -35,13 +35,13 @@ jobs:
                 include:
                     - target: x86_64-unknown-linux-musl
                       runner: ubuntu-latest
-                      archive: forge-cli-linux-x86_64.tar.gz
+                      archive: rune-cli-linux-x86_64.tar.gz
                     - target: aarch64-apple-darwin
                       runner: macos-latest
-                      archive: forge-cli-macos-aarch64.tar.gz
+                      archive: rune-cli-macos-aarch64.tar.gz
                     - target: x86_64-pc-windows-msvc
                       runner: windows-latest
-                      archive: forge-cli-windows-x86_64.zip
+                      archive: rune-cli-windows-x86_64.zip
 
         runs-on: ${{ matrix.runner }}
         steps:
@@ -65,14 +65,14 @@ jobs:
               env:
                   ARCHIVE: ${{ matrix.archive }}
                   TARGET: ${{ matrix.target }}
-              run: tar czf "$ARCHIVE" -C "target/$TARGET/release" forge
+              run: tar czf "$ARCHIVE" -C "target/$TARGET/release" rune
 
             - name: Package (windows)
               if: runner.os == 'Windows'
               env:
                   ARCHIVE: ${{ matrix.archive }}
                   TARGET: ${{ matrix.target }}
-              run: Compress-Archive -Path "target/$env:TARGET/release/forge.exe" -DestinationPath "$env:ARCHIVE"
+              run: Compress-Archive -Path "target/$env:TARGET/release/rune.exe" -DestinationPath "$env:ARCHIVE"
               shell: pwsh
 
             - name: Upload artifact
@@ -98,6 +98,6 @@ jobs:
                   TAG: ${{ inputs.tag }}
               run: |
                   gh release create "$TAG" --title "$TAG" --generate-notes \
-                      forge-cli-linux-x86_64.tar.gz/forge-cli-linux-x86_64.tar.gz \
-                      forge-cli-macos-aarch64.tar.gz/forge-cli-macos-aarch64.tar.gz \
-                      forge-cli-windows-x86_64.zip/forge-cli-windows-x86_64.zip
+                      rune-cli-linux-x86_64.tar.gz/rune-cli-linux-x86_64.tar.gz \
+                      rune-cli-macos-aarch64.tar.gz/rune-cli-macos-aarch64.tar.gz \
+                      rune-cli-windows-x86_64.zip/rune-cli-windows-x86_64.zip

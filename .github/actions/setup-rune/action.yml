@@ -1,5 +1,5 @@
-name: Setup Forge
-description: Download and cache the forge CLI binary from GitHub releases
+name: Setup Rune
+description: Download and cache the rune CLI binary from GitHub releases
 
 inputs:
     version:
@@ -11,7 +11,7 @@ inputs:
 
 outputs:
     version:
-        description: "Installed forge version"
+        description: "Installed rune version"
         value: ${{ steps.resolve.outputs.version }}
     cache-hit:
         description: "Whether the binary was restored from cache"
@@ -28,33 +28,33 @@ runs:
               REQUESTED: ${{ inputs.version }}
           run: |
               if [ "$REQUESTED" = "latest" ]; then
-                  VERSION=$(gh api repos/N4M3Z/forge-cli/releases/latest --jq '.tag_name')
+                  VERSION=$(gh api repos/runedeck/rune/releases/latest --jq '.tag_name')
               else
                   VERSION="$REQUESTED"
               fi
               echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-              echo "Resolved forge version: $VERSION"
+              echo "Resolved rune version: $VERSION"
 
         - name: Determine archive name
           id: archive
           shell: bash
           run: |
               case "$RUNNER_OS-$RUNNER_ARCH" in
-                  Linux-X64)   ARCHIVE="forge-cli-linux-x86_64.tar.gz" ;;
-                  macOS-ARM64) ARCHIVE="forge-cli-macos-aarch64.tar.gz" ;;
-                  Windows-X64) ARCHIVE="forge-cli-windows-x86_64.zip" ;;
+                  Linux-X64)   ARCHIVE="rune-cli-linux-x86_64.tar.gz" ;;
+                  macOS-ARM64) ARCHIVE="rune-cli-macos-aarch64.tar.gz" ;;
+                  Windows-X64) ARCHIVE="rune-cli-windows-x86_64.zip" ;;
                   *) echo "Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
               esac
               echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
 
-        - name: Cache forge binary
+        - name: Cache rune binary
           id: cache
           uses: actions/cache@v4
           with:
-              path: ~/.cache/forge-cli
-              key: forge-${{ steps.resolve.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+              path: ~/.cache/rune-cli
+              key: rune-${{ steps.resolve.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
 
-        - name: Download forge
+        - name: Download rune
           if: steps.cache.outputs.cache-hit != 'true'
           shell: bash
           env:
@@ -62,18 +62,18 @@ runs:
               VERSION: ${{ steps.resolve.outputs.version }}
               ARCHIVE: ${{ steps.archive.outputs.archive }}
           run: |
-              mkdir -p ~/.cache/forge-cli
+              mkdir -p ~/.cache/rune-cli
               gh release download "$VERSION" \
-                  --repo N4M3Z/forge-cli \
+                  --repo runedeck/rune \
                   --pattern "$ARCHIVE" \
                   --dir /tmp
               if [[ "$ARCHIVE" == *.zip ]]; then
-                  unzip -o "/tmp/$ARCHIVE" -d ~/.cache/forge-cli
+                  unzip -o "/tmp/$ARCHIVE" -d ~/.cache/rune-cli
               else
-                  tar xzf "/tmp/$ARCHIVE" -C ~/.cache/forge-cli
+                  tar xzf "/tmp/$ARCHIVE" -C ~/.cache/rune-cli
               fi
-              chmod +x ~/.cache/forge-cli/forge*
+              chmod +x ~/.cache/rune-cli/rune*
 
         - name: Add to PATH
           shell: bash
-          run: echo "$HOME/.cache/forge-cli" >> "$GITHUB_PATH"
+          run: echo "$HOME/.cache/rune-cli" >> "$GITHUB_PATH"

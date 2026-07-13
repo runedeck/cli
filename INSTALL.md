@@ -1,18 +1,18 @@
-# forge-cli
+# rune-cli
 
 > Assemble, validate, and deploy markdown content across AI coding providers.
 
 *This file follows the [install.md](https://github.com/mintlify/install-md) standard — structured instructions for AI agents to execute autonomously. Human readers: see [README.md](README.md) for conventional documentation.*
 
-I want you to install forge-cli for me. Execute all the steps below autonomously.
+I want you to install rune-cli for me. Execute all the steps below autonomously.
 
 ## OBJECTIVE
 
-Build the `forge` binary from source and make it available on PATH.
+Build the `rune` binary from source and make it available on PATH.
 
 ## DONE WHEN
 
-Running `forge --help` prints the CLI usage and exits successfully.
+Running `rune --help` prints the CLI usage and exits successfully.
 
 ## TODO
 
@@ -36,8 +36,8 @@ source "$HOME/.cargo/env"
 ### Clone
 
 ```sh
-git clone https://github.com/N4M3Z/forge-cli.git
-cd forge-cli
+git clone https://github.com/runedeck/rune.git
+cd rune-cli
 ```
 
 If already cloned, pull latest:
@@ -56,7 +56,7 @@ cargo build --release
 
 ```sh
 mkdir -p ~/.local/bin
-ln -sf "$(pwd)/target/release/forge" ~/.local/bin/forge
+ln -sf "$(pwd)/target/release/rune" ~/.local/bin/rune
 ```
 
 If `~/.local/bin` is not on PATH:
@@ -71,7 +71,7 @@ source ~/.zshrc
 You must confirm the binary is accessible:
 
 ```sh
-forge --help
+rune --help
 ```
 
-EXECUTE NOW: Complete the above TODO list to achieve: `forge --help` prints CLI usage and exits successfully.
+EXECUTE NOW: Complete the above TODO list to achieve: `rune --help` prints CLI usage and exits successfully.

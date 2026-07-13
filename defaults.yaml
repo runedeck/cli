@@ -1,4 +1,4 @@
-# forge-cli default configuration.
+# rune-cli default configuration.
 # Override: create config.yaml (gitignored) with only the fields you want to change.
 
 validate:
