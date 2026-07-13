@@ -2,6 +2,7 @@
 /// Substituted into `templates/init/.githooks/pre-commit` by `rune init`.
 pub const VALIDATE_SH_SHA: &str = env!("VALIDATE_SH_SHA");
 
+pub mod deck;
 pub mod error;
 pub mod manifest;
 pub mod module;

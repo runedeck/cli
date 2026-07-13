@@ -11,6 +11,7 @@ pub struct ModuleManifest {
     #[serde(rename = "type")]
     pub module_type: Option<String>,
     pub platforms: Option<Vec<String>>,
+    pub providers: Option<Vec<String>>,
     pub repository: Option<String>,
 }
 
@@ -41,6 +42,7 @@ mod tests {
             events: Vec::new(),
             module_type: None,
             platforms: None,
+            providers: None,
             repository: Some("https://github.com/N4M3Z/rune-core".to_string()),
         };
         assert_eq!(manifest.source_uri(), "https://github.com/N4M3Z/rune-core");
@@ -55,6 +57,7 @@ mod tests {
             events: Vec::new(),
             module_type: None,
             platforms: None,
+            providers: None,
             repository: None,
         };
         assert_eq!(manifest.source_uri(), "rune-gm");
