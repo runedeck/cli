@@ -1,0 +1,7 @@
+name: essentials
+description: Core artifacts from both fixture domains.
+extends: [science]
+runes:
+  - writing/rules/GlobalName
+exclude:
+  - science/**/SharedName

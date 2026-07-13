@@ -74,7 +74,7 @@ pub fn filter_deck_to_requested(
     mut all_files: Vec<SourceFile>,
     list: &ArtifactList,
     source_label: &str,
-    source_path: &Path,
+    deck: &commands::deck::Deck,
 ) -> Result<Vec<SourceFile>, Error> {
     let canonical_ids: BTreeSet<String> = all_files
         .iter()
@@ -82,10 +82,23 @@ pub fn filter_deck_to_requested(
         .collect();
     let mut selected = BTreeSet::new();
 
+    if let Some(cast) = &list.cast {
+        selected.extend(
+            deck.resolve_cast(cast, canonical_ids.iter().map(String::as_str))
+                .map_err(|message| Error::new(ErrorKind::Config, format!(".rune: {message}")))?,
+        );
+    }
+
     for requested in list.ids() {
         let candidates: Vec<&String> = canonical_ids
             .iter()
-            .filter(|candidate| id_matches(requested, candidate))
+            .filter(|candidate| {
+                if requested.contains(['*', '?']) {
+                    commands::deck::matches_artifact_glob(requested, candidate)
+                } else {
+                    id_matches(requested, candidate)
+                }
+            })
             .collect();
         match candidates.as_slice() {
             [] => {
@@ -93,12 +106,15 @@ pub fn filter_deck_to_requested(
                     ErrorKind::Config,
                     format!(
                         ".rune: artifact '{requested}' requested from source '{source_label}' not found at {}",
-                        source_path.display()
+                        deck.root.display()
                     ),
                 ));
             }
             [candidate] => {
                 selected.insert((*candidate).clone());
+            }
+            _ if requested.contains(['*', '?']) => {
+                selected.extend(candidates.into_iter().cloned());
             }
             _ => {
                 let listed = candidates
@@ -113,6 +129,36 @@ pub fn filter_deck_to_requested(
             }
         }
     }
+
+    let selected_domains = selected
+        .iter()
+        .filter_map(|id| {
+            let mut parts = id.split('/');
+            let domain = parts.next()?;
+            let kind = parts.next()?;
+            (kind != "hooks").then_some(domain.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    for id in &canonical_ids {
+        let mut parts = id.split('/');
+        let domain = parts.next().unwrap_or_default();
+        let kind = parts.next().unwrap_or_default();
+        if kind == "hooks" && selected_domains.contains(domain) {
+            selected.insert(id.clone());
+        }
+    }
+    selected.retain(|id| {
+        let mut parts = id.split('/');
+        let domain = parts.next().unwrap_or_default();
+        let kind = parts.next().unwrap_or_default();
+        kind != "hooks" || selected_domains.contains(domain)
+    });
+    selected.retain(|id| {
+        !list
+            .exclude
+            .iter()
+            .any(|pattern| commands::deck::matches_artifact_glob(pattern, id))
+    });
 
     all_files.retain(|file| {
         file.artifact_id

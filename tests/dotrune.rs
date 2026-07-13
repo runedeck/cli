@@ -372,12 +372,91 @@ fn deck_resolves_canonical_artifact_id() {
 }
 
 #[test]
-fn deck_resolves_canonical_hook_id() {
+fn deck_does_not_deploy_hook_without_selected_domain_artifact() {
     let consumer = tempfile::tempdir().unwrap();
 
     install_local_deck(consumer.path(), "hooks", "science/hooks/OnEvent").success();
 
-    assert!(consumer.path().join(".claude/hooks/OnEvent.md").is_file());
+    assert!(!consumer.path().join(".claude/hooks/OnEvent.md").exists());
+}
+
+#[test]
+fn deck_deploys_domain_hooks_with_selected_domain_artifact() {
+    let consumer = tempfile::tempdir().unwrap();
+
+    install_local_deck(consumer.path(), "skills", "science/skills/OnlyScience").success();
+
+    let hook = consumer.path().join(".claude/hooks/OnEvent.md");
+    let body = fs::read_to_string(&hook).expect("science hook must deploy with science skill");
+    assert!(
+        body.contains("Descriptive fixture placeholder for a hook."),
+        "{body}"
+    );
+}
+
+#[test]
+fn consumer_cast_unions_explicit_ids_then_applies_entry_exclude() {
+    let consumer = tempfile::tempdir().unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: essentials\n    include: [writing/skills/OnlyWriting]\n    exclude: ['science/agents/**']\n",
+            support::deck_fixture().display()
+        ),
+    );
+
+    install(consumer.path()).success();
+
+    let science =
+        fs::read_to_string(consumer.path().join(".claude/skills/OnlyScience/SKILL.md")).unwrap();
+    let writing =
+        fs::read_to_string(consumer.path().join(".claude/skills/OnlyWriting/SKILL.md")).unwrap();
+    let rule = fs::read_to_string(consumer.path().join(".claude/rules/GlobalName.md")).unwrap();
+    assert!(science.contains("OnlyScience"), "{science}");
+    assert!(writing.contains("OnlyWriting"), "{writing}");
+    assert!(
+        rule.contains("Descriptive fixture placeholder for a globally repeated name."),
+        "{rule}"
+    );
+    assert!(
+        !consumer
+            .path()
+            .join(".claude/agents/SharedName.md")
+            .exists()
+    );
+}
+
+#[test]
+fn consumer_unknown_cast_is_a_resolve_error() {
+    let consumer = tempfile::tempdir().unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: unknown\n",
+            support::deck_fixture().display()
+        ),
+    );
+
+    let output = install(consumer.path()).failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("unknown cast 'unknown'"), "{stderr}");
+}
+
+#[test]
+fn consumer_cast_referencing_removed_artifact_is_a_resolve_error() {
+    let consumer = tempfile::tempdir().unwrap();
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: stale\n",
+            support::deck_fixture().display()
+        ),
+    );
+
+    let output = install(consumer.path()).failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("science/rules/RemovedArtifact"), "{stderr}");
+    assert!(stderr.contains("matches no artifact"), "{stderr}");
 }
 
 #[test]
@@ -453,7 +532,7 @@ fn deck_domain_provider_list_overrides_deck_default() {
     support::copy_deck_fixture(deck.path());
     fs::write(
         deck.path().join("deck.yaml"),
-        "name: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
+        "schema: 1\nname: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
     )
     .unwrap();
     fs::write(
@@ -494,7 +573,7 @@ fn target_provider_selection_overrides_deck_and_domain_defaults() {
     support::copy_deck_fixture(deck.path());
     fs::write(
         deck.path().join("deck.yaml"),
-        "name: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
+        "schema: 1\nname: fixture\nversion: 0.1.0\ndescription: Fixture.\nproviders: [claude]\n",
     )
     .unwrap();
     fs::write(

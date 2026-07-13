@@ -33,12 +33,30 @@ pub fn resolve_sources(
         }
 
         let filtered = match &canonical {
-            CanonicalSource::Module(module_root) => filter_to_requested(
-                sources::collect(module_root, valid_qualifiers)?,
-                artifact_list,
-                source_label,
-                module_root,
-            )?,
+            CanonicalSource::Module(module_root) => {
+                if let Some(cast) = &artifact_list.cast {
+                    return Err(Error::new(
+                        ErrorKind::Config,
+                        format!(
+                            ".rune: cast '{cast}' requires a deck-root source; source '{source_label}' resolves to a single module"
+                        ),
+                    ));
+                }
+                if !artifact_list.include.is_empty() || !artifact_list.exclude.is_empty() {
+                    return Err(Error::new(
+                        ErrorKind::Config,
+                        format!(
+                            ".rune: include/exclude requires a deck-root source; source '{source_label}' resolves to a single module"
+                        ),
+                    ));
+                }
+                filter_to_requested(
+                    sources::collect(module_root, valid_qualifiers)?,
+                    artifact_list,
+                    source_label,
+                    module_root,
+                )?
+            }
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();
                 for domain in &deck.domains {
@@ -49,7 +67,7 @@ pub fn resolve_sources(
                         files.push(file);
                     }
                 }
-                filter_deck_to_requested(files, artifact_list, source_label, &deck.root)?
+                filter_deck_to_requested(files, artifact_list, source_label, deck)?
             }
         };
         collected.extend(filtered);

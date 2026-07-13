@@ -1,7 +1,7 @@
 //! Schema and parser for `.rune`.
 
 use commands::error::{Error, ErrorKind};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -15,7 +15,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 const ALLOW_FILE_URLS_ENV: &str = "RUNE_GIT_ALLOW_FILE_URLS";
 const LEGACY_ALLOW_FILE_URLS_ENV: &str = "FORGE_GIT_ALLOW_FILE_URLS";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DotRune {
     pub version: u32,
@@ -40,6 +40,29 @@ pub enum Source {
         commit: String,
         path: Option<PathBuf>,
     },
+}
+
+impl Serialize for Source {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut map = serializer.serialize_map(None)?;
+        match self {
+            Self::Local { local, path } => {
+                map.serialize_entry("local", local)?;
+                if let Some(path) = path {
+                    map.serialize_entry("path", path)?;
+                }
+            }
+            Self::Git { git, commit, path } => {
+                map.serialize_entry("git", git)?;
+                map.serialize_entry("ref", commit)?;
+                if let Some(path) = path {
+                    map.serialize_entry("path", path)?;
+                }
+            }
+        }
+        map.end()
+    }
 }
 
 impl<'de> Deserialize<'de> for Source {
@@ -178,26 +201,39 @@ pub fn validate_commit_sha(sha: &str) -> Result<(), String> {
 
 /// Per-source list of requested artifact names. Each kind defaults to empty
 /// so `.rune` can request only one kind per source.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ArtifactList {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cast: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
 }
 
 impl ArtifactList {
     pub fn is_empty(&self) -> bool {
-        self.skills.is_empty()
+        self.cast.is_none()
+            && self.include.is_empty()
+            && self.skills.is_empty()
             && self.agents.is_empty()
             && self.rules.is_empty()
             && self.hooks.is_empty()
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &String> {
-        self.skills
+        self.include
             .iter()
+            .chain(&self.skills)
             .chain(&self.agents)
             .chain(&self.rules)
             .chain(&self.hooks)

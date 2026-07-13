@@ -17,7 +17,7 @@ use super::{DriftEntry, DriftResult, DriftStatus, compare_file_content, print_dr
 use crate::cli::config;
 use crate::cli::deploy::{is_owned_by_module, load_deployed_manifest};
 
-const CONTENT_PREFIXES: [&str; 3] = ["agents/", "skills/", "rules/"];
+const CONTENT_PREFIXES: [&str; 4] = ["agents/", "skills/", "rules/", "hooks/"];
 
 /// Verify each provider's `build/<provider>` against `<target_base>/<provider
 /// target>` (mirroring `rune install --target`), scoped to this module.
@@ -28,11 +28,11 @@ pub fn execute(
     json_output: bool,
 ) -> Result<i32, Error> {
     let module_root = Path::new(source);
-    if !module_root.join("module.yaml").is_file() {
+    if !module_root.join("module.yaml").is_file() && !crate::cli::dotrune::exists(module_root) {
         return Err(Error::new(
             ErrorKind::Io,
             format!(
-                "{source} is not a module root (no module.yaml); --target verify compares its build/ against a deployment"
+                "{source} is not a module or consumer root (no module.yaml or .rune); --target verify compares its build/ against a deployment"
             ),
         ));
     }

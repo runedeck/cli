@@ -1,3 +1,4 @@
+mod add;
 mod adopt;
 mod assemble;
 pub(crate) mod config;
@@ -52,6 +53,25 @@ enum Command {
         /// Directory to scaffold the new module into (created if missing).
         #[arg(long, value_name = "DIR")]
         target: String,
+    },
+
+    /// Add a deck artifact selection to the consumer `.rune` manifest
+    Add {
+        /// Domain or domain/name selection. Domain-only stores `<domain>/**`.
+        #[arg(value_name = "DOMAIN[/NAME]", required_unless_present = "cast")]
+        artifact: Option<String>,
+
+        /// Add a cast reference instead of an artifact selection.
+        #[arg(long, value_name = "NAME", conflicts_with = "artifact")]
+        cast: Option<String>,
+
+        /// Deck path or HTTPS git URL. Required when creating `.rune`.
+        #[arg(long, value_name = "PATH_OR_URL")]
+        source: Option<String>,
+
+        /// Full pinned commit SHA for an HTTPS source.
+        #[arg(long = "ref", value_name = "SHA")]
+        reference: Option<String>,
     },
 
     /// Assemble and deploy module content to provider directories
@@ -377,6 +397,19 @@ pub fn run() -> i32 {
         #[cfg(feature = "tui")]
         Command::Tui => return crate::tui::run(),
         Command::Init { target } => (init::execute(&target), "initialized"),
+        Command::Add {
+            artifact,
+            cast,
+            source,
+            reference,
+        } => {
+            return exit_code(add::execute(
+                artifact.as_deref(),
+                cast.as_deref(),
+                source.as_deref(),
+                reference.as_deref(),
+            ));
+        }
         Command::Install {
             source,
             target,

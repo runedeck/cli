@@ -404,10 +404,11 @@ fn resolved_deck_artifacts_store_canonical_ids() {
     )
     .unwrap();
 
-    assert!(!files.is_empty());
-    assert!(
+    assert_eq!(
         files
             .iter()
-            .all(|file| file.artifact_id.as_deref() == Some("science/skills/OnlyScience"))
+            .filter_map(|file| file.artifact_id.as_deref())
+            .collect::<Vec<_>>(),
+        ["science/skills/OnlyScience", "science/hooks/OnEvent"]
     );
 }

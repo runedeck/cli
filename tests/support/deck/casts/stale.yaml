@@ -1,0 +1,4 @@
+name: stale
+description: A cast retaining a removed artifact reference.
+runes:
+  - science/rules/RemovedArtifact

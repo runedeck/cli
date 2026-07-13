@@ -27,7 +27,7 @@ use std::fs;
 use std::path::Path;
 
 pub use git::cached_worktree;
-pub use parse::{DotRune, validate_commit_sha, validate_git_url};
+pub use parse::{DotRune, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
 pub use resolve::resolve_sources;
 
 const MAX_BYTES: usize = 64 * 1024;

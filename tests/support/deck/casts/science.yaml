@@ -1,0 +1,5 @@
+name: science
+description: All science skills and agents.
+runes:
+  - science/skills/**
+  - science/agents/**
