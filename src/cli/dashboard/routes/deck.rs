@@ -236,4 +236,36 @@ mod tests {
         let response = decks_page(State(app_state(None))).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn decks_route_uses_configured_deck_outside_deck_launch_directory() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
+        let mut view = DashboardView {
+            modules: Vec::new(),
+            summary: StatusSummary::default(),
+            provenance: Vec::new(),
+            adrs: Vec::new(),
+            deck: None,
+        };
+        crate::cli::dashboard::server::attach_configured_deck(&mut view, &root, &[], &[]).unwrap();
+        let state = AppState {
+            root: PathBuf::from("/tmp/non-deck-dashboard-root"),
+            shared: Arc::new(RwLock::new(DashboardState {
+                view,
+                provider_targets: Vec::new(),
+                settings_filenames: Vec::new(),
+                local_repos: std::collections::HashMap::new(),
+                version: "test".to_string(),
+                binary_hash: String::new(),
+                scanned_at: "12:00:00".to_string(),
+            })),
+        };
+
+        let response = decks_page(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_body(response).await;
+        assert!(body.contains("stage-a-fixture"));
+        assert!(body.contains("science"));
+    }
 }

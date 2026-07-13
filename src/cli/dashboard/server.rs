@@ -49,7 +49,12 @@ pub async fn start(root: &Path, port: Option<u16>) -> Result<(), Error> {
 pub fn build_state(root: &Path) -> Result<DashboardState, Error> {
     let provider_targets = load_provider_targets(root);
     let watched_locations = watchlist::watched_locations();
-    let view = scan::build_view(root, &provider_targets, &watched_locations)?;
+    let mut view = scan::build_view(root, &provider_targets, &watched_locations)?;
+    if view.deck.is_none()
+        && let Some(deck_root) = configured_deck_root()?
+    {
+        attach_configured_deck(&mut view, &deck_root, &provider_targets, &watched_locations)?;
+    }
     Ok(DashboardState {
         view,
         provider_targets,
@@ -59,6 +64,31 @@ pub fn build_state(root: &Path) -> Result<DashboardState, Error> {
         binary_hash: compute_binary_hash(),
         scanned_at: chrono::Utc::now().format("%H:%M:%S").to_string(),
     })
+}
+
+fn configured_deck_root() -> Result<Option<std::path::PathBuf>, Error> {
+    let configured = commands::ontology::load()?.deck;
+    Ok(configured.map(|value| commands::ontology::expand_tilde(&value.value)))
+}
+
+pub(crate) fn attach_configured_deck(
+    view: &mut commands::view::DashboardView,
+    deck_root: &Path,
+    provider_targets: &[(String, String)],
+    watched_locations: &[std::path::PathBuf],
+) -> Result<(), Error> {
+    if !commands::deck::is_deck(deck_root) {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "configured deck source {} has no deck.yaml",
+                deck_root.display()
+            ),
+        ));
+    }
+    let configured = scan::build_view(deck_root, provider_targets, watched_locations)?;
+    view.deck = configured.deck;
+    Ok(())
 }
 
 /// Provider name + target directory pairs from `defaults.yaml` (merged with
