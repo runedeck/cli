@@ -1,17 +1,17 @@
 //! Filter a producer's full `Vec<SourceFile>` down to the subset requested
-//! by a single source's `ArtifactList`. Records which requested names matched
-//! and errors if any requested artifact failed to resolve.
+//! by a single source's `RuneList`. Records which requested names matched
+//! and errors if any requested rune failed to resolve.
 
 use commands::error::{Error, ErrorKind};
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use crate::cli::assemble::sources::SourceFile;
-use crate::cli::dotrune::parse::ArtifactList;
+use crate::cli::dotrune::parse::RuneList;
 
 pub fn filter_to_requested(
     all_files: Vec<SourceFile>,
-    list: &ArtifactList,
+    list: &RuneList,
     source_label: &str,
     source_path: &Path,
 ) -> Result<Vec<SourceFile>, Error> {
@@ -72,7 +72,7 @@ pub fn filter_to_requested(
 
 pub fn filter_deck_to_requested(
     mut all_files: Vec<SourceFile>,
-    list: &ArtifactList,
+    list: &RuneList,
     source_label: &str,
     deck: &commands::deck::Deck,
 ) -> Result<Vec<SourceFile>, Error> {
@@ -82,7 +82,7 @@ pub fn filter_deck_to_requested(
         .collect();
     let mut selected = BTreeSet::new();
 
-    if let Some(cast) = &list.cast {
+    for cast in &list.casts {
         selected.extend(
             deck.resolve_cast(cast, canonical_ids.iter().map(String::as_str))
                 .map_err(|message| Error::new(ErrorKind::Config, format!(".rune: {message}")))?,
@@ -90,6 +90,10 @@ pub fn filter_deck_to_requested(
     }
 
     for requested in list.ids() {
+        if let Some(deck_ids) = whole_deck_selection(requested, deck, &canonical_ids) {
+            selected.extend(deck_ids);
+            continue;
+        }
         let candidates: Vec<&String> = canonical_ids
             .iter()
             .filter(|candidate| {
@@ -105,7 +109,7 @@ pub fn filter_deck_to_requested(
                 return Err(Error::new(
                     ErrorKind::Config,
                     format!(
-                        ".rune: artifact '{requested}' requested from source '{source_label}' not found at {}",
+                        ".rune: rune '{requested}' requested from source '{source_label}' not found at {}",
                         deck.root.display()
                     ),
                 ));
@@ -124,7 +128,7 @@ pub fn filter_deck_to_requested(
                     .join(", ");
                 return Err(Error::new(
                     ErrorKind::Config,
-                    format!(".rune: artifact '{requested}' is ambiguous; candidates: {listed}"),
+                    format!(".rune: rune '{requested}' is ambiguous; candidates: {listed}"),
                 ));
             }
         }
@@ -167,6 +171,29 @@ pub fn filter_deck_to_requested(
     });
     all_files.sort_by_key(deck_output_key);
     Ok(all_files)
+}
+
+/// A bare token that names a deck selects every rune in it. Deck names win
+/// over rune names so `add development` never silently narrows to a rune
+/// that happens to share the deck's name.
+fn whole_deck_selection(
+    requested: &str,
+    deck: &commands::deck::Deck,
+    canonical_ids: &BTreeSet<String>,
+) -> Option<Vec<String>> {
+    if requested.contains('/') || requested.contains(['*', '?']) {
+        return None;
+    }
+    deck.domains
+        .iter()
+        .any(|domain| domain.name == requested)
+        .then(|| {
+            canonical_ids
+                .iter()
+                .filter(|id| id.split('/').next() == Some(requested))
+                .cloned()
+                .collect()
+        })
 }
 
 fn id_matches(requested: &str, canonical: &str) -> bool {

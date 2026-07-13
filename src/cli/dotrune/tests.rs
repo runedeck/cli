@@ -5,7 +5,7 @@ version: 1
 sources:
     rune-core:
         local: ../rune-core
-artifacts:
+runes:
     rune-core:
         skills: [BuildSkill]
 ";
@@ -20,9 +20,9 @@ fn parse_minimal_happy_path() {
     };
     assert_eq!(local.to_string_lossy(), "../rune-core");
     assert!(path.is_none());
-    assert_eq!(manifest.artifacts["rune-core"].skills, vec!["BuildSkill"]);
-    assert!(manifest.artifacts["rune-core"].agents.is_empty());
-    assert!(manifest.artifacts["rune-core"].rules.is_empty());
+    assert_eq!(manifest.runes["rune-core"].skills, vec!["BuildSkill"]);
+    assert!(manifest.runes["rune-core"].agents.is_empty());
+    assert!(manifest.runes["rune-core"].rules.is_empty());
 }
 
 #[test]
@@ -32,16 +32,16 @@ version: 1
 sources:
     a:
         local: ./a
-artifacts:
+runes:
     a:
         skills: [S1, S2]
         agents: [A1]
         rules: [R1, R2, R3]
 ";
     let manifest = parse(content).unwrap();
-    assert_eq!(manifest.artifacts["a"].skills, vec!["S1", "S2"]);
-    assert_eq!(manifest.artifacts["a"].agents, vec!["A1"]);
-    assert_eq!(manifest.artifacts["a"].rules.len(), 3);
+    assert_eq!(manifest.runes["a"].skills, vec!["S1", "S2"]);
+    assert_eq!(manifest.runes["a"].agents, vec!["A1"]);
+    assert_eq!(manifest.runes["a"].rules.len(), 3);
 }
 
 #[test]
@@ -83,7 +83,7 @@ version: 1
 sources:
     a:
         local: ./a
-artifacts:
+runes:
     a:
         plugins: [SomePlugin]
 ";
@@ -131,7 +131,7 @@ version: 1
 sources:
     a:
         local: ./a
-artifacts:
+runes:
     b:
         skills: [Something]
 ";
@@ -162,7 +162,7 @@ sources:
         local: ./a
 ";
     let manifest = parse(content).unwrap();
-    assert!(manifest.artifacts.is_empty());
+    assert!(manifest.runes.is_empty());
 }
 
 #[test]
@@ -365,21 +365,21 @@ version: 1
 sources:
     a:
         local: ./a
-artifacts:
+runes:
     a:
         rules: [OnlyRule]
 ";
     let manifest = parse(content).unwrap();
-    assert!(manifest.artifacts["a"].skills.is_empty());
-    assert!(manifest.artifacts["a"].agents.is_empty());
-    assert_eq!(manifest.artifacts["a"].rules, vec!["OnlyRule"]);
+    assert!(manifest.runes["a"].skills.is_empty());
+    assert!(manifest.runes["a"].agents.is_empty());
+    assert_eq!(manifest.runes["a"].rules, vec!["OnlyRule"]);
 }
 
 #[test]
 fn resolved_deck_artifacts_store_canonical_ids() {
     let deck = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
     let content = format!(
-        "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [OnlyScience]\n",
+        "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    skills: [OnlyScience]\n",
         deck.display()
     );
     let manifest = parse(&content).unwrap();

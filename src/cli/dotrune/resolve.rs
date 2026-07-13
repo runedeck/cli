@@ -25,16 +25,16 @@ pub fn resolve_sources(
 
     for (source_label, source) in &manifest.sources {
         let canonical = canonicalize_source(source, source_label, repo_root)?;
-        let Some(artifact_list) = manifest.artifacts.get(source_label) else {
+        let Some(rune_list) = manifest.runes.get(source_label) else {
             continue;
         };
-        if artifact_list.is_empty() {
+        if rune_list.is_empty() {
             continue;
         }
 
         let filtered = match &canonical {
             CanonicalSource::Module(module_root) => {
-                if let Some(cast) = &artifact_list.cast {
+                if let Some(cast) = rune_list.casts.first() {
                     return Err(Error::new(
                         ErrorKind::Config,
                         format!(
@@ -42,7 +42,7 @@ pub fn resolve_sources(
                         ),
                     ));
                 }
-                if !artifact_list.include.is_empty() || !artifact_list.exclude.is_empty() {
+                if !rune_list.include.is_empty() || !rune_list.exclude.is_empty() {
                     return Err(Error::new(
                         ErrorKind::Config,
                         format!(
@@ -52,7 +52,7 @@ pub fn resolve_sources(
                 }
                 filter_to_requested(
                     sources::collect(module_root, valid_qualifiers)?,
-                    artifact_list,
+                    rune_list,
                     source_label,
                     module_root,
                 )?
@@ -68,7 +68,7 @@ pub fn resolve_sources(
                         files.push(file);
                     }
                 }
-                filter_deck_to_requested(files, artifact_list, source_label, deck)?
+                filter_deck_to_requested(files, rune_list, source_label, deck)?
             }
         };
         collected.extend(filtered);

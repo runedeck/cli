@@ -20,7 +20,7 @@ pub struct DotRune {
     pub version: u32,
     pub sources: BTreeMap<String, Source>,
     #[serde(default)]
-    pub artifacts: BTreeMap<String, ArtifactList>,
+    pub runes: BTreeMap<String, RuneList>,
 }
 
 /// Where to find a producer module. `Local` for a sibling checkout on disk,
@@ -181,13 +181,16 @@ pub fn validate_commit_sha(sha: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Per-source list of requested artifact names. Each kind defaults to empty
+/// Per-source list of requested rune names. Each kind defaults to empty
 /// so `.rune` can request only one kind per source.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct ArtifactList {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cast: Option<String>,
+pub struct RuneList {
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_list"
+    )]
+    pub casts: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -202,9 +205,21 @@ pub struct ArtifactList {
     pub hooks: Vec<String>,
 }
 
-impl ArtifactList {
+fn string_or_list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    use serde::de::Error as _;
+    let value: serde_yaml::Value = Deserialize::deserialize(deserializer)?;
+    match value {
+        serde_yaml::Value::String(single) => Ok(vec![single]),
+        serde_yaml::Value::Sequence(_) => serde_yaml::from_value(value).map_err(D::Error::custom),
+        other => Err(D::Error::custom(format!(
+            "casts must be a cast name or a list of cast names, got: {other:?}"
+        ))),
+    }
+}
+
+impl RuneList {
     pub fn is_empty(&self) -> bool {
-        self.cast.is_none()
+        self.casts.is_empty()
             && self.include.is_empty()
             && self.skills.is_empty()
             && self.agents.is_empty()
@@ -236,11 +251,11 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
         ));
     }
 
-    for source_label in manifest.artifacts.keys() {
+    for source_label in manifest.runes.keys() {
         if !manifest.sources.contains_key(source_label) {
             return Err(Error::new(
                 ErrorKind::Parse,
-                format!(".rune: artifacts entry '{source_label}' has no matching `sources` entry"),
+                format!(".rune: runes entry '{source_label}' has no matching `sources` entry"),
             ));
         }
     }

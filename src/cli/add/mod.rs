@@ -43,39 +43,89 @@ pub fn execute(
             Some(configured_source.as_str())
         };
     let source_label = select_source(&mut manifest, selected_source, reference)?;
-    let entry = manifest.artifacts.entry(source_label).or_default();
-    let changed = if let Some(cast) = cast {
-        match entry.cast.as_deref() {
-            Some(existing) if existing == cast => false,
-            Some(existing) => {
-                return Err(Error::new(
-                    ErrorKind::Config,
-                    format!("source entry already references cast '{existing}'"),
-                ));
-            }
-            None => {
-                entry.cast = Some(cast.to_string());
-                true
+    let entry = manifest.runes.entry(source_label).or_default();
+    let mut changed = false;
+    if let Some(cast) = cast {
+        for cast in split_comma_list(cast, "cast")? {
+            if !entry.casts.contains(&cast) {
+                entry.casts.push(cast);
+                changed = true;
             }
         }
     } else {
-        let selection = normalize_artifact(artifact.unwrap_or_default())?;
-        if entry.include.contains(&selection) {
-            false
-        } else {
-            entry.include.push(selection);
-            true
+        for selection in split_comma_list(artifact.unwrap_or_default(), "rune")? {
+            let selection = normalize_rune_id(&selection)?;
+            if !entry.include.contains(&selection) {
+                entry.include.push(selection);
+                changed = true;
+            }
         }
-    };
+    }
+
+    match validate_selection(&manifest, &repo_root) {
+        Ok(()) => {}
+        Err(Deferred(note)) => println!("note: {note}"),
+        Err(Invalid(error)) => return Err(error),
+    }
 
     if changed || !manifest_path.is_file() {
         let content = serde_yaml::to_string(&manifest).map_err(|error| {
             Error::new(ErrorKind::Parse, format!("cannot serialize .rune: {error}"))
         })?;
         atomic_write(&manifest_path, content.as_bytes())?;
+        println!("updated {}", manifest_path.display());
     }
     println!("rune install --source {}", repo_root.display());
     Ok(0)
+}
+
+fn split_comma_list(raw: &str, what: &str) -> Result<Vec<String>, Error> {
+    let items: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect();
+    if items.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("expected at least one {what}, got '{raw}'"),
+        ));
+    }
+    Ok(items)
+}
+
+enum ValidationError {
+    Deferred(String),
+    Invalid(Error),
+}
+use ValidationError::{Deferred, Invalid};
+
+/// Resolve the whole manifest against its sources so unknown ids, unknown
+/// casts, and ambiguous short forms fail at add time instead of install
+/// time. Git sources may need a network fetch, so validation defers to
+/// install rather than cloning during an edit command.
+fn validate_selection(manifest: &DotRune, repo_root: &Path) -> Result<(), ValidationError> {
+    if manifest
+        .sources
+        .values()
+        .any(|source| matches!(source, Source::Git { .. }))
+    {
+        return Err(Deferred(
+            "selection uses a git source; ids are verified at install".to_string(),
+        ));
+    }
+    let merged_config = crate::cli::config::load_merged_config(repo_root)
+        .map_err(|error| Invalid(Error::new(ErrorKind::Config, error.to_string())))?;
+    let providers = crate::cli::config::load_providers(&merged_config)
+        .map_err(|error| Invalid(Error::new(ErrorKind::Config, error.to_string())))?;
+    let models = crate::cli::config::load_models(repo_root);
+    let provider_names: Vec<String> = providers.keys().cloned().collect();
+    let qualifiers =
+        crate::cli::assemble::sources::build_valid_qualifiers(&provider_names, &models);
+    crate::cli::dotrune::resolve_sources(manifest, repo_root, &qualifiers)
+        .map(|_| ())
+        .map_err(Invalid)
 }
 
 fn configured_deck_source() -> Result<String, Error> {
@@ -97,7 +147,7 @@ fn minimal_manifest(source: &str, reference: Option<&str>) -> Result<DotRune, Er
     Ok(DotRune {
         version: SCHEMA_VERSION,
         sources,
-        artifacts: BTreeMap::new(),
+        runes: BTreeMap::new(),
     })
 }
 
@@ -186,19 +236,17 @@ fn source_matches(source: &Source, requested: &str, reference: Option<&str>) -> 
     }
 }
 
-fn normalize_artifact(artifact: &str) -> Result<String, Error> {
-    let parts = artifact.split('/').collect::<Vec<_>>();
-    if parts.iter().any(|part| part.is_empty()) || !matches!(parts.len(), 1 | 2) {
+fn normalize_rune_id(rune_id: &str) -> Result<String, Error> {
+    let parts = rune_id.split('/').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.is_empty()) || !matches!(parts.len(), 1..=3) {
         return Err(Error::new(
             ErrorKind::Config,
-            format!("artifact must be <domain> or <domain>/<Name>, got '{artifact}'"),
+            format!(
+                "rune id must be <deck>, <Name>, <deck>/<Name>, or <deck>/<kind>/<Name>, got '{rune_id}'"
+            ),
         ));
     }
-    if parts.len() == 1 {
-        Ok(format!("{artifact}/**"))
-    } else {
-        Ok(artifact.to_string())
-    }
+    Ok(rune_id.to_string())
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), Error> {

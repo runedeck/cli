@@ -131,7 +131,7 @@ fn install_deck_source(
     fs::write(
         consumer.join(".rune"),
         format!(
-            "version: 1\nsources:\n  deck:\n    git: file://{}\n    ref: {sha}\n{path_line}artifacts:\n  deck:\n    skills: [{skills}]\n",
+            "version: 1\nsources:\n  deck:\n    git: file://{}\n    ref: {sha}\n{path_line}runes:\n  deck:\n    skills: [{skills}]\n",
             bare_path.display()
         ),
     )
@@ -162,7 +162,7 @@ fn dotrune_git_source_clones_and_deploys_pinned_sha() {
                 producer:\n    \
                     git: file://{bare}\n    \
                     ref: {sha}\n\
-             artifacts:\n  \
+             runes:\n  \
                 producer:\n    \
                     skills: [GitSkill]\n",
             bare = bare_path.display(),
@@ -264,7 +264,7 @@ fn dotrune_git_source_rejects_uncached_sha_without_match() {
                 producer:\n    \
                     git: file://{bare}\n    \
                     ref: {bogus_sha}\n\
-             artifacts:\n  \
+             runes:\n  \
                 producer:\n    \
                     skills: [GitSkill]\n",
             bare = bare_path.display(),
@@ -301,7 +301,7 @@ fn dotrune_git_source_is_cache_idempotent() {
             producer:\n    \
                 git: file://{bare}\n    \
                 ref: {sha}\n\
-         artifacts:\n  \
+         runes:\n  \
             producer:\n    \
                 skills: [GitSkill]\n",
         bare = bare_path.display(),

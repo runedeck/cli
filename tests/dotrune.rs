@@ -71,7 +71,7 @@ fn install_local_deck(
     write_dotrune(
         consumer_root,
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    {artifact_kind}: [{ids}]\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    {artifact_kind}: [{ids}]\n",
             support::deck_fixture().display()
         ),
     );
@@ -143,7 +143,7 @@ fn dotrune_deploys_requested_artifacts_across_providers() {
                     local: {a}\n  \
                 producer-b:\n    \
                     local: {b}\n\
-             artifacts:\n  \
+             runes:\n  \
                 producer-a:\n    \
                     skills: [AlphaSkill]\n  \
                 producer-b:\n    \
@@ -204,7 +204,7 @@ fn dotrune_errors_on_missing_source_path() {
     let consumer = tempfile::tempdir().unwrap();
     write_dotrune(
         consumer.path(),
-        "version: 1\nsources:\n  ghost:\n    local: /definitely/does/not/exist\nartifacts:\n  ghost:\n    skills: [X]\n",
+        "version: 1\nsources:\n  ghost:\n    local: /definitely/does/not/exist\nrunes:\n  ghost:\n    skills: [X]\n",
     );
 
     let output = install(consumer.path()).failure();
@@ -225,7 +225,7 @@ fn dotrune_errors_on_missing_artifact_in_source() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [DoesNotExist]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nrunes:\n  producer:\n    skills: [DoesNotExist]\n",
             p = producer.path().display(),
         ),
     );
@@ -248,7 +248,7 @@ fn dotrune_install_is_idempotent() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nrunes:\n  producer:\n    skills: [AlphaSkill]\n",
             p = producer.path().display(),
         ),
     );
@@ -282,7 +282,7 @@ fn dotrune_defaults_target_to_source_when_omitted() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    local: {p}\nartifacts:\n  producer:\n    skills: [AlphaSkill]\n",
+            "version: 1\nsources:\n  producer:\n    local: {p}\nrunes:\n  producer:\n    skills: [AlphaSkill]\n",
             p = producer.path().display(),
         ),
     );
@@ -343,7 +343,7 @@ fn dotrune_local_deck_subpath_resolves_one_domain() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\n    path: runes/science\nartifacts:\n  deck:\n    skills: [OnlyScience]\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\n    path: runes/science\nrunes:\n  deck:\n    skills: [OnlyScience]\n",
             support::deck_fixture().display()
         ),
     );
@@ -407,7 +407,7 @@ fn consumer_cast_unions_explicit_ids_then_applies_entry_exclude() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: essentials\n    include: [writing/skills/OnlyWriting]\n    exclude: ['science/agents/**']\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: essentials\n    include: [writing/skills/OnlyWriting]\n    exclude: ['science/agents/**']\n",
             support::deck_fixture().display()
         ),
     );
@@ -439,7 +439,7 @@ fn consumer_unknown_cast_is_a_resolve_error() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: unknown\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: unknown\n",
             support::deck_fixture().display()
         ),
     );
@@ -455,7 +455,7 @@ fn consumer_cast_referencing_removed_artifact_is_a_resolve_error() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: stale\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: stale\n",
             support::deck_fixture().display()
         ),
     );
@@ -550,7 +550,7 @@ fn deck_domain_provider_list_overrides_deck_default() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [science/skills/OnlyScience, writing/skills/OnlyWriting]\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    skills: [science/skills/OnlyScience, writing/skills/OnlyWriting]\n",
             deck.path().display()
         ),
     );
@@ -591,7 +591,7 @@ fn target_provider_selection_overrides_deck_and_domain_defaults() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    skills: [science/skills/OnlyScience]\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    skills: [science/skills/OnlyScience]\n",
             deck.path().display()
         ),
     );
@@ -627,7 +627,7 @@ fn single_module_source_still_resolves_bare_name() {
     write_dotrune(
         consumer.path(),
         &format!(
-            "version: 1\nsources:\n  producer:\n    local: {}\nartifacts:\n  producer:\n    skills: [LegacyBareName]\n",
+            "version: 1\nsources:\n  producer:\n    local: {}\nrunes:\n  producer:\n    skills: [LegacyBareName]\n",
             producer.path().display()
         ),
     );

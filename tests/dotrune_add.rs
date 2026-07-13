@@ -32,7 +32,7 @@ fn install(consumer_root: &Path) -> assert_cmd::assert::Assert {
 }
 
 #[test]
-fn add_creates_minimal_manifest_with_domain_glob_without_installing() {
+fn add_creates_minimal_manifest_with_deck_token_without_installing() {
     let consumer = tempfile::tempdir().unwrap();
     let deck = deck_fixture().to_string_lossy().into_owned();
 
@@ -46,8 +46,8 @@ fn add_creates_minimal_manifest_with_domain_glob_without_installing() {
         Some(deck.as_str())
     );
     assert_eq!(
-        value["artifacts"]["deck"]["include"][0].as_str(),
-        Some("science/**")
+        value["runes"]["deck"]["include"][0].as_str(),
+        Some("science")
     );
     assert!(!consumer.path().join(".claude").exists());
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
@@ -69,7 +69,7 @@ fn add_is_idempotent_and_cast_is_stored_by_name() {
         "idempotent add must leave .rune byte-identical"
     );
     let value: serde_yaml::Value = serde_yaml::from_slice(&second).unwrap();
-    assert_eq!(value["artifacts"]["deck"]["cast"].as_str(), Some("science"));
+    assert_eq!(value["runes"]["deck"]["casts"][0].as_str(), Some("science"));
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn add_prefers_existing_single_source_over_rune_deck() {
     rune()
         .current_dir(consumer.path())
         .env("RUNE_DECK", "/does/not/exist")
-        .args(["add", "development"])
+        .args(["add", "writing"])
         .assert()
         .success();
 
@@ -134,6 +134,89 @@ fn add_prefers_existing_single_source_over_rune_deck() {
     assert_eq!(
         manifest["sources"]["deck"]["local"].as_str(),
         Some(deck.as_str())
+    );
+}
+
+#[test]
+fn add_accepts_canonical_three_segment_id() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    add(
+        consumer.path(),
+        &["science/skills/OnlyScience", "--source", &deck],
+    )
+    .success();
+
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(consumer.path().join(".rune")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["runes"]["deck"]["include"][0].as_str(),
+        Some("science/skills/OnlyScience")
+    );
+}
+
+#[test]
+fn add_rejects_ambiguous_short_form_listing_candidates() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    add(consumer.path(), &["science/SharedName", "--source", &deck])
+        .failure()
+        .stderr(
+            predicates::str::contains("ambiguous")
+                .and(predicates::str::contains("science/agents/SharedName"))
+                .and(predicates::str::contains("science/skills/SharedName")),
+        );
+
+    assert!(
+        !consumer.path().join(".rune").exists(),
+        "a rejected add must not write .rune"
+    );
+}
+
+#[test]
+fn add_rejects_unknown_rune_at_add_time() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    add(
+        consumer.path(),
+        &["science/DoesNotExist", "--source", &deck],
+    )
+    .failure()
+    .stderr(predicates::str::contains("not found"));
+}
+
+#[test]
+fn add_accepts_comma_separated_runes_and_casts() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    add(
+        consumer.path(),
+        &["OnlyScience,OnlyWriting", "--source", &deck],
+    )
+    .success();
+    add(consumer.path(), &["--cast", "science,essentials"]).success();
+
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(consumer.path().join(".rune")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["runes"]["deck"]["include"][0].as_str(),
+        Some("OnlyScience")
+    );
+    assert_eq!(
+        manifest["runes"]["deck"]["include"][1].as_str(),
+        Some("OnlyWriting")
+    );
+    assert_eq!(
+        manifest["runes"]["deck"]["casts"][0].as_str(),
+        Some("science")
+    );
+    assert_eq!(
+        manifest["runes"]["deck"]["casts"][1].as_str(),
+        Some("essentials")
     );
 }
 

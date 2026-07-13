@@ -93,7 +93,7 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
     fs::write(
         consumer.path().join(".rune"),
         format!(
-            "version: 1\nsources:\n  deck:\n    local: {}\nartifacts:\n  deck:\n    cast: science\n",
+            "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: science\n",
             deck.path().display()
         ),
     )
