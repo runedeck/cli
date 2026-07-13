@@ -7,17 +7,17 @@ mod copy;
 mod dashboard;
 mod deploy;
 mod dispatch;
-mod dotrune;
+pub(crate) mod dotrune;
 mod drift;
 mod exec;
 mod find;
 mod init;
-mod install;
+pub(crate) mod install;
 mod launch;
 mod ontology;
 mod output;
 mod provenance;
-mod quest;
+pub(crate) mod quest;
 mod release;
 mod validate;
 pub(crate) mod watchlist;
@@ -55,6 +55,9 @@ enum Command {
         /// Render one frame to stdout as text (headless layout inspection).
         #[arg(long)]
         snapshot: bool,
+        /// Open directly in the consumer checkbox editor.
+        #[arg(long)]
+        edit: bool,
         /// Snapshot width in columns.
         #[arg(long, default_value = "120")]
         width: u16,
@@ -471,6 +474,7 @@ pub fn run() -> i32 {
         Command::Tui {
             source,
             snapshot,
+            edit,
             width,
             height,
             section,
@@ -480,9 +484,18 @@ pub fn run() -> i32 {
         } => {
             let source = std::path::PathBuf::from(source);
             return if snapshot {
-                crate::tui::run_snapshot(source, width, height, section, tab.as_deref(), drill, row)
+                crate::tui::run_snapshot(
+                    source,
+                    width,
+                    height,
+                    section,
+                    tab.as_deref(),
+                    drill,
+                    row,
+                    edit,
+                )
             } else {
-                crate::tui::run(source)
+                crate::tui::run(source, edit)
             };
         }
         Command::Init { target } => (init::execute(&target), "initialized"),
@@ -692,7 +705,7 @@ fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error>
 
 #[cfg(feature = "tui")]
 fn bare() -> i32 {
-    crate::tui::run(std::path::PathBuf::from("."))
+    crate::tui::run(std::path::PathBuf::from("."), false)
 }
 
 #[cfg(not(feature = "tui"))]

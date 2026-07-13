@@ -1,4 +1,5 @@
 pub mod app;
+mod cast_editor;
 pub mod components;
 pub mod event;
 mod rich;
@@ -26,8 +27,8 @@ mod tests;
 
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 
-pub fn run(source: PathBuf) -> i32 {
-    match launch(source) {
+pub fn run(source: PathBuf, edit: bool) -> i32 {
+    match launch(source, edit) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("fatal: {error}");
@@ -39,6 +40,7 @@ pub fn run(source: PathBuf) -> i32 {
 /// Render a single frame to plain text on stdout, for headless inspection of the
 /// layout at a given size and view. Waits for the background scan to deliver real
 /// data before drawing. This is the verification tool: run it, read the output.
+#[allow(clippy::too_many_arguments)]
 pub fn run_snapshot(
     source: PathBuf,
     width: u16,
@@ -47,8 +49,12 @@ pub fn run_snapshot(
     tab: Option<&str>,
     drill: u8,
     row: usize,
+    edit: bool,
 ) -> i32 {
     let mut app = App::load(source);
+    if edit {
+        app.open_cast_editor();
+    }
     for _ in 0..3000 {
         app.poll_scan();
         if !app.scan_pending() {
@@ -112,8 +118,11 @@ fn detail_tab_from_name(name: &str) -> Option<DetailTab> {
     }
 }
 
-fn launch(source: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn launch(source: PathBuf, edit: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::load(source);
+    if edit {
+        app.open_cast_editor();
+    }
     let mut terminal = setup_terminal()?;
     install_panic_hook();
 

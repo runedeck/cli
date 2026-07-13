@@ -77,6 +77,28 @@ pub fn resolve_sources(
     Ok(collected)
 }
 
+/// Materialize one manifest source and return its canonical root.
+///
+/// Editors use this to inspect the same local or pinned-git source that the
+/// install resolver will consume.
+pub fn materialize_source(
+    source: &Source,
+    source_label: &str,
+    repo_root: &Path,
+) -> Result<PathBuf, Error> {
+    let (materialized, subpath) = match source {
+        Source::Local { local, path } => (
+            canonicalize_local(local, source_label, repo_root)?,
+            path.as_deref(),
+        ),
+        Source::Git { git, commit, path } => (
+            crate::cli::dotrune::git::ensure_cached(git, commit, source_label)?,
+            path.as_deref(),
+        ),
+    };
+    canonicalize_subpath(&materialized, subpath, source_label)
+}
+
 fn canonical_rune_id(deck: &str, file: &SourceFile) -> Result<String, Error> {
     let name = if file.kind == commands::provider::ContentKind::Skills {
         file.relative_path
@@ -113,17 +135,10 @@ fn canonicalize_source(
     source_label: &str,
     repo_root: &Path,
 ) -> Result<CanonicalSource, Error> {
-    let (materialized, subpath) = match source {
-        Source::Local { local, path } => (
-            canonicalize_local(local, source_label, repo_root)?,
-            path.as_deref(),
-        ),
-        Source::Git { git, commit, path } => (
-            crate::cli::dotrune::git::ensure_cached(git, commit, source_label)?,
-            path.as_deref(),
-        ),
+    let canonical = materialize_source(source, source_label, repo_root)?;
+    let subpath = match source {
+        Source::Local { path, .. } | Source::Git { path, .. } => path,
     };
-    let canonical = canonicalize_subpath(&materialized, subpath, source_label)?;
 
     if subpath.is_some() {
         return require_module(canonical, source_label);

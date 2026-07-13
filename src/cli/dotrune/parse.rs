@@ -14,7 +14,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// pulls that bypass SHA pinning.
 const ALLOW_FILE_URLS_ENV: &str = "RUNE_GIT_ALLOW_FILE_URLS";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DotRune {
     pub version: u32,
@@ -27,7 +27,7 @@ pub struct DotRune {
 /// `Git` for a remote HTTPS repository pinned to a 40-hex commit SHA.
 ///
 /// A custom `Deserialize` allows local and git sources to carry an inner `path`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Source {
     Local {
         local: PathBuf,
@@ -183,7 +183,7 @@ pub fn validate_commit_sha(sha: &str) -> Result<(), String> {
 
 /// Per-source list of requested rune names. Each kind defaults to empty
 /// so `.rune` can request only one kind per source.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RuneList {
     #[serde(

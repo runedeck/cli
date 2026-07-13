@@ -23,11 +23,14 @@ mod resolve;
 mod tests;
 
 use commands::error::{Error, ErrorKind};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
 use std::path::Path;
 
 pub use git::cached_worktree;
 pub use parse::{DotRune, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
+#[cfg(feature = "tui")]
+pub use resolve::materialize_source;
 pub use resolve::resolve_sources;
 
 const MAX_BYTES: usize = 64 * 1024;
@@ -79,4 +82,77 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
     })?;
 
     parse::parse(content).map(Some)
+}
+
+/// Serialize and atomically replace a consumer manifest.
+///
+/// Both `rune add` and interactive editors use this durability path so a
+/// failed rename never leaves a partially written `.rune` file.
+pub fn write_atomic(repo_root: &Path, manifest: &DotRune) -> Result<(), Error> {
+    let path = repo_root.join(".rune");
+    let content = serde_yaml::to_string(manifest).map_err(|error| {
+        Error::new(ErrorKind::Parse, format!("cannot serialize .rune: {error}"))
+    })?;
+    atomic_write_with(&path, content.as_bytes(), |from, to| fs::rename(from, to))
+}
+
+fn atomic_write_with<F>(path: &Path, content: &[u8], rename: F) -> Result<(), Error>
+where
+    F: FnOnce(&Path, &Path) -> std::io::Result<()>,
+{
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = parent.join(format!(".rune.tmp-{}-{nonce}", std::process::id()));
+    let mut created = false;
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        created = true;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        rename(&temp, path)
+    })();
+    if let Err(error) = result {
+        if created {
+            let _ = fs::remove_file(&temp);
+        }
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!("cannot atomically rewrite {}: {error}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_cleans_temp_and_preserves_destination_on_rename_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join(".rune");
+        fs::write(&destination, "original\n").unwrap();
+
+        let error = atomic_write_with(&destination, b"replacement\n", |_, _| {
+            Err(std::io::Error::other("simulated rename failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("simulated rename failure"));
+        assert_eq!(fs::read_to_string(destination).unwrap(), "original\n");
+        let leftovers = fs::read_dir(root.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".rune.tmp-"))
+            .collect::<Vec<_>>();
+        assert_eq!(leftovers, Vec::<String>::new());
+    }
 }
