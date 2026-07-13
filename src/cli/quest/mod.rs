@@ -80,11 +80,21 @@ fn show_binding(state_path: &Path) -> i32 {
 }
 
 fn list_quests(state_path: &Path) -> Result<i32, Error> {
+    let mut stdout = std::io::stdout().lock();
+    list_quests_to(state_path, &mut stdout)
+}
+
+fn list_quests_to(state_path: &Path, writer: &mut impl std::io::Write) -> Result<i32, Error> {
     let document = read_document(state_path)?;
     let state = state_from_document(&document);
-    let history = normalized_history(&state);
+    let history = normalized_history(&state)
+        .into_iter()
+        .filter(|quest| Path::new(quest).is_dir())
+        .collect::<Vec<_>>();
     if history.is_empty() {
-        println!("no recent quests");
+        writeln!(writer, "no recent quests").map_err(|error| {
+            Error::new(ErrorKind::Io, format!("cannot write quest list: {error}"))
+        })?;
         return Ok(0);
     }
     for quest in history {
@@ -93,7 +103,9 @@ fn list_quests(state_path: &Path) -> Result<i32, Error> {
         } else {
             " "
         };
-        println!("{marker} {quest}");
+        writeln!(writer, "{marker} {quest}").map_err(|error| {
+            Error::new(ErrorKind::Io, format!("cannot write quest list: {error}"))
+        })?;
     }
     Ok(0)
 }
@@ -103,9 +115,8 @@ fn previous_quest(state_path: &Path) -> Result<PathBuf, Error> {
     let state = state_from_document(&document);
     normalized_history(&state)
         .into_iter()
-        .find(|quest| Some(quest.as_str()) != state.quest.as_deref())
+        .find(|quest| Some(quest.as_str()) != state.quest.as_deref() && Path::new(quest).is_dir())
         .map(PathBuf::from)
-        .filter(|quest| quest.is_dir())
         .ok_or_else(|| Error::new(ErrorKind::Config, "no previous quest".to_string()))
 }
 
@@ -286,4 +297,71 @@ fn io_error(path: &Path, action: &str, error: &dyn std::fmt::Display) -> Error {
         ErrorKind::Io,
         format!("cannot {action} {}: {error}", path.display()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previous_quest_skips_deleted_history_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("active");
+        let deleted = root.path().join("deleted");
+        let valid = root.path().join("valid");
+        std::fs::create_dir(&active).unwrap();
+        std::fs::create_dir(&valid).unwrap();
+        let state_path = root.path().join("state.yaml");
+        std::fs::write(
+            &state_path,
+            serde_yaml::to_string(&serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter(
+                [
+                    (
+                        serde_yaml::Value::from("quest"),
+                        serde_yaml::Value::from(active.to_string_lossy().into_owned()),
+                    ),
+                    (
+                        serde_yaml::Value::from("quests"),
+                        serde_yaml::Value::Sequence(vec![
+                            serde_yaml::Value::from(deleted.to_string_lossy().into_owned()),
+                            serde_yaml::Value::from(valid.to_string_lossy().into_owned()),
+                        ]),
+                    ),
+                ],
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(previous_quest(&state_path).unwrap(), valid);
+    }
+
+    #[test]
+    fn list_quests_omits_deleted_history_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("active");
+        let deleted = root.path().join("deleted");
+        let valid = root.path().join("valid");
+        std::fs::create_dir(&active).unwrap();
+        std::fs::create_dir(&valid).unwrap();
+        let state_path = root.path().join("state.yaml");
+        std::fs::write(
+            &state_path,
+            format!(
+                "quest: {}\nquests:\n  - {}\n  - {}\n",
+                active.display(),
+                deleted.display(),
+                valid.display()
+            ),
+        )
+        .unwrap();
+        let mut output = Vec::new();
+
+        list_quests_to(&state_path, &mut output).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            format!("* {}\n  {}\n", active.display(), valid.display())
+        );
+    }
 }
