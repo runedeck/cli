@@ -15,11 +15,13 @@ use ratatui::{
 pub(super) enum EditorAction {
     Continue,
     Save,
+    SaveAndClose,
     Discard,
 }
 
 pub(super) struct FileEditor {
     path: PathBuf,
+    artifact_key: Option<String>,
     original: String,
     state: EditorState,
     events: EditorEventHandler,
@@ -28,7 +30,11 @@ pub(super) struct FileEditor {
 }
 
 impl FileEditor {
-    pub(super) fn open(path: PathBuf, line: Option<usize>) -> Result<Self, String> {
+    pub(super) fn open(
+        path: PathBuf,
+        line: Option<usize>,
+        artifact_key: Option<String>,
+    ) -> Result<Self, String> {
         let original = std::fs::read_to_string(&path)
             .map_err(|error| format!("could not read {}: {error}", path.display()))?;
         let mut state = EditorState::new(Lines::from(original.as_str()));
@@ -39,6 +45,7 @@ impl FileEditor {
         state.cursor = Index2::new(row, 0);
         Ok(Self {
             path,
+            artifact_key,
             original,
             state,
             events: EditorEventHandler::default(),
@@ -49,6 +56,10 @@ impl FileEditor {
 
     pub(super) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(super) fn artifact_key(&self) -> Option<&str> {
+        self.artifact_key.as_deref()
     }
 
     pub(super) fn display_path(&self) -> String {
@@ -68,6 +79,10 @@ impl FileEditor {
 
     pub(super) fn is_dirty(&self) -> bool {
         self.text() != self.original
+    }
+
+    pub(super) fn mark_saved(&mut self) {
+        self.original = self.text();
     }
 
     pub(super) fn mode_label(&self) -> String {
@@ -113,7 +128,8 @@ impl FileEditor {
             KeyCode::Enter => {
                 let command = self.command.take().unwrap_or_default();
                 match command.trim() {
-                    "w" | "wq" | "x" => EditorAction::Save,
+                    "w" => EditorAction::Save,
+                    "wq" | "x" => EditorAction::SaveAndClose,
                     "q" => self.request_discard(),
                     "q!" => EditorAction::Discard,
                     _ => EditorAction::Continue,
@@ -190,7 +206,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("Rule.md");
         std::fs::write(&path, "old").unwrap();
-        let mut editor = FileEditor::open(path, None).unwrap();
+        let mut editor = FileEditor::open(path, None, None).unwrap();
         editor.events.on_key_event(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
             &mut editor.state,

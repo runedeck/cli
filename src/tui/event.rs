@@ -19,6 +19,9 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     app.clear_toast();
+    if key.code != KeyCode::Char('d') || !app.is_comment_navigator_focused() {
+        app.disarm_comment_delete();
+    }
     if app.is_file_editor_open() {
         app.file_editor_key(key);
         return;
@@ -92,13 +95,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('e') => app.edit_selected_source_or_cast(),
         KeyCode::Char('E') => app.open_selected_source_external(),
         KeyCode::Char('y' | 'Y') => app.copy_tuicr_review(),
-        KeyCode::Right | KeyCode::Char('l') if app.is_comment_navigator_focused() => {
-            app.comment_navigator_scroll_right();
-        }
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => app.drill_or_expand(),
-        KeyCode::Left | KeyCode::Char('h') if app.is_comment_navigator_focused() => {
-            app.comment_navigator_scroll_left();
-        }
         KeyCode::Left | KeyCode::Char('h') => app.move_back(),
         KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
         KeyCode::BackTab => app.focus_previous(),

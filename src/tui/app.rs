@@ -648,6 +648,8 @@ pub struct App {
     list_last_selected: usize,
     /// Second-press confirmation state for quitting with unsaved comments.
     quit_armed: bool,
+    /// Second-press confirmation state for deleting the selected comment.
+    comment_delete_armed: bool,
     /// Line cursor for the Code tab, decoupled from the viewport: keys move
     /// it (viewport follows), the wheel scrolls without touching it.
     detail_cursor: usize,
@@ -768,6 +770,7 @@ impl App {
             list_offset: 0,
             list_last_selected: 0,
             quit_armed: false,
+            comment_delete_armed: false,
             list_filter: String::new(),
             list_filter_typing: false,
             problems_only: false,
@@ -1184,11 +1187,15 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let text = if let Some(editor) = &self.file_editor {
-            format!(
-                " editor [{}] · i:insert Esc:normal · :w save · :q quit · {}",
-                editor.mode_label(),
-                editor.display_path()
-            )
+            if let Some(toast) = &self.toast {
+                format!(" editor [{}] · {toast}", editor.mode_label())
+            } else {
+                format!(
+                    " editor [{}] · i:insert Esc:normal · :w save · :q quit · {}",
+                    editor.mode_label(),
+                    editor.display_path()
+                )
+            }
         } else if let Some(edit) = &self.pending_cast_edit {
             format!(
                 " {} {} in cast {}?  Enter confirms · Esc cancels",
@@ -2697,6 +2704,7 @@ impl App {
     }
 
     pub fn focus_next(&mut self) {
+        self.disarm_comment_delete();
         let has_comments = !self.comments.is_empty();
         self.focused = match self.focused {
             ColumnFocus::Sections => ColumnFocus::List,
@@ -2707,6 +2715,7 @@ impl App {
     }
 
     pub fn focus_previous(&mut self) {
+        self.disarm_comment_delete();
         let has_comments = !self.comments.is_empty();
         self.focused = match self.focused {
             ColumnFocus::Sections if has_comments => ColumnFocus::Comments,
@@ -2845,6 +2854,7 @@ impl App {
     /// row, or detail tab it lands on. Clicks are discrete and idempotent, so
     /// mapping them to selection is safe (unlike wheel events).
     pub fn mouse_click(&mut self, x: u16, y: u16) {
+        self.disarm_comment_delete();
         if self.preview.is_some()
             || self.help_state == HelpState::Open
             || self.palette.is_open()
@@ -3475,6 +3485,13 @@ impl App {
         self.file_editor.is_some()
     }
 
+    #[cfg(test)]
+    pub fn code_source_override_for_test(&self) -> Option<(&str, &Path)> {
+        self.code_source_override
+            .as_ref()
+            .map(|(key, path)| (key.as_str(), path.as_path()))
+    }
+
     pub fn file_editor_key(&mut self, key: KeyEvent) {
         let action = self
             .file_editor
@@ -3489,28 +3506,33 @@ impl App {
                     .map(|editor| editor.path().to_path_buf());
                 self.toast = path.map(|path| format!("discarded changes to {}", path.display()));
             }
-            FileEditorAction::Save => self.save_file_editor(),
+            FileEditorAction::Save => self.save_file_editor(false),
+            FileEditorAction::SaveAndClose => self.save_file_editor(true),
         }
     }
 
-    fn save_file_editor(&mut self) {
-        let Some(editor) = self.file_editor.take() else {
+    fn save_file_editor(&mut self, close: bool) {
+        let Some(editor) = self.file_editor.as_ref() else {
             return;
         };
         let path = editor.path().to_path_buf();
-        let artifact_key = self
-            .selected_artifact()
-            .map(|artifact| format!("{}:{}", artifact.module, artifact.relative_path));
-        match editing::atomic_write(&path, &editor.text()) {
+        let artifact_key = editor.artifact_key().map(str::to_string);
+        let text = editor.text();
+        match editing::atomic_write(&path, &text) {
             Ok(()) => {
                 if let Some(artifact_key) = artifact_key {
                     self.code_source_override = Some((artifact_key, path.clone()));
+                }
+                if let Some(editor) = self.file_editor.as_mut() {
+                    editor.mark_saved();
+                }
+                if close {
+                    self.file_editor = None;
                 }
                 self.invalidate_after_source_edit();
                 self.toast = Some(format!("saved {}", path.display()));
             }
             Err(error) => {
-                self.file_editor = Some(editor);
                 self.toast = Some(format!("save failed: {error}"));
             }
         }
@@ -3601,7 +3623,10 @@ impl App {
     }
 
     fn open_file_editor_at(&mut self, path: PathBuf, line: Option<usize>) {
-        match FileEditor::open(path, line) {
+        let artifact_key = self
+            .selected_artifact()
+            .map(|artifact| format!("{}:{}", artifact.module, artifact.relative_path));
+        match FileEditor::open(path, line, artifact_key) {
             Ok(editor) => self.file_editor = Some(editor),
             Err(error) => self.toast = Some(error),
         }
@@ -4256,12 +4281,24 @@ impl App {
     }
 
     pub fn delete_selected_comment(&mut self) {
+        if !self.comment_delete_armed {
+            self.comment_delete_armed = true;
+            self.toast = Some("press d again to delete".to_string());
+            return;
+        }
+        self.comment_delete_armed = false;
         let items = self.comment_navigator_items();
         let Some(item) = items.get(self.comment_navigator_state.selected()) else {
             self.toast = Some("No comments to delete".to_string());
             return;
         };
-        self.comments.remove(&item.key);
+        let mut remaining_comments = self.comments.clone();
+        remaining_comments.remove(&item.key);
+        if let Err(error) = persist_comments(&self.root, &remaining_comments) {
+            self.toast = Some(format!("comment delete failed: {error}"));
+            return;
+        }
+        self.comments = remaining_comments;
         let remaining = self.comments.len();
         if remaining == 0 {
             self.comment_navigator_state.list_state.select(None);
@@ -4270,10 +4307,7 @@ impl App {
             let selected = self.comment_navigator_state.selected().min(remaining - 1);
             self.comment_navigator_state.select(selected);
         }
-        self.toast = Some(match persist_comments(&self.root, &self.comments) {
-            Ok(()) => "comment deleted".to_string(),
-            Err(error) => format!("comment deleted in memory; persistence failed: {error}"),
-        });
+        self.toast = Some("comment deleted".to_string());
     }
 
     #[must_use]
@@ -4281,12 +4315,8 @@ impl App {
         self.focused == ColumnFocus::Comments
     }
 
-    pub fn comment_navigator_scroll_left(&mut self) {
-        self.comment_navigator_state.scroll_left(4);
-    }
-
-    pub fn comment_navigator_scroll_right(&mut self) {
-        self.comment_navigator_state.scroll_right(4);
+    pub fn disarm_comment_delete(&mut self) {
+        self.comment_delete_armed = false;
     }
 
     fn comment_navigator_viewport_scroll(&mut self, down: bool, lines: usize) {
@@ -6168,7 +6198,7 @@ fn render_launch_picker(frame: &mut Frame<'_>, area: Rect, picker: &LaunchPicker
 
 fn hint_row(focused: ColumnFocus) -> String {
     if focused == ColumnFocus::Comments {
-        return "j/k comments  ·  Enter jump  ·  d delete  ·  h/l scroll  ·  Tab focus".to_string();
+        return "j/k comments  ·  l/Enter jump  ·  d delete  ·  h back  ·  Tab focus".to_string();
     }
     if focused == ColumnFocus::Detail {
         return [

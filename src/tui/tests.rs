@@ -585,7 +585,29 @@ fn comment_navigator_snapshot_renders_two_comments_and_jumps() {
 }
 
 #[test]
-fn deleting_from_comment_navigator_updates_storage() {
+fn comment_navigator_h_and_l_navigate_instead_of_inert_scrolling() {
+    let mut app = fixture_app();
+    app.add_comment_for_test(
+        "rune-core",
+        "skills/BuildSkill/SKILL.md",
+        1,
+        CommentKind::Issue,
+        "a comment wider than a narrow navigator viewport",
+    );
+    for _ in 0..3 {
+        event::handle_key(&mut app, key(KeyCode::Tab));
+    }
+
+    event::handle_key(&mut app, key(KeyCode::Char('h')));
+    assert_eq!(app.focused_column(), ColumnFocus::Detail);
+
+    app.focus_next();
+    event::handle_key(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(app.focused_column(), ColumnFocus::Detail);
+}
+
+#[test]
+fn deleting_from_comment_navigator_requires_two_presses_and_updates_storage() {
     let root = tempfile::tempdir().unwrap();
     let mut view = fixture_view();
     view.modules[0].artifacts[0].relative_path = "a.md".to_string();
@@ -597,10 +619,80 @@ fn deleting_from_comment_navigator_updates_storage() {
     }
 
     event::handle_key(&mut app, key(KeyCode::Char('d')));
+    assert!(app.tuicr_digest().contains("remove me"));
+    assert!(rendered(&mut app).contains("press d again to delete"));
+
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
 
     let comments = commands::review::load(root.path()).unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].text, "keep me");
+}
+
+#[test]
+fn another_key_disarms_comment_delete() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    app.add_comment_for_test(
+        "rune-core",
+        "skills/BuildSkill/SKILL.md",
+        1,
+        CommentKind::Issue,
+        "keep me",
+    );
+    for _ in 0..3 {
+        event::handle_key(&mut app, key(KeyCode::Tab));
+    }
+
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+
+    assert!(app.tuicr_digest().contains("keep me"));
+}
+
+#[test]
+fn failed_comment_delete_keeps_comment_in_memory() {
+    let root = tempfile::tempdir().unwrap();
+    commands::review::persist(
+        root.path(),
+        &[commands::review::ReviewComment {
+            module: "rune-core".to_string(),
+            path: "skills/BuildSkill/SKILL.md".to_string(),
+            line: 1,
+            end_line: None,
+            kind: CommentKind::Issue,
+            text: "must survive".to_string(),
+        }],
+    )
+    .unwrap();
+    let sidecar = root.path().join(".rune-comments.yaml");
+    let original_permissions = std::fs::metadata(&sidecar).unwrap().permissions();
+    let mut read_only_permissions = original_permissions.clone();
+    read_only_permissions.set_readonly(true);
+    std::fs::set_permissions(&sidecar, read_only_permissions).unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    for _ in 0..3 {
+        event::handle_key(&mut app, key(KeyCode::Tab));
+    }
+
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+
+    assert!(app.tuicr_digest().contains("must survive"));
+    assert!(rendered(&mut app).contains("comment delete failed"));
+
+    std::fs::set_permissions(&sidecar, original_permissions).unwrap();
 }
 
 #[test]
@@ -942,7 +1034,7 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
 }
 
 #[test]
-fn file_editor_snapshot_shows_mode_line_and_saves_back_to_code() {
+fn file_editor_w_saves_in_place_and_wq_closes() {
     let root = tempfile::tempdir().unwrap();
     let source_path = "skills/BuildSkill/SKILL.md";
     std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
@@ -969,12 +1061,110 @@ fn file_editor_snapshot_shows_mode_line_and_saves_back_to_code() {
         event::handle_key(&mut app, key(code));
     }
 
-    assert!(!app.is_file_editor_open());
+    assert!(app.is_file_editor_open());
     assert_eq!(
         std::fs::read_to_string(root.path().join(source_path)).unwrap(),
         "!original body\n"
     );
+
+    for code in [
+        KeyCode::Char(':'),
+        KeyCode::Char('w'),
+        KeyCode::Char('q'),
+        KeyCode::Enter,
+    ] {
+        event::handle_key(&mut app, key(code));
+    }
+
+    assert!(!app.is_file_editor_open());
     assert!(rendered(&mut app).contains("!original body"));
+}
+
+#[test]
+fn file_editor_save_stays_bound_to_artifact_selected_when_opened() {
+    let root = tempfile::tempdir().unwrap();
+    let first_source = "skills/BuildSkill/SKILL.md";
+    let second_source = "skills/OtherSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::create_dir_all(root.path().join("skills/OtherSkill")).unwrap();
+    std::fs::write(root.path().join(first_source), "first\n").unwrap();
+    std::fs::write(root.path().join(second_source), "second\n").unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = first_source.to_string();
+    let mut second = view.modules[0].artifacts[0].clone();
+    second.name = "OtherSkill".to_string();
+    second.relative_path = second_source.to_string();
+    second.source_path = second_source.to_string();
+    view.modules[0].artifacts.push(second);
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+
+    event::handle_key(&mut app, key(KeyCode::Char('e')));
+    app.focus_previous();
+    app.move_list_selection(1);
+    for code in [
+        KeyCode::Char(':'),
+        KeyCode::Char('w'),
+        KeyCode::Char('q'),
+        KeyCode::Enter,
+    ] {
+        event::handle_key(&mut app, key(code));
+    }
+
+    assert_eq!(
+        app.code_source_override_for_test(),
+        Some((
+            "rune-core:skills/BuildSkill/SKILL.md",
+            std::fs::canonicalize(root.path().join(first_source))
+                .unwrap()
+                .as_path(),
+        ))
+    );
+}
+
+#[test]
+fn file_editor_save_failure_keeps_editor_and_buffer_open() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    let source = root.path().join(source_path);
+    std::fs::write(&source, "original body\n").unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    event::handle_key(&mut app, key(KeyCode::Char('e')));
+    for code in [KeyCode::Char('i'), KeyCode::Char('!'), KeyCode::Esc] {
+        event::handle_key(&mut app, key(code));
+    }
+    let original_permissions = std::fs::metadata(&source).unwrap().permissions();
+    let mut read_only_permissions = original_permissions.clone();
+    read_only_permissions.set_readonly(true);
+    std::fs::set_permissions(&source, read_only_permissions).unwrap();
+
+    for code in [
+        KeyCode::Char(':'),
+        KeyCode::Char('w'),
+        KeyCode::Char('q'),
+        KeyCode::Enter,
+    ] {
+        event::handle_key(&mut app, key(code));
+    }
+
+    assert!(app.is_file_editor_open());
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("!original body"));
+    assert!(snapshot.contains("save failed"));
+
+    std::fs::set_permissions(&source, original_permissions).unwrap();
 }
 
 #[test]

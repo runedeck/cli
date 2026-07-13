@@ -21,10 +21,7 @@ pub(super) struct CommentNavigatorItem {
 #[derive(Default)]
 pub(super) struct CommentNavigatorState {
     pub(super) list_state: ListState,
-    pub(super) scroll_x: usize,
-    pub(super) viewport_width: usize,
     pub(super) viewport_height: usize,
-    pub(super) max_content_width: usize,
 }
 
 impl CommentNavigatorState {
@@ -34,15 +31,6 @@ impl CommentNavigatorState {
 
     pub(super) fn select(&mut self, index: usize) {
         self.list_state.select(Some(index));
-    }
-
-    pub(super) fn scroll_left(&mut self, columns: usize) {
-        self.scroll_x = self.scroll_x.saturating_sub(columns);
-    }
-
-    pub(super) fn scroll_right(&mut self, columns: usize) {
-        let max_scroll = self.max_content_width.saturating_sub(self.viewport_width);
-        self.scroll_x = self.scroll_x.saturating_add(columns).min(max_scroll);
     }
 }
 
@@ -63,21 +51,12 @@ pub(super) fn render_comment_navigator(
             Color::DarkGray
         }));
     let inner = block.inner(area);
-    state.viewport_width = usize::from(inner.width);
     state.viewport_height = usize::from(inner.height);
 
-    let row_lines = items
+    let rows = items
         .iter()
         .map(|item| render_comment_row(item, usize::from(inner.width)))
-        .collect::<Vec<_>>();
-    state.max_content_width = row_lines.iter().map(line_width).max().unwrap_or_default();
-    let max_scroll = state
-        .max_content_width
-        .saturating_sub(usize::from(inner.width));
-    state.scroll_x = state.scroll_x.min(max_scroll);
-    let rows = row_lines
-        .into_iter()
-        .map(|line| ListItem::new(apply_horizontal_scroll(line, state.scroll_x)))
+        .map(ListItem::new)
         .collect::<Vec<_>>();
     let list = List::new(rows)
         .highlight_style(
@@ -119,10 +98,6 @@ fn comment_kind_style(kind: CommentKind) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn line_width(line: &Line<'_>) -> usize {
-    line.spans.iter().map(|span| span.content.width()).sum()
-}
-
 /// Split text by display width, transliterated from tuicr's comment panel.
 pub(super) fn wrap_segments(text: &str, content_area: usize) -> Vec<&str> {
     if content_area == 0 || text.width() <= content_area {
@@ -149,31 +124,6 @@ pub(super) fn wrap_segments(text: &str, content_area: usize) -> Vec<&str> {
         remaining = rest;
     }
     segments
-}
-
-/// Apply horizontal scroll while retaining the kind marker, matching tuicr.
-fn apply_horizontal_scroll(line: Line<'static>, scroll_x: usize) -> Line<'static> {
-    if scroll_x == 0 || line.spans.is_empty() {
-        return line;
-    }
-    let mut spans = line.spans;
-    let marker = spans.remove(0);
-    let mut characters_to_skip = scroll_x;
-    let mut visible = vec![marker];
-    for span in spans {
-        let content = span.content.into_owned();
-        let character_count = content.chars().count();
-        if characters_to_skip >= character_count {
-            characters_to_skip -= character_count;
-        } else if characters_to_skip > 0 {
-            let content = content.chars().skip(characters_to_skip).collect::<String>();
-            characters_to_skip = 0;
-            visible.push(Span::styled(content, span.style));
-        } else {
-            visible.push(Span::styled(content, span.style));
-        }
-    }
-    Line::from(visible)
 }
 
 #[cfg(test)]
