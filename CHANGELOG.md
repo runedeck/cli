@@ -4,45 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-13
+
+rune 0.4.0 succeeds forge-cli 0.3.x.
 
 ### Added
 
-- `.rune` consumer manifests accept `git:` sources pinned to a 40-hex commit SHA. `rune install` clones the remote via `gix` into a content-addressed cache at `~/.cache/rune/git/<host>/<owner>/<repo>/`, materializes the pinned tree, and feeds it through the standard assemble + deploy pipeline. HTTPS-only; `ssh://`, `git://`, `git@host:` shorthand, and userinfo URLs are rejected at parse time. Branch names, tags, and abbreviated SHAs are rejected in favor of explicit 40-char commit hashes. Cache hits are instant; the bare clone is reused across SHA pins within the same repository. Legacy `.forge` manifests and `FORGE_GIT_*` environment variables remain supported as fallbacks. (#53)
-- `rune launch <tool>` composes coding-tool launches through ordered middleware (`pxpipe`, `otel`, `presidio`, `squid`, `docker`, `tmux`) plus external `rune-launch-mw-*` script middleware. It supports configured default chains and tool base-url env mappings, `--with a,b,c`, legacy `--pxpipe`/`--direct`, `--tmux[=name]`, scoped child env injection, best-effort proxy preflight, and `--dry-run` plan output.
-- The `agentskills` provider installs Agent Skills-compatible `SKILL.md` files under `.agents/skills/<Name>/SKILL.md`, with `agents` as an alias for `--provider agents` and an Agent Skills frontmatter whitelist.
-- `rune adopt <url>` fetches an upstream HTTPS artifact (or `file://` fixture), applies the `align` transform into a module skill or companion file, and writes an `adopt/v1` provenance sidecar with the upstream digest pin.
-- `rune find "<query>"` scans local modules, discovered repos, and already-cached watchlist sources for skills, agents, and rules, ranking matches by name, trigger text, and description with optional JSON output.
-- `rune install` now warns prominently and refuses by default when the source git checkout is confirmed behind local `origin/main` or `origin/master`; `--allow-stale` overrides the refusal while still printing the warning. Prune is qualifier-aware: a deployed base file whose source counterpart exists only under a qualifier directory is pruned, while a correctly-resolved qualifier deployment is kept. (#73)
-- `rune config` prints the resolved rune ontology from `~/.config/rune/config.yaml`, with `RUNE_*` environment overrides taking precedence over file values and built-in defaults. The legacy `project.yaml` file remains as a deprecated fallback for one release.
-- `rune exec <skill>` runs skill-bundled scripts through a small synchronous runtime table (`uv run`, `bash`, `deno run`, `node`), injects `RUNE_*`/`INPUT_*` environment, supports JSON stdin/stdout wrapping, dry-runs, and output schema validation.
-- Unknown `rune <verb>` commands now dispatch to external `rune-<verb>` scripts from the module `commands/` directory, configured extension directories, or `PATH`, keeping new capabilities out of the Rust kernel.
-- `rune tui` and bare `rune` under `--features tui` launch a ratatui terminal dashboard over the shared `commands::services` scan model, with artifacts, provenance, projects/ontology placeholder, sources/watch/find panes, and a command palette.
-- `rune tui` now opens an instant Miller-column dashboard at full web-dashboard parity: sections, artifact lists, tabbed artifact detail, provenance chain/deploy groups, ADRs, variants, integrity attention list, search filters/sorts, git history, Settings/Hooks/Config/Schemas file-browser sections, and a `?` help overlay driven by the same keybinding table as the footer hints. Scans run on a background thread so the shell renders immediately while module discovery continues.
-- TUI Miller columns now auto-size sections/list columns while leaving the detail pane widest, render markdown previews through `glow` with ANSI parsing when available, highlight Code tabs with `syntect`, and support in-memory tuicr line-comments with clipboard export.
-- Model-level qualifier resolution for rules and agents (PROV-0005 Phase 1). Assembly now resolves the full `user/` > `provider/<model>/` > `provider/` > base precedence: a file at `rules/<provider>/<model-id>/Rule.md` overrides the base for that provider and model, and the long-documented `user/` overlay is finally wired for rules and agents too. Each provider gains a default `model` in `defaults.yaml` (an exact ID from `config/models.yaml`); `rune assemble --model <ID>` and `rune install --model <ID>` override it for providers that list that model. Qualifier directory names are validated as exact model IDs: model IDs are no longer split into segments, so a directory named `4` or `6` (from `claude-opus-4-6`) is no longer a valid qualifier, and a model-only file under `rules/<provider>/<model-id>/` is collected instead of silently dropped. An unrecognized model-qualifier subdirectory is skipped with a warning rather than dropped silently. Skill overlays, recording the model in `.manifest`/provenance sidecars, and the per-model release matrix are deferred to Phase 2. (#60)
-- `rune drift --target <BASE>` verifies a module's assembled `build/` against where it was deployed, scoped to the module's own files. It mirrors `rune install --target`: each provider's `build/<provider>` is compared to `<BASE>/<provider-target>`, so files built but not yet deployed surface as local-only, deployment edits surface as frontmatter/body drift, and this module's deployed files (per the target `.manifest` plus provenance attribution) that are no longer built surface as drift. Unlike `--upstream` against a multi-module tree such as `~/.claude`, other modules' files are never reported. `--target` and `--upstream` are mutually exclusive. (#61)
-- `rune validate` sanity-checks Claude Code plugin scaffolding when `.claude-plugin/plugin.json` is present: each manifest (`plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json`) must be valid JSON, and every hook script referenced via `${CLAUDE_PLUGIN_ROOT}` must exist and be executable (the most common cause of hooks silently not firing). It deliberately makes no assertions about the plugin or marketplace field schema, so it does not break when Claude Code's plugin format changes. Non-plugin modules are unaffected: the check runs only when `plugin.json` exists. (#59)
-- `.rune` consumer manifests accept `git:` sources pinned to a 40-hex commit SHA. `rune install` clones the remote via `gix` into a content-addressed cache at `~/.cache/rune/git/<host>/<owner>/<repo>/`, materializes the pinned tree, and feeds it through the standard assemble + deploy pipeline. HTTPS-only; `ssh://`, `git://`, `git@host:` shorthand, and userinfo URLs are rejected at parse time. Branch names, tags, and abbreviated SHAs are rejected in favor of explicit 40-char commit hashes. Cache hits are instant; the bare clone is reused across SHA pins within the same repository. (#53)
+- The deck lexicon names deck, rune, cast, quest, lore, and artifacts, with `runes:` and `casts:` as consumer-manifest keys.
+- `rune add` eagerly resolves selections to canonical ids, accepts comma-separated rune and cast lists, and rejects ambiguous names.
+- `rune quest` binds the working repository used by quest-aware commands.
+- `rune init` scaffolds projects from composable skeleton archetypes and keeps the single-module scaffold behind `--module`.
+- `rune tui --edit` provides a checkbox cast editor for consumer manifests.
+- TUI code views support line comments, visual selections, a Vim-style comment editor, and in-file search.
+- `rune review list` and `rune review export` expose persisted review comments, and `y` copies rendered comments from the TUI.
+- `.rune` manifests accept HTTPS Git sources pinned to full commit SHAs and reuse a content-addressed local cache.
+- `rune launch` composes coding-tool middleware, `rune exec` runs skill scripts, and external `rune-<verb>` commands extend the CLI.
+- `rune adopt` records upstream digest provenance, and `rune find` ranks local and cached runes by relevance.
+- The `agentskills` provider deploys Agent Skills-compatible `SKILL.md` files under `.agents/skills/`.
+- Model qualifiers resolve through `user/`, provider-model, provider, and base precedence.
+- `rune validate` checks Claude Code plugin manifests and executable hook references.
 
 ### Changed
 
-- Pure dashboard view builders for nested overview, matrix, variant coverage, deployment grouping, dependency links, and search sorting/filtering moved into `commands::services::builders` so the axum dashboard and TUI share the same rendering inputs.
-- Dashboard scan logic moved from the dashboard binary into `commands::services`, shared by the axum dashboard and reusable by a future TUI with no behavioral change.
-- `rune install` and `rune deploy` default `--target` to `--source` when a `.rune` consumer manifest is present and `--target` is omitted. The consumer dir IS the place the user wants provider trees written; the previous behavior forced redundant `--target .` on every consumer-mode invocation. Module-root flows (no `.rune`) are unchanged: an omitted `--target` still resolves provider directories relative to the current working directory. (#52)
+- The grouped root help organizes flagship deck workflows separately from plumbing commands.
+- Add and drift workflows resolve quest and target defaults consistently and report actionable selection or deployment differences.
+- Validate output uses the grouped drift-style deck report with concise status markers.
+- The default `full` feature ships the TUI and dashboard, so plain `cargo install --path .` installs the complete interface.
+- Dashboard and TUI views share service-layer scanners, builders, and rendering inputs.
+- Consumer installs default their deploy target to the `.rune` source directory.
+- Install refuses confirmed stale source checkouts unless `--allow-stale` is supplied.
 
-- `rune install` and `rune deploy` default `--target` to `--source` when a `.rune` consumer manifest is present and `--target` is omitted. The consumer dir IS the place the user wants provider trees written; the previous behavior forced redundant `--target .` on every consumer-mode invocation. Module-root flows (no consumer manifest) are unchanged: an omitted `--target` still resolves provider directories relative to the current working directory. (#52)
-- The package, binary, repository, provenance URIs, templates, and operational documentation are renamed from rune to rune.
+### Removed
 
-### Deferred
-
-- Porting the shell `rune project` spine remains a separate environment-coupled follow-up.
+- Legacy `.forge` manifests, `FORGE_*` environment fallbacks, `~/.config/forge` configuration, and `project.yaml` ontology fallback are unsupported.
 
 ### Fixed
 
-- Prune is qualifier-aware, so base files are removed when the only remaining source match is an inactive qualifier variant while correctly resolved qualifier output is kept. (closes #73)
-- `rune provenance` verifies source-side `.provenance/` sidecars, not just deployed targets. Pointed at a source repository or an artifact subdirectory (detected by a `module.yaml` at or above the path), it walks `.provenance/*.yaml`, resolves each `subject.name` to a repo-relative file, recomputes its SHA-256 against the recorded digest, and verifies the digests of in-repo `resolvedDependencies` (the remote `upstream` dependency is left to its recorded pin). Previously the strict typed sidecar model rejected `adopt/v1` sidecars (which carry `upstream_url` rather than `source`) and the directory walk only iterated provider kind roots, so `rune provenance skills/Foo` reported "No provenance found" and source-side drift went undetected. The model now tolerates both `assemble/v1` and `adopt/v1` schemas without changing generated sidecar output, and `--json` emits a machine-readable per-sidecar report. (#44)
-- Assembly preserves Claude-native `SKILL.md` frontmatter for the claude provider. `claude.keep_fields.skills` previously kept only `name`, `description`, and `version`, so `rune assemble` stripped `allowed-tools` (and the rest of the Claude Code optional skill fields) from deployed skills, breaking tool pre-approval and gating dynamic context injection (`!` command lines). The claude skill keep-list now mirrors the skill mdschema whitelist (`allowed-tools`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `paths`, `shell`). The frontmatter stripper also retains multi-line block values for kept fields, so a list-form `allowed-tools:` survives intact instead of collapsing to a valueless key. (#69)
+- Deck-source validation ignores deploy-target `.manifest` baselines, while single-module targets direct missing-baseline guidance to `rune install`.
+- Qualifier-aware pruning removes inactive base deployments without deleting the selected qualifier output.
+- Source-side provenance verifies both assemble and adopt sidecars against current file digests.
+- Claude skill assembly preserves supported native frontmatter fields and multiline values.
 
 ## [0.3.2] - 2026-05-22
 
@@ -169,7 +170,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - INSTALL.md following Mintlify install.md standard
 - 28 ADRs documenting architecture decisions
 
-[Unreleased]: https://github.com/runedeck/rune/compare/v0.3.2...HEAD
+[0.4.0]: https://github.com/runedeck/rune/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/runedeck/rune/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/runedeck/rune/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/runedeck/rune/compare/v0.2.0...v0.3.0
