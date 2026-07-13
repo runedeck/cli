@@ -63,7 +63,7 @@ fn review_export_matches_agent_ready_golden_file() {
         .args([
             "review",
             "export",
-            "--source",
+            "--target",
             root.path().to_str().unwrap(),
             "--format",
             "markdown",
@@ -71,6 +71,37 @@ fn review_export_matches_agent_ready_golden_file() {
         .assert()
         .success()
         .stdout(include_str!("fixtures/review-export.md"));
+}
+
+#[test]
+fn review_defaults_to_bound_quest_when_cwd_has_no_comments() {
+    let home = tempfile::tempdir().unwrap();
+    let quest = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(
+        quest.path().join(".rune-comments.yaml"),
+        "version: 1\ncomments:\n  - module: rune\n    path: src/lib.rs\n    line: 2\n    kind: note\n    text: bound quest comment\n",
+    )
+    .unwrap();
+    let state_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("state.yaml"),
+        format!(
+            "quest: {}\nquests:\n  - {}\n",
+            quest.path().display(),
+            quest.path().display()
+        ),
+    )
+    .unwrap();
+
+    rune()
+        .current_dir(elsewhere.path())
+        .env("HOME", home.path())
+        .args(["review", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bound quest comment"));
 }
 
 #[test]

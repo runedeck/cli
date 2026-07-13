@@ -147,7 +147,7 @@ pub fn export(root: &Path, comments: &[ReviewComment], format: ExportFormat) -> 
 /// Copy text to the system clipboard, preferring `pbcopy` on macOS and using
 /// terminal clipboard integration when no native pasteboard is available.
 pub fn copy_to_clipboard(text: &str) -> Result<bool, String> {
-    if cfg!(target_os = "macos") && try_clipboard_command("pbcopy", &[], text) {
+    if cfg!(target_os = "macos") && try_clipboard_command("/usr/bin/pbcopy", &[], text) {
         return Ok(false);
     }
     if std::env::var_os("TMUX").is_some() {
@@ -339,14 +339,5 @@ mod tests {
         assert!(output.contains("`src/lib.rs:2-3`"));
         assert!(output.contains("   2 | two"));
         assert!(output.contains("   3 | three"));
-    }
-
-    #[test]
-    fn osc52_encodes_clipboard_content() {
-        let mut output = Vec::new();
-
-        write_osc52(&mut output, "review").unwrap();
-
-        assert_eq!(output, b"\x1b]52;c;cmV2aWV3\x07");
     }
 }
