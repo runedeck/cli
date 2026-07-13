@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 /// Atomically replace a text file, retaining its existing permissions.
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
+        return Err(format!("{} is read-only", path.display()));
+    }
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
@@ -66,5 +69,23 @@ mod tests {
             skill_override,
             root.path().join("skills/Skill/user/SKILL.md")
         );
+    }
+
+    #[test]
+    fn existing_skill_override_is_never_overwritten() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("skills/X/SKILL.md");
+        let override_path = root.path().join("skills/X/user/SKILL.md");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(override_path.parent().unwrap()).unwrap();
+        std::fs::write(&source, "upstream content\n").unwrap();
+        let hand_edits = b"hand-edited override\n\xff";
+        std::fs::write(&override_path, hand_edits).unwrap();
+
+        let (returned_path, created) = create_user_override(&source).unwrap();
+
+        assert_eq!(returned_path, override_path);
+        assert!(!created);
+        assert_eq!(std::fs::read(returned_path).unwrap(), hand_edits);
     }
 }

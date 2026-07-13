@@ -117,6 +117,9 @@ pub fn load(root: &Path) -> Result<Vec<ReviewComment>, String> {
 /// Atomically persist review comments to `.rune-comments.yaml`.
 pub fn persist(root: &Path, comments: &[ReviewComment]) -> Result<(), String> {
     let path = root.join(SIDECAR_NAME);
+    if std::fs::metadata(&path).is_ok_and(|metadata| metadata.permissions().readonly()) {
+        return Err(format!("{} is read-only", path.display()));
+    }
     let store = CommentStore {
         version: STORE_VERSION,
         comments: comments.to_vec(),
@@ -142,6 +145,14 @@ pub fn export(root: &Path, comments: &[ReviewComment], format: ExportFormat) -> 
         ExportFormat::Markdown => export_markdown(root, comments),
         ExportFormat::Stdout => export_stdout(root, comments),
     }
+}
+
+/// Remove terminal control characters while preserving markdown whitespace.
+#[must_use]
+pub fn sanitize_terminal_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| matches!(character, '\t' | '\n') || !character.is_control())
+        .collect()
 }
 
 /// Copy text to the system clipboard, preferring `pbcopy` on macOS and using
@@ -224,14 +235,17 @@ fn export_markdown(root: &Path, comments: &[ReviewComment]) -> String {
     );
     let mut number = 1;
     for (path, group) in grouped(comments) {
+        let path = sanitize_terminal_text(path);
         let _ = write!(output, "\n## `{path}`\n");
         for comment in group {
+            let location = sanitize_terminal_text(&comment.location());
+            let text = sanitize_terminal_text(&comment.text);
             let _ = write!(
                 output,
                 "\n{number}. **[{}]** `{}` - {}\n",
                 comment.kind.label(),
-                comment.location(),
-                comment.text
+                location,
+                text
             );
             write_markdown_context(&mut output, root, comment);
             number += 1;
@@ -243,14 +257,17 @@ fn export_markdown(root: &Path, comments: &[ReviewComment]) -> String {
 fn export_stdout(root: &Path, comments: &[ReviewComment]) -> String {
     let mut output = String::new();
     for (path, group) in grouped(comments) {
+        let path = sanitize_terminal_text(path);
         let _ = writeln!(output, "{path}");
         for comment in group {
+            let location = sanitize_terminal_text(&comment.location());
+            let text = sanitize_terminal_text(&comment.text);
             let _ = writeln!(
                 output,
                 "  [{}] {} - {}",
                 comment.kind.label(),
-                comment.location(),
-                comment.text
+                location,
+                text
             );
             for (line_number, line) in source_context(root, comment) {
                 let _ = writeln!(output, "    {line_number:>4} | {line}");
@@ -283,7 +300,7 @@ fn source_context(root: &Path, comment: &ReviewComment) -> Vec<(usize, String)> 
         .filter_map(|(index, line)| {
             let number = index + 1;
             (number >= comment.line && number <= comment.last_line())
-                .then(|| (number, line.to_string()))
+                .then(|| (number, sanitize_terminal_text(line)))
         })
         .collect()
 }
@@ -339,5 +356,31 @@ mod tests {
         assert!(output.contains("`src/lib.rs:2-3`"));
         assert!(output.contains("   2 | two"));
         assert!(output.contains("   3 | three"));
+    }
+
+    #[test]
+    fn exports_strip_terminal_control_sequences_from_comments_and_source() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("src")).unwrap();
+        std::fs::write(
+            root.path().join("src/lib.rs"),
+            "safe \x1b[2Jsource\x7f line\n",
+        )
+        .unwrap();
+        let comments = vec![ReviewComment {
+            module: "rune".to_string(),
+            path: "src/lib.rs".to_string(),
+            line: 1,
+            end_line: None,
+            kind: CommentKind::Issue,
+            text: "copy \x1b]52;c;evil\x07 payload".to_string(),
+        }];
+
+        for format in [ExportFormat::Markdown, ExportFormat::Stdout] {
+            let output = export(root.path(), &comments, format);
+            assert!(!output.contains(['\x1b', '\x07', '\x7f']));
+            assert!(output.contains("]52;c;evil payload"));
+            assert!(output.contains("safe [2Jsource line"));
+        }
     }
 }

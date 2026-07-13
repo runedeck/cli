@@ -47,13 +47,16 @@ fn resolve_target(target: Option<&str>) -> Result<PathBuf, String> {
 
 fn list_to(root: &Path, writer: &mut impl std::io::Write) -> Result<i32, String> {
     for comment in review::load(root)? {
+        let location = review::sanitize_terminal_text(&comment.location());
+        let module = review::sanitize_terminal_text(&comment.module);
+        let text = review::sanitize_terminal_text(&comment.text);
         writeln!(
             writer,
             "{}\t{}\t{}\t{}",
-            comment.location(),
+            location,
             comment.kind.label(),
-            comment.module,
-            comment.text
+            module,
+            text
         )
         .map_err(|error| error.to_string())?;
     }
@@ -102,5 +105,30 @@ mod tests {
             String::from_utf8(output).unwrap(),
             "src/lib.rs:4\tNOTE\trune\texplain this\n"
         );
+    }
+
+    #[test]
+    fn list_strips_terminal_control_sequences() {
+        let root = tempfile::tempdir().unwrap();
+        review::persist(
+            root.path(),
+            &[ReviewComment {
+                module: "ru\x1b[2Jne".to_string(),
+                path: "src/lib.rs".to_string(),
+                line: 4,
+                end_line: None,
+                kind: CommentKind::Note,
+                text: "copy \x1b]52;c;evil\x07 payload".to_string(),
+            }],
+        )
+        .unwrap();
+        let mut output = Vec::new();
+
+        list_to(root.path(), &mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(!output.contains(['\x1b', '\x07']));
+        assert!(output.contains("ru[2Jne"));
+        assert!(output.contains("]52;c;evil payload"));
     }
 }
