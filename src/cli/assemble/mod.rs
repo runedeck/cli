@@ -242,7 +242,7 @@ fn assemble_source_for_provider(
     let (transformed_content, transformed_filename) = if is_hook {
         let domain = hook_domain(source)?;
         let content = if relative_within_kind == "hooks.json" {
-            rewrite_hook_commands(&assembled, &provider_config.target, domain)?
+            rewrite_hook_commands(&assembled, provider_config.default_target(), domain)?
         } else {
             assembled.clone()
         };

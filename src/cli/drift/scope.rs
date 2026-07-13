@@ -16,8 +16,7 @@ use std::path::Path;
 use super::{DriftEntry, DriftResult, DriftStatus, compare_file_content, print_drift_result};
 use crate::cli::config;
 use crate::cli::deploy::{is_owned_by_module, load_deployed_manifest};
-
-const CONTENT_PREFIXES: [&str; 4] = ["agents/", "skills/", "rules/", "hooks/"];
+use commands::provider::{ContentKind, ProviderConfig};
 
 /// Verify each provider's `build/<provider>` against `<target_base>/<provider
 /// target>` (mirroring `rune install --target`), scoped to this module.
@@ -57,7 +56,8 @@ pub fn execute(
         compare_provider(
             &mut result,
             &build_dir,
-            &base.join(&provider_config.target),
+            base,
+            provider_config,
             provider_name,
             module_name,
             &ignored,
@@ -112,27 +112,39 @@ pub fn execute_deck(
         println!("== {} ==", domain.name);
         let source_uri = domain.manifest.source_uri();
         for (provider_name, provider_config) in &providers {
-            let deployed_base = base.join(&provider_config.target);
-            for (key, entry) in load_deployed_manifest(&deployed_base) {
-                if !is_content_key(&key)
-                    || !entry_belongs_to_domain(&key, &entry, &deployed_base, domain, source_uri)
-                {
-                    continue;
-                }
-                let status = match fs::read_to_string(deployed_base.join(&key)) {
-                    Ok(content)
-                        if commands::manifest::content_sha256(&content) == entry.fingerprint =>
+            for target_root in provider_config.target_roots() {
+                let deployed_base = base.join(target_root);
+                for (key, entry) in load_deployed_manifest(&deployed_base) {
+                    let Some(kind) = kind_for_relative(&key) else {
+                        continue;
+                    };
+                    if base.join(provider_config.target_for_kind(kind)) != deployed_base
+                        || !entry_belongs_to_domain(
+                            &key,
+                            &entry,
+                            &deployed_base,
+                            domain,
+                            source_uri,
+                        )
                     {
-                        DriftStatus::Identical
+                        continue;
                     }
-                    Ok(_) => DriftStatus::BodyOnly,
-                    Err(_) => DriftStatus::UpstreamOnly,
-                };
-                result.entries.push(only_entry(
-                    &key,
-                    status,
-                    &format!("{}/{}", domain.name, provider_name),
-                ));
+                    let status = match fs::read_to_string(deployed_base.join(&key)) {
+                        Ok(content)
+                            if commands::manifest::content_sha256(&content)
+                                == entry.fingerprint =>
+                        {
+                            DriftStatus::Identical
+                        }
+                        Ok(_) => DriftStatus::BodyOnly,
+                        Err(_) => DriftStatus::UpstreamOnly,
+                    };
+                    result.entries.push(only_entry(
+                        &key,
+                        status,
+                        &format!("{}/{}", domain.name, provider_name),
+                    ));
+                }
             }
         }
     }
@@ -188,7 +200,8 @@ fn entry_belongs_to_domain(
 fn compare_provider(
     result: &mut DriftResult,
     build_dir: &Path,
-    deployed_base: &Path,
+    target_base: &Path,
+    provider_config: &ProviderConfig,
     provider_name: &str,
     module_name: Option<&str>,
     ignored: &HashSet<&str>,
@@ -196,6 +209,10 @@ fn compare_provider(
     let build_files = collect_content_files(build_dir);
 
     for (relative, build_content) in &build_files {
+        let Some(kind) = kind_for_relative(relative) else {
+            continue;
+        };
+        let deployed_base = target_base.join(provider_config.target_for_kind(kind));
         let deployed_path = deployed_base.join(relative);
         match fs::read_to_string(&deployed_path) {
             Ok(deployed_content) => {
@@ -217,14 +234,21 @@ fn compare_provider(
 
     // This module's deployed files (per the target manifest + provenance) that
     // are no longer built — stale deployments that should be pruned.
-    for (key, entry) in load_deployed_manifest(deployed_base) {
-        if build_files.contains_key(&key) || !is_content_key(&key) {
-            continue;
-        }
-        if is_owned_by_module(&entry, deployed_base, module_name) {
-            result
-                .entries
-                .push(only_entry(&key, DriftStatus::UpstreamOnly, provider_name));
+    for target_root in provider_config.target_roots() {
+        let deployed_base = target_base.join(target_root);
+        for (key, entry) in load_deployed_manifest(&deployed_base) {
+            let Some(kind) = kind_for_relative(&key) else {
+                continue;
+            };
+            let expected_base = target_base.join(provider_config.target_for_kind(kind));
+            if expected_base == deployed_base && build_files.contains_key(&key) {
+                continue;
+            }
+            if is_owned_by_module(&entry, &deployed_base, module_name) {
+                result
+                    .entries
+                    .push(only_entry(&key, DriftStatus::UpstreamOnly, provider_name));
+            }
         }
     }
 }
@@ -240,10 +264,14 @@ fn only_entry(name: &str, status: DriftStatus, category: &str) -> DriftEntry {
     }
 }
 
-fn is_content_key(key: &str) -> bool {
-    CONTENT_PREFIXES
-        .iter()
-        .any(|prefix| key.starts_with(prefix))
+fn kind_for_relative(relative: &str) -> Option<ContentKind> {
+    match relative.split_once('/').map(|(kind, _)| kind) {
+        Some("agents") => Some(ContentKind::Agents),
+        Some("skills") => Some(ContentKind::Skills),
+        Some("rules") => Some(ContentKind::Rules),
+        Some("hooks") => Some(ContentKind::Hooks),
+        _ => None,
+    }
 }
 
 /// Collect content files under a provider build directory, keyed by their path
