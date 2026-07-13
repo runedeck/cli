@@ -115,6 +115,15 @@ pub(super) fn git_remote(path: &Path) -> Option<String> {
 /// and their adoption provenance sidecars. Returns `None` if the directory
 /// holds no source artifacts.
 pub(super) fn scan_source_module(root: &Path) -> Option<ModuleView> {
+    scan_source_module_with_hooks(root, false)
+}
+
+/// Scans a deck domain, including its opaque hook bundle files.
+pub(super) fn scan_deck_source_module(root: &Path) -> Option<ModuleView> {
+    scan_source_module_with_hooks(root, true)
+}
+
+fn scan_source_module_with_hooks(root: &Path, include_hooks: bool) -> Option<ModuleView> {
     let source_uri = git_remote(root).unwrap_or_else(|| root.to_string_lossy().to_string());
     let module_name = root.file_name().map_or_else(
         || "module".to_string(),
@@ -125,6 +134,9 @@ pub(super) fn scan_source_module(root: &Path) -> Option<ModuleView> {
     artifacts.extend(scan_flat_kind(root, "agents"));
     artifacts.extend(scan_flat_kind(root, "rules"));
     artifacts.extend(scan_skill_kind(root));
+    if include_hooks {
+        artifacts.extend(scan_hook_kind(root));
+    }
 
     if artifacts.is_empty() {
         return None;
@@ -140,6 +152,63 @@ pub(super) fn scan_source_module(root: &Path) -> Option<ModuleView> {
         vcs: None,
         git_log: Vec::new(),
     })
+}
+
+fn scan_hook_kind(root: &Path) -> Vec<ArtifactView> {
+    fn walk(root: &Path, directory: &Path, artifacts: &mut Vec<ArtifactView>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        let mut entries = entries.flatten().collect::<Vec<_>>();
+        entries.sort_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk(root, &path, artifacts);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let relative_path = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            let Some(name) = relative_path
+                .strip_prefix("hooks/")
+                .map(Path::new)
+                .map(|path| path.with_extension(""))
+                .map(|path| path.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            let sidecar = path
+                .parent()
+                .unwrap_or(root)
+                .join(".provenance")
+                .join(format!("{name}.yaml"));
+            artifacts.push(build_source_artifact(
+                root,
+                "hooks",
+                &name,
+                &path,
+                &relative_path,
+                &sidecar,
+            ));
+        }
+    }
+
+    let mut artifacts = Vec::new();
+    walk(root, &root.join("hooks"), &mut artifacts);
+    artifacts
 }
 
 fn scan_flat_kind(root: &Path, kind: &str) -> Vec<ArtifactView> {

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -35,22 +35,34 @@ pub struct Deck {
     casts: BTreeMap<String, Cast>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Cast {
-    name: String,
-    #[serde(rename = "description")]
-    _description: String,
+pub struct Cast {
+    pub name: String,
+    pub description: String,
     #[serde(default)]
-    extends: Vec<String>,
-    runes: Vec<String>,
+    pub extends: Vec<String>,
+    pub runes: Vec<String>,
     #[serde(default)]
-    exclude: Vec<String>,
-    #[serde(default, rename = "plugin")]
-    _plugin: Option<serde_yaml::Value>,
+    pub exclude: Vec<String>,
+    #[serde(default, rename = "plugin", skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<serde_yaml::Value>,
+    #[serde(skip)]
+    pub path: PathBuf,
 }
 
 impl Deck {
+    /// Cast manifests in deterministic name order.
+    pub fn casts(&self) -> impl Iterator<Item = &Cast> {
+        self.casts.values()
+    }
+
+    /// Returns a cast manifest by its declared name.
+    #[must_use]
+    pub fn cast(&self, name: &str) -> Option<&Cast> {
+        self.casts.get(name)
+    }
+
     pub fn providers_for<'a>(&'a self, domain: &'a Domain) -> Option<&'a [String]> {
         domain
             .providers
@@ -63,12 +75,25 @@ impl Deck {
         name: &str,
         artifact_ids: impl IntoIterator<Item = &'a str>,
     ) -> Result<Vec<String>, String> {
+        self.resolve_cast_with_override(name, artifact_ids, None)
+    }
+
+    /// Resolves a cast while substituting one in-memory manifest.
+    ///
+    /// This supports confirmation-first editors without mutating the deck on
+    /// disk merely to preview the resulting artifact set.
+    pub fn resolve_cast_with_override<'a>(
+        &self,
+        name: &str,
+        artifact_ids: impl IntoIterator<Item = &'a str>,
+        cast_override: Option<&Cast>,
+    ) -> Result<Vec<String>, String> {
         let artifacts = artifact_ids
             .into_iter()
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
         let mut stack = Vec::new();
-        let selected = self.resolve_cast_inner(name, &artifacts, &mut stack)?;
+        let selected = self.resolve_cast_inner(name, &artifacts, &mut stack, cast_override)?;
         let mut ordered = selected.into_iter().collect::<Vec<_>>();
         ordered.sort_by_key(|id| artifact_order_key(id));
         Ok(ordered)
@@ -79,20 +104,21 @@ impl Deck {
         name: &str,
         artifacts: &BTreeSet<String>,
         stack: &mut Vec<String>,
+        cast_override: Option<&Cast>,
     ) -> Result<BTreeSet<String>, String> {
         if let Some(index) = stack.iter().position(|item| item == name) {
             let mut cycle = stack[index..].to_vec();
             cycle.push(name.to_string());
             return Err(format!("cast extension cycle: {}", cycle.join(" -> ")));
         }
-        let cast = self
-            .casts
-            .get(name)
+        let cast = cast_override
+            .filter(|cast| cast.name == name)
+            .or_else(|| self.casts.get(name))
             .ok_or_else(|| format!("unknown cast '{name}'"))?;
         stack.push(name.to_string());
         let mut selected = BTreeSet::new();
         for parent in &cast.extends {
-            selected.extend(self.resolve_cast_inner(parent, artifacts, stack)?);
+            selected.extend(self.resolve_cast_inner(parent, artifacts, stack, cast_override)?);
         }
         for pattern in &cast.runes {
             let matched = artifacts
@@ -226,8 +252,9 @@ fn load_casts(root: &Path) -> Result<BTreeMap<String, Cast>, String> {
     for path in paths {
         let content = std::fs::read_to_string(&path)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        let cast: Cast = serde_yaml::from_str(&content)
+        let mut cast: Cast = serde_yaml::from_str(&content)
             .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+        cast.path = path;
         let name = cast.name.clone();
         if casts.insert(name.clone(), cast).is_some() {
             return Err(format!("duplicate cast name '{name}'"));

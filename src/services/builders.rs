@@ -520,6 +520,7 @@ mod tests {
             summary: StatusSummary::default(),
             provenance: Vec::new(),
             adrs: Vec::new(),
+            deck: None,
         }
     }
 
@@ -553,11 +554,12 @@ mod tests {
             ],
         )]));
 
-        assert_eq!(matrix.cols, vec!["skills", "agents", "rules"]);
+        assert_eq!(matrix.cols, vec!["skills", "agents", "rules", "hooks"]);
         assert_eq!(matrix.rows[0].module, "rune-core");
         assert_eq!(matrix.rows[0].cells[0].count, 1);
         assert_eq!(matrix.rows[0].cells[1].count, 0);
         assert_eq!(matrix.rows[0].cells[2].count, 1);
+        assert_eq!(matrix.rows[0].cells[3].count, 0);
         assert_eq!(matrix.total, 2);
     }
 

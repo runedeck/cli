@@ -14,6 +14,72 @@ pub struct DashboardView {
     pub summary: StatusSummary,
     pub provenance: Vec<ProvenanceView>,
     pub adrs: Vec<Adr>,
+    /// Deck-specific state when the selected source root contains `deck.yaml`.
+    pub deck: Option<DeckView>,
+}
+
+/// Shared deck state consumed by the TUI and read-only dashboard.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeckView {
+    pub root: std::path::PathBuf,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub domains: Vec<DomainView>,
+    pub casts: Vec<CastView>,
+    /// Persistent target locations whose consumer manifest points at this deck.
+    pub targets: Vec<DeckTargetView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DomainView {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub source_uri: String,
+    pub providers: Vec<String>,
+    pub artifact_counts: BTreeMap<String, usize>,
+    pub validation: DomainValidationView,
+}
+
+impl DomainView {
+    #[must_use]
+    pub fn artifact_count(&self) -> usize {
+        self.artifact_counts.values().sum()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DomainValidationView {
+    pub valid: bool,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CastView {
+    pub name: String,
+    pub description: String,
+    pub extends: Vec<String>,
+    pub runes: Vec<String>,
+    pub exclude: Vec<String>,
+    pub resolved_artifacts: Vec<String>,
+    pub resolution_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeckTargetView {
+    pub name: String,
+    pub root: std::path::PathBuf,
+    /// Only known deployments are present. Missing ids render as a blank status.
+    pub artifacts: BTreeMap<String, DeckTargetArtifactView>,
+    pub summary: StatusSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeckTargetArtifactView {
+    /// Worst provider status for compact list columns.
+    pub status: FileStatus,
+    pub providers: BTreeMap<String, FileStatus>,
 }
 
 /// An architecture decision record found in a repo's `docs/decisions/`.
@@ -163,8 +229,8 @@ impl DashboardView {
     }
 }
 
-/// Display order for content kinds: skills first.
-pub const KIND_ORDER: [&str; 3] = ["skills", "agents", "rules"];
+/// Display order for the closed v1 content kinds.
+pub const KIND_ORDER: [&str; 4] = ["skills", "agents", "rules", "hooks"];
 
 /// Groups artifact references by kind in display order (skills, agents, rules),
 /// preserving the incoming order within each kind. Empty kinds are omitted.

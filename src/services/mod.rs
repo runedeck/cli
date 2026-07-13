@@ -20,21 +20,28 @@ mod vcs;
 pub use adr::build_adr_artifact;
 pub use discovery::discover_local_repos;
 pub use history::{
-    extract_frontmatter_field, git_log_for_artifact, read_source_adoption, read_source_sidecar,
-    source_at_deploy,
+    DEFAULT_HISTORY_BATCH_SIZE, DEFAULT_HISTORY_METADATA_WINDOW, HistoryEntry, HistoryOptions,
+    HistoryScope, HistoryUpdate, HistoryWalker, extract_frontmatter_field, git_log_for_artifact,
+    read_source_adoption, read_source_sidecar, source_at_deploy,
 };
 pub use source::{parse_frontmatter, strip_frontmatter};
 pub use target::git_log_in_repo;
 
 use crate::error::{Error, ErrorKind};
+use crate::manifest::FileStatus;
 use crate::provider::ContentKind;
-use crate::view::{DashboardView, ModuleView, StatusSummary, Variant};
+use crate::view::{
+    CastView, DashboardView, DeckTargetArtifactView, DeckTargetView, DeckView,
+    DomainValidationView, DomainView, ModuleView, StatusSummary, Variant,
+};
 use adr::discover_adrs;
-use discovery::{discover_targets, scan_source_module};
+use discovery::{discover_targets, scan_deck_source_module, scan_source_module};
 use provenance::collect_provenance;
 use references::artifact_staleness;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use target::{PendingCompanion, attach_companions, scan_target};
 
@@ -53,6 +60,9 @@ pub fn build_view(
     providers: &[(String, String)],
     watched_locations: &[PathBuf],
 ) -> Result<DashboardView, Error> {
+    if crate::deck::is_deck(root) {
+        return build_deck_view(root, providers, watched_locations);
+    }
     let targets = discover_targets(root, providers, watched_locations);
     if targets.is_empty() {
         return Err(Error::new(
@@ -159,7 +169,611 @@ pub fn build_view(
         summary,
         provenance,
         adrs,
+        deck: None,
     })
+}
+
+fn build_deck_view(
+    root: &Path,
+    providers: &[(String, String)],
+    watched_locations: &[PathBuf],
+) -> Result<DashboardView, Error> {
+    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let deck =
+        crate::deck::load(&root).map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let repo_vcs = vcs::repo_vcs(&root);
+    let repo_log = vcs::repo_log(&root);
+    let provider_names = providers
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    let mut modules = Vec::new();
+    let mut domains = Vec::new();
+    let mut artifact_ids = Vec::new();
+
+    for (index, domain) in deck.domains.iter().enumerate() {
+        let (module, domain_view, ids) = build_deck_domain(
+            &root,
+            &deck,
+            domain,
+            index,
+            repo_vcs.as_ref(),
+            &repo_log,
+            &provider_names,
+        );
+        domains.push(domain_view);
+        artifact_ids.extend(ids);
+        modules.push(module);
+    }
+
+    let casts = deck
+        .casts()
+        .map(
+            |cast| match deck.resolve_cast(&cast.name, artifact_ids.iter().map(String::as_str)) {
+                Ok(resolved_artifacts) => CastView {
+                    name: cast.name.clone(),
+                    description: cast.description.clone(),
+                    extends: cast.extends.clone(),
+                    runes: cast.runes.clone(),
+                    exclude: cast.exclude.clone(),
+                    resolved_artifacts,
+                    resolution_error: None,
+                },
+                Err(message) => CastView {
+                    name: cast.name.clone(),
+                    description: cast.description.clone(),
+                    extends: cast.extends.clone(),
+                    runes: cast.runes.clone(),
+                    exclude: cast.exclude.clone(),
+                    resolved_artifacts: Vec::new(),
+                    resolution_error: Some(message),
+                },
+            },
+        )
+        .collect();
+    let targets = discover_deck_targets(&deck, providers, watched_locations);
+    let mut summary = StatusSummary::default();
+    for target in &targets {
+        summary.unchanged += target.summary.unchanged;
+        summary.stale += target.summary.stale;
+        summary.modified += target.summary.modified;
+        summary.new += target.summary.new;
+    }
+    let local_repos = discover_local_repos(&root, watched_locations);
+    let adrs = discover_adrs(&local_repos, &active_repo_names(&modules, &root));
+
+    Ok(DashboardView {
+        modules,
+        summary,
+        provenance: Vec::new(),
+        adrs,
+        deck: Some(DeckView {
+            root,
+            name: deck.manifest.name,
+            version: deck.manifest.version,
+            description: deck.manifest.description,
+            domains,
+            casts,
+            targets,
+        }),
+    })
+}
+
+fn build_deck_domain(
+    root: &Path,
+    deck: &crate::deck::Deck,
+    domain: &crate::deck::Domain,
+    index: usize,
+    repo_vcs: Option<&vcs::RepoVcs>,
+    repo_log: &[crate::view::GitCommit],
+    provider_names: &[String],
+) -> (ModuleView, DomainView, Vec<String>) {
+    let root_path = root.to_path_buf();
+    let mut module = scan_deck_source_module(&domain.root).unwrap_or_else(|| ModuleView {
+        name: domain.name.clone(),
+        version: domain.manifest.version.clone(),
+        description: domain.manifest.description.clone(),
+        source_uri: domain.manifest.source_uri().to_string(),
+        is_target: false,
+        artifacts: Vec::new(),
+        local_path: Some(root_path.clone()),
+        vcs: None,
+        git_log: Vec::new(),
+    });
+    module.name.clone_from(&domain.name);
+    module.version.clone_from(&domain.manifest.version);
+    module.description.clone_from(&domain.manifest.description);
+    module.source_uri = domain.manifest.source_uri().to_string();
+    module.is_target = false;
+    module.local_path = Some(root_path.clone());
+    module.vcs = repo_vcs.map(vcs::RepoVcs::module_state);
+    module.git_log = repo_log.to_vec();
+
+    for artifact in &mut module.artifacts {
+        artifact.module.clone_from(&domain.name);
+        artifact.module_tint = index % 8;
+        artifact.source_path = format!("runes/{}/{}", domain.name, artifact.relative_path);
+        artifact.vcs = repo_vcs.map(|state| state.state_for(&artifact.source_path));
+        let (broken, age) = artifact_staleness(
+            Some(&root_path),
+            &artifact.source_path,
+            &artifact.raw_source,
+            artifact.latest_commit_date(),
+        );
+        artifact.broken_refs = broken;
+        artifact.age_days = age;
+        artifact.variants = collect_variants(&domain.root, &artifact.relative_path, provider_names);
+    }
+    module.artifacts.sort_by(|left, right| {
+        kind_order(&left.kind)
+            .cmp(&kind_order(&right.kind))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+
+    let mut artifact_counts = BTreeMap::new();
+    let artifact_ids = module
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            *artifact_counts.entry(artifact.kind.clone()).or_insert(0) += 1;
+            format!("{}/{}/{}", domain.name, artifact.kind, artifact.name)
+        })
+        .collect();
+    let domain_view = DomainView {
+        name: domain.name.clone(),
+        version: domain.manifest.version.clone(),
+        description: domain.manifest.description.clone(),
+        source_uri: domain.manifest.source_uri().to_string(),
+        providers: deck.providers_for(domain).unwrap_or_default().to_vec(),
+        artifact_counts,
+        validation: validate_domain_inventory(&module),
+    };
+    (module, domain_view, artifact_ids)
+}
+
+fn validate_domain_inventory(module: &ModuleView) -> DomainValidationView {
+    let mut errors = Vec::new();
+    for artifact in &module.artifacts {
+        for broken in &artifact.broken_refs {
+            errors.push(format!(
+                "{}: broken reference {broken}",
+                artifact.relative_path
+            ));
+        }
+        let extension = Path::new(&artifact.relative_path)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str);
+        let syntax_error = if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("json")) {
+            serde_json::from_str::<serde_json::Value>(&artifact.raw_source)
+                .err()
+                .map(|error| format!("invalid JSON: {error}"))
+        } else if extension
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml"))
+        {
+            serde_yaml::from_str::<serde_yaml::Value>(&artifact.raw_source)
+                .err()
+                .map(|error| format!("invalid YAML: {error}"))
+        } else {
+            None
+        };
+        if let Some(error) = syntax_error {
+            errors.push(format!("{}: {error}", artifact.relative_path));
+        }
+    }
+    DomainValidationView {
+        valid: errors.is_empty(),
+        errors,
+    }
+}
+
+fn kind_order(kind: &str) -> usize {
+    crate::view::KIND_ORDER
+        .iter()
+        .position(|candidate| *candidate == kind)
+        .unwrap_or(crate::view::KIND_ORDER.len())
+}
+
+fn discover_deck_targets(
+    deck: &crate::deck::Deck,
+    providers: &[(String, String)],
+    watched_locations: &[PathBuf],
+) -> Vec<DeckTargetView> {
+    let deck_root = fs::canonicalize(&deck.root).unwrap_or_else(|_| deck.root.clone());
+    let deck_remote = discovery::git_remote(&deck_root);
+    let mut source_roots = std::collections::HashMap::new();
+    for domain in &deck.domains {
+        source_roots.insert(
+            domain
+                .manifest
+                .source_uri()
+                .trim_end_matches(".git")
+                .to_string(),
+            domain.root.clone(),
+        );
+    }
+    if let Some(remote) = deck_remote.as_ref() {
+        source_roots.insert(
+            remote.trim_end_matches(".git").to_string(),
+            deck_root.clone(),
+        );
+    }
+
+    let mut locations = watched_locations
+        .iter()
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .filter(|path| path != &deck_root)
+        .filter(|path| target_points_at_deck(path, &deck_root, deck_remote.as_deref()))
+        .collect::<Vec<_>>();
+    locations.sort();
+    locations.dedup();
+
+    locations
+        .into_iter()
+        .map(|target_root| {
+            let mut artifacts: BTreeMap<String, DeckTargetArtifactView> = BTreeMap::new();
+            for (provider_name, provider_dir) in providers {
+                let provider_path = target_root.join(provider_dir);
+                for (deployed_path, entry) in source::load_manifest(&provider_path) {
+                    let Some(kind) = deployed_path
+                        .split('/')
+                        .next()
+                        .filter(|kind| matches!(*kind, "skills" | "agents" | "rules" | "hooks"))
+                    else {
+                        continue;
+                    };
+                    let source_uri = source::resolve_source(&provider_path, &deployed_path, &entry);
+                    let source_path = source::resolve_source_path(&provider_path, &entry);
+                    let Some(domain) =
+                        deck_domain_for_source(deck, &source_uri, source_path.as_deref())
+                            .or_else(|| deck_domain_for_deployed_path(deck, kind, &deployed_path))
+                    else {
+                        continue;
+                    };
+                    let Some(artifact_id) = canonical_deck_artifact_id(
+                        &domain.name,
+                        kind,
+                        source_path.as_deref(),
+                        &deployed_path,
+                    ) else {
+                        continue;
+                    };
+                    let status = target::deployed_status(
+                        &provider_path,
+                        &deployed_path,
+                        &entry,
+                        &source_uri,
+                        source_path.as_deref(),
+                        &source_roots,
+                    );
+                    let artifact =
+                        artifacts
+                            .entry(artifact_id)
+                            .or_insert_with(|| DeckTargetArtifactView {
+                                status,
+                                providers: BTreeMap::new(),
+                            });
+                    artifact.providers.insert(provider_name.clone(), status);
+                    artifact.status = worse_status(artifact.status, status);
+                }
+            }
+            let mut summary = StatusSummary::default();
+            for artifact in artifacts.values() {
+                target::tally_status(&mut summary, artifact.status);
+            }
+            let name = target_root.file_name().map_or_else(
+                || target_root.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            DeckTargetView {
+                name,
+                root: target_root,
+                artifacts,
+                summary,
+            }
+        })
+        .collect()
+}
+
+fn target_points_at_deck(target: &Path, deck_root: &Path, deck_remote: Option<&str>) -> bool {
+    let manifest_path = [target.join(".rune"), target.join(".forge")]
+        .into_iter()
+        .find(|path| path.is_file());
+    let Some(manifest_path) = manifest_path else {
+        return false;
+    };
+    let Ok(content) = fs::read_to_string(manifest_path) else {
+        return false;
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return false;
+    };
+    let Some(sources) = value.get("sources").and_then(serde_yaml::Value::as_mapping) else {
+        return false;
+    };
+    sources.values().any(|source| {
+        if let Some(local) = source
+            .get("local")
+            .and_then(serde_yaml::Value::as_str)
+            .or_else(|| {
+                source
+                    .get("path")
+                    .and_then(serde_yaml::Value::as_str)
+                    .filter(|_| source.get("git").is_none() && source.get("local").is_none())
+            })
+        {
+            let local = PathBuf::from(local);
+            let resolved = if local.is_absolute() {
+                local
+            } else {
+                target.join(local)
+            };
+            return fs::canonicalize(&resolved).unwrap_or(resolved) == deck_root;
+        }
+        source
+            .get("git")
+            .and_then(serde_yaml::Value::as_str)
+            .zip(deck_remote)
+            .is_some_and(|(source, remote)| {
+                source.trim_end_matches(".git") == remote.trim_end_matches(".git")
+            })
+    })
+}
+
+fn deck_domain_for_source<'a>(
+    deck: &'a crate::deck::Deck,
+    source_uri: &str,
+    source_path: Option<&str>,
+) -> Option<&'a crate::deck::Domain> {
+    if let Some(path) = source_path
+        && let Some(domain_name) = path
+            .strip_prefix("runes/")
+            .and_then(|path| path.split('/').next())
+        && let Some(domain) = deck
+            .domains
+            .iter()
+            .find(|domain| domain.name == domain_name)
+    {
+        return Some(domain);
+    }
+    let normalized = source_uri.trim_end_matches(".git");
+    deck.domains.iter().find(|domain| {
+        domain.name == normalized
+            || domain.manifest.source_uri().trim_end_matches(".git") == normalized
+    })
+}
+
+fn deck_domain_for_deployed_path<'a>(
+    deck: &'a crate::deck::Deck,
+    kind: &str,
+    deployed_path: &str,
+) -> Option<&'a crate::deck::Domain> {
+    let matches = deck
+        .domains
+        .iter()
+        .filter(|domain| {
+            scan_deck_source_module(&domain.root).is_some_and(|module| {
+                module.artifacts.iter().any(|artifact| {
+                    artifact.kind == kind && artifact.relative_path == deployed_path
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches[0])
+}
+
+fn canonical_deck_artifact_id(
+    domain: &str,
+    kind: &str,
+    source_path: Option<&str>,
+    deployed_path: &str,
+) -> Option<String> {
+    let path = source_path.unwrap_or(deployed_path);
+    let domain_prefix = format!("runes/{domain}/");
+    let path = path.strip_prefix(&domain_prefix).unwrap_or(path);
+    let within_kind = path.strip_prefix(&format!("{kind}/"))?;
+    let name = match kind {
+        "skills" => within_kind.split('/').next()?.to_string(),
+        "hooks" => Path::new(within_kind)
+            .with_extension("")
+            .to_string_lossy()
+            .into_owned(),
+        "agents" | "rules" => Path::new(within_kind)
+            .file_stem()?
+            .to_string_lossy()
+            .into_owned(),
+        _ => return None,
+    };
+    (!name.is_empty()).then(|| format!("{domain}/{kind}/{name}"))
+}
+
+fn worse_status(left: FileStatus, right: FileStatus) -> FileStatus {
+    fn rank(status: FileStatus) -> u8 {
+        match status {
+            FileStatus::Unchanged => 0,
+            FileStatus::New => 1,
+            FileStatus::Stale => 2,
+            FileStatus::Modified => 3,
+        }
+    }
+    if rank(right) > rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+/// A confirmation-ready cast mutation. Persist it only after user approval.
+#[derive(Debug, Clone)]
+pub struct CastEdit {
+    pub cast_name: String,
+    pub artifact_id: String,
+    pub include: bool,
+    pub before: Vec<String>,
+    pub after: Vec<String>,
+    path: PathBuf,
+    original: Vec<u8>,
+    replacement: Vec<u8>,
+}
+
+impl CastEdit {
+    /// Serialized YAML that will replace the cast manifest.
+    #[must_use]
+    pub fn yaml(&self) -> &str {
+        std::str::from_utf8(&self.replacement).unwrap_or_default()
+    }
+}
+
+/// Prepares a cast toggle without writing to disk.
+pub fn prepare_cast_toggle(
+    deck_root: &Path,
+    cast_name: &str,
+    artifact_id: &str,
+    include: bool,
+) -> Result<CastEdit, Error> {
+    let deck =
+        crate::deck::load(deck_root).map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let artifact_ids = deck_artifact_ids(&deck);
+    if !artifact_ids
+        .iter()
+        .any(|candidate| candidate == artifact_id)
+    {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("unknown deck artifact '{artifact_id}'"),
+        ));
+    }
+    let cast = deck
+        .cast(cast_name)
+        .ok_or_else(|| Error::new(ErrorKind::Config, format!("unknown cast '{cast_name}'")))?;
+    let before = deck
+        .resolve_cast(cast_name, artifact_ids.iter().map(String::as_str))
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let mut edited = cast.clone();
+    if include {
+        edited.exclude.retain(|pattern| pattern != artifact_id);
+        if !before.iter().any(|selected| selected == artifact_id)
+            && !edited.runes.iter().any(|rune| rune == artifact_id)
+        {
+            edited.runes.push(artifact_id.to_string());
+        }
+    } else {
+        edited.runes.retain(|rune| rune != artifact_id);
+        if !edited
+            .exclude
+            .iter()
+            .any(|excluded| excluded == artifact_id)
+        {
+            edited.exclude.push(artifact_id.to_string());
+        }
+    }
+    let after = deck
+        .resolve_cast_with_override(
+            cast_name,
+            artifact_ids.iter().map(String::as_str),
+            Some(&edited),
+        )
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    if include && !after.iter().any(|selected| selected == artifact_id) {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "cannot include '{artifact_id}' while a wildcard or inherited cast exclusion still matches it"
+            ),
+        ));
+    }
+    let original = fs::read(&cast.path).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", cast.path.display()),
+        )
+    })?;
+    let replacement = serde_yaml::to_string(&edited)
+        .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize cast: {error}")))?
+        .into_bytes();
+    Ok(CastEdit {
+        cast_name: cast_name.to_string(),
+        artifact_id: artifact_id.to_string(),
+        include,
+        before,
+        after,
+        path: cast.path.clone(),
+        original,
+        replacement,
+    })
+}
+
+/// Atomically persists a previously prepared cast edit.
+pub fn persist_cast_edit(edit: &CastEdit) -> Result<(), Error> {
+    let current = fs::read(&edit.path).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", edit.path.display()),
+        )
+    })?;
+    if current != edit.original {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "cast '{}' changed after the edit was prepared; refresh before writing",
+                edit.cast_name
+            ),
+        ));
+    }
+    atomic_write(&edit.path, &edit.replacement)
+}
+
+fn deck_artifact_ids(deck: &crate::deck::Deck) -> Vec<String> {
+    let mut ids = Vec::new();
+    for domain in &deck.domains {
+        if let Some(module) = scan_deck_source_module(&domain.root) {
+            ids.extend(
+                module
+                    .artifacts
+                    .into_iter()
+                    .map(|artifact| format!("{}/{}/{}", domain.name, artifact.kind, artifact.name)),
+            );
+        }
+    }
+    ids.sort_by(|left, right| {
+        let left_parts = left.split('/').collect::<Vec<_>>();
+        let right_parts = right.split('/').collect::<Vec<_>>();
+        left_parts
+            .first()
+            .cmp(&right_parts.first())
+            .then_with(|| {
+                kind_order(left_parts.get(1).copied().unwrap_or_default())
+                    .cmp(&kind_order(right_parts.get(1).copied().unwrap_or_default()))
+            })
+            .then_with(|| left.cmp(right))
+    });
+    ids
+}
+
+fn atomic_write(path: &Path, content: &[u8]) -> Result<(), Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = parent.join(format!(".cast.tmp-{}-{nonce}", std::process::id()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, path)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temp);
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!("cannot atomically rewrite {}: {error}", path.display()),
+        ));
+    }
+    Ok(())
 }
 
 /// Directory-name allowlist for ADRs and schemas: the active modules plus the
@@ -255,6 +869,30 @@ mod tests {
     use crate::manifest;
     use std::fs;
 
+    fn write(path: &Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    fn minimal_deck(root: &Path) {
+        write(
+            &root.join("deck.yaml"),
+            "schema: 1\nname: test-deck\nversion: 1.0.0\ndescription: Test deck.\n",
+        );
+        write(
+            &root.join("runes/science/module.yaml"),
+            "name: science\nversion: 0.1.0\ndescription: Science.\nevents: []\n",
+        );
+        write(
+            &root.join("runes/science/rules/Alpha.md"),
+            "---\ndescription: Alpha rule.\n---\nAlpha.\n",
+        );
+        write(
+            &root.join("casts/all.yaml"),
+            "name: all\ndescription: Everything.\nrunes: [science/**]\n",
+        );
+    }
+
     #[test]
     fn build_view_reads_deployed_skill_from_provider_manifest() {
         let temp = tempfile::tempdir().unwrap();
@@ -308,6 +946,148 @@ mod tests {
         assert_eq!(
             artifact.providers.get("claude").unwrap().status,
             manifest::FileStatus::Unchanged
+        );
+    }
+
+    #[test]
+    fn build_view_discovers_deck_domains_kinds_and_casts() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
+
+        let view = build_view(&fixture, &[], &[]).unwrap();
+        let deck = view.deck.as_ref().unwrap();
+
+        assert_eq!(
+            deck.domains
+                .iter()
+                .map(|domain| domain.name.as_str())
+                .collect::<Vec<_>>(),
+            ["science", "writing"]
+        );
+        assert_eq!(
+            view.modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>(),
+            ["science", "writing"]
+        );
+        let science = &view.modules[0];
+        assert_eq!(science.version, "0.1.0");
+        assert!(science.artifacts.iter().any(|artifact| {
+            artifact.kind == "hooks"
+                && artifact.name == "hooks"
+                && artifact.source_path == "runes/science/hooks/hooks.json"
+        }));
+        let science_cast = deck
+            .casts
+            .iter()
+            .find(|cast| cast.name == "science")
+            .unwrap();
+        assert_eq!(science_cast.resolved_artifacts.len(), 3);
+        assert!(
+            deck.casts
+                .iter()
+                .find(|cast| cast.name == "stale")
+                .unwrap()
+                .resolution_error
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn deck_target_statuses_only_include_watched_consumers_of_deck() {
+        let temp = tempfile::tempdir().unwrap();
+        let deck_root = temp.path().join("deck");
+        let target_root = temp.path().join("target");
+        minimal_deck(&deck_root);
+        write(
+            &target_root.join(".rune"),
+            &format!(
+                "version: 1\nsources:\n  deck:\n    local: {}\nartifacts: {{}}\n",
+                deck_root.display()
+            ),
+        );
+        let deployed = "Alpha.\n";
+        let fingerprint = manifest::content_sha256(deployed);
+        write(&target_root.join(".claude/rules/Alpha.md"), deployed);
+        write(
+            &target_root.join(".claude/rules/.provenance/Alpha.yaml"),
+            "source: science\nresolvedDependencies:\n  - uri: rules/Alpha.md\n",
+        );
+        write(
+            &target_root.join(".claude/.manifest"),
+            &format!(
+                "rules:\n  Alpha.md:\n    fingerprint: {fingerprint}\n    provenance: rules/.provenance/Alpha.yaml\n"
+            ),
+        );
+
+        let providers = [("claude".to_string(), ".claude".to_string())];
+        let view = build_view(&deck_root, &providers, std::slice::from_ref(&target_root)).unwrap();
+        let target = &view.deck.unwrap().targets[0];
+
+        assert_eq!(target.name, "target");
+        assert_eq!(
+            target.artifacts["science/rules/Alpha"].status,
+            FileStatus::Unchanged
+        );
+    }
+
+    #[test]
+    fn cast_toggle_previews_then_persists_atomically() {
+        let temp = tempfile::tempdir().unwrap();
+        minimal_deck(temp.path());
+        let cast_path = temp.path().join("casts/all.yaml");
+        let original = fs::read_to_string(&cast_path).unwrap();
+
+        let edit = prepare_cast_toggle(temp.path(), "all", "science/rules/Alpha", false).unwrap();
+
+        assert_eq!(fs::read_to_string(&cast_path).unwrap(), original);
+        assert!(edit.before.contains(&"science/rules/Alpha".to_string()));
+        assert!(!edit.after.contains(&"science/rules/Alpha".to_string()));
+        persist_cast_edit(&edit).unwrap();
+        let deck = crate::deck::load(temp.path()).unwrap();
+        assert!(
+            deck.resolve_cast("all", ["science/rules/Alpha"])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn cast_edit_refuses_to_overwrite_a_newer_change() {
+        let temp = tempfile::tempdir().unwrap();
+        minimal_deck(temp.path());
+        let edit = prepare_cast_toggle(temp.path(), "all", "science/rules/Alpha", false).unwrap();
+        write(
+            &temp.path().join("casts/all.yaml"),
+            "name: all\ndescription: Concurrent.\nrunes: [science/**]\n",
+        );
+
+        let error = persist_cast_edit(&edit).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("changed after the edit was prepared")
+        );
+    }
+
+    #[test]
+    fn cast_toggle_does_not_remove_a_broad_exclusion() {
+        let temp = tempfile::tempdir().unwrap();
+        minimal_deck(temp.path());
+        write(
+            &temp.path().join("casts/all.yaml"),
+            "name: all\ndescription: Broad exclusion.\nrunes: [science/**]\nexclude: [science/**]\n",
+        );
+
+        let error = prepare_cast_toggle(temp.path(), "all", "science/rules/Alpha", true)
+            .expect_err("a single toggle must not widen a broad exclusion");
+
+        assert!(error.to_string().contains("wildcard or inherited"));
+        assert!(
+            fs::read_to_string(temp.path().join("casts/all.yaml"))
+                .unwrap()
+                .contains("exclude: [science/**]")
         );
     }
 }

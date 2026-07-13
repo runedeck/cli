@@ -4,10 +4,301 @@ use super::sidecar::{Sidecar, parse_adoption};
 use super::source::resolve_sidecar;
 use crate::manifest;
 use crate::view::{Adoption, GitCommit};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+/// Number of commits fetched by each background history request.
+pub const DEFAULT_HISTORY_BATCH_SIZE: usize = 200;
+
+/// Maximum number of commit records retained by the background walker.
+pub const DEFAULT_HISTORY_METADATA_WINDOW: usize = DEFAULT_HISTORY_BATCH_SIZE * 3;
+
+/// Selects whether history covers the whole deck repository or selected paths.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum HistoryScope {
+    #[default]
+    Deck,
+    Paths(Vec<PathBuf>),
+}
+
+/// Batch and memory bounds for a [`HistoryWalker`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryOptions {
+    pub batch_size: usize,
+    pub metadata_window: usize,
+}
+
+impl Default for HistoryOptions {
+    fn default() -> Self {
+        Self {
+            batch_size: DEFAULT_HISTORY_BATCH_SIZE,
+            metadata_window: DEFAULT_HISTORY_METADATA_WINDOW,
+        }
+    }
+}
+
+/// A commit and its short ref decorations (for example `HEAD -> main`).
+#[derive(Debug, Clone, Default)]
+pub struct HistoryEntry {
+    pub commit: GitCommit,
+    pub refs: Vec<String>,
+}
+
+/// A bounded snapshot emitted after each history batch.
+///
+/// `window_start` is the absolute index of `entries[0]` in newest-first
+/// history. Once `total_loaded` exceeds the configured metadata window, old
+/// entries are evicted from the front and `window_start` advances.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryUpdate {
+    pub window_start: usize,
+    pub total_loaded: usize,
+    pub entries: Vec<HistoryEntry>,
+    pub has_more: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug)]
+struct HistoryWorkerState {
+    has_more: AtomicBool,
+    request_pending: AtomicBool,
+}
+
+/// Background, request-driven git history loader.
+///
+/// Construction starts the first batch. Call [`Self::request_more`] when the
+/// viewport approaches the end of the current window, then poll the update
+/// channel with [`Self::try_recv`] or [`Self::recv_timeout`].
+pub struct HistoryWalker {
+    requests: Sender<()>,
+    updates: Receiver<HistoryUpdate>,
+    state: Arc<HistoryWorkerState>,
+    _worker: JoinHandle<()>,
+}
+
+impl HistoryWalker {
+    /// Starts a walker with a batch size of 200 and a 600-entry metadata window.
+    pub fn start(repo: impl Into<PathBuf>, scope: HistoryScope) -> std::io::Result<Self> {
+        Self::with_options(repo, scope, HistoryOptions::default())
+    }
+
+    /// Starts a walker with explicit batching and metadata-window bounds.
+    pub fn with_options(
+        repo: impl Into<PathBuf>,
+        scope: HistoryScope,
+        options: HistoryOptions,
+    ) -> std::io::Result<Self> {
+        let options = HistoryOptions {
+            batch_size: options.batch_size.max(1),
+            metadata_window: options.metadata_window.max(options.batch_size.max(1)),
+        };
+        let repo = repo.into();
+        let revision = history_revision(&repo)?;
+        let (request_sender, request_receiver) = mpsc::channel();
+        let (update_sender, update_receiver) = mpsc::channel();
+        let state = Arc::new(HistoryWorkerState {
+            has_more: AtomicBool::new(true),
+            request_pending: AtomicBool::new(true),
+        });
+        let worker_state = Arc::clone(&state);
+        let worker = thread::Builder::new()
+            .name("rune-history".to_string())
+            .spawn(move || {
+                walk_history(
+                    &repo,
+                    &revision,
+                    &scope,
+                    options,
+                    &request_receiver,
+                    &update_sender,
+                    &worker_state,
+                );
+            })?;
+        Ok(Self {
+            requests: request_sender,
+            updates: update_receiver,
+            state,
+            _worker: worker,
+        })
+    }
+
+    /// Queues one more batch. Returns `false` when a request is already pending
+    /// or the worker has reached the end of history.
+    pub fn request_more(&self) -> bool {
+        if !self.state.has_more.load(Ordering::Acquire)
+            || self
+                .state
+                .request_pending
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return false;
+        }
+        if self.requests.send(()).is_err() {
+            self.state.request_pending.store(false, Ordering::Release);
+            self.state.has_more.store(false, Ordering::Release);
+            return false;
+        }
+        true
+    }
+
+    pub fn try_recv(&self) -> Result<HistoryUpdate, TryRecvError> {
+        self.updates.try_recv()
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<HistoryUpdate, RecvTimeoutError> {
+        self.updates.recv_timeout(timeout)
+    }
+}
+
+fn walk_history(
+    repo: &Path,
+    revision: &str,
+    scope: &HistoryScope,
+    options: HistoryOptions,
+    requests: &Receiver<()>,
+    updates: &Sender<HistoryUpdate>,
+    state: &HistoryWorkerState,
+) {
+    let mut window = VecDeque::with_capacity(options.metadata_window);
+    let mut total_loaded = 0;
+    loop {
+        let batch =
+            match load_history_batch(repo, revision, scope, total_loaded, options.batch_size) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    state.has_more.store(false, Ordering::Release);
+                    state.request_pending.store(false, Ordering::Release);
+                    let _ = updates.send(HistoryUpdate {
+                        window_start: total_loaded.saturating_sub(window.len()),
+                        total_loaded,
+                        entries: window.into_iter().collect(),
+                        has_more: false,
+                        error: Some(error),
+                    });
+                    return;
+                }
+            };
+        let has_more = batch.len() > options.batch_size;
+        let loaded = batch.len().min(options.batch_size);
+        window.extend(batch.into_iter().take(loaded));
+        total_loaded += loaded;
+        if window.len() > options.metadata_window {
+            window.drain(..window.len() - options.metadata_window);
+        }
+
+        state.has_more.store(has_more, Ordering::Release);
+        state.request_pending.store(false, Ordering::Release);
+        if updates
+            .send(HistoryUpdate {
+                window_start: total_loaded.saturating_sub(window.len()),
+                total_loaded,
+                entries: window.iter().cloned().collect(),
+                has_more,
+                error: None,
+            })
+            .is_err()
+            || !has_more
+        {
+            return;
+        }
+        if requests.recv().is_err() {
+            return;
+        }
+    }
+}
+
+fn load_history_batch(
+    repo: &Path,
+    revision: &str,
+    scope: &HistoryScope,
+    skip: usize,
+    batch_size: usize,
+) -> Result<Vec<HistoryEntry>, String> {
+    let mut command = Command::new("git");
+    command
+        .arg("log")
+        .arg(format!("--skip={skip}"))
+        .arg("-n")
+        .arg((batch_size + 1).to_string())
+        .arg("--decorate=short")
+        .arg(HISTORY_GIT_LOG_FORMAT)
+        .arg(revision)
+        .current_dir(repo);
+    if let HistoryScope::Paths(paths) = scope
+        && !paths.is_empty()
+    {
+        command.arg("--").args(paths);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("could not start git log: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git log failed: {}", detail.trim()));
+    }
+    let mut entries = parse_history_log(&String::from_utf8_lossy(&output.stdout));
+    for entry in &mut entries {
+        enrich_commits_with_entire(repo, std::slice::from_mut(&mut entry.commit));
+    }
+    Ok(entries)
+}
+
+fn history_revision(repo: &Path) -> std::io::Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(repo)
+        .output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "cannot resolve history revision: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+const HISTORY_GIT_LOG_FORMAT: &str = "--format=%H%x00%s%x00%ai%x00%an%x00%(trailers:key=Entire-Checkpoint,valueonly,separator=%x20)%x00%D";
+
+fn parse_history_log(raw: &str) -> Vec<HistoryEntry> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            let mut fields = line.split('\u{0}');
+            let sha = fields.next()?.to_string();
+            if sha.is_empty() {
+                return None;
+            }
+            let commit = GitCommit {
+                sha,
+                message: fields.next().unwrap_or_default().to_string(),
+                date: fields.next().unwrap_or_default().to_string(),
+                author: fields.next().unwrap_or_default().to_string(),
+                checkpoint: fields.next().unwrap_or_default().trim().to_string(),
+                ..GitCommit::default()
+            };
+            let refs = fields
+                .next()
+                .unwrap_or_default()
+                .split(", ")
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect();
+            Some(HistoryEntry { commit, refs })
+        })
+        .collect()
+}
 
 /// Reads the source-repo adoption sidecar for a deployed artifact.
 /// `skills/X/SKILL.md` -> `skills/X/.provenance/SKILL.yaml`,
@@ -284,6 +575,77 @@ fn git_show_lines(repo: &Path, tree: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn history_fixture(commit_count: usize) -> tempfile::TempDir {
+        let repo = tempfile::tempdir().expect("fixture repo");
+        git(repo.path(), &["init", "-q"]);
+        git(repo.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let mut input = String::new();
+        for index in 0..commit_count {
+            let blob = format!("fixture {index}\n");
+            let blob_mark = index * 2 + 1;
+            let commit_mark = index * 2 + 2;
+            let message = format!("commit {index}\n");
+            let path = if index % 2 == 0 {
+                "tracked.txt"
+            } else {
+                "other.txt"
+            };
+            let timestamp = 1_700_000_000 + index;
+            write!(
+                input,
+                "blob\nmark :{blob_mark}\ndata {}\n{blob}\n\
+                 commit refs/heads/main\nmark :{commit_mark}\n\
+                 author Fixture <fixture@example.com> {timestamp} +0000\n\
+                 committer Fixture <fixture@example.com> {timestamp} +0000\n\
+                 data {}\n{message}\nM 100644 :{blob_mark} {path}\n\n",
+                blob.len(),
+                message.len()
+            )
+            .expect("write fast-import fixture");
+        }
+
+        let mut child = Command::new("git")
+            .args(["fast-import", "--quiet"])
+            .current_dir(repo.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("git fast-import should start");
+        child
+            .stdin
+            .take()
+            .expect("fast-import stdin")
+            .write_all(input.as_bytes())
+            .expect("write fast-import stream");
+        let output = child.wait_with_output().expect("wait for fast-import");
+        assert!(
+            output.status.success(),
+            "git fast-import failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        git(repo.path(), &["tag", "--no-sign", "fixture-tip", "HEAD"]);
+        repo
+    }
 
     #[test]
     fn parse_git_log_captures_checkpoint_trailer() {
@@ -314,5 +676,95 @@ mod tests {
         let capped = truncate_prompt(&long);
         assert!(capped.ends_with('\u{2026}'));
         assert!(capped.chars().count() <= 111);
+    }
+
+    #[test]
+    fn history_walker_loads_500_commits_in_bounded_batches() {
+        let repo = history_fixture(505);
+        let walker = HistoryWalker::with_options(
+            repo.path(),
+            HistoryScope::Deck,
+            HistoryOptions {
+                batch_size: 200,
+                metadata_window: 400,
+            },
+        )
+        .expect("start history walker");
+
+        let first = walker
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first history batch");
+        assert_eq!(first.window_start, 0);
+        assert_eq!(first.total_loaded, 200);
+        assert_eq!(first.entries.len(), 200);
+        assert!(first.has_more);
+        assert!(first.error.is_none());
+        assert_eq!(first.entries[0].commit.message, "commit 504");
+        assert!(
+            first.entries[0]
+                .refs
+                .iter()
+                .any(|name| name.contains("main"))
+        );
+        assert!(walker.request_more());
+
+        let second = walker
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second history batch");
+        assert_eq!(second.window_start, 0);
+        assert_eq!(second.total_loaded, 400);
+        assert_eq!(second.entries.len(), 400);
+        assert!(second.has_more);
+        assert!(walker.request_more());
+
+        let third = walker
+            .recv_timeout(Duration::from_secs(5))
+            .expect("final history batch");
+        assert_eq!(third.window_start, 105);
+        assert_eq!(third.total_loaded, 505);
+        assert_eq!(third.entries.len(), 400);
+        assert!(!third.has_more);
+        assert_eq!(
+            third.entries.last().expect("oldest commit").commit.message,
+            "commit 0"
+        );
+        assert!(!walker.request_more());
+    }
+
+    #[test]
+    fn history_walker_scopes_history_to_selected_paths() {
+        let repo = history_fixture(505);
+        let walker = HistoryWalker::with_options(
+            repo.path(),
+            HistoryScope::Paths(vec![PathBuf::from("tracked.txt")]),
+            HistoryOptions {
+                batch_size: 200,
+                metadata_window: 400,
+            },
+        )
+        .expect("start history walker");
+
+        let first = walker
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first path history batch");
+        assert_eq!(first.total_loaded, 200);
+        assert!(first.has_more);
+        assert!(first.entries.iter().all(|entry| {
+            entry.commit.message["commit ".len()..]
+                .parse::<usize>()
+                .is_ok_and(|index| index % 2 == 0)
+        }));
+        assert!(walker.request_more());
+
+        let second = walker
+            .recv_timeout(Duration::from_secs(5))
+            .expect("final path history batch");
+        assert_eq!(second.total_loaded, 253);
+        assert_eq!(second.entries.len(), 253);
+        assert!(!second.has_more);
+        assert_eq!(
+            second.entries.last().expect("oldest commit").commit.message,
+            "commit 0"
+        );
     }
 }
