@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -92,5 +93,92 @@ fn add_then_install_then_drift_is_clean() {
     assert!(
         stdout.contains("identical") || stdout.contains("No drift"),
         "{stdout}"
+    );
+}
+
+#[test]
+fn add_uses_rune_deck_when_source_is_omitted() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    rune()
+        .current_dir(consumer.path())
+        .env("RUNE_DECK", &deck)
+        .args(["add", "science"])
+        .assert()
+        .success();
+
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(consumer.path().join(".rune")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["sources"]["deck"]["local"].as_str(),
+        Some(deck.as_str())
+    );
+}
+
+#[test]
+fn add_prefers_existing_single_source_over_rune_deck() {
+    let consumer = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+    add(consumer.path(), &["science", "--source", &deck]).success();
+
+    rune()
+        .current_dir(consumer.path())
+        .env("RUNE_DECK", "/does/not/exist")
+        .args(["add", "development"])
+        .assert()
+        .success();
+
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(consumer.path().join(".rune")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["sources"]["deck"]["local"].as_str(),
+        Some(deck.as_str())
+    );
+}
+
+#[test]
+fn add_without_any_source_names_all_resolution_options() {
+    let consumer = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+
+    rune()
+        .current_dir(consumer.path())
+        .env("HOME", home.path())
+        .env_remove("RUNE_DECK")
+        .args(["add", "science"])
+        .assert()
+        .failure()
+        .stderr(
+            predicates::str::contains("--source")
+                .and(predicates::str::contains("RUNE_DECK"))
+                .and(predicates::str::contains("rune config set deck")),
+        );
+}
+
+#[test]
+fn config_set_deck_supplies_add_source() {
+    let consumer = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let deck = deck_fixture().to_string_lossy().into_owned();
+
+    rune()
+        .env("HOME", home.path())
+        .args(["config", "set", "deck", &deck])
+        .assert()
+        .success();
+    rune()
+        .current_dir(consumer.path())
+        .env("HOME", home.path())
+        .env_remove("RUNE_DECK")
+        .args(["add", "science"])
+        .assert()
+        .success();
+
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(consumer.path().join(".rune")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["sources"]["deck"]["local"].as_str(),
+        Some(deck.as_str())
     );
 }

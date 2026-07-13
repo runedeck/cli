@@ -28,7 +28,8 @@ Expected: an aggregate report over the four domains (council, development, meta,
 
 ```sh
 T=$(mktemp -d) && cd "$T"
-rune add --source "$DECK" --cast development
+rune config set deck "$DECK"
+rune add --cast development
 cat .rune             # version, deck source, cast: development
 rune install          # deploys with a count, no warnings about skipped files
 ```

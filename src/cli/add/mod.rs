@@ -24,16 +24,25 @@ pub fn execute(
             Error::new(ErrorKind::Config, "cannot load existing .rune".to_string())
         })?
     } else {
-        let source = source.ok_or_else(|| {
-            Error::new(
-                ErrorKind::Config,
-                "--source <path-or-url> is required when creating .rune".to_string(),
-            )
-        })?;
+        let configured_source;
+        let source = if let Some(source) = source {
+            source
+        } else {
+            configured_source = configured_deck_source()?;
+            &configured_source
+        };
         minimal_manifest(source, reference)?
     };
 
-    let source_label = select_source(&mut manifest, source, reference)?;
+    let configured_source;
+    let selected_source =
+        if source.is_some() || (manifest_path.is_file() && !manifest.sources.is_empty()) {
+            source
+        } else {
+            configured_source = configured_deck_source()?;
+            Some(configured_source.as_str())
+        };
+    let source_label = select_source(&mut manifest, selected_source, reference)?;
     let entry = manifest.artifacts.entry(source_label).or_default();
     let changed = if let Some(cast) = cast {
         match entry.cast.as_deref() {
@@ -67,6 +76,19 @@ pub fn execute(
     }
     println!("rune install --source {}", repo_root.display());
     Ok(0)
+}
+
+fn configured_deck_source() -> Result<String, Error> {
+    commands::ontology::load()?
+        .deck
+        .map(|value| value.value)
+        .ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "no deck source configured; pass --source <path-or-url>, set RUNE_DECK, or set `deck` in ~/.config/rune/config.yaml with `rune config set deck <path-or-url>`"
+                .to_string(),
+        )
+    })
 }
 
 fn minimal_manifest(source: &str, reference: Option<&str>) -> Result<DotRune, Error> {

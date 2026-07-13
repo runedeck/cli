@@ -52,7 +52,7 @@ A cast resolves to a flat set of qualified ids: `extends` unions depth-first (cy
 
 ### Consumer manifest
 
-`.rune` at the target repo root, with `.forge` read as legacy fallback. Entries reference a deck source (pinned), optionally a cast, and explicit qualified ids. `rune add <domain>[/<Name>]` rewrites `.rune` atomically (temp file, rename) and prints the install command; it does not install. `rune install` resolves, assembles, and deploys the selection, including only hooks belonging to selected domains.
+`.rune` at the target repo root, with `.forge` read as legacy fallback. Entries reference a deck source (pinned), optionally a cast, and explicit qualified ids. `rune add <domain>[/<Name>]` rewrites `.rune` atomically (temp file, rename) and prints the install command; it does not install. Without `--source`, add uses the manifest's sole source, then `RUNE_DECK`, then the configured `deck` value. `rune install` resolves, assembles, and deploys the selection, including only hooks belonging to selected domains.
 
 ### Aggregate operations
 

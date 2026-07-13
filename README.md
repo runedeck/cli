@@ -125,6 +125,17 @@ providers:
 
 Every command takes its inputs as named flags. Source modules use `--source <DIR>` (defaults to `.` for in-tree commands), targets use `--target <DIR>`, upstreams use `--upstream <DIR>`. There are no positional path arguments.
 
+Set a default deck once, then add selections without repeating `--source`:
+
+```sh
+rune config set deck ~/Developer/runedeck/runedeck
+rune add development
+```
+
+`rune add` uses an existing `.rune` manifest's sole source first. Otherwise it
+uses `RUNE_DECK`, then the `deck` key in `~/.config/rune/config.yaml`. An
+explicit `--source <path-or-url>` always selects the requested source.
+
 Assemble and deploy the current module to all provider directories:
 
 ```sh
