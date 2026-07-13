@@ -24,7 +24,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-rune manages deck state, casts, and deployment history across domains and kinds. CLI commands alone make cast composition and history inspection tedious at catalog scale. Operators need a primary terminal experience and a lightweight browser view for read-only inspection. Two faces must not diverge in behavior or mutate state through paths the CLI cannot reach.
+rune manages deck state, casts, and deployment history across decks and kinds. CLI commands alone make cast composition and history inspection tedious at catalog scale. Operators need a primary terminal experience and a lightweight browser view for read-only inspection. Two faces must not diverge in behavior or mutate state through paths the CLI cannot reach.
 
 ## Considered Options
 
@@ -37,7 +37,7 @@ rune manages deck state, casts, and deployment history across domains and kinds.
 
 rune ships two interfaces over one deck-state layer.
 
-**Terminal UI (primary):** vim-keybinding interaction modeled on tuicr; Miller columns for domain, kind, and status navigation; cast composition workflows; a history view following gitui and jjui patterns with batched background log walking, a sliding metadata window, bindings mapped to actions rather than hardcoded keys, and jj graph glyphs parsed rather than hand-drawn.
+**Terminal UI (primary):** vim-keybinding interaction modeled on tuicr; Miller columns for deck, kind, and status navigation; cast composition workflows; a history view following gitui and jjui patterns with batched background log walking, a sliding metadata window, bindings mapped to actions rather than hardcoded keys, and jj graph glyphs parsed rather than hand-drawn.
 
 **Read-only web dashboard:** axum, htmx, and askama on loopback; inspection only.
 
