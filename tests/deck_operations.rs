@@ -133,3 +133,42 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
         "real drift must be named: {stdout}"
     );
 }
+
+#[test]
+fn deck_release_requires_and_packages_one_domain() {
+    let deck = tempfile::tempdir().unwrap();
+    support::copy_deck_fixture(deck.path());
+
+    let missing = rune()
+        .args(["release", "--source", deck.path().to_str().unwrap()])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&missing.get_output().stderr);
+    assert!(
+        stderr.contains("requires a domain argument"),
+        "deck release must explain the missing domain: {stderr}"
+    );
+
+    rune()
+        .args([
+            "release",
+            "science",
+            "--source",
+            deck.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let dist = deck.path().join("runes/science/dist");
+    assert!(
+        fs::read_dir(&dist).unwrap().flatten().any(|entry| entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "gz")),
+        "the selected module must use the existing release packaging path"
+    );
+    assert!(
+        !deck.path().join("runes/writing/dist").exists(),
+        "unselected domains must not be released"
+    );
+}

@@ -338,6 +338,10 @@ enum Command {
 
     /// Assemble and package module as release tarballs
     Release {
+        /// Deck domain to package. Required when --source is a deck root.
+        #[arg(value_name = "DOMAIN")]
+        domain: Option<String>,
+
         /// Module root to package (must contain module.yaml). Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
@@ -526,7 +530,14 @@ pub fn run() -> i32 {
         }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => return exit_code(dashboard::execute(&root, port)),
-        Command::Release { source, embed } => (release::execute(&source, embed), "released"),
+        Command::Release {
+            domain,
+            source,
+            embed,
+        } => (
+            release::execute_source(&source, domain.as_deref(), embed),
+            "released",
+        ),
         Command::Watch { action } => return run_watch(action, args.json),
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
     };

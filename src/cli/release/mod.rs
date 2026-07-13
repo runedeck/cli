@@ -13,6 +13,51 @@ const MAKEFILE_TEMPLATE: &str = include_str!(concat!(
     "/templates/make/dist.mk"
 ));
 
+/// Resolve an optional deck domain, preserving the existing single-module
+/// release path unchanged.
+pub fn execute_source(
+    path: &str,
+    domain_name: Option<&str>,
+    embed: bool,
+) -> Result<ActionResult, Error> {
+    let root = Path::new(path);
+    if !commands::deck::is_deck(root) {
+        if let Some(domain) = domain_name {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("domain '{domain}' is only valid when --source is a deck"),
+            ));
+        }
+        return execute(path, embed);
+    }
+
+    let deck =
+        commands::deck::load(root).map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let domain_name = domain_name.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "release against a deck requires a domain argument".to_string(),
+        )
+    })?;
+    let domain = deck
+        .domains
+        .iter()
+        .find(|domain| domain.name == domain_name)
+        .ok_or_else(|| {
+            let available = deck
+                .domains
+                .iter()
+                .map(|domain| domain.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Error::new(
+                ErrorKind::Config,
+                format!("unknown deck domain '{domain_name}'; available: {available}"),
+            )
+        })?;
+    execute(&domain.root.to_string_lossy(), embed)
+}
+
 /// Assemble, install to a staging directory, then package each provider's
 /// output as a self-contained release tarball in `dist/`.
 ///
