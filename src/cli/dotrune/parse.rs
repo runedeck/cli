@@ -12,6 +12,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// without spinning up an HTTPS server. Never set in production: the
 /// HTTPS-only rule defends against `git://` MITM and accidental local-path
 /// pulls that bypass SHA pinning.
+#[cfg(feature = "test-file-urls")]
 const ALLOW_FILE_URLS_ENV: &str = "RUNE_GIT_ALLOW_FILE_URLS";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -144,8 +145,8 @@ fn validate_subpath(path: Option<&std::path::Path>) -> Result<(), String> {
 }
 
 pub fn validate_git_url(url: &str) -> Result<(), String> {
-    let allow_file = std::env::var_os(ALLOW_FILE_URLS_ENV).is_some();
-    if allow_file && url.starts_with("file://") {
+    #[cfg(feature = "test-file-urls")]
+    if std::env::var_os(ALLOW_FILE_URLS_ENV).is_some() && url.starts_with("file://") {
         return Ok(());
     }
     let Some(after_scheme) = url.strip_prefix("https://") else {

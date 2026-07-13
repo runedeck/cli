@@ -23,6 +23,12 @@ deploy = []
 embed = ["dep:rust-embed"]
 dashboard = ["assemble", "validate", "deploy", "dep:axum", "dep:tokio", "dep:askama", "dep:tower-http", "dep:open"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:ansi-to-tui", "dep:unicode-width", "dep:edtui"]
+test-file-urls = []
+
+[[test]]
+name = "dotrune_git"
+path = "tests/dotrune_git.rs"
+required-features = ["test-file-urls"]
 
 [dependencies]
 # cli
@@ -82,7 +88,7 @@ unsafe_code = "forbid"
 
 [lints.rust.unexpected_cfgs]
 level = "deny"
-check-cfg = ["cfg(ci)", "cfg(feature, values(\"dashboard\", \"tui\"))"]
+check-cfg = ["cfg(ci)", "cfg(feature, values(\"dashboard\", \"test-file-urls\", \"tui\"))"]
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
