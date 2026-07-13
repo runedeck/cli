@@ -76,6 +76,21 @@ fn skips_dotfiles_under_runes_without_warning() {
 }
 
 #[test]
+fn skips_root_readme_under_runes_without_warning() {
+    let root = tempfile::tempdir().unwrap();
+    write(&root.path().join("deck.yaml"), &deck_yaml(""));
+    write(
+        &root.path().join("runes/README.md"),
+        "Deck domain documentation.\n",
+    );
+
+    let deck = load(root.path()).unwrap();
+
+    assert!(deck.domains.is_empty());
+    assert!(deck.warnings.is_empty());
+}
+
+#[test]
 fn rejects_domain_name_that_differs_from_directory() {
     let root = tempfile::tempdir().unwrap();
     write(&root.path().join("deck.yaml"), &deck_yaml(""));

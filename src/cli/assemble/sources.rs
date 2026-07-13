@@ -387,8 +387,9 @@ fn walk_qualifier_dir(
     Ok(())
 }
 
-/// Walk a skill subdirectory. SKILL.md is assembled; other .md files are passthrough.
-/// Subdirectories (user/, model qualifiers) are flattened into the skill root.
+/// Walk a skill subdirectory. SKILL.md is assembled; every other file is
+/// passthrough regardless of extension. Ordinary subdirectories retain their
+/// relative paths; the special user/ overlay is flattened into the skill root.
 /// user/ files override root files with the same name.
 ///
 /// Given `skills/Explain/`:
@@ -413,11 +414,18 @@ fn walk_skill_dir(
     let mut file_map: std::collections::HashMap<String, SourceFile> =
         std::collections::HashMap::new();
 
-    collect_skill_files(dir, &skill_name, kind, &mut file_map, false)?;
+    collect_skill_files(dir, &skill_name, kind, &mut file_map, false, Path::new(""))?;
 
     let user_dir = dir.join("user");
     if user_dir.is_dir() {
-        collect_skill_files(&user_dir, &skill_name, kind, &mut file_map, true)?;
+        collect_skill_files(
+            &user_dir,
+            &skill_name,
+            kind,
+            &mut file_map,
+            true,
+            Path::new(""),
+        )?;
     }
 
     sources.extend(file_map.into_values());
@@ -430,6 +438,7 @@ fn collect_skill_files(
     kind: commands::provider::ContentKind,
     file_map: &mut std::collections::HashMap<String, SourceFile>,
     is_overlay: bool,
+    relative_dir: &Path,
 ) -> Result<(), Error> {
     let mut entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
@@ -443,9 +452,21 @@ fn collect_skill_files(
         let path = entry.path();
 
         if path.is_dir() {
+            if !is_overlay && relative_dir.as_os_str().is_empty() && path.ends_with("user") {
+                continue;
+            }
+            let child_relative = relative_dir.join(entry.file_name());
+            collect_skill_files(
+                &path,
+                skill_name,
+                kind,
+                file_map,
+                is_overlay,
+                &child_relative,
+            )?;
             continue;
         }
-        if path.extension().unwrap_or_default() != "md" {
+        if !path.is_file() {
             warn_skipped(&path, "unsupported file type");
             continue;
         }
@@ -456,21 +477,23 @@ fn collect_skill_files(
             .to_string_lossy()
             .to_string();
 
-        let is_skill_file = filename == "SKILL.md";
-        let flattened_relative = format!("skills/{skill_name}/{filename}");
+        let relative_file = relative_dir.join(&filename);
+        let relative_file = relative_file.to_string_lossy().replace('\\', "/");
+        let is_skill_file = relative_dir.as_os_str().is_empty() && filename == "SKILL.md";
+        let flattened_relative = format!("skills/{skill_name}/{relative_file}");
         let Some(content) = read_source_text(&path)? else {
             continue;
         };
 
-        if is_overlay && file_map.contains_key(&filename) {
-            eprintln!("  override  skills/{skill_name}/user/{filename} → {filename}");
+        if is_overlay && file_map.contains_key(&relative_file) {
+            eprintln!("  override  skills/{skill_name}/user/{relative_file} → {relative_file}");
         } else if is_overlay {
-            eprintln!("  flatten   skills/{skill_name}/user/{filename} → {filename}");
+            eprintln!("  flatten   skills/{skill_name}/user/{relative_file} → {relative_file}");
         }
 
-        let targets = parse_targets(&content);
+        let targets = is_skill_file.then(|| parse_targets(&content)).flatten();
         file_map.insert(
-            filename,
+            relative_file,
             SourceFile {
                 relative_path: flattened_relative,
                 full_path: path.to_string_lossy().to_string(),
@@ -797,5 +820,46 @@ mod tests {
                 source.relative_path
             );
         }
+    }
+
+    #[test]
+    fn walk_skill_dir_preserves_non_markdown_bundle_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = scaffold_kind(dir.path(), "skills").join("SystematicDebug");
+        let scripts_dir = skill_dir.join("scripts");
+        std::fs::create_dir_all(&scripts_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: SystematicDebug\n---\n# Debug",
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("find-polluter.sh"),
+            "#!/bin/sh\necho polluter\n",
+        )
+        .unwrap();
+        std::fs::write(scripts_dir.join("inspect.py"), "print('inspect')\n").unwrap();
+
+        let mut sources = Vec::new();
+        walk_skill_dir(
+            &skill_dir,
+            commands::provider::ContentKind::Skills,
+            &mut sources,
+        )
+        .unwrap();
+
+        let shell = sources
+            .iter()
+            .find(|source| source.relative_path.ends_with("find-polluter.sh"))
+            .expect("shell companion");
+        assert!(shell.passthrough);
+        assert_eq!(shell.content, "#!/bin/sh\necho polluter\n");
+
+        let nested = sources
+            .iter()
+            .find(|source| source.relative_path.ends_with("scripts/inspect.py"))
+            .expect("nested asset");
+        assert!(nested.passthrough);
+        assert_eq!(nested.content, "print('inspect')\n");
     }
 }

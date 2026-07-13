@@ -161,7 +161,7 @@ pub fn load(root: &Path) -> Result<Deck, String> {
     let mut warnings = Vec::new();
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if name.starts_with('.') || (name == "README.md" && entry.path().is_file()) {
             continue;
         }
         let domain_root = entry.path();

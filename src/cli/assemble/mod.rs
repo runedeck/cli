@@ -260,9 +260,9 @@ fn assemble_source_for_provider(
 
     assembled = transformed_content;
 
-    // Always ensure a trailing newline for POSIX text file convention
-    // before calculating the hash for provenance and writing to disk.
-    if !is_hook && !assembled.is_empty() && !assembled.ends_with('\n') {
+    // Normalize assembled documents to the POSIX trailing-newline convention.
+    // Passthrough skill assets and hooks retain their source bytes verbatim.
+    if !is_hook && !source.passthrough && !assembled.is_empty() && !assembled.ends_with('\n') {
         assembled.push('\n');
     }
 
@@ -286,7 +286,7 @@ fn assemble_source_for_provider(
     let manifest_key = format!("{}/{}/{}", provider_name, source.kind, transformed_filename);
 
     output::write_file(&output_path, &assembled)?;
-    if is_hook {
+    if is_hook || source.passthrough {
         preserve_executable_bit(source, &output_path)?;
     }
 
