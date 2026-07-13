@@ -12,12 +12,20 @@ pub fn execute(
     source: Option<&str>,
     reference: Option<&str>,
 ) -> Result<i32, Error> {
-    let repo_root = std::env::current_dir().map_err(|error| {
+    let current_dir = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot read current directory: {error}"),
         )
     })?;
+    let repo_root = if current_dir.join(".rune").is_file() {
+        current_dir
+    } else if let Some(quest) = crate::cli::quest::bound_quest() {
+        println!("using bound quest {}", quest.display());
+        quest
+    } else {
+        current_dir
+    };
     let manifest_path = repo_root.join(".rune");
     let mut manifest = if manifest_path.is_file() {
         crate::cli::dotrune::load(&repo_root)?.ok_or_else(|| {

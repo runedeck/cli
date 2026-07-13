@@ -17,6 +17,7 @@ mod launch;
 mod ontology;
 mod output;
 mod provenance;
+mod quest;
 mod release;
 mod validate;
 pub(crate) mod watchlist;
@@ -81,14 +82,14 @@ enum Command {
         target: String,
     },
 
-    /// Add a deck artifact selection to the consumer `.rune` manifest
+    /// Add a rune selection to the consumer `.rune` manifest
     Add {
-        /// Domain or domain/name selection. Domain-only stores `<domain>/**`.
-        #[arg(value_name = "DOMAIN[/NAME]", required_unless_present = "cast")]
+        /// Rune ids, comma-separated: <deck>, <Name>, <deck>/<Name>, or <deck>/<kind>/<Name>.
+        #[arg(value_name = "ID[,ID...]", required_unless_present = "cast")]
         rune: Option<String>,
 
-        /// Add a cast reference instead of an artifact selection.
-        #[arg(long, value_name = "NAME", conflicts_with = "rune")]
+        /// Cast names, comma-separated, instead of rune ids.
+        #[arg(long, value_name = "NAME[,NAME...]", conflicts_with = "rune")]
         cast: Option<String>,
 
         /// Deck path or HTTPS git URL. Required when creating `.rune`.
@@ -98,6 +99,21 @@ enum Command {
         /// Full pinned commit SHA for an HTTPS source.
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
+    },
+
+    /// Bind the quest (working repo) that rune commands operate on
+    Quest {
+        /// Quest slug (<owner>/<name>), directory name under the quests root, or path. Omit to show the binding.
+        #[arg(value_name = "SLUG_OR_PATH")]
+        quest: Option<String>,
+
+        /// Clone `https://github.com/<owner>/<name>` into the quests root when the quest is missing.
+        #[arg(long, requires = "quest")]
+        clone: bool,
+
+        /// Remove the binding.
+        #[arg(long, conflicts_with_all = ["quest", "clone"])]
+        unbind: bool,
     },
 
     /// Assemble and deploy module content to provider directories
@@ -482,6 +498,13 @@ pub fn run() -> i32 {
                 source.as_deref(),
                 reference.as_deref(),
             ));
+        }
+        Command::Quest {
+            quest,
+            clone,
+            unbind,
+        } => {
+            return exit_code(quest::execute(quest.as_deref(), clone, unbind));
         }
         Command::Install {
             source,
