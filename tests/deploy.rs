@@ -633,8 +633,10 @@ fn validate_reports_missing_required_files() {
         ])
         .assert()
         .failure()
-        .stdout(predicates::str::contains("MISSING README.md"))
-        .stdout(predicates::str::contains("MISSING LICENSE"));
+        .stdout(predicates::str::contains(
+            "missing required file: README.md",
+        ))
+        .stdout(predicates::str::contains("missing required file: LICENSE"));
 }
 
 #[test]
