@@ -52,7 +52,34 @@ fn validate_prints_warning_items_without_failing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("⚡ .manifest"))
+        .stdout(predicate::str::contains(
+            "run rune install to establish baseline",
+        ))
+        .stdout(predicate::str::contains("rune init").not())
         .stdout(predicate::str::contains("1 warning"))
+        .stdout(predicate::str::contains("0 errors"));
+}
+
+#[test]
+fn validate_deck_sources_do_not_require_deploy_manifests() {
+    let deck = tempfile::tempdir().unwrap();
+    std::fs::write(
+        deck.path().join("deck.yaml"),
+        "schema: 1\nname: validation-deck\nversion: 0.1.0\ndescription: test deck\n",
+    )
+    .unwrap();
+    let module = deck.path().join("runes/validate-output");
+    std::fs::create_dir_all(&module).unwrap();
+    write_valid_module(&module);
+    std::fs::remove_file(module.join(".manifest")).unwrap();
+
+    rune()
+        .args(["validate", "--source"])
+        .arg(deck.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".manifest").not())
+        .stdout(predicate::str::contains("0 warnings"))
         .stdout(predicate::str::contains("0 errors"));
 }
 

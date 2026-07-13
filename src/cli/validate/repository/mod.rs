@@ -9,7 +9,7 @@ pub fn check_template_drift(module_root: &Path, report: &mut ValidationReport) {
     if !manifest_path.is_file() {
         report.warn(
             ".manifest",
-            ".manifest: missing — run rune init to establish baseline".to_string(),
+            ".manifest: missing — run rune install to establish baseline".to_string(),
         );
         return;
     }

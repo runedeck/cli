@@ -17,7 +17,10 @@ fn warns_when_no_manifest() {
     check_template_drift(temp_directory.path(), &mut report);
 
     assert_eq!(report.result.warnings.len(), 1);
-    assert!(report.result.warnings[0].contains("missing"));
+    assert_eq!(
+        report.result.warnings[0],
+        ".manifest: missing — run rune install to establish baseline"
+    );
 }
 
 #[test]

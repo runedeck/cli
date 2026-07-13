@@ -123,7 +123,7 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
         let mut aggregate = ValidationReport::default();
         for deck_entry in deck.entries {
-            let mut deck_entry_report = match validate_module(&deck_entry.root) {
+            let mut deck_entry_report = match validate_module(&deck_entry.root, false) {
                 Ok(result) => result,
                 Err(error) => {
                     aggregate.fail(&deck_entry.name, format!("{}: {error}", deck_entry.name));
@@ -143,10 +143,13 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
         }
         return Ok(aggregate);
     }
-    validate_module(module_root)
+    validate_module(module_root, true)
 }
 
-fn validate_module(module_root: &Path) -> Result<ValidationReport, Error> {
+fn validate_module(
+    module_root: &Path,
+    check_deploy_baseline: bool,
+) -> Result<ValidationReport, Error> {
     let mut report = ValidationReport::default();
 
     check_module_structure(module_root, &mut report);
@@ -155,7 +158,9 @@ fn validate_module(module_root: &Path) -> Result<ValidationReport, Error> {
     if module_root.join("module.yaml").is_file() {
         report.record_since("module.yaml", checkpoint);
     }
-    repository::check_template_drift(module_root, &mut report);
+    if check_deploy_baseline {
+        repository::check_template_drift(module_root, &mut report);
+    }
 
     for kind in &["agents", "rules"] {
         let dir = module_root.join(kind);
