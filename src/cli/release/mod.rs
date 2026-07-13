@@ -90,6 +90,7 @@ pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
         false,
         false,
         None,
+        None,
         true,
     )?;
     result.installed.clear();
