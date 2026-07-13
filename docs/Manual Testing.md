@@ -50,11 +50,11 @@ echo tamper >> .claude/rules/Deslop.md
 rune drift --target .claude                 # flags Deslop.md as modified
 ```
 
-## 4. Four providers, steward cast
+## 4. Four providers, all cast
 
 ```sh
 T=$(mktemp -d) && cd "$T"
-rune add --source "$DECK" --cast steward >/dev/null && rune install >/dev/null
+rune add --source "$DECK" --cast all >/dev/null && rune install >/dev/null
 for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -l)"; done
 ```
 
