@@ -11,8 +11,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ```sh
 cd ~/Developer/runedeck/rune
-cargo install --path . --all-features
-rune --version        # rune 0.3.2
+cargo install --path .
+rune --version        # rune 0.4.0
 rune --help           # subcommands include add, install, validate, drift, review, tui, dashboard, adopt, find, launch, watch
 ```
 

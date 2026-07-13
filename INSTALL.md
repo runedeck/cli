@@ -18,8 +18,7 @@ Running `rune --help` prints the CLI usage and exits successfully.
 
 - [ ] Ensure Rust toolchain is installed
 - [ ] Clone the repository
-- [ ] Build the release binary
-- [ ] Symlink to PATH
+- [ ] Install the release binary
 - [ ] Verify the installation
 
 ## Steps
@@ -37,7 +36,7 @@ source "$HOME/.cargo/env"
 
 ```sh
 git clone https://github.com/runedeck/rune.git
-cd rune-cli
+cd rune
 ```
 
 If already cloned, pull latest:
@@ -46,23 +45,16 @@ If already cloned, pull latest:
 git pull
 ```
 
-### Build
+### Install
 
 ```sh
-cargo build --release
+cargo install --path .
 ```
 
-### Symlink
-
-```sh
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/target/release/rune" ~/.local/bin/rune
-```
-
-If `~/.local/bin` is not on PATH:
+If `~/.cargo/bin` is not on PATH:
 
 ```zsh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 

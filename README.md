@@ -16,23 +16,27 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 
 ## What it does
 
-**Assemble** — Transforms source markdown into provider-specific output. Strips frontmatter, removes GFM reference links, resolves variant overrides, applies provider rules (kebab-case filenames, tool name remapping, TOML conversion). Writes provenance sidecars (SLSA/in-toto) alongside each built file.
+**Assemble** — Transforms source runes into provider-specific output. Strips frontmatter, removes GFM reference links, resolves variant overrides, applies provider rules (kebab-case filenames, tool name remapping, TOML conversion). Writes provenance sidecars (SLSA/in-toto) alongside each built file.
 
-**Deploy** — Deploys assembled files from `build/` to provider target directories. Tracks deployments via `.manifest` dotfiles for incremental installs — skips unchanged files, detects user modifications, overwrites stale content.
+**Deploy** — Deploys assembled runes from `build/` to provider target directories. Tracks deployments via `.manifest` dotfiles for incremental installs — skips unchanged files, detects user modifications, overwrites stale content.
 
 **Install** — Runs assemble + deploy in one step.
 
-**Validate** — Checks module structure, `.mdschema` compliance, and runs external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available.
+**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available.
 
-**Drift** — Compares a module's content against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
+**Drift** — Compares a rune source against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
 
-**Provenance** — Shows the source-to-deployed chain for a file, or scans a directory for verification status grouped by source module.
+**Provenance** — Shows the source-to-deployed chain for a file, or scans a directory for verification status grouped by source rune.
 
-**Copy** — Copies source files directly to a target directory without assembly or transforms. No manifest tracking.
+**Copy** — Copies source runes directly to a target directory without assembly or transforms. No manifest tracking.
 
-**Clean** — Removes stale files from previous installs. Compares the current build against deployed targets and deletes files no longer in the module.
+**Clean** — Removes stale files from previous installs. Compares the current build against deployed targets and deletes runes no longer in the source.
 
-**Release** — Packages assembled content as release tarballs.
+**Release** — Packages assembled runes as release tarballs.
+
+**Adopt** — Imports an upstream rune into a single-module source with digest-pinned provenance.
+
+**Find** — Searches local and watched rune sources by name, trigger text, and description.
 
 ## How Content Flows
 
@@ -123,7 +127,14 @@ providers:
 
 ## Usage
 
-Source modules use `--source <DIR>` (defaults to `.` for in-tree commands), targets use `--target <DIR>`, and upstreams use `--upstream <DIR>`. Project initialization takes a positional slug or directory because creating a quest is the flagship entry point.
+Rune sources and decks use `--source <DIR>` (defaults to `.` for in-tree commands), targets use `--target <DIR>`, and upstreams use `--upstream <DIR>`. Project initialization takes a positional slug or directory because creating a quest is the flagship entry point.
+
+Install the complete CLI, including the terminal and web dashboards, from a
+source checkout:
+
+```sh
+cargo install --path .
+```
 
 ### Start a project
 
@@ -166,7 +177,25 @@ rune add development
 uses `RUNE_DECK`, then the `deck` key in `~/.config/rune/config.yaml`. An
 explicit `--source <path-or-url>` always selects the requested source.
 
-Assemble and deploy the current module to all provider directories:
+### Review comments
+
+The TUI stores code-review comments in `.rune-comments.yaml` at the quest root.
+The file is local working state and is ignored by new single-module scaffolds.
+List or render comments for an agent from the current repository:
+
+```sh
+rune review list
+rune review export --format markdown
+```
+
+Both commands accept `--target <DIR>`. Without it, rune checks the current
+directory first and falls back to the bound quest. In the TUI, `y` copies the
+rendered review through macOS `pbcopy` when available, with terminal clipboard
+integration as the fallback.
+
+### Command examples
+
+Assemble and deploy the current rune source to all provider directories:
 
 ```sh
 rune install
@@ -184,10 +213,10 @@ Deploy only one provider:
 rune install --target ~/project --provider opencode
 ```
 
-Install from a different module:
+Install from a different rune source:
 
 ```sh
-rune install --source path/to/module --target ~/project
+rune install --source path/to/rune --target ~/project
 ```
 
 Overwrite user-modified files:
@@ -214,13 +243,13 @@ Deploy from an existing build/ directory:
 rune deploy
 ```
 
-Validate module structure, schemas, linters, and tests:
+Validate a deck or rune source against its schemas, linters, and tests:
 
 ```sh
 rune validate
 ```
 
-Compare a module against an upstream reference:
+Compare a rune source against an upstream reference:
 
 ```sh
 rune drift --upstream ../rune-core
@@ -247,19 +276,19 @@ rune provenance --target ~/.claude --show-orphans
 Copy source files directly without assembly:
 
 ```sh
-rune copy --source path/to/module --target ~/project
+rune copy --source path/to/rune --target ~/project
 ```
 
-Package assembled content as tarballs:
+Package assembled runes as tarballs:
 
 ```sh
 rune release
 ```
 
-Scaffold a new module:
+Scaffold a single-module rune source:
 
 ```sh
-rune init --target path/to/new-module
+rune init --module path/to/rune
 ```
 
 All commands support `--json` for machine-readable output.

@@ -41,16 +41,18 @@ Adopt a layered feature hierarchy from day one:
 ```toml
 [features]
 default = ["full"]
-full = ["assemble", "validate", "deploy"]
+full = ["assemble", "validate", "deploy", "tui", "dashboard"]
 assemble = []
-validate = ["dep:jsonschema"]
+validate = ["assemble", "dep:rust-embed"]
 deploy = []
+dashboard = ["assemble", "validate", "deploy", "dep:axum", "dep:tokio", "dep:askama", "dep:tower-http", "dep:open"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:ansi-to-tui", "dep:unicode-width"]
 testing = ["dep:tempfile", "dep:assert_cmd"]
 ```
 
 ### Conventions
 
-- `default` pulls `full` — `cargo install` gets everything
+- `default` pulls `full` — `cargo install` gets the core pipeline, TUI, and dashboard
 - Individual features are atomic and composable
 - Optional dependencies use `dep:` prefix to prevent implicit feature leakage
 - `testing` gates test utilities that live in `src/` (per RUST-0004)

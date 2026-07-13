@@ -1,6 +1,6 @@
 [package]
 name = "rune-cli"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 license = "EUPL-1.2"
 repository = "https://github.com/runedeck/rune"
@@ -16,12 +16,12 @@ path = "src/main.rs"
 
 [features]
 default = ["full"]
-full = ["assemble", "validate", "deploy"]
+full = ["assemble", "validate", "deploy", "tui", "dashboard"]
 assemble = []
-validate = ["dep:rust-embed"]
+validate = ["assemble", "dep:rust-embed"]
 deploy = []
 embed = ["dep:rust-embed"]
-dashboard = ["full", "dep:axum", "dep:tokio", "dep:askama", "dep:tower-http", "dep:open"]
+dashboard = ["assemble", "validate", "deploy", "dep:axum", "dep:tokio", "dep:askama", "dep:tower-http", "dep:open"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:syntect", "dep:ansi-to-tui", "dep:unicode-width"]
 
 [dependencies]
@@ -54,14 +54,14 @@ gix = { version = "0.66", default-features = false, features = ["blocking-networ
 rust-embed = { version = "8", optional = true }
 jsonschema = { version = "0.46.0", default-features = false }
 
-# dashboard (optional, excluded from full)
+# dashboard (optional, included in full)
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["rt", "net", "macros"], optional = true }
 askama = { version = "0.13", features = ["urlencode"], optional = true }
 tower-http = { version = "0.6", features = ["set-header"], optional = true }
 open = { version = "5", optional = true }
 
-# tui (optional, excluded from full)
+# tui (optional, included in full)
 ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.29", optional = true }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"], optional = true }
