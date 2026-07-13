@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use commands::services::editing;
 use std::fs;
 use std::path::Path;
 
@@ -90,6 +91,57 @@ fn create_skill_with_claude_fields(root: &Path, name: &str) {
 }
 
 // --- Install tests ---
+
+#[test]
+fn created_user_override_is_deployed_by_the_second_install() {
+    let module = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    scaffold_module(module.path());
+    create_rule(module.path(), "OverrideRule");
+
+    rune()
+        .args([
+            "install",
+            "--source",
+            module.path().to_str().unwrap(),
+            "--target",
+            target.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let base = module.path().join("rules/OverrideRule.md");
+    let (override_path, created) = editing::create_user_override(&base).unwrap();
+    assert!(created);
+    assert_eq!(
+        override_path,
+        module.path().join("rules/user/OverrideRule.md")
+    );
+    editing::atomic_write(
+        &override_path,
+        "---\nname: OverrideRule\ndescription: user override\n---\n\nUSER OVERRIDE BODY\n",
+    )
+    .unwrap();
+
+    rune()
+        .args([
+            "install",
+            "--source",
+            module.path().to_str().unwrap(),
+            "--target",
+            target.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let deployed =
+        std::fs::read_to_string(target.path().join(".claude/rules/OverrideRule.md")).unwrap();
+    assert!(deployed.contains("USER OVERRIDE BODY"), "{deployed}");
+    assert!(
+        !deployed.contains("Rule content with a reference"),
+        "{deployed}"
+    );
+}
 
 #[test]
 fn install_deploys_agent_to_all_providers() {

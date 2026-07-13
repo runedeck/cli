@@ -1,7 +1,9 @@
 pub mod app;
 mod cast_editor;
+mod comment_navigator;
 pub mod components;
 pub mod event;
+mod file_editor;
 mod rich;
 mod word_wrap;
 
@@ -58,6 +60,13 @@ pub fn run_snapshot(
     for _ in 0..3000 {
         app.poll_scan();
         if !app.scan_pending() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    for _ in 0..3000 {
+        app.poll_validation();
+        if !app.validation_pending() {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -179,6 +188,7 @@ fn install_panic_hook() {
 fn event_loop(terminal: &mut TuiTerminal, app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     while !app.should_quit() {
         app.poll_scan();
+        app.poll_validation();
         terminal.draw(|frame| app.render(frame))?;
         if terminal_event::poll(Duration::from_millis(200))? {
             match terminal_event::read()? {
@@ -203,20 +213,40 @@ fn run_external_tool(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let program = &command.program;
     restore_terminal(terminal);
+    let mut restore_guard = TerminalRestoreGuard::default();
     let status = std::process::Command::new(program)
         .args(&command.args)
         .current_dir(&command.directory)
         .status();
     *terminal = setup_terminal()?;
+    restore_guard.armed = true;
     terminal.clear()?;
     // The tool may have committed, amended, or touched files: rescan so VCS
     // state, diffs, and history reflect what it left behind. Force it — a
     // scan already in flight predates whatever the tool changed.
-    app.force_refresh();
+    if app.external_editor_finished() {
+        terminal.draw(|frame| app.render(frame))?;
+    } else {
+        app.force_refresh();
+    }
     match status {
         Ok(status) if status.success() => {}
         Ok(status) => app.set_toast(format!("{program} exited with {status}")),
         Err(error) => app.set_toast(format!("could not launch {program}: {error}")),
     }
+    restore_guard.armed = false;
     Ok(())
+}
+
+#[derive(Default)]
+struct TerminalRestoreGuard {
+    armed: bool,
+}
+
+impl Drop for TerminalRestoreGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            restore_terminal_without_backend();
+        }
+    }
 }
