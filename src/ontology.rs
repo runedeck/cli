@@ -4,9 +4,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
-
-static PROJECT_WARNING: Once = Once::new();
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -21,15 +18,15 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Ontology {
-    pub workshop: Option<String>,
+    pub quests: Option<String>,
     pub owner: Option<String>,
     pub archive: Option<String>,
     pub vault: Option<String>,
     pub work: Option<String>,
-    pub data: Option<String>,
+    pub lore: Option<String>,
     pub mount: Option<String>,
     pub developer: Option<String>,
-    pub documents: Option<String>,
+    pub artifacts: Option<String>,
     pub githooks: Option<String>,
     pub domain: Option<String>,
 }
@@ -171,15 +168,15 @@ pub struct ResolvedField {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ResolvedOntology {
-    pub workshop: Option<ResolvedValue>,
+    pub quests: Option<ResolvedValue>,
     pub owner: Option<ResolvedValue>,
     pub archive: Option<ResolvedValue>,
     pub vault: Option<ResolvedValue>,
     pub work: Option<ResolvedValue>,
-    pub data: Option<ResolvedValue>,
+    pub lore: Option<ResolvedValue>,
     pub mount: Option<ResolvedValue>,
     pub developer: Option<ResolvedValue>,
-    pub documents: Option<ResolvedValue>,
+    pub artifacts: Option<ResolvedValue>,
     pub githooks: Option<ResolvedValue>,
     pub domain: Option<ResolvedValue>,
 }
@@ -201,45 +198,45 @@ pub struct ResolvedConfig {
 
 #[derive(Debug, Clone, Copy)]
 enum Key {
-    Workshop,
+    Quests,
     Owner,
     Archive,
     Vault,
     Work,
-    Data,
+    Lore,
     Mount,
     Developer,
-    Documents,
+    Artifacts,
     Githooks,
     Domain,
 }
 
 impl Key {
     const ALL: [Self; 11] = [
-        Self::Workshop,
+        Self::Quests,
         Self::Owner,
         Self::Archive,
         Self::Vault,
         Self::Work,
-        Self::Data,
+        Self::Lore,
         Self::Mount,
         Self::Developer,
-        Self::Documents,
+        Self::Artifacts,
         Self::Githooks,
         Self::Domain,
     ];
 
     fn name(self) -> &'static str {
         match self {
-            Self::Workshop => "workshop",
+            Self::Quests => "quests",
             Self::Owner => "owner",
             Self::Archive => "archive",
             Self::Vault => "vault",
             Self::Work => "work",
-            Self::Data => "data",
+            Self::Lore => "lore",
             Self::Mount => "mount",
             Self::Developer => "developer",
-            Self::Documents => "documents",
+            Self::Artifacts => "artifacts",
             Self::Githooks => "githooks",
             Self::Domain => "domain",
         }
@@ -247,15 +244,15 @@ impl Key {
 
     fn env(self) -> &'static str {
         match self {
-            Self::Workshop => "RUNE_WORKSHOP",
+            Self::Quests => "RUNE_QUESTS",
             Self::Owner => "RUNE_OWNER",
             Self::Archive => "RUNE_ARCHIVE",
             Self::Vault => "RUNE_VAULT",
             Self::Work => "RUNE_WORK",
-            Self::Data => "RUNE_DATA",
+            Self::Lore => "RUNE_LORE",
             Self::Mount => "RUNE_MOUNT",
             Self::Developer => "RUNE_DEVELOPER",
-            Self::Documents => "RUNE_DOCUMENTS",
+            Self::Artifacts => "RUNE_ARTIFACTS",
             Self::Githooks => "RUNE_GITHOOKS",
             Self::Domain => "RUNE_DOMAIN",
         }
@@ -263,27 +260,27 @@ impl Key {
 
     fn default(self) -> Option<&'static str> {
         match self {
-            Self::Workshop => Some("~/Agents"),
+            Self::Quests => Some("~/Agents"),
             Self::Archive => Some("~/Agents/archive"),
             Self::Vault => Some("~/Atlas/Domains"),
-            Self::Data => Some("~/Data"),
+            Self::Lore => Some("~/Data"),
             Self::Mount => Some("~/Atlas"),
             Self::Domain => Some("Technology"),
-            Self::Owner | Self::Work | Self::Developer | Self::Documents | Self::Githooks => None,
+            Self::Owner | Self::Work | Self::Developer | Self::Artifacts | Self::Githooks => None,
         }
     }
 
     fn configured(self, ontology: &Ontology) -> Option<&String> {
         match self {
-            Self::Workshop => ontology.workshop.as_ref(),
+            Self::Quests => ontology.quests.as_ref(),
             Self::Owner => ontology.owner.as_ref(),
             Self::Archive => ontology.archive.as_ref(),
             Self::Vault => ontology.vault.as_ref(),
             Self::Work => ontology.work.as_ref(),
-            Self::Data => ontology.data.as_ref(),
+            Self::Lore => ontology.lore.as_ref(),
             Self::Mount => ontology.mount.as_ref(),
             Self::Developer => ontology.developer.as_ref(),
-            Self::Documents => ontology.documents.as_ref(),
+            Self::Artifacts => ontology.artifacts.as_ref(),
             Self::Githooks => ontology.githooks.as_ref(),
             Self::Domain => ontology.domain.as_ref(),
         }
@@ -312,15 +309,15 @@ impl ResolvedOntology {
 
     fn value(&self, key: Key) -> Option<&ResolvedValue> {
         match key {
-            Key::Workshop => self.workshop.as_ref(),
+            Key::Quests => self.quests.as_ref(),
             Key::Owner => self.owner.as_ref(),
             Key::Archive => self.archive.as_ref(),
             Key::Vault => self.vault.as_ref(),
             Key::Work => self.work.as_ref(),
-            Key::Data => self.data.as_ref(),
+            Key::Lore => self.lore.as_ref(),
             Key::Mount => self.mount.as_ref(),
             Key::Developer => self.developer.as_ref(),
-            Key::Documents => self.documents.as_ref(),
+            Key::Artifacts => self.artifacts.as_ref(),
             Key::Githooks => self.githooks.as_ref(),
             Key::Domain => self.domain.as_ref(),
         }
@@ -382,7 +379,7 @@ fn load_raw_config(config_dir: &Path) -> Result<Config, Error> {
     let config_path = config_dir.join("config.yaml");
     match fs::read_to_string(&config_path) {
         Ok(content) => parse_config(&content, &config_path),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => load_project_fallback(config_dir),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
         Err(error) => Err(Error::new(
             ErrorKind::Io,
             format!("cannot read {}: {error}", config_path.display()),
@@ -399,36 +396,6 @@ fn parse_config(content: &str, path: &Path) -> Result<Config, Error> {
     })
 }
 
-fn load_project_fallback(config_dir: &Path) -> Result<Config, Error> {
-    let project_path = config_dir.join("project.yaml");
-    let content = match fs::read_to_string(&project_path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Config::default()),
-        Err(error) => {
-            return Err(Error::new(
-                ErrorKind::Io,
-                format!("cannot read {}: {error}", project_path.display()),
-            ));
-        }
-    };
-    PROJECT_WARNING.call_once(|| {
-        eprintln!(
-            "warning: {} is deprecated; migrate to config.yaml",
-            project_path.display()
-        );
-    });
-    let project: ProjectConfig = serde_yaml::from_str(&content).map_err(|error| {
-        Error::new(
-            ErrorKind::Config,
-            format!("{} is malformed: {error}", project_path.display()),
-        )
-    })?;
-    Ok(Config {
-        ontology: project.into_ontology(),
-        ..Config::default()
-    })
-}
-
 fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> ResolvedConfig {
     let deck = env("RUNE_DECK")
         .map(|value| ResolvedValue {
@@ -442,15 +409,15 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
             })
         });
     let ontology = ResolvedOntology {
-        workshop: resolve_key(Key::Workshop, &config.ontology, env),
+        quests: resolve_key(Key::Quests, &config.ontology, env),
         owner: resolve_key(Key::Owner, &config.ontology, env),
         archive: resolve_key(Key::Archive, &config.ontology, env),
         vault: resolve_key(Key::Vault, &config.ontology, env),
         work: resolve_key(Key::Work, &config.ontology, env),
-        data: resolve_key(Key::Data, &config.ontology, env),
+        lore: resolve_key(Key::Lore, &config.ontology, env),
         mount: resolve_key(Key::Mount, &config.ontology, env),
         developer: resolve_key(Key::Developer, &config.ontology, env),
-        documents: resolve_key(Key::Documents, &config.ontology, env),
+        artifacts: resolve_key(Key::Artifacts, &config.ontology, env),
         githooks: resolve_key(Key::Githooks, &config.ontology, env),
         domain: resolve_key(Key::Domain, &config.ontology, env),
     };
@@ -489,48 +456,6 @@ fn resolved_value(key: Key, value: String, source: Source) -> ResolvedValue {
         value
     };
     ResolvedValue { value, source }
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-struct ProjectConfig {
-    workshop: Option<String>,
-    owner: Option<String>,
-    archive: Option<String>,
-    vault: Option<String>,
-    work: Option<String>,
-    data: Option<String>,
-    mount: Option<String>,
-    githooks: Option<String>,
-    developer: Option<String>,
-    documents: Option<String>,
-    defaults: ProjectDefaults,
-    exclude: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-struct ProjectDefaults {
-    domain: Option<String>,
-}
-
-impl ProjectConfig {
-    fn into_ontology(self) -> Ontology {
-        let _ = self.exclude;
-        Ontology {
-            workshop: self.workshop,
-            owner: self.owner,
-            archive: self.archive,
-            vault: self.vault,
-            work: self.work,
-            data: self.data,
-            mount: self.mount,
-            developer: self.developer,
-            documents: self.documents,
-            githooks: self.githooks,
-            domain: self.defaults.domain,
-        }
-    }
 }
 
 #[cfg(test)]

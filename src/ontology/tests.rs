@@ -16,15 +16,15 @@ fn env_from<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<Stri
 fn env_beats_config_beats_default() {
     let config = Config {
         ontology: Ontology {
-            workshop: Some("/from-config".to_string()),
+            quests: Some("/from-config".to_string()),
             ..Ontology::default()
         },
         ..Config::default()
     };
-    let resolved = resolve_config(&config, &env_from(&[("RUNE_WORKSHOP", "/from-env")]));
-    let workshop = resolved.ontology.workshop.expect("workshop resolved");
-    assert_eq!(workshop.value, "/from-env");
-    assert_eq!(workshop.source, Source::Env);
+    let resolved = resolve_config(&config, &env_from(&[("RUNE_QUESTS", "/from-env")]));
+    let quests = resolved.ontology.quests.expect("quests resolved");
+    assert_eq!(quests.value, "/from-env");
+    assert_eq!(quests.source, Source::Env);
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn tilde_expansion_resolves_under_home() {
 }
 
 #[test]
-fn project_yaml_fallback_populates_ontology() {
+fn project_yaml_is_ignored() {
     let dir = tempfile::tempdir().expect("tempdir");
     let project = dir.path().join("project.yaml");
     std::fs::write(
@@ -107,12 +107,23 @@ fn project_yaml_fallback_populates_ontology() {
     )
     .expect("write project");
 
-    let resolved = load_from_dir_with_env(dir.path(), &no_env).expect("load project fallback");
-    let workshop = resolved.ontology.workshop.expect("workshop");
-    let domain = resolved.ontology.domain.expect("domain");
-    assert_eq!(workshop.value, "/workshop");
-    assert_eq!(workshop.source, Source::Config);
-    assert_eq!(domain.value, "Security");
+    let resolved = load_from_dir_with_env(dir.path(), &no_env).expect("load defaults");
+    assert!(resolved.ontology.quests.is_some_and(|quests| {
+        quests.source == Source::Default && quests.value.ends_with("Agents")
+    }));
+}
+
+#[test]
+fn lore_and_artifacts_resolve_from_env() {
+    let resolved = resolve_config(
+        &Config::default(),
+        &env_from(&[("RUNE_LORE", "/lore"), ("RUNE_ARTIFACTS", "/artifacts")]),
+    );
+    assert_eq!(resolved.ontology.lore.expect("lore").value, "/lore");
+    assert_eq!(
+        resolved.ontology.artifacts.expect("artifacts").value,
+        "/artifacts"
+    );
 }
 
 #[test]

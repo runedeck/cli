@@ -20,13 +20,23 @@ pub fn show(json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
+const ONTOLOGY_KEYS: [&str; 4] = ["quests", "lore", "artifacts", "owner"];
+
 pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
-    if key != "deck" {
-        return Err(format!("unsupported config key '{key}'; expected: deck"));
+    let nested = ONTOLOGY_KEYS.contains(&key);
+    if key != "deck" && !nested {
+        return Err(format!(
+            "unsupported config key '{key}'; expected: deck, {}",
+            ONTOLOGY_KEYS.join(", ")
+        ));
     }
     let config_dir = ontology::config_dir().map_err(|error| error.to_string())?;
     let config_path = config_dir.join("config.yaml");
-    set_in_file(&config_path, key, value)?;
+    if nested {
+        set_nested_in_file(&config_path, "ontology", key, value)?;
+    } else {
+        set_in_file(&config_path, key, value)?;
+    }
     if json {
         println!(
             "{}",
@@ -38,15 +48,27 @@ pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
+fn set_nested_in_file(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+    let mut document = read_config_document(path)?;
+    let mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let section_key = serde_yaml::Value::String(section.to_string());
+    let section_value = mapping
+        .entry(section_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let section_mapping = section_value
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{section} in {} must be a YAML mapping", path.display()))?;
+    section_mapping.insert(
+        serde_yaml::Value::String(key.to_string()),
+        serde_yaml::Value::String(value.to_string()),
+    );
+    write_config_document(path, &document)
+}
+
 fn set_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
-    let mut document = match fs::read_to_string(path) {
-        Ok(content) => serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .map_err(|error| format!("{} is malformed: {error}", path.display()))?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-        }
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-    };
+    let mut document = read_config_document(path)?;
     let mapping = document
         .as_mapping_mut()
         .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
@@ -54,11 +76,26 @@ fn set_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
         serde_yaml::Value::String(key.to_string()),
         serde_yaml::Value::String(value.to_string()),
     );
+    write_config_document(path, &document)
+}
+
+fn read_config_document(path: &Path) -> Result<serde_yaml::Value, String> {
+    match fs::read_to_string(path) {
+        Ok(content) => serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .map_err(|error| format!("{} is malformed: {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        }
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+fn write_config_document(path: &Path, document: &serde_yaml::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    let content = serde_yaml::to_string(&document)
+    let content = serde_yaml::to_string(document)
         .map_err(|error| format!("cannot serialize config: {error}"))?;
     fs::write(path, content).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
@@ -73,7 +110,24 @@ fn format_source(source: Source) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::set_in_file;
+    use super::{set_in_file, set_nested_in_file};
+
+    #[test]
+    fn nested_setter_writes_under_ontology() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.yaml");
+        std::fs::write(&path, "deck: /tmp/deck\n").expect("fixture");
+
+        set_nested_in_file(&path, "ontology", "quests", "/tmp/quests").expect("set quests");
+        set_nested_in_file(&path, "ontology", "lore", "/tmp/lore").expect("set lore");
+
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(path).expect("read updated config"))
+                .expect("parse updated config");
+        assert_eq!(value["ontology"]["quests"].as_str(), Some("/tmp/quests"));
+        assert_eq!(value["ontology"]["lore"].as_str(), Some("/tmp/lore"));
+        assert_eq!(value["deck"].as_str(), Some("/tmp/deck"));
+    }
 
     #[test]
     fn setter_preserves_unrelated_yaml() {
