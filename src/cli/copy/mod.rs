@@ -6,8 +6,8 @@ use std::path::Path;
 
 /// Copy source files directly to a target directory.
 ///
-/// Copies agents/, skills/, rules/ as-is from module root to target.
-/// When the source module has a `module.yaml` (and `skip_provenance` is false),
+/// Copies agents/, skills/, and rules/ as-is from a rune source to a target.
+/// When the rune source has a `module.yaml` (and `skip_provenance` is false),
 /// writes SLSA provenance sidecars to `.provenance/` directories alongside
 /// each copied file in the target tree.
 pub fn execute(path: &str, target: &str, skip_provenance: bool) -> Result<ActionResult, Error> {

@@ -279,7 +279,7 @@ fn module_name(module_root: &Path) -> String {
     match commands::module::load(module_root) {
         Ok(manifest) => manifest.name,
         Err(_) => module_root.file_name().map_or_else(
-            || "module".to_string(),
+            || "rune".to_string(),
             |name| name.to_string_lossy().to_string(),
         ),
     }

@@ -13,8 +13,7 @@ const MAKEFILE_TEMPLATE: &str = include_str!(concat!(
     "/templates/make/dist.mk"
 ));
 
-/// Resolve an optional deck, preserving the existing single-module
-/// release path unchanged.
+/// Resolve an optional deck or a single-module rune source.
 pub fn execute_source(
     path: &str,
     deck_name: Option<&str>,
@@ -59,7 +58,7 @@ pub fn execute_source(
 }
 
 /// Assemble, install to a staging directory, then package each provider's
-/// output as a self-contained release tarball in `dist/`.
+/// output as a self-contained rune release tarball in `dist/`.
 ///
 /// ```text
 /// module/
@@ -68,7 +67,7 @@ pub fn execute_source(
 /// ```
 ///
 /// Each tarball wraps `.{provider}/` (with `.manifest` inside, written by
-/// install), a generated `Makefile`, and the module `README.md`.
+/// install), a generated `Makefile`, and the rune source `README.md`.
 pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
     let module_root = Path::new(path);
     let module_manifest = module::load(module_root).map_err(|error| {

@@ -418,10 +418,17 @@ fn fetch(source: &ClassifiedUrl) -> Result<Vec<u8>, String> {
 }
 
 fn canonical_module_root(module: &Path) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(module)
-        .map_err(|error| format!("cannot canonicalize module {}: {error}", module.display()))?;
+    let root = fs::canonicalize(module).map_err(|error| {
+        format!(
+            "cannot canonicalize rune source {}: {error}",
+            module.display()
+        )
+    })?;
     if !root.is_dir() {
-        return Err(format!("module is not a directory: {}", root.display()));
+        return Err(format!(
+            "rune source is not a directory: {}",
+            root.display()
+        ));
     }
     Ok(root)
 }
@@ -438,7 +445,7 @@ fn contained_path(module_root: &Path, relative_path: &Path) -> Result<PathBuf, S
         .map_err(|error| format!("cannot canonicalize {}: {error}", parent.display()))?;
     if !canonical_parent.starts_with(module_root) {
         return Err(format!(
-            "target escapes module root: {}",
+            "target escapes rune source root: {}",
             relative_path.display()
         ));
     }
@@ -448,7 +455,7 @@ fn contained_path(module_root: &Path, relative_path: &Path) -> Result<PathBuf, S
 fn validate_relative_path(path: &str) -> Result<PathBuf, String> {
     let relative = Path::new(path);
     if relative.as_os_str().is_empty() || relative.is_absolute() {
-        return Err(format!("path must be relative to the module: {path}"));
+        return Err(format!("path must be relative to the rune source: {path}"));
     }
     let mut normalized = PathBuf::new();
     for component in relative.components() {

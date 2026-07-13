@@ -9,9 +9,9 @@ use std::path::Path;
 
 use crate::cli::config;
 
-/// Assemble module content into the build/ directory.
+/// Assemble rune content into the build/ directory.
 ///
-/// Given a module at `path`:
+/// Given a rune source at `path`:
 ///
 /// ```text
 /// module/
@@ -49,7 +49,7 @@ pub fn execute_with_options(
     if !module_root.is_dir() {
         return Err(Error::new(
             commands::error::ErrorKind::Io,
-            format!("module directory not found: {}", module_root.display()),
+            format!("rune source directory not found: {}", module_root.display()),
         ));
     }
     let module_manifest = module_root.join("module.yaml");
@@ -57,7 +57,7 @@ pub fn execute_with_options(
         return Err(Error::new(
             commands::error::ErrorKind::Config,
             format!(
-                "no module.yaml or .rune at {}; --source must point to a module root or consumer repo",
+                "no module.yaml or .rune at {}; --source must point to a rune source or consumer quest",
                 module_root.display()
             ),
         ));

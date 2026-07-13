@@ -162,7 +162,7 @@ fn resolve_target_base(target_root: &str, effective_target: Option<&str>) -> Pat
 /// `/` or `.` matches literally; a bare prefix (`skills/Alpha`) matches only
 /// at a path or extension boundary, so `skills/AlphaOther/` stays untouched.
 fn only_matches(manifest_key: &str, prefix: &str) -> bool {
-    // Providers rename artifacts during assembly (gemini slugifies
+    // Providers rename runes during assembly (gemini slugifies
     // SecurityArchitect to security-architect); compare shapes that survive
     // the rename: lowercase with separators dropped.
     let key = normalize_only(manifest_key);
@@ -488,8 +488,8 @@ fn filter_requested_providers(
     Ok(matched)
 }
 
-/// Refuse to operate on a path that isn't a rune module root or a consumer
-/// repo. A consumer repo (one with `.rune`) is a valid `--source` for
+/// Refuse to operate on a path that isn't a rune source root or a consumer
+/// quest. A consumer quest (one with `.rune`) is a valid `--source` for
 /// install and deploy; the assemble step has already turned its manifest
 /// into a `Vec<SourceFile>` by the time deploy runs.
 fn require_module_root(module_root: &Path) -> Result<(), Error> {
@@ -503,7 +503,7 @@ fn require_module_root(module_root: &Path) -> Result<(), Error> {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "no module.yaml or .rune at {}; --source must point to a module root or consumer repo",
+                "no module.yaml or .rune at {}; --source must point to a rune source or consumer quest",
                 module_root.display()
             ),
         ));
