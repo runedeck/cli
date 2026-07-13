@@ -11,7 +11,7 @@
 use commands::error::{Error, ErrorKind};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{DriftEntry, DriftResult, DriftStatus, compare_file_content, print_drift_result};
 use crate::cli::config;
@@ -69,6 +69,66 @@ pub fn execute(
             ErrorKind::Io,
             format!("no build/ output under {source}; run `rune assemble` or `rune install` first"),
         ));
+    }
+
+    if json_output {
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => println!("{json}"),
+            Err(error) => eprintln!("failed to serialize drift result: {error}"),
+        }
+    } else {
+        print_drift_result(&result);
+    }
+
+    let has_drift = result.entries.iter().any(|entry| {
+        matches!(
+            entry.status,
+            DriftStatus::FrontmatterOnly
+                | DriftStatus::BodyOnly
+                | DriftStatus::Both
+                | DriftStatus::UpstreamOnly
+        )
+    });
+    Ok(i32::from(has_drift))
+}
+
+/// Verify manifest-tracked files in provider targets discovered in the current
+/// working directory. This mode needs neither source material nor `build/`.
+pub fn execute_discovered(
+    target_base: &Path,
+    discovered_targets: &[PathBuf],
+    json_output: bool,
+) -> Result<i32, Error> {
+    let mut result = DriftResult::default();
+
+    for target in discovered_targets {
+        let deployed_base = target_base.join(target);
+        let category = target
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .trim_start_matches('.')
+            .to_string();
+        let mut entries = load_deployed_manifest(&deployed_base)?
+            .into_iter()
+            .collect::<Vec<_>>();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        for (relative, manifest_entry) in entries {
+            let status = match fs::read_to_string(deployed_base.join(&relative)) {
+                Ok(content)
+                    if commands::manifest::content_sha256(&content)
+                        == manifest_entry.fingerprint =>
+                {
+                    DriftStatus::Identical
+                }
+                Ok(_) => DriftStatus::BodyOnly,
+                Err(_) => DriftStatus::UpstreamOnly,
+            };
+            result
+                .entries
+                .push(only_entry(&relative, status, &category));
+        }
     }
 
     if json_output {
@@ -215,7 +275,8 @@ fn compare_provider(
         let Some(kind) = kind_for_relative(relative) else {
             continue;
         };
-        let deployed_base = target_base.join(provider_config.target_for_kind(kind));
+        let target_root = provider_config.target_for_kind(kind);
+        let deployed_base = target_base.join(target_root);
         let deployed_path = deployed_base.join(relative);
         match fs::read_to_string(&deployed_path) {
             Ok(deployed_content) => {

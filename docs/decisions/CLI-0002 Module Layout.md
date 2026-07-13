@@ -8,7 +8,7 @@ tags:
     - architecture
 status: accepted
 created: 2026-03-19
-updated: 2026-04-17
+updated: 2026-07-13
 author: "@N4M3Z"
 project: rune-cli
 related:
@@ -118,7 +118,7 @@ tests/
 | `rune assemble`    | source → `build/` (assembly only, inspect before deploy)              |
 | `rune deploy`      | `build/` → provider dirs with manifest tracking and provenance        |
 | `rune validate`    | structure + mdschema + external tools (shellcheck, cargo, tsc, gitleaks) |
-| `rune drift`       | compare module against upstream, report frontmatter/body differences  |
+| `rune drift`       | compare source/upstream or verify manifest-scoped provider deployments; with no scope flag, discover manifest-bearing `.claude`, `.codex`, `.gemini`, and `.opencode` targets in the current directory |
 | `rune provenance`  | show source chain for a deployed file or scan a directory             |
 | `rune copy`        | raw source → target directory (no assembly, no transforms)            |
 | `rune release`     | assemble + package as tarballs (+ optional `--embed`)                 |

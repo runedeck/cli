@@ -7,11 +7,12 @@ use console::Style;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod scope;
 
 const BODY_KEY: &str = "body";
+const PROVIDER_TARGETS: &[&str] = &[".claude", ".codex", ".gemini", ".opencode"];
 
 // --- Types ---
 
@@ -47,7 +48,8 @@ pub struct DriftResult {
 // --- Execution ---
 
 /// Route to upstream comparison (`--upstream`) or manifest-scoped deployment
-/// verification (`--target`). Exactly one of the two must be provided.
+/// verification (`--target`). With neither option, provider targets containing
+/// a `.manifest` are discovered in the current directory.
 pub fn execute(
     module_path: &str,
     upstream_path: Option<&str>,
@@ -55,6 +57,11 @@ pub fn execute(
     ignore_keys: &[String],
     json_output: bool,
 ) -> Result<i32, Error> {
+    if upstream_path.is_none() && target_path.is_none() {
+        let (current_dir, targets) = discover_current_provider_targets()?;
+        return scope::execute_discovered(&current_dir, &targets, json_output);
+    }
+
     if commands::deck::is_deck(Path::new(module_path)) {
         let deck = commands::deck::load(Path::new(module_path))
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
@@ -63,30 +70,56 @@ pub fn execute(
                 execute_deck_upstream(&deck, upstream, ignore_keys, json_output)
             }
             (None, Some(target)) => scope::execute_deck(&deck, target, ignore_keys, json_output),
+            (None, None) => Err(Error::new(
+                ErrorKind::Config,
+                "drift mode was not selected".to_string(),
+            )),
             (Some(_), Some(_)) => Err(Error::new(
                 ErrorKind::Config,
                 "--upstream and --target are mutually exclusive".to_string(),
             )),
-            (None, None) => Err(Error::new(
-                ErrorKind::Config,
-                "provide --upstream <DIR> or --target <DIR>".to_string(),
-            )),
         };
     }
     match (upstream_path, target_path) {
-        (Some(upstream), None) => {
-            execute_upstream(module_path, upstream, ignore_keys, json_output)
-        }
+        (Some(upstream), None) => execute_upstream(module_path, upstream, ignore_keys, json_output),
         (None, Some(target)) => scope::execute(module_path, target, ignore_keys, json_output),
+        (None, None) => Err(Error::new(
+            ErrorKind::Config,
+            "drift mode was not selected".to_string(),
+        )),
         (Some(_), Some(_)) => Err(Error::new(
             ErrorKind::Config,
             "--upstream and --target are mutually exclusive".to_string(),
         )),
-        (None, None) => Err(Error::new(
-            ErrorKind::Config,
-            "provide --upstream <DIR> (compare two module trees) or --target <DIR> (verify build against a deployment)".to_string(),
-        )),
     }
+}
+
+fn discover_current_provider_targets() -> Result<(PathBuf, Vec<PathBuf>), Error> {
+    let current_dir = std::env::current_dir().map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot determine current directory: {error}"),
+        )
+    })?;
+    let targets = discover_provider_targets(&current_dir);
+    if targets.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!(
+                "no provider target with a .manifest found in current directory; expected one of {}",
+                PROVIDER_TARGETS.join(", ")
+            ),
+        ));
+    }
+    Ok((current_dir, targets))
+}
+
+fn discover_provider_targets(base: &Path) -> Vec<PathBuf> {
+    PROVIDER_TARGETS
+        .iter()
+        .map(PathBuf::from)
+        .filter(|target| base.join(target).join(".manifest").is_file())
+        .collect()
 }
 
 fn execute_deck_upstream(
