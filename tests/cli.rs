@@ -88,6 +88,66 @@ fn no_args_exits_with_error() {
         .stderr(predicate::str::is_empty().not());
 }
 
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_renders_deck_domain_columns() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--section",
+            "14",
+            "--width",
+            "140",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Domains"))
+        .stdout(predicate::str::contains("Kinds"))
+        .stdout(predicate::str::contains("Artifacts"))
+        .stdout(predicate::str::contains("science"))
+        .stdout(predicate::str::contains("writing"))
+        .stdout(predicate::str::contains("NAME"))
+        .stdout(predicate::str::contains("KIND"))
+        .stdout(predicate::str::contains("DOMAIN"));
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_renders_deck_casts() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--section",
+            "15",
+            "--drill",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Casts"))
+        .stdout(predicate::str::contains("essentials · 2 resolved"));
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_renders_batched_deck_history() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args(["tui", "--snapshot", "--source", &deck, "--section", "16"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("History"))
+        .stdout(predicate::str::contains("Loading commit history").not());
+}
+
 #[test]
 fn exec_shell_fixture_round_trips_json() {
     let root = tempfile::tempdir().unwrap();

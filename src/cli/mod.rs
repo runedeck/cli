@@ -47,6 +47,10 @@ enum Command {
     /// Launch the terminal dashboard
     #[cfg(feature = "tui")]
     Tui {
+        /// Module or deck root to inspect. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+
         /// Render one frame to stdout as text (headless layout inspection).
         #[arg(long)]
         snapshot: bool,
@@ -358,7 +362,12 @@ enum Command {
     #[cfg(feature = "dashboard")]
     Dashboard {
         /// Base directory to scan for modules (one level deep). Defaults to `.`.
-        #[arg(long, value_name = "DIR", default_value = ".")]
+        #[arg(
+            long = "source",
+            visible_alias = "root",
+            value_name = "DIR",
+            default_value = "."
+        )]
         root: String,
 
         /// Port to bind. Defaults to 40000, falling back to 40001 if busy.
@@ -430,6 +439,7 @@ pub fn run() -> i32 {
     let (result, verb) = match command {
         #[cfg(feature = "tui")]
         Command::Tui {
+            source,
             snapshot,
             width,
             height,
@@ -438,10 +448,11 @@ pub fn run() -> i32 {
             drill,
             row,
         } => {
+            let source = std::path::PathBuf::from(source);
             return if snapshot {
-                crate::tui::run_snapshot(width, height, section, tab.as_deref(), drill, row)
+                crate::tui::run_snapshot(source, width, height, section, tab.as_deref(), drill, row)
             } else {
-                crate::tui::run()
+                crate::tui::run(source)
             };
         }
         Command::Init { target } => (init::execute(&target), "initialized"),
@@ -635,7 +646,7 @@ fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error>
 
 #[cfg(feature = "tui")]
 fn bare() -> i32 {
-    crate::tui::run()
+    crate::tui::run(std::path::PathBuf::from("."))
 }
 
 #[cfg(not(feature = "tui"))]

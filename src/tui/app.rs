@@ -18,6 +18,7 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use commands::{
+    manifest::FileStatus,
     services::{
         self, builders,
         files::{self, FileSections},
@@ -37,7 +38,8 @@ use super::components::{
 use super::rich;
 use super::word_wrap::expand_gutter_wrapped;
 
-const SECTION_COUNT: usize = 13;
+const SECTION_COUNT: usize = 16;
+const LEGACY_SECTION_COUNT: usize = 13;
 const DETAIL_TAB_COUNT: usize = 6;
 const LEFT_MIN_WIDTH: u16 = 14;
 const LEFT_MAX_WIDTH: u16 = 20;
@@ -69,6 +71,8 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("o s a r", "overview, skills, agents, rules"),
             ("R d p v", "repositories, ADRs, provenance, variants"),
             ("f t h c m", "search, settings, hooks, config, schemas"),
+            ("n x y", "domains, casts, deck history"),
+            ("H", "history for selected artifact"),
         ],
     ),
     (
@@ -113,6 +117,9 @@ pub enum Section {
     Hooks = 10,
     Config = 11,
     Schemas = 12,
+    Domains = 13,
+    Casts = 14,
+    DeckHistory = 15,
 }
 
 impl Section {
@@ -130,6 +137,9 @@ impl Section {
         Self::Hooks,
         Self::Config,
         Self::Schemas,
+        Self::Domains,
+        Self::Casts,
+        Self::DeckHistory,
     ];
 
     fn label(self) -> &'static str {
@@ -147,6 +157,9 @@ impl Section {
             Self::Hooks => "Hooks",
             Self::Config => "Config",
             Self::Schemas => "Schemas",
+            Self::Domains => "Domains",
+            Self::Casts => "Casts",
+            Self::DeckHistory => "History",
         }
     }
 
@@ -169,6 +182,9 @@ impl Section {
             "hooks" | "hook" => Some(Self::Hooks),
             "config" | "configuration" => Some(Self::Config),
             "schemas" | "schema" | "manifests" | "manifest" => Some(Self::Schemas),
+            "domains" | "domain" => Some(Self::Domains),
+            "casts" | "cast" => Some(Self::Casts),
+            "deck-history" | "deck_history" | "history" => Some(Self::DeckHistory),
             _ => None,
         }
     }
@@ -190,6 +206,9 @@ impl Section {
             Self::Hooks => "h",
             Self::Config => "c",
             Self::Schemas => "m",
+            Self::Domains => "n",
+            Self::Casts => "x",
+            Self::DeckHistory => "y",
         }
     }
 
@@ -208,6 +227,9 @@ impl Section {
             'h' | 'H' => Some(Self::Hooks),
             'c' | 'C' => Some(Self::Config),
             'm' | 'M' => Some(Self::Schemas),
+            'n' | 'N' => Some(Self::Domains),
+            'x' | 'X' => Some(Self::Casts),
+            'y' => Some(Self::DeckHistory),
             _ => None,
         }
     }
@@ -336,6 +358,9 @@ enum ListTarget {
         group: usize,
         index: usize,
     },
+    Domain(String),
+    Cast(String),
+    HistoryCommit(String),
 }
 
 #[derive(Debug, Clone)]
@@ -561,6 +586,17 @@ pub struct App {
     list_filter_typing: bool,
     /// Show only rows whose status needs attention (modified/stale/new).
     problems_only: bool,
+    /// Confirmation-ready cast edit. Enter persists it; Esc discards it.
+    pending_cast_edit: Option<services::CastEdit>,
+    /// Request-driven, bounded deck history loader and its latest window.
+    history_walker: Option<services::HistoryWalker>,
+    history_update: services::HistoryUpdate,
+    history_received: bool,
+    deck_domain_selected: usize,
+    deck_kind_selected: usize,
+    deck_artifact_selected: usize,
+    deck_offsets: [usize; 3],
+    deck_last_selected: [usize; 3],
 }
 
 impl App {
@@ -594,7 +630,7 @@ impl App {
         view: DashboardView,
         file_sections: FileSections,
     ) -> Self {
-        Self {
+        let mut app = Self {
             root,
             providers,
             watched_locations,
@@ -642,7 +678,18 @@ impl App {
             detail_viewport: 1,
             synthesized: None,
             search_typing: false,
-        }
+            pending_cast_edit: None,
+            history_walker: None,
+            history_update: services::HistoryUpdate::default(),
+            history_received: false,
+            deck_domain_selected: 0,
+            deck_kind_selected: 0,
+            deck_artifact_selected: 0,
+            deck_offsets: [0; 3],
+            deck_last_selected: [0; 3],
+        };
+        app.ensure_history_walker();
+        app
     }
 
     pub fn refresh(&mut self) {
@@ -678,6 +725,10 @@ impl App {
                 self.file_sections = scan_result.file_sections;
                 self.scan_state = ScanState::Idle;
                 self.scan_receiver = None;
+                self.history_walker = None;
+                self.history_update = services::HistoryUpdate::default();
+                self.history_received = false;
+                self.ensure_history_walker();
                 self.toast = Some("scan complete".to_string());
                 let previous_target = self.selected_target();
                 self.invalidate_rows();
@@ -734,7 +785,87 @@ impl App {
         self.toast = None;
     }
 
+    fn ensure_history_walker(&mut self) {
+        if self.history_walker.is_some() || self.view.deck.is_none() {
+            return;
+        }
+        self.restart_history(services::HistoryScope::Deck);
+    }
+
+    fn restart_history(&mut self, scope: services::HistoryScope) {
+        let Some(root) = self.view.deck.as_ref().map(|deck| deck.root.clone()) else {
+            return;
+        };
+        self.history_walker = None;
+        self.history_update = services::HistoryUpdate::default();
+        self.history_received = false;
+        match services::HistoryWalker::start(root, scope) {
+            Ok(walker) => self.history_walker = Some(walker),
+            Err(error) => {
+                self.history_update.error = Some(format!("could not start history: {error}"));
+            }
+        }
+    }
+
+    pub fn open_history_for_selection(&mut self) {
+        let paths = self
+            .selected_artifact()
+            .map(|artifact| vec![PathBuf::from(&artifact.source_path)]);
+        self.set_section(Section::DeckHistory);
+        self.focused = ColumnFocus::List;
+        self.restart_history(
+            paths.map_or(services::HistoryScope::Deck, services::HistoryScope::Paths),
+        );
+    }
+
+    pub(super) fn poll_history(&mut self) {
+        let selected_sha = (self.section == Section::DeckHistory)
+            .then(|| self.selected_target())
+            .flatten()
+            .and_then(|target| match target {
+                ListTarget::HistoryCommit(sha) => Some(sha),
+                _ => None,
+            });
+        let mut changed = false;
+        if let Some(walker) = self.history_walker.as_ref() {
+            while let Ok(update) = walker.try_recv() {
+                self.history_update = update;
+                self.history_received = true;
+                changed = true;
+            }
+        }
+        if changed && self.section == Section::DeckHistory {
+            if let Some(sha) = selected_sha
+                && let Some(index) = self
+                    .history_update
+                    .entries
+                    .iter()
+                    .position(|entry| entry.commit.sha == sha)
+            {
+                let error_row = usize::from(self.history_update.error.is_some());
+                self.list_selected[Section::DeckHistory as usize] = index + error_row;
+            }
+            self.invalidate_rows();
+            self.clamp_list_selection();
+        }
+    }
+
+    pub(super) fn history_ready(&self) -> bool {
+        self.history_walker.is_none() || self.history_received
+    }
+
+    fn request_history_if_near_end(&self, selected: usize) {
+        if self.section != Section::DeckHistory || selected + 24 < self.history_update.entries.len()
+        {
+            return;
+        }
+        if let Some(walker) = self.history_walker.as_ref() {
+            let _ = walker.request_more();
+        }
+    }
+
     pub fn render(&mut self, frame: &mut Frame<'_>) {
+        self.poll_history();
         if self.preview.is_some() {
             let area = frame.area();
             let inner_width = area.width.saturating_sub(2).max(1);
@@ -778,7 +909,25 @@ impl App {
             ])
             .split(frame.area());
         self.render_status(frame, layout[0]);
-        let fitted_widths = fit_miller_widths(layout[1].width, self.column_widths);
+        let mut desired_widths = self.column_widths;
+        if self.view.deck.is_some()
+            && matches!(
+                self.section,
+                Section::Skills | Section::Agents | Section::Rules | Section::Hooks
+            )
+        {
+            let targets = self
+                .view
+                .deck
+                .as_ref()
+                .into_iter()
+                .flat_map(|deck| deck.targets.iter().map(|target| target.name.clone()))
+                .collect::<Vec<_>>();
+            desired_widths.middle = desired_widths.middle.max(usize_to_u16(
+                UnicodeWidthStr::width(artifact_table_header(&targets).as_str()) + 2,
+            ));
+        }
+        let fitted_widths = fit_miller_widths(layout[1].width, desired_widths);
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -792,9 +941,15 @@ impl App {
         self.mouse_regions.detail = columns[2];
         self.mouse_regions.tabs = Rect::default();
         self.mouse_regions.detail_body = Rect::default();
-        self.render_sections(frame, columns[0]);
-        self.render_list(frame, columns[1]);
-        self.render_detail(frame, columns[2]);
+        if self.section == Section::Domains && self.view.deck.is_some() {
+            self.render_deck_domains(frame, columns[0]);
+            self.render_deck_kinds(frame, columns[1]);
+            self.render_deck_artifacts(frame, columns[2]);
+        } else {
+            self.render_sections(frame, columns[0]);
+            self.render_list(frame, columns[1]);
+            self.render_detail(frame, columns[2]);
+        }
         self.render_footer(frame, layout[2]);
 
         if let Some(picker) = &self.deploy_picker {
@@ -835,7 +990,14 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = if let Some(prompt) = &self.comment_prompt {
+        let text = if let Some(edit) = &self.pending_cast_edit {
+            format!(
+                " {} {} in cast {}?  Enter confirms · Esc cancels",
+                if edit.include { "include" } else { "exclude" },
+                edit.artifact_id,
+                edit.cast_name
+            )
+        } else if let Some(prompt) = &self.comment_prompt {
             format!(
                 " comment [{}] {}:{} > {}",
                 prompt.kind.label(),
@@ -863,7 +1025,8 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let items: Vec<ListItem<'_>> = Section::ALL
+        let items: Vec<ListItem<'_>> = self
+            .visible_sections()
             .iter()
             .enumerate()
             .map(|(index, section)| {
@@ -881,6 +1044,130 @@ impl App {
             })
             .collect();
         frame.render_widget(List::new(items), inner);
+    }
+
+    /// Deck inventory uses the three existing Miller panes as
+    /// domains -> kinds -> artifacts. Section shortcuts remain active, so the
+    /// user can leave this focused inventory without adding a fourth column.
+    fn render_deck_domains(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let block = column_block(" Domains ", self.focused == ColumnFocus::Sections);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let len = self.view.deck.as_ref().map_or(0, |deck| deck.domains.len());
+        self.update_deck_viewport(0, self.deck_domain_selected, len, inner.height);
+        let offset = self.deck_offsets[0];
+        let items = self
+            .view
+            .deck
+            .as_ref()
+            .into_iter()
+            .flat_map(|deck| deck.domains.iter())
+            .enumerate()
+            .skip(offset)
+            .take(usize::from(inner.height))
+            .map(|(index, domain)| {
+                let style = if index == self.deck_domain_selected {
+                    selected_style(self.focused == ColumnFocus::Sections)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(domain.name.clone(), style),
+                    Span::styled(
+                        format!("  {}", domain.artifact_count()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(List::new(items), inner);
+    }
+
+    fn render_deck_kinds(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let block = column_block(" Kinds ", self.focused == ColumnFocus::List);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let kinds = self.selected_deck_kinds();
+        self.update_deck_viewport(1, self.deck_kind_selected, kinds.len(), inner.height);
+        let offset = self.deck_offsets[1];
+        let items = self
+            .selected_deck_kinds()
+            .into_iter()
+            .enumerate()
+            .skip(offset)
+            .take(usize::from(inner.height))
+            .map(|(index, (kind, count))| {
+                let style = if index == self.deck_kind_selected {
+                    selected_style(self.focused == ColumnFocus::List)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(kind, style),
+                    Span::styled(format!("  {count}"), Style::default().fg(Color::DarkGray)),
+                ]))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(List::new(items), inner);
+    }
+
+    fn render_deck_artifacts(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let block = column_block(" Artifacts ", self.focused == ColumnFocus::Detail);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let artifact_count = self.selected_deck_artifacts().len();
+        let body_height = inner.height.saturating_sub(1);
+        self.update_deck_viewport(2, self.deck_artifact_selected, artifact_count, body_height);
+        let offset = self.deck_offsets[2];
+        let target_names = self
+            .view
+            .deck
+            .as_ref()
+            .map(|deck| {
+                deck.targets
+                    .iter()
+                    .map(|target| target.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut lines = vec![Line::from(Span::styled(
+            artifact_table_header(&target_names),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ))];
+        lines.extend(
+            self.selected_deck_artifacts()
+                .into_iter()
+                .enumerate()
+                .skip(offset)
+                .take(usize::from(body_height))
+                .map(|(index, (module, artifact))| {
+                    let style = if index == self.deck_artifact_selected {
+                        selected_style(self.focused == ColumnFocus::Detail)
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(
+                        self.deck_artifact_table_row(module, artifact),
+                        style,
+                    ))
+                }),
+        );
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
+    fn update_deck_viewport(&mut self, pane: usize, selected: usize, len: usize, height: u16) {
+        let viewport = usize::from(height.max(1));
+        if selected != self.deck_last_selected[pane] {
+            if selected < self.deck_offsets[pane] {
+                self.deck_offsets[pane] = selected;
+            } else if selected >= self.deck_offsets[pane] + viewport {
+                self.deck_offsets[pane] = selected + 1 - viewport;
+            }
+            self.deck_last_selected[pane] = selected;
+        }
+        self.deck_offsets[pane] = self.deck_offsets[pane].min(len.saturating_sub(viewport));
     }
 
     fn render_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -922,6 +1209,7 @@ impl App {
         }
         let viewport = usize::from(inner.height.max(1));
         let selected = self.selected_list_index(&self.cached_rows);
+        self.request_history_if_near_end(selected);
         // The viewport follows selection changes (keyboard/click), while wheel
         // scrolling moves the offset alone — passive gestures never drag the
         // selection, and moving the selection always brings it back on screen.
@@ -1081,8 +1369,136 @@ impl App {
                     frame.render_widget(Paragraph::new("schema file not found"), inner);
                 }
             }
+            Some(ListTarget::Cast(name)) => self.render_cast_detail(frame, inner, &name),
+            Some(ListTarget::HistoryCommit(sha)) => {
+                self.render_history_detail(frame, inner, &sha);
+            }
+            Some(ListTarget::Domain(name)) => self.render_domain_detail(frame, inner, &name),
             _ => self.render_overview_detail(frame, inner),
         }
+    }
+
+    fn render_domain_detail(&self, frame: &mut Frame<'_>, area: Rect, name: &str) {
+        let Some(domain) = self
+            .view
+            .deck
+            .as_ref()
+            .and_then(|deck| deck.domains.iter().find(|domain| domain.name == name))
+        else {
+            frame.render_widget(Paragraph::new("domain not found"), area);
+            return;
+        };
+        let validation = if domain.validation.valid {
+            "valid".to_string()
+        } else {
+            format!("invalid: {}", domain.validation.errors.join("; "))
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                domain.name.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(domain.description.clone()),
+            Line::from(format!("version {} · {validation}", domain.version)),
+            Line::from(""),
+        ];
+        for (kind, count) in &domain.artifact_counts {
+            lines.push(Line::from(format!("{kind:<12} {count}")));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    }
+
+    fn render_cast_detail(&mut self, frame: &mut Frame<'_>, area: Rect, name: &str) {
+        let Some(cast) = self
+            .view
+            .deck
+            .as_ref()
+            .and_then(|deck| deck.casts.iter().find(|cast| cast.name == name))
+            .cloned()
+        else {
+            frame.render_widget(Paragraph::new("cast not found"), area);
+            return;
+        };
+        self.mouse_regions.detail_body = area;
+        let artifacts = self.all_deck_artifact_ids();
+        self.detail_cursor = self.detail_cursor.min(artifacts.len().saturating_sub(1));
+        let viewport = usize::from(area.height.max(1));
+        self.detail_viewport = viewport;
+        if self.detail_cursor < usize::from(self.detail_scroll) {
+            self.detail_scroll = u16::try_from(self.detail_cursor).unwrap_or(u16::MAX);
+        } else if self.detail_cursor >= usize::from(self.detail_scroll) + viewport.saturating_sub(3)
+        {
+            self.detail_scroll = u16::try_from(
+                self.detail_cursor
+                    .saturating_add(4)
+                    .saturating_sub(viewport),
+            )
+            .unwrap_or(u16::MAX);
+        }
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!("{} · {} resolved", cast.name, cast.resolved_artifacts.len()),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(cast.description.clone()),
+            Line::from(Span::styled(
+                "Space toggles · Enter confirms pending edit",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+        ];
+        let scroll = usize::from(self.detail_scroll);
+        lines.extend(
+            artifacts
+                .iter()
+                .enumerate()
+                .skip(scroll)
+                .take(viewport.saturating_sub(4))
+                .map(|(index, artifact_id)| {
+                    let included = cast
+                        .resolved_artifacts
+                        .iter()
+                        .any(|resolved| resolved == artifact_id);
+                    let style = if index == self.detail_cursor {
+                        selected_style(self.focused == ColumnFocus::Detail)
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(
+                        format!("[{}] {artifact_id}", if included { "x" } else { " " }),
+                        style,
+                    ))
+                }),
+        );
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_history_detail(&self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+        let Some(entry) = self
+            .history_update
+            .entries
+            .iter()
+            .find(|entry| entry.commit.sha == sha)
+        else {
+            frame.render_widget(
+                Paragraph::new("commit metadata outside sliding window"),
+                area,
+            );
+            return;
+        };
+        let short = entry.commit.sha.chars().take(12).collect::<String>();
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!("{short} {}", entry.commit.message),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!("author  {}", entry.commit.author)),
+            Line::from(format!("date    {}", entry.commit.date)),
+        ];
+        if !entry.refs.is_empty() {
+            lines.push(Line::from(format!("refs    {}", entry.refs.join(", "))));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
 
     fn render_artifact_detail(
@@ -1762,6 +2178,10 @@ impl App {
     /// Esc walks focus back toward Sections and quits only from there —
     /// backing out of a pane must never kill the session.
     pub fn escape(&mut self) {
+        if self.section == Section::Domains && self.focused == ColumnFocus::Sections {
+            self.set_section(Section::Overview);
+            return;
+        }
         match self.focused {
             ColumnFocus::Detail | ColumnFocus::List => self.focus_previous(),
             ColumnFocus::Sections => self.request_quit(),
@@ -2030,9 +2450,9 @@ impl App {
         } else if regions.sections.contains(position) {
             self.focused = ColumnFocus::Sections;
             if let Some(row) = bordered_row_at(regions.sections, x, y)
-                && row < Section::ALL.len()
+                && let Some(&section) = self.visible_sections().get(row)
             {
-                self.set_section(Section::ALL[row]);
+                self.set_section(section);
             }
         } else if regions.list.contains(position) {
             self.focused = ColumnFocus::List;
@@ -2091,6 +2511,25 @@ impl App {
             return;
         }
         let position = Position { x, y };
+        if self.section == Section::Domains && self.view.deck.is_some() {
+            let pane = if self.mouse_regions.sections.contains(position) {
+                Some(0)
+            } else if self.mouse_regions.list.contains(position) {
+                Some(1)
+            } else if self.mouse_regions.detail.contains(position) {
+                Some(2)
+            } else {
+                None
+            };
+            if let Some(pane) = pane {
+                self.deck_offsets[pane] = if down {
+                    self.deck_offsets[pane].saturating_add(usize::from(WHEEL_STEP))
+                } else {
+                    self.deck_offsets[pane].saturating_sub(usize::from(WHEEL_STEP))
+                };
+            }
+            return;
+        }
         if self.mouse_regions.detail.contains(position) {
             self.detail_scroll = if down {
                 self.detail_scroll.saturating_add(WHEEL_STEP)
@@ -2104,6 +2543,7 @@ impl App {
             } else {
                 self.list_offset.saturating_sub(usize::from(WHEEL_STEP))
             };
+            self.request_history_if_near_end(self.list_offset.saturating_add(self.detail_viewport));
         }
     }
 
@@ -2385,6 +2825,7 @@ impl App {
         self.is_help_open()
             || self.is_palette_open()
             || self.is_comment_prompt_open()
+            || self.pending_cast_edit.is_some()
             || self.deploy_picker.is_some()
             || self.launch_picker.is_some()
     }
@@ -2482,6 +2923,13 @@ impl App {
     }
 
     #[cfg(test)]
+    pub fn set_history_for_test(&mut self, update: services::HistoryUpdate) {
+        self.history_walker = None;
+        self.history_update = update;
+        self.invalidate_rows();
+    }
+
+    #[cfg(test)]
     #[must_use]
     pub fn search_query(&self) -> &str {
         &self.search.query
@@ -2525,6 +2973,59 @@ impl App {
     #[must_use]
     pub fn is_comment_prompt_open(&self) -> bool {
         self.comment_prompt.is_some()
+    }
+
+    #[must_use]
+    pub fn is_cast_confirmation_open(&self) -> bool {
+        self.pending_cast_edit.is_some()
+    }
+
+    pub fn cast_confirmation_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.pending_cast_edit = None;
+                self.toast = Some("cast edit cancelled".to_string());
+            }
+            KeyCode::Enter => {
+                let Some(edit) = self.pending_cast_edit.take() else {
+                    return;
+                };
+                match services::persist_cast_edit(&edit) {
+                    Ok(()) => {
+                        self.toast = Some(format!("saved cast {}", edit.cast_name));
+                        self.force_refresh();
+                    }
+                    Err(error) => self.toast = Some(format!("cast write failed: {error}")),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn prepare_selected_cast_toggle(&mut self) {
+        let Some(ListTarget::Cast(cast_name)) = self.selected_target() else {
+            return;
+        };
+        let artifacts = self.all_deck_artifact_ids();
+        let Some(artifact_id) = artifacts.get(self.detail_cursor) else {
+            return;
+        };
+        let Some(deck) = self.view.deck.as_ref() else {
+            return;
+        };
+        let included = deck
+            .casts
+            .iter()
+            .find(|cast| cast.name == cast_name)
+            .is_some_and(|cast| {
+                cast.resolved_artifacts
+                    .iter()
+                    .any(|resolved| resolved == artifact_id)
+            });
+        match services::prepare_cast_toggle(&deck.root, &cast_name, artifact_id, !included) {
+            Ok(edit) => self.pending_cast_edit = Some(edit),
+            Err(error) => self.toast = Some(format!("could not edit cast: {error}")),
+        }
     }
 
     pub fn comment_prompt_key(&mut self, key: KeyEvent) {
@@ -2697,6 +3198,28 @@ impl App {
     }
 
     fn section_key(&mut self, key: KeyEvent) {
+        if self.section == Section::Domains && self.view.deck.is_some() {
+            let domain_count = self.view.deck.as_ref().map_or(0, |deck| deck.domains.len());
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.deck_domain_selected =
+                        (self.deck_domain_selected + 1).min(domain_count.saturating_sub(1));
+                    self.deck_kind_selected = 0;
+                    self.deck_artifact_selected = 0;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.deck_domain_selected = self.deck_domain_selected.saturating_sub(1);
+                    self.deck_kind_selected = 0;
+                    self.deck_artifact_selected = 0;
+                }
+                KeyCode::Home | KeyCode::Char('g') => self.deck_domain_selected = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.deck_domain_selected = domain_count.saturating_sub(1);
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
                 let next = (self.section as usize + 1).min(SECTION_COUNT - 1);
@@ -2707,12 +3230,36 @@ impl App {
                 self.set_section(Section::from_index(next));
             }
             KeyCode::Home | KeyCode::Char('g') => self.set_section(Section::Overview),
-            KeyCode::End | KeyCode::Char('G') => self.set_section(Section::Schemas),
+            KeyCode::End | KeyCode::Char('G') => self.set_section(if self.view.deck.is_some() {
+                Section::DeckHistory
+            } else {
+                Section::Schemas
+            }),
             _ => {}
         }
     }
 
     fn list_key(&mut self, key: KeyEvent) {
+        if self.section == Section::Domains && self.view.deck.is_some() {
+            let count = self.selected_deck_kinds().len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.deck_kind_selected =
+                        (self.deck_kind_selected + 1).min(count.saturating_sub(1));
+                    self.deck_artifact_selected = 0;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.deck_kind_selected = self.deck_kind_selected.saturating_sub(1);
+                    self.deck_artifact_selected = 0;
+                }
+                KeyCode::Home | KeyCode::Char('g') => self.deck_kind_selected = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.deck_kind_selected = count.saturating_sub(1);
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => self.move_list_selection(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_list_selection(-1),
@@ -2731,6 +3278,42 @@ impl App {
     }
 
     fn detail_key(&mut self, key: KeyEvent) {
+        if self.section == Section::Domains && self.view.deck.is_some() {
+            let count = self.selected_deck_artifacts().len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.deck_artifact_selected =
+                        (self.deck_artifact_selected + 1).min(count.saturating_sub(1));
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.deck_artifact_selected = self.deck_artifact_selected.saturating_sub(1);
+                }
+                KeyCode::Home | KeyCode::Char('g') => self.deck_artifact_selected = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.deck_artifact_selected = count.saturating_sub(1);
+                }
+                _ => {}
+            }
+            return;
+        }
+        if self.section == Section::Casts {
+            let count = self.all_deck_artifact_ids().len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.detail_cursor = (self.detail_cursor + 1).min(count.saturating_sub(1));
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.detail_cursor = self.detail_cursor.saturating_sub(1);
+                }
+                KeyCode::Home | KeyCode::Char('g') => self.detail_cursor = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.detail_cursor = count.saturating_sub(1);
+                }
+                KeyCode::Char(' ' | 'x') => self.prepare_selected_cast_toggle(),
+                _ => {}
+            }
+            return;
+        }
         let page = isize::try_from(self.detail_viewport.max(2) - 1).unwrap_or(10);
         let half = (page / 2).max(1);
         match key.code {
@@ -2784,12 +3367,16 @@ impl App {
     fn set_section(&mut self, section: Section) {
         self.section = section;
         self.detail_scroll = 0;
+        self.detail_cursor = 0;
         self.list_offset = 0;
         self.list_filter.clear();
         self.list_filter_typing = false;
         self.problems_only = false;
         self.invalidate_rows();
         self.clamp_list_selection();
+        if section == Section::DeckHistory {
+            self.request_history_if_near_end(self.selected_list_index(&self.cached_rows));
+        }
     }
 
     fn ensure_rows(&mut self) {
@@ -2949,7 +3536,93 @@ impl App {
             Section::Hooks => self.hook_rows(),
             Section::Config => self.config_rows(),
             Section::Schemas => self.schema_rows(),
+            Section::Domains => self.domain_rows(),
+            Section::Casts => self.cast_rows(),
+            Section::DeckHistory => self.history_rows(),
         }
+    }
+
+    fn domain_rows(&self) -> Vec<ListRow> {
+        self.view.deck.as_ref().map_or_else(Vec::new, |deck| {
+            deck.domains
+                .iter()
+                .map(|domain| {
+                    ListRow::item(
+                        domain.name.clone(),
+                        format!(
+                            "{} artifacts · {}",
+                            domain.artifact_count(),
+                            if domain.validation.valid {
+                                "valid"
+                            } else {
+                                "invalid"
+                            }
+                        ),
+                        ListTarget::Domain(domain.name.clone()),
+                        if domain.validation.valid {
+                            "ok"
+                        } else {
+                            "stale"
+                        },
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn cast_rows(&self) -> Vec<ListRow> {
+        self.view.deck.as_ref().map_or_else(Vec::new, |deck| {
+            deck.casts
+                .iter()
+                .map(|cast| {
+                    let (detail, status) = cast.resolution_error.as_ref().map_or_else(
+                        || {
+                            (
+                                format!("{} resolved artifacts", cast.resolved_artifacts.len()),
+                                "ok",
+                            )
+                        },
+                        |error| (error.clone(), "stale"),
+                    );
+                    ListRow::item(
+                        cast.name.clone(),
+                        detail,
+                        ListTarget::Cast(cast.name.clone()),
+                        status,
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn history_rows(&self) -> Vec<ListRow> {
+        let mut rows = Vec::new();
+        if let Some(error) = self.history_update.error.as_ref() {
+            rows.push(ListRow::header(error.clone()));
+        }
+        rows.extend(self.history_update.entries.iter().map(|entry| {
+            let short = entry.commit.sha.chars().take(8).collect::<String>();
+            let refs = if entry.refs.is_empty() {
+                entry.commit.date.clone()
+            } else {
+                format!("[{}]", entry.refs.join(", "))
+            };
+            ListRow::item(
+                format!("{short} {}", entry.commit.message),
+                refs,
+                ListTarget::HistoryCommit(entry.commit.sha.clone()),
+                "source",
+            )
+        }));
+        if rows.is_empty() {
+            rows.push(ListRow::header("Loading commit history…"));
+        } else if self.history_update.has_more {
+            rows.push(ListRow::header(format!(
+                "{} loaded · scroll for more",
+                self.history_update.total_loaded
+            )));
+        }
+        rows
     }
 
     fn overview_rows(&self) -> Vec<ListRow> {
@@ -3011,9 +3684,22 @@ impl App {
             if kind_filter.is_some_and(|filter| filter != kind) {
                 continue;
             }
-            rows.push(ListRow::header(kind));
+            if let Some(deck) = self.view.deck.as_ref() {
+                let targets = deck
+                    .targets
+                    .iter()
+                    .map(|target| target.name.clone())
+                    .collect::<Vec<_>>();
+                rows.push(ListRow::header(artifact_table_header(&targets)));
+            } else {
+                rows.push(ListRow::header(kind));
+            }
             for (artifact, module) in artifacts {
-                rows.push(artifact_row(artifact, module));
+                rows.push(if self.view.deck.is_some() {
+                    self.deck_artifact_row(artifact, module)
+                } else {
+                    artifact_row(artifact, module)
+                });
                 for companion in &artifact.companions {
                     rows.push(ListRow::item(
                         format!("  ↳ {}", companion.name),
@@ -3227,6 +3913,121 @@ impl App {
         rows
     }
 
+    fn visible_sections(&self) -> &[Section] {
+        if self.view.deck.is_some() {
+            &Section::ALL
+        } else {
+            &Section::ALL[..LEGACY_SECTION_COUNT]
+        }
+    }
+
+    fn selected_deck_domain_name(&self) -> Option<&str> {
+        self.view
+            .deck
+            .as_ref()?
+            .domains
+            .get(self.deck_domain_selected)
+            .map(|domain| domain.name.as_str())
+    }
+
+    fn selected_deck_kinds(&self) -> Vec<(String, usize)> {
+        let Some(domain) = self.selected_deck_domain_name() else {
+            return Vec::new();
+        };
+        self.view
+            .modules
+            .iter()
+            .find(|module| module.name == domain)
+            .map(|module| {
+                commands::view::KIND_ORDER
+                    .iter()
+                    .filter_map(|kind| {
+                        let count = module
+                            .artifacts
+                            .iter()
+                            .filter(|artifact| artifact.kind == *kind)
+                            .count();
+                        (count > 0).then(|| ((*kind).to_string(), count))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn selected_deck_artifacts(&self) -> Vec<(&str, &ArtifactView)> {
+        let Some(domain) = self.selected_deck_domain_name() else {
+            return Vec::new();
+        };
+        let kinds = self.selected_deck_kinds();
+        let Some((kind, _)) = kinds.get(self.deck_kind_selected) else {
+            return Vec::new();
+        };
+        self.view
+            .modules
+            .iter()
+            .find(|module| module.name == domain)
+            .map(|module| {
+                module
+                    .artifacts
+                    .iter()
+                    .filter(|artifact| artifact.kind == *kind)
+                    .map(|artifact| (module.name.as_str(), artifact))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn all_deck_artifact_ids(&self) -> Vec<String> {
+        let mut ids =
+            self.view
+                .modules
+                .iter()
+                .flat_map(|module| {
+                    module.artifacts.iter().map(|artifact| {
+                        format!("{}/{}/{}", module.name, artifact.kind, artifact.name)
+                    })
+                })
+                .collect::<Vec<_>>();
+        ids.sort_by(|left, right| {
+            deck_artifact_order_key(left).cmp(&deck_artifact_order_key(right))
+        });
+        ids
+    }
+
+    fn deck_artifact_table_row(&self, module: &str, artifact: &ArtifactView) -> String {
+        let mut columns = vec![
+            format!("{:<18}", truncate_to_width(&artifact.name, 18)),
+            format!("{:<9}", truncate_to_width(&artifact.kind, 9)),
+            format!("{:<12}", truncate_to_width(module, 12)),
+        ];
+        if let Some(deck) = self.view.deck.as_ref() {
+            let id = format!("{module}/{}/{}", artifact.kind, artifact.name);
+            columns.extend(deck.targets.iter().map(|target| {
+                format!(
+                    "{:<9}",
+                    target
+                        .artifacts
+                        .get(&id)
+                        .map_or("", |deployed| short_file_status(deployed.status))
+                )
+            }));
+        }
+        columns.join(" ")
+    }
+
+    fn deck_artifact_row(&self, artifact: &ArtifactView, module: &str) -> ListRow {
+        ListRow::item(
+            self.deck_artifact_table_row(module, artifact),
+            String::new(),
+            ListTarget::Artifact {
+                module: module.to_string(),
+                kind: artifact.kind.clone(),
+                name: artifact.name.clone(),
+            },
+            artifact.overall_status(),
+        )
+    }
+
     fn selected_list_index(&self, rows: &[ListRow]) -> usize {
         let selected = self.list_selected[self.section as usize];
         if rows.get(selected).is_some_and(ListRow::is_selectable) {
@@ -3255,6 +4056,7 @@ impl App {
         let rows = self.cached_rows();
         let index = self.selected_list_index(rows);
         self.list_selected[self.section as usize] = index;
+        self.request_history_if_near_end(index);
     }
 
     pub fn move_list_selection(&mut self, delta: isize) {
@@ -3301,6 +4103,17 @@ impl App {
     }
 
     fn selected_target(&self) -> Option<ListTarget> {
+        if self.section == Section::Domains {
+            let (module, artifact) = self
+                .selected_deck_artifacts()
+                .get(self.deck_artifact_selected)
+                .copied()?;
+            return Some(ListTarget::Artifact {
+                module: module.to_string(),
+                kind: artifact.kind.clone(),
+                name: artifact.name.clone(),
+            });
+        }
         let rows = self.cached_rows();
         let selected = self.selected_list_index(rows);
         rows.get(selected).map(|row| row.target.clone())
@@ -3720,6 +4533,7 @@ pub fn load_provider_targets(root: &Path) -> Vec<(String, String)> {
 
 fn empty_dashboard_view() -> DashboardView {
     DashboardView {
+        deck: None,
         modules: Vec::new(),
         summary: StatusSummary::default(),
         provenance: Vec::new(),
@@ -3819,6 +4633,55 @@ fn artifact_row(artifact: &ArtifactView, module: &str) -> ListRow {
         },
         artifact.overall_status(),
     )
+}
+
+fn artifact_table_header(targets: &[String]) -> String {
+    let mut columns = vec![
+        format!("{:<18}", "NAME"),
+        format!("{:<9}", "KIND"),
+        format!("{:<12}", "DOMAIN"),
+    ];
+    columns.extend(
+        targets
+            .iter()
+            .map(|target| format!("{:<9}", truncate_to_width(target, 9))),
+    );
+    columns.join(" ")
+}
+
+fn short_file_status(status: FileStatus) -> &'static str {
+    match status {
+        FileStatus::Unchanged => "ok",
+        FileStatus::New => "new",
+        FileStatus::Stale => "stale",
+        FileStatus::Modified => "modified",
+    }
+}
+
+fn deck_artifact_order_key(id: &str) -> (&str, usize, &str) {
+    let mut parts = id.splitn(3, '/');
+    let domain = parts.next().unwrap_or_default();
+    let kind = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    let kind_index = commands::view::KIND_ORDER
+        .iter()
+        .position(|candidate| *candidate == kind)
+        .unwrap_or(commands::view::KIND_ORDER.len());
+    (domain, kind_index, name)
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    let mut result = String::new();
+    let mut used = 0;
+    for character in text.chars() {
+        let character_width = character.width().unwrap_or(0);
+        if used + character_width > width {
+            break;
+        }
+        result.push(character);
+        used += character_width;
+    }
+    result
 }
 
 /// gitui-style status letters: shape carries the state, color reinforces it.

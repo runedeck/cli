@@ -8,9 +8,10 @@ use commands::{
     services::files::{
         ConfigFile, FileSections, HarnessFiles, HarnessHooks, HookEntry, SchemaGroup,
     },
+    services::{self, HistoryEntry, HistoryUpdate},
     view::{
-        Adr, ArtifactView, DashboardView, GitCommit, ModuleView, ProvenanceArtifact,
-        ProvenanceView, ProviderStatus, StatusSummary,
+        Adr, ArtifactView, DashboardView, DeckTargetArtifactView, DeckTargetView, GitCommit,
+        ModuleView, ProvenanceArtifact, ProvenanceView, ProviderStatus, StatusSummary,
     },
 };
 
@@ -64,6 +65,7 @@ fn fixture_view() -> DashboardView {
     };
 
     DashboardView {
+        deck: None,
         modules: vec![
             ModuleView {
                 name: "rune-core".to_string(),
@@ -133,6 +135,33 @@ fn fixture_app() -> App {
         fixture_view(),
         fixture_file_sections(),
     )
+}
+
+fn deck_fixture_app() -> App {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
+    let mut view = services::build_view(&root, &[], &[]).expect("deck fixture view");
+    let mut artifacts = std::collections::BTreeMap::new();
+    artifacts.insert(
+        "science/agents/SharedName".to_string(),
+        DeckTargetArtifactView {
+            status: FileStatus::Unchanged,
+            providers: std::collections::BTreeMap::new(),
+        },
+    );
+    view.deck
+        .as_mut()
+        .expect("deck view")
+        .targets
+        .push(DeckTargetView {
+            name: "laptop".to_string(),
+            root: root.join("target"),
+            artifacts,
+            summary: StatusSummary {
+                unchanged: 1,
+                ..StatusSummary::default()
+            },
+        });
+    App::from_view(root, Vec::new(), Vec::new(), view)
 }
 
 fn fixture_file_sections() -> FileSections {
@@ -256,6 +285,72 @@ fn adrs_section_lists_fixture_adr() {
 
     assert!(output.contains("ADR-0001"));
     assert!(output.contains("Use Miller columns"));
+}
+
+#[test]
+fn deck_domains_use_three_miller_columns_and_artifact_table() {
+    let mut app = deck_fixture_app();
+    app.set_section_by_number(14);
+
+    let output = rendered(&mut app);
+
+    assert!(output.contains("Domains"));
+    assert!(output.contains("Kinds"));
+    assert!(output.contains("Artifacts"));
+    assert!(output.contains("science"));
+    assert!(output.contains("writing"));
+    assert!(output.contains("NAME"));
+    assert!(output.contains("KIND"));
+    assert!(output.contains("DOMAIN"));
+    assert!(output.contains("laptop"));
+    assert!(output.contains("SharedName"));
+}
+
+#[test]
+fn deck_casts_section_lists_and_resolves_cast_artifacts() {
+    let mut app = deck_fixture_app();
+    app.set_section_by_number(15);
+    app.focus_next();
+    app.drill_or_expand();
+
+    let output = rendered(&mut app);
+
+    assert!(output.contains("Casts"));
+    assert!(output.contains("essentials"));
+    assert!(output.contains("resolved"));
+    assert!(output.contains("science/"));
+    assert!(output.contains("Space toggles"));
+}
+
+#[test]
+fn deck_history_section_renders_linear_refs_and_commit_detail() {
+    let mut app = deck_fixture_app();
+    app.set_history_for_test(HistoryUpdate {
+        window_start: 0,
+        total_loaded: 1,
+        entries: vec![HistoryEntry {
+            commit: GitCommit {
+                sha: "0123456789abcdef".to_string(),
+                message: "Add deck history".to_string(),
+                date: "2026-07-13".to_string(),
+                author: "Sol".to_string(),
+                ..GitCommit::default()
+            },
+            refs: vec!["HEAD -> main".to_string(), "v1".to_string()],
+        }],
+        has_more: false,
+        error: None,
+    });
+    app.set_section_by_number(16);
+    app.focus_next();
+    app.drill_or_expand();
+
+    let output = rendered(&mut app);
+
+    assert!(output.contains("History"));
+    assert!(output.contains("Add deck history"));
+    assert!(output.contains("HEAD -> main"));
+    assert!(output.contains("author  Sol"));
 }
 
 #[test]

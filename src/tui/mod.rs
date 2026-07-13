@@ -26,8 +26,8 @@ mod tests;
 
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 
-pub fn run() -> i32 {
-    match launch() {
+pub fn run(source: PathBuf) -> i32 {
+    match launch(source) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("fatal: {error}");
@@ -40,6 +40,7 @@ pub fn run() -> i32 {
 /// layout at a given size and view. Waits for the background scan to deliver real
 /// data before drawing. This is the verification tool: run it, read the output.
 pub fn run_snapshot(
+    source: PathBuf,
     width: u16,
     height: u16,
     section: Option<usize>,
@@ -47,7 +48,7 @@ pub fn run_snapshot(
     drill: u8,
     row: usize,
 ) -> i32 {
-    let mut app = App::load(PathBuf::from("."));
+    let mut app = App::load(source);
     for _ in 0..3000 {
         app.poll_scan();
         if !app.scan_pending() {
@@ -57,6 +58,13 @@ pub fn run_snapshot(
     }
     if let Some(number) = section {
         app.set_section_by_number(number);
+    }
+    for _ in 0..300 {
+        app.poll_history();
+        if app.history_ready() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
     for step in 0..drill {
         app.drill_or_expand();
@@ -104,8 +112,8 @@ fn detail_tab_from_name(name: &str) -> Option<DetailTab> {
     }
 }
 
-fn launch() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::load(PathBuf::from("."));
+fn launch(source: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::load(source);
     let mut terminal = setup_terminal()?;
     install_panic_hook();
 
