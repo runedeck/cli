@@ -17,7 +17,7 @@ mod tests;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "forge", about = "Forge module toolkit", version)]
+#[command(name = "rune", about = "Rune Deck toolkit", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

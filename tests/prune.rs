@@ -5,8 +5,8 @@ use assert_cmd::Command;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 /// Write `module.yaml` with an explicit `repository:` URL so the deployed
@@ -61,7 +61,7 @@ fn install(source: &Path, target: &Path, extra_args: &[&str]) -> assert_cmd::ass
         target.to_str().unwrap(),
     ];
     args.extend(extra_args);
-    forge().args(args).assert()
+    rune().args(args).assert()
 }
 
 fn list_trash(target: &Path, provider: &str) -> Vec<PathBuf> {

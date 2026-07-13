@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 /// Create a minimal module in a temp directory.
@@ -87,7 +87,7 @@ fn install_deploys_agent_to_all_providers() {
     scaffold_module(module_directory.path());
     create_agent(module_directory.path(), "TestAgent", "strong");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -132,7 +132,7 @@ fn install_maps_model_tier_for_claude() {
     scaffold_module(module_directory.path());
     create_agent(module_directory.path(), "StrongAgent", "strong");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -162,7 +162,7 @@ fn install_generates_valid_codex_toml_with_effort() {
     scaffold_module(module_directory.path());
     create_agent(module_directory.path(), "StrongAgent", "strong");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -206,7 +206,7 @@ fn install_strips_rule_frontmatter_for_claude() {
     scaffold_module(module_directory.path());
     create_rule(module_directory.path(), "TestRule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -232,7 +232,7 @@ fn install_keeps_links_for_claude_strips_for_gemini() {
     scaffold_module(module_directory.path());
     create_rule(module_directory.path(), "LinkedRule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -260,7 +260,7 @@ fn install_deploys_nested_rules() {
     scaffold_module(module_directory.path());
     create_nested_rule(module_directory.path(), "sub", "NestedRule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -287,7 +287,7 @@ fn install_deploys_skill_with_companion() {
     scaffold_module(module_directory.path());
     create_skill_with_companion(module_directory.path(), "TestSkill", "Reference.md");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -323,7 +323,7 @@ fn install_creates_nested_manifest() {
     create_agent(module_directory.path(), "Agent", "fast");
     create_rule(module_directory.path(), "Rule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -353,7 +353,7 @@ fn install_deploys_provenance_sidecars() {
     scaffold_module(module_directory.path());
     create_agent(module_directory.path(), "TracedAgent", "fast");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -384,7 +384,7 @@ fn install_deploys_nested_provenance() {
     scaffold_module(module_directory.path());
     create_nested_rule(module_directory.path(), "deep", "DeepRule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -414,7 +414,7 @@ fn install_is_idempotent() {
     create_agent(module_directory.path(), "IdempotentAgent", "fast");
 
     // First install
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -427,7 +427,7 @@ fn install_is_idempotent() {
         .stdout(predicates::str::contains("deployed"));
 
     // Second install — should skip
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -449,7 +449,7 @@ fn install_empty_module_succeeds() {
 
     scaffold_module(module_directory.path());
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -479,7 +479,7 @@ fn validate_reports_missing_required_files() {
     )
     .unwrap();
 
-    forge()
+    rune()
         .args([
             "validate",
             "--source",
@@ -499,7 +499,7 @@ fn validate_passes_complete_module() {
     fs::write(module_directory.path().join("README.md"), "# Test\n").unwrap();
     fs::write(module_directory.path().join("LICENSE"), "EUPL-1.2\n").unwrap();
 
-    forge()
+    rune()
         .args([
             "validate",
             "--source",
@@ -519,7 +519,7 @@ fn copy_preserves_frontmatter() {
     scaffold_module(module_directory.path());
     create_agent(module_directory.path(), "RawAgent", "strong");
 
-    forge()
+    rune()
         .args([
             "copy",
             "--source",
@@ -559,7 +559,7 @@ fn install_respects_targets_frontmatter() {
     create_rule_with_targets(module_directory.path(), "ClaudeOnly", "claudecode");
     create_rule(module_directory.path(), "Universal");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -615,7 +615,7 @@ fn install_targets_multiple_providers() {
         "claudecode, geminicli",
     );
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -661,7 +661,7 @@ fn install_target_writes_manifest_with_correct_fingerprints() {
     scaffold_module(module_directory.path());
     create_rule(module_directory.path(), "ManifestRule");
 
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -711,7 +711,7 @@ fn validate_catches_mdschema_violation() {
     )
     .unwrap();
 
-    forge()
+    rune()
         .args([
             "validate",
             "--source",

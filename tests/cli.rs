@@ -1,22 +1,22 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 #[test]
 fn version_flag_prints_version() {
-    forge()
+    rune()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("forge"));
+        .stdout(predicate::str::contains("rune"));
 }
 
 #[test]
 fn help_flag_lists_subcommands() {
-    forge()
+    rune()
         .arg("--help")
         .assert()
         .success()
@@ -29,7 +29,7 @@ fn help_flag_lists_subcommands() {
 
 #[test]
 fn install_help_shows_flags() {
-    forge()
+    rune()
         .args(["install", "--help"])
         .assert()
         .success()
@@ -39,7 +39,7 @@ fn install_help_shows_flags() {
 
 #[test]
 fn install_nonexistent_path_fails() {
-    forge()
+    rune()
         .args(["install", "/nonexistent/path"])
         .assert()
         .failure()
@@ -48,22 +48,22 @@ fn install_nonexistent_path_fails() {
 
 #[test]
 fn validate_help_succeeds() {
-    forge().args(["validate", "--help"]).assert().success();
+    rune().args(["validate", "--help"]).assert().success();
 }
 
 #[test]
 fn assemble_help_succeeds() {
-    forge().args(["assemble", "--help"]).assert().success();
+    rune().args(["assemble", "--help"]).assert().success();
 }
 
 #[test]
 fn copy_help_succeeds() {
-    forge().args(["copy", "--help"]).assert().success();
+    rune().args(["copy", "--help"]).assert().success();
 }
 
 #[test]
 fn release_help_shows_embed() {
-    forge()
+    rune()
         .args(["release", "--help"])
         .assert()
         .success()
@@ -72,7 +72,7 @@ fn release_help_shows_embed() {
 
 #[test]
 fn json_flag_accepted_globally() {
-    forge()
+    rune()
         .args(["--json", "install", "--help"])
         .assert()
         .success();
@@ -80,7 +80,7 @@ fn json_flag_accepted_globally() {
 
 #[test]
 fn no_args_exits_with_error() {
-    forge()
+    rune()
         .assert()
         .failure()
         .stderr(predicate::str::is_empty().not());

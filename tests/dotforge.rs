@@ -8,8 +8,8 @@ use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 fn scaffold_producer(root: &Path, name: &str) {
@@ -50,7 +50,7 @@ fn write_dotforge(consumer_root: &Path, body: &str) {
 }
 
 fn install(consumer_root: &Path) -> assert_cmd::assert::Assert {
-    forge()
+    rune()
         .args([
             "install",
             "--source",
@@ -229,7 +229,7 @@ fn dotforge_defaults_target_to_source_when_omitted() {
     );
 
     // Note: no --target. Issue #52 says deploying should land under the consumer dir.
-    forge()
+    rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .assert()
         .success();

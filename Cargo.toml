@@ -1,17 +1,17 @@
 [package]
-name = "forge-cli"
+name = "rune-cli"
 version = "0.3.2"
 edition = "2024"
 license = "EUPL-1.2"
-repository = "https://github.com/N4M3Z/forge-cli"
-description = "Forge module toolkit — assemble, validate, and deploy skills, agents, and rules across AI coding providers"
+repository = "https://github.com/runedeck/rune"
+description = "Rune Deck toolkit — assemble, validate, and deploy runes (skills, agents, rules) from the deck across AI coding harnesses"
 
 [lib]
 name = "commands"
 path = "src/commands.rs"
 
 [[bin]]
-name = "forge"
+name = "rune"
 path = "src/main.rs"
 
 [features]

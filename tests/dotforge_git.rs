@@ -12,8 +12,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command as StdCommand;
 
-fn forge() -> Command {
-    Command::cargo_bin("forge").unwrap()
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
 }
 
 fn git(args: &[&str], cwd: &Path) -> std::process::Output {
@@ -118,7 +118,7 @@ fn dotforge_git_source_clones_and_deploys_pinned_sha() {
     )
     .unwrap();
 
-    forge()
+    rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
         .env("FORGE_GIT_CACHE_DIR", cache.path())
@@ -161,7 +161,7 @@ fn dotforge_git_source_rejects_uncached_sha_without_match() {
     )
     .unwrap();
 
-    let output = forge()
+    let output = rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
         .env("FORGE_GIT_CACHE_DIR", cache.path())
@@ -197,7 +197,7 @@ fn dotforge_git_source_is_cache_idempotent() {
     );
     fs::write(consumer.path().join(".forge"), &manifest).unwrap();
 
-    forge()
+    rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
         .env("FORGE_GIT_CACHE_DIR", cache.path())
@@ -205,7 +205,7 @@ fn dotforge_git_source_is_cache_idempotent() {
         .success();
     let first = fs::read(consumer.path().join(".claude/.manifest")).unwrap();
 
-    forge()
+    rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .env("FORGE_GIT_ALLOW_FILE_URLS", "1")
         .env("FORGE_GIT_CACHE_DIR", cache.path())
