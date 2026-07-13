@@ -67,7 +67,7 @@ A non-module project that wants to use rune artifacts drops a `.rune` YAML file 
 
 Two source kinds:
 - **Local** (`path: ../rune-core`) — sibling checkout on disk
-- **Git** (`git: https://github.com/N4M3Z/rune-core`, `ref: <40-hex-SHA>`) — remote HTTPS repo pinned to a full commit SHA. Cloned via `gix` into `~/.cache/rune/git/<host>/<owner>/<repo>/` (override with `RUNE_GIT_CACHE_DIR`); the pinned tree is materialized into a per-SHA worktree dir. HTTPS-only, no shorthand or userinfo URLs, no branch / tag refs. `RUNE_GIT_ALLOW_FILE_URLS=1` allows `file://` URLs in tests.
+- **Git** (`git: https://github.com/runedeck/runedeck`, `ref: <40-hex-SHA>`) — remote HTTPS repo pinned to a full commit SHA. Cloned via `gix` into `~/.cache/rune/git/<host>/<owner>/<repo>/` (override with `RUNE_GIT_CACHE_DIR`); the pinned tree is materialized into a per-SHA worktree dir. HTTPS-only, no shorthand or userinfo URLs, no branch / tag refs. `RUNE_GIT_ALLOW_FILE_URLS=1` allows `file://` URLs in tests.
 
 ### Validation
 
