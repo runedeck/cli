@@ -18,6 +18,13 @@ fn assert_domain_order(output: &[u8]) {
     assert!(science < writing, "domains must be lexicographic: {stdout}");
 }
 
+fn assert_domain_prefix_order(output: &[u8]) {
+    let stdout = String::from_utf8_lossy(output);
+    let science = stdout.find("science/").expect("science domain item");
+    let writing = stdout.find("writing/").expect("writing domain item");
+    assert!(science < writing, "domains must be lexicographic: {stdout}");
+}
+
 #[test]
 fn aggregate_operations_visit_both_domains_in_order() {
     let deck = support::deck_fixture();
@@ -27,7 +34,7 @@ fn aggregate_operations_visit_both_domains_in_order() {
         .args(["validate", "--source", deck.to_str().unwrap()])
         .assert()
         .failure();
-    assert_domain_order(&validate.get_output().stdout);
+    assert_domain_prefix_order(&validate.get_output().stdout);
 
     let provenance = rune()
         .args(["provenance", "--target", deck.to_str().unwrap()])

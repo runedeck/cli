@@ -12,12 +12,12 @@ fn template_content(filename: &str) -> String {
 #[test]
 fn warns_when_no_manifest() {
     let temp_directory = TempDir::new().unwrap();
-    let mut result = ActionResult::new();
+    let mut report = ValidationReport::default();
 
-    check_template_drift(temp_directory.path(), &mut result);
+    check_template_drift(temp_directory.path(), &mut report);
 
-    assert_eq!(result.warnings.len(), 1);
-    assert!(result.warnings[0].contains("missing"));
+    assert_eq!(report.result.warnings.len(), 1);
+    assert!(report.result.warnings[0].contains("missing"));
 }
 
 #[test]
@@ -39,10 +39,10 @@ fn detects_matching_file() {
     let manifest_yaml = manifest::write(&entries).unwrap();
     std::fs::write(temp_directory.path().join(".manifest"), manifest_yaml).unwrap();
 
-    let mut result = ActionResult::new();
-    check_template_drift(temp_directory.path(), &mut result);
+    let mut report = ValidationReport::default();
+    check_template_drift(temp_directory.path(), &mut report);
 
-    assert!(result.warnings.is_empty());
+    assert!(report.result.warnings.is_empty());
 }
 
 #[test]
@@ -63,11 +63,11 @@ fn detects_drifted_file() {
     let manifest_yaml = manifest::write(&entries).unwrap();
     std::fs::write(temp_directory.path().join(".manifest"), manifest_yaml).unwrap();
 
-    let mut result = ActionResult::new();
-    check_template_drift(temp_directory.path(), &mut result);
+    let mut report = ValidationReport::default();
+    check_template_drift(temp_directory.path(), &mut report);
 
-    assert_eq!(result.warnings.len(), 1);
-    assert!(result.warnings[0].contains("drifted"));
+    assert_eq!(report.result.warnings.len(), 1);
+    assert!(report.result.warnings[0].contains("drifted"));
 }
 
 #[test]
@@ -85,9 +85,9 @@ fn detects_missing_tracked_file() {
     let manifest_yaml = manifest::write(&entries).unwrap();
     std::fs::write(temp_directory.path().join(".manifest"), manifest_yaml).unwrap();
 
-    let mut result = ActionResult::new();
-    check_template_drift(temp_directory.path(), &mut result);
+    let mut report = ValidationReport::default();
+    check_template_drift(temp_directory.path(), &mut report);
 
-    assert_eq!(result.warnings.len(), 1);
-    assert!(result.warnings[0].contains("missing"));
+    assert_eq!(report.result.warnings.len(), 1);
+    assert!(report.result.warnings[0].contains("missing"));
 }

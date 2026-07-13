@@ -1,7 +1,7 @@
-use commands::result::ActionResult;
 use std::path::Path;
 use std::process::Command;
 
+use super::ValidationReport;
 use crate::cli::config;
 
 const SEMGREP_ENVIRONMENT: &[(&str, &str)] = &[
@@ -10,18 +10,18 @@ const SEMGREP_ENVIRONMENT: &[(&str, &str)] = &[
     ("SEMGREP_SEND_METRICS", "off"),
 ];
 
-pub fn run_external_checks(module_root: &Path, result: &mut ActionResult) {
+pub fn run_external_checks(module_root: &Path, report: &mut ValidationReport) {
     let exclude_patterns = load_exclude_patterns(module_root);
 
-    check_trailing_whitespace(module_root, &exclude_patterns, result);
-    check_yaml_syntax(module_root, &exclude_patterns, result);
-    check_json_syntax(module_root, &exclude_patterns, result);
-    check_shellcheck(module_root, result);
-    check_cargo(module_root, result);
-    check_typescript(module_root, result);
-    check_ruff(module_root, result);
-    check_gitleaks(module_root, result);
-    check_semgrep(module_root, result);
+    check_trailing_whitespace(module_root, &exclude_patterns, report);
+    check_yaml_syntax(module_root, &exclude_patterns, report);
+    check_json_syntax(module_root, &exclude_patterns, report);
+    check_shellcheck(module_root, report);
+    check_cargo(module_root, report);
+    check_typescript(module_root, report);
+    check_ruff(module_root, report);
+    check_gitleaks(module_root, report);
+    check_semgrep(module_root, report);
 }
 
 fn load_exclude_patterns(module_root: &Path) -> Vec<String> {
@@ -36,7 +36,7 @@ fn load_exclude_patterns(module_root: &Path) -> Vec<String> {
 fn check_trailing_whitespace(
     module_root: &Path,
     exclude_patterns: &[String],
-    result: &mut ActionResult,
+    report: &mut ValidationReport,
 ) {
     let text_files = find_text_files(module_root);
     if text_files.is_empty() {
@@ -59,15 +59,21 @@ fn check_trailing_whitespace(
         }
     }
 
-    if !violations.is_empty() {
-        println!("  trailing whitespace ({} files)", violations.len());
-        result
-            .errors
-            .push(format!("trailing whitespace in: {}", violations.join(", ")));
+    if violations.is_empty() {
+        report.pass("trailing whitespace");
+    } else {
+        report.fail(
+            "trailing whitespace",
+            format!("trailing whitespace in: {}", violations.join(", ")),
+        );
     }
 }
 
-fn check_yaml_syntax(module_root: &Path, exclude_patterns: &[String], result: &mut ActionResult) {
+fn check_yaml_syntax(
+    module_root: &Path,
+    exclude_patterns: &[String],
+    report: &mut ValidationReport,
+) {
     let mut all_yaml = find_files(module_root, "yaml");
     all_yaml.extend(find_files(module_root, "yml"));
     if all_yaml.is_empty() {
@@ -81,16 +87,23 @@ fn check_yaml_syntax(module_root: &Path, exclude_patterns: &[String], result: &m
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
+        let display_path = relative_path(path, module_root);
         if let Err(error) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-            println!("  INVALID {}: {error}", path.display());
-            result
-                .errors
-                .push(format!("invalid YAML: {}", path.display()));
+            report.fail(
+                &display_path,
+                format!("invalid YAML: {display_path}: {error}"),
+            );
+        } else {
+            report.pass(display_path);
         }
     }
 }
 
-fn check_json_syntax(module_root: &Path, exclude_patterns: &[String], result: &mut ActionResult) {
+fn check_json_syntax(
+    module_root: &Path,
+    exclude_patterns: &[String],
+    report: &mut ValidationReport,
+) {
     let json_files = find_files(module_root, "json");
     if json_files.is_empty() {
         return;
@@ -103,11 +116,14 @@ fn check_json_syntax(module_root: &Path, exclude_patterns: &[String], result: &m
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
+        let display_path = relative_path(path, module_root);
         if let Err(error) = serde_json::from_str::<serde_json::Value>(&content) {
-            println!("  INVALID {}: {error}", path.display());
-            result
-                .errors
-                .push(format!("invalid JSON: {}", path.display()));
+            report.fail(
+                &display_path,
+                format!("invalid JSON: {display_path}: {error}"),
+            );
+        } else {
+            report.pass(display_path);
         }
     }
 }
@@ -126,7 +142,7 @@ pub(super) fn is_excluded(path: &Path, module_root: &Path, patterns: &[String]) 
     })
 }
 
-fn check_shellcheck(module_root: &Path, result: &mut ActionResult) {
+fn check_shellcheck(module_root: &Path, report: &mut ValidationReport) {
     if !has_tool("shellcheck") {
         return;
     }
@@ -136,7 +152,6 @@ fn check_shellcheck(module_root: &Path, result: &mut ActionResult) {
         return;
     }
 
-    println!("  shellcheck");
     let mut arguments = vec!["-S", "warning"];
     let paths: Vec<String> = shell_files
         .iter()
@@ -151,32 +166,35 @@ fn check_shellcheck(module_root: &Path, result: &mut ActionResult) {
         arguments.push(path);
     }
 
-    if !run_command("shellcheck", &arguments, module_root) {
-        result.errors.push("shellcheck found warnings".to_string());
+    if run_command("shellcheck", &arguments, module_root) {
+        report.pass("shellcheck");
+    } else {
+        report.fail("shellcheck", "shellcheck found warnings".to_string());
     }
 }
 
-fn check_cargo(module_root: &Path, result: &mut ActionResult) {
+fn check_cargo(module_root: &Path, report: &mut ValidationReport) {
     if !module_root.join("Cargo.toml").is_file() || !has_tool("cargo") {
         return;
     }
 
-    println!("  cargo fmt --check");
-    if !run_command("cargo", &["fmt", "--check"], module_root) {
-        result
-            .errors
-            .push("cargo fmt found formatting issues".to_string());
+    if run_command("cargo", &["fmt", "--check"], module_root) {
+        report.pass("cargo fmt --check");
+    } else {
+        report.fail(
+            "cargo fmt --check",
+            "cargo fmt found formatting issues".to_string(),
+        );
     }
 
-    println!("  cargo clippy");
-    if !run_command("cargo", &["clippy", "--", "-D", "warnings"], module_root) {
-        result
-            .errors
-            .push("cargo clippy found warnings".to_string());
+    if run_command("cargo", &["clippy", "--", "-D", "warnings"], module_root) {
+        report.pass("cargo clippy");
+    } else {
+        report.fail("cargo clippy", "cargo clippy found warnings".to_string());
     }
 }
 
-fn check_typescript(module_root: &Path, result: &mut ActionResult) {
+fn check_typescript(module_root: &Path, report: &mut ValidationReport) {
     if !module_root.join("tsconfig.json").is_file() || !has_tool("npx") {
         return;
     }
@@ -186,13 +204,14 @@ fn check_typescript(module_root: &Path, result: &mut ActionResult) {
         return;
     }
 
-    println!("  tsc --noEmit");
-    if !run_command("npx", &["tsc", "--noEmit"], module_root) {
-        result.errors.push("tsc found type errors".to_string());
+    if run_command("npx", &["tsc", "--noEmit"], module_root) {
+        report.pass("tsc --noEmit");
+    } else {
+        report.fail("tsc --noEmit", "tsc found type errors".to_string());
     }
 }
 
-fn check_ruff(module_root: &Path, result: &mut ActionResult) {
+fn check_ruff(module_root: &Path, report: &mut ValidationReport) {
     if !has_tool("ruff") {
         return;
     }
@@ -202,19 +221,19 @@ fn check_ruff(module_root: &Path, result: &mut ActionResult) {
         return;
     }
 
-    println!("  ruff check");
-    if !run_command("ruff", &["check", "."], module_root) {
-        result.errors.push("ruff found issues".to_string());
+    if run_command("ruff", &["check", "."], module_root) {
+        report.pass("ruff check");
+    } else {
+        report.fail("ruff check", "ruff found issues".to_string());
     }
 }
 
-fn check_semgrep(module_root: &Path, result: &mut ActionResult) {
+fn check_semgrep(module_root: &Path, report: &mut ValidationReport) {
     if !has_usable_semgrep(module_root) {
         return;
     }
 
-    println!("  semgrep OWASP");
-    if !run_command_with_env(
+    if run_command_with_env(
         "semgrep",
         &[
             "scan",
@@ -226,22 +245,25 @@ fn check_semgrep(module_root: &Path, result: &mut ActionResult) {
         module_root,
         SEMGREP_ENVIRONMENT,
     ) {
-        result.errors.push("semgrep found issues".to_string());
+        report.pass("semgrep OWASP");
+    } else {
+        report.fail("semgrep OWASP", "semgrep found issues".to_string());
     }
 }
 
-fn check_gitleaks(module_root: &Path, result: &mut ActionResult) {
+fn check_gitleaks(module_root: &Path, report: &mut ValidationReport) {
     if !has_tool("gitleaks") {
         return;
     }
 
-    println!("  gitleaks detect");
-    if !run_command(
+    if run_command(
         "gitleaks",
         &["detect", "--no-banner", "--no-git", "-s", "."],
         module_root,
     ) {
-        result.errors.push("gitleaks found secrets".to_string());
+        report.pass("gitleaks detect");
+    } else {
+        report.fail("gitleaks detect", "gitleaks found secrets".to_string());
     }
 }
 
@@ -268,8 +290,8 @@ fn run_command(program: &str, arguments: &[&str], working_directory: &Path) -> b
     Command::new(program)
         .args(arguments)
         .current_dir(working_directory)
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn run_command_with_env(
@@ -283,7 +305,14 @@ fn run_command_with_env(
     for (key, value) in environment {
         command.env(key, value);
     }
-    command.status().is_ok_and(|status| status.success())
+    command.output().is_ok_and(|output| output.status.success())
+}
+
+fn relative_path(path: &Path, module_root: &Path) -> String {
+    path.strip_prefix(module_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
 }
 
 fn find_text_files(module_root: &Path) -> Vec<std::path::PathBuf> {
@@ -300,6 +329,7 @@ fn find_text_files(module_root: &Path) -> Vec<std::path::PathBuf> {
 fn find_files(module_root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     collect_files_recursive(module_root, extension, &mut files);
+    files.sort();
     files
 }
 

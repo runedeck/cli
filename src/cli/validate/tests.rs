@@ -4,11 +4,11 @@ use tempfile::TempDir;
 #[test]
 fn check_module_structure_reports_missing_required_files() {
     let temp_directory = TempDir::new().unwrap();
-    let mut result = ActionResult::new();
+    let mut report = ValidationReport::default();
 
-    check_module_structure(temp_directory.path(), &mut result);
+    check_module_structure(temp_directory.path(), &mut report);
 
-    assert_eq!(result.errors.len(), REQUIRED_FILES.len());
+    assert_eq!(report.result.errors.len(), REQUIRED_FILES.len());
 }
 
 #[test]
@@ -19,10 +19,10 @@ fn check_module_structure_passes_with_all_required_files() {
         std::fs::write(temp_directory.path().join(filename), "content").unwrap();
     }
 
-    let mut result = ActionResult::new();
-    check_module_structure(temp_directory.path(), &mut result);
+    let mut report = ValidationReport::default();
+    check_module_structure(temp_directory.path(), &mut report);
 
-    assert!(result.errors.is_empty());
+    assert!(report.result.errors.is_empty());
 }
 
 #[test]
@@ -73,13 +73,13 @@ when_to_use: \"When the user asks for X.\"\n\
 Body content for the test skill.\n";
     std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
 
-    let mut result = ActionResult::new();
-    check::skill_directory(&skill_dir, &mut result).unwrap();
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
 
     assert!(
-        result.errors.is_empty(),
+        report.result.errors.is_empty(),
         "Claude Code optional skill fields should validate cleanly: {:?}",
-        result.errors
+        report.result.errors
     );
 }
 
@@ -134,9 +134,9 @@ fn write_hook_script(root: &std::path::Path, relative: &str, executable: bool) {
 #[test]
 fn plugin_scaffolding_skipped_without_manifest() {
     let temp = TempDir::new().unwrap();
-    let mut result = ActionResult::new();
-    plugin::check_plugin_scaffolding(temp.path(), &mut result);
-    assert!(result.errors.is_empty(), "no plugin, no errors");
+    let mut report = ValidationReport::default();
+    plugin::check_plugin_scaffolding(temp.path(), &mut report);
+    assert!(report.result.errors.is_empty(), "no plugin, no errors");
 }
 
 #[test]
@@ -151,9 +151,13 @@ fn plugin_scaffolding_valid_tree_passes() {
     .unwrap();
     write_hook_script(temp.path(), "hooks/guard.sh", true);
 
-    let mut result = ActionResult::new();
-    plugin::check_plugin_scaffolding(temp.path(), &mut result);
-    assert!(result.errors.is_empty(), "valid tree: {:?}", result.errors);
+    let mut report = ValidationReport::default();
+    plugin::check_plugin_scaffolding(temp.path(), &mut report);
+    assert!(
+        report.result.errors.is_empty(),
+        "valid tree: {:?}",
+        report.result.errors
+    );
 }
 
 #[test]
@@ -161,12 +165,16 @@ fn plugin_scaffolding_corrupt_manifest_errors() {
     let temp = TempDir::new().unwrap();
     write_plugin_manifest(temp.path(), "{ not valid json");
 
-    let mut result = ActionResult::new();
-    plugin::check_plugin_scaffolding(temp.path(), &mut result);
+    let mut report = ValidationReport::default();
+    plugin::check_plugin_scaffolding(temp.path(), &mut report);
     assert!(
-        result.errors.iter().any(|e| e.contains("invalid JSON")),
+        report
+            .result
+            .errors
+            .iter()
+            .any(|e| e.contains("invalid JSON")),
         "expected JSON error: {:?}",
-        result.errors
+        report.result.errors
     );
 }
 
@@ -181,12 +189,12 @@ fn plugin_scaffolding_missing_hook_script_errors() {
     )
     .unwrap();
 
-    let mut result = ActionResult::new();
-    plugin::check_plugin_scaffolding(temp.path(), &mut result);
+    let mut report = ValidationReport::default();
+    plugin::check_plugin_scaffolding(temp.path(), &mut report);
     assert!(
-        result.errors.iter().any(|e| e.contains("not found")),
+        report.result.errors.iter().any(|e| e.contains("not found")),
         "expected missing-script error: {:?}",
-        result.errors
+        report.result.errors
     );
 }
 
@@ -203,11 +211,15 @@ fn plugin_scaffolding_non_executable_hook_errors() {
     .unwrap();
     write_hook_script(temp.path(), "hooks/guard.sh", false);
 
-    let mut result = ActionResult::new();
-    plugin::check_plugin_scaffolding(temp.path(), &mut result);
+    let mut report = ValidationReport::default();
+    plugin::check_plugin_scaffolding(temp.path(), &mut report);
     assert!(
-        result.errors.iter().any(|e| e.contains("not executable")),
+        report
+            .result
+            .errors
+            .iter()
+            .any(|e| e.contains("not executable")),
         "expected non-executable error: {:?}",
-        result.errors
+        report.result.errors
     );
 }

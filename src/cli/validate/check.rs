@@ -4,6 +4,7 @@ use commands::validate;
 use std::fs;
 use std::path::Path;
 
+use super::ValidationReport;
 use super::schema;
 use crate::cli::config::read_file;
 
@@ -20,7 +21,7 @@ pub fn flat_directory(
     dir: &Path,
     module_root: &Path,
     kind: &str,
-    result: &mut ActionResult,
+    report: &mut ValidationReport,
 ) -> Result<(), Error> {
     let schema_content =
         schema::load_schema(dir).or_else(|| schema::embedded_schema(kind).map(String::from));
@@ -29,11 +30,12 @@ pub fn flat_directory(
 
     let entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
+    let mut entries = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(std::fs::DirEntry::path);
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
-
         let path = entry.path();
         if path.is_dir() || path.extension().unwrap_or_default() != "md" {
             continue;
@@ -46,14 +48,16 @@ pub fn flat_directory(
             .to_string_lossy()
             .to_string();
 
+        let checkpoint = report.checkpoint();
         collect_diagnostics(
             &content,
             &relative,
             schema_content.as_ref(),
             mdschema_content.as_ref(),
             None,
-            result,
+            &mut report.result,
         );
+        report.record_since(relative, checkpoint);
     }
 
     Ok(())
@@ -64,7 +68,7 @@ pub fn flat_directory_with_json_schema(
     module_root: &Path,
     kind: &str,
     json_schema_content: Option<&String>,
-    result: &mut ActionResult,
+    report: &mut ValidationReport,
 ) -> Result<(), Error> {
     let schema_content =
         schema::load_schema(dir).or_else(|| schema::embedded_schema(kind).map(String::from));
@@ -73,11 +77,12 @@ pub fn flat_directory_with_json_schema(
 
     let entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
+    let mut entries = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+    entries.sort_by_key(std::fs::DirEntry::path);
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
-
         let path = entry.path();
         if path.is_dir() || path.extension().unwrap_or_default() != "md" {
             continue;
@@ -90,14 +95,16 @@ pub fn flat_directory_with_json_schema(
             .to_string_lossy()
             .to_string();
 
+        let checkpoint = report.checkpoint();
         collect_diagnostics(
             &content,
             &relative,
             schema_content.as_ref(),
             mdschema_content.as_ref(),
             json_schema_content,
-            result,
+            &mut report.result,
         );
+        report.record_since(relative, checkpoint);
     }
 
     Ok(())
@@ -119,7 +126,11 @@ pub fn flat_directory_with_json_schema(
 ///     examples.md       ← also checked
 ///     .mdschema         ← structural constraints for this skill
 /// ```
-pub fn skill_directory(dir: &Path, result: &mut ActionResult) -> Result<(), Error> {
+pub fn skill_directory(
+    dir: &Path,
+    module_root: &Path,
+    report: &mut ValidationReport,
+) -> Result<(), Error> {
     let mdschema_content = schema::load_mdschema_or_fallback(dir, "skills")
         .map_err(|error| Error::new(ErrorKind::Io, error))?;
 
@@ -128,18 +139,24 @@ pub fn skill_directory(dir: &Path, result: &mut ActionResult) -> Result<(), Erro
     let skill_file = dir.join("SKILL.md");
     if skill_file.is_file() {
         let content = read_file(&skill_file)?;
-        let display_path = skill_file.to_string_lossy().to_string();
+        let display_path = skill_file
+            .strip_prefix(module_root)
+            .unwrap_or(&skill_file)
+            .to_string_lossy()
+            .to_string();
 
         let skill_schema = schema::embedded_schema("skills").map(String::from);
 
+        let checkpoint = report.checkpoint();
         collect_diagnostics(
             &content,
             &display_path,
             skill_schema.as_ref(),
             mdschema_content.as_ref(),
             None,
-            result,
+            &mut report.result,
         );
+        report.record_since(display_path, checkpoint);
     }
 
     Ok(())

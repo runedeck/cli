@@ -540,7 +540,9 @@ pub fn run() -> i32 {
             target,
             skip_provenance,
         } => (copy::execute(&source, &target, skip_provenance), "copied"),
-        Command::Validate { source } => (validate::execute(&source), "validated"),
+        Command::Validate { source } => {
+            return exit_code(validate::execute(&source, args.json));
+        }
         Command::Provenance {
             target,
             source_uri,
