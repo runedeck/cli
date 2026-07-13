@@ -79,5 +79,6 @@ Against a deck source, `validate`, `provenance`, `drift`, and `clean` iterate al
 ## Consequences
 
 - Single-module sources keep the current behavior, so all existing tests stay green
+- The deploy pipeline currently drops non-markdown files without a warning, so hook scripts and manifests do not reach targets; the aggregate stage makes this loud and ships hook files verbatim
 - Qualified ids make the consumer manifest self-documenting at the cost of longer entries
 - Adding a domain is `mkdir` plus `module.yaml` with no registry edit; a malformed `module.yaml` in a new domain fails deck-wide validation immediately, which is intended

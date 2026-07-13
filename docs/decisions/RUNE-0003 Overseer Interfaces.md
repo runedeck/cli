@@ -52,3 +52,4 @@ gitui and jjui are MIT-licensed. Vendoring specific components with attribution 
 - Two interfaces cost more to build and maintain than a CLI-only tool
 - The TUI carries the complexity of log walking and graph rendering; write workflows stay in the terminal because the dashboard is read-only
 - Vendored components need license attribution and periodic alignment when upstream UI projects change
+- The batched history walking, sliding metadata window, and cast composition views are decided direction, not yet implemented; the current TUI loads a short synchronous history window

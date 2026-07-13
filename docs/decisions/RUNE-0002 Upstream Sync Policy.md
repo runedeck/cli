@@ -24,11 +24,11 @@ upstream: []
 
 ## Context and Problem Statement
 
-The predecessor CLI repository keeps evolving after rune's fresh-root fork. Cherry-picks and shared ancestry are unavailable without importing history rune deliberately shed. The team still needs bug fixes and features from upstream. Uncontrolled copying would reintroduce forge naming and semantics that conflict with the deck model.
+The predecessor CLI repository keeps evolving after rune's fresh-root fork. Cherry-picking fetched upstream commits is technically possible without shared ancestry, but the results carry upstream naming and bypass the review and rename discipline rune requires. The team still needs bug fixes and features from upstream. Uncontrolled copying would reintroduce predecessor naming and semantics that conflict with the deck model.
 
 ## Considered Options
 
-- Track upstream as a git remote and merge or cherry-pick with shared ancestry
+- Cherry-pick fetched upstream commits directly, accepting their naming and shape
 - Port deltas as content, staged by subsystem, with the rename applied on import
 - Freeze at the fork point and reimplement upstream features independently
 
