@@ -28,6 +28,36 @@ fn env_beats_config_beats_default() {
 }
 
 #[test]
+fn rune_deck_env_beats_config() {
+    let config = Config {
+        deck: Some("/from-config".to_string()),
+        ..Config::default()
+    };
+    let resolved = resolve_config(&config, &env_from(&[("RUNE_DECK", "/from-env")]));
+    let deck = resolved.deck.expect("deck resolved");
+    assert_eq!(deck.value, "/from-env");
+    assert_eq!(deck.source, Source::Env);
+}
+
+#[test]
+fn deck_config_is_used_without_env() {
+    let config = Config {
+        deck: Some("/from-config".to_string()),
+        ..Config::default()
+    };
+    let deck = resolve_config(&config, &no_env)
+        .deck
+        .expect("deck resolved");
+    assert_eq!(deck.value, "/from-config");
+    assert_eq!(deck.source, Source::Config);
+}
+
+#[test]
+fn deck_is_unset_without_env_or_config() {
+    assert!(resolve_config(&Config::default(), &no_env).deck.is_none());
+}
+
+#[test]
 fn config_beats_default() {
     let config = Config {
         ontology: Ontology {

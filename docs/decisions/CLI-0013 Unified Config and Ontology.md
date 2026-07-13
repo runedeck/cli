@@ -47,13 +47,14 @@ Rune commands need a shared vocabulary for user directories such as the workshop
 
 Chosen option: **Option 2**, because a single typed config gives the minimal Rust kernel enough shared facts to launch scripts and expose the resolved ontology while keeping behavior outside Rust.
 
-Rune reads `~/.config/rune/config.yaml` into typed structs. The top-level config denies unknown fields so mistakes fail loudly, while reserved `launch` and `watch` sections remain parse-tolerant for future use. Ontology accessors resolve values with `RUNE_*` environment variables first, config file values second, and built-in defaults last. Path-like ontology values expand a leading `~/` after resolution.
+Rune reads `~/.config/rune/config.yaml` into typed structs. The top-level config denies unknown fields so mistakes fail loudly, while reserved `launch` and `watch` sections remain parse-tolerant for future use. The top-level `deck` key supplies the default source for `rune add` and is set with `rune config set deck <path-or-url>`. Runtime accessors resolve `RUNE_*` environment variables first, config file values second, and built-in defaults last. Path-like ontology values expand a leading `~/` after resolution.
 
 If `config.yaml` is absent, Rune reads `project.yaml` from the same directory as a deprecated fallback and maps `defaults.domain` to the ontology `domain` key. The fallback emits one process-wide warning so interactive commands make the migration visible without spamming repeated loads.
 
 ## Consequences
 
 - `rune config` can display the exact effective ontology, including provenance for each key.
+- `RUNE_DECK` overrides the configured deck without editing the user config.
 - `rune exec` and external dispatch inject the same `RUNE_*` values into child processes.
 - Legacy `project.yaml` users retain one release of overlap.
 - Unknown top-level keys in `config.yaml` are errors, which prevents silent misspellings.

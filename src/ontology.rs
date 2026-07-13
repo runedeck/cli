@@ -11,6 +11,7 @@ static PROJECT_WARNING: Once = Once::new();
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub deck: Option<String>,
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
@@ -191,6 +192,7 @@ pub struct ResolvedValue {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ResolvedConfig {
+    pub deck: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
     #[serde(skip)]
@@ -365,6 +367,18 @@ pub fn env_vars(config: &ResolvedConfig) -> Vec<(String, String)> {
         .collect()
 }
 
+#[must_use]
+pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
+    let mut fields = vec![ResolvedField {
+        key: "deck",
+        env: "RUNE_DECK",
+        value: config.deck.as_ref().map(|value| value.value.clone()),
+        source: config.deck.as_ref().map(|value| value.source),
+    }];
+    fields.extend(config.ontology.fields());
+    fields
+}
+
 pub fn expand_tilde(value: &str) -> PathBuf {
     if let Some(rest) = value.strip_prefix("~/") {
         return dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest));
@@ -432,6 +446,17 @@ fn load_project_fallback(config_dir: &Path) -> Result<Config, Error> {
 }
 
 fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> ResolvedConfig {
+    let deck = env("RUNE_DECK")
+        .map(|value| ResolvedValue {
+            value,
+            source: Source::Env,
+        })
+        .or_else(|| {
+            config.deck.as_ref().map(|value| ResolvedValue {
+                value: value.clone(),
+                source: Source::Config,
+            })
+        });
     let ontology = ResolvedOntology {
         workshop: resolve_key(Key::Workshop, &config.ontology, env),
         owner: resolve_key(Key::Owner, &config.ontology, env),
@@ -451,6 +476,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         .map(|extension| expand_tilde(extension))
         .collect();
     ResolvedConfig {
+        deck,
         ontology,
         extensions,
         launch: config.launch.clone(),

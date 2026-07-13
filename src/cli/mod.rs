@@ -292,8 +292,11 @@ enum Command {
         target: Option<String>,
     },
 
-    /// Show the resolved Rune ontology and configuration
-    Config,
+    /// Show or update resolved Rune configuration
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
 
     /// Adopt an upstream skill artifact into a module with provenance
     Adopt {
@@ -422,6 +425,17 @@ enum WatchAction {
     Remove {
         /// Path or git URL to stop watching.
         path: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Set a user configuration value
+    Set {
+        /// Configuration key. Currently supported: deck.
+        key: String,
+        /// New value.
+        value: String,
     },
 }
 
@@ -571,7 +585,12 @@ pub fn run() -> i32 {
                 "cleaned",
             )
         }
-        Command::Config => return exit_code(ontology::show(args.json)),
+        Command::Config { action } => {
+            return exit_code(match action {
+                Some(ConfigAction::Set { key, value }) => ontology::set(&key, &value, args.json),
+                None => ontology::show(args.json),
+            });
+        }
         Command::Adopt {
             url,
             module,

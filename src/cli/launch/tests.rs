@@ -8,6 +8,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
         cwd: root.to_path_buf(),
         root: root.to_path_buf(),
         config: ontology::ResolvedConfig {
+            deck: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions,
             launch,
