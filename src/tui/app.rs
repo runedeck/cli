@@ -19,7 +19,7 @@ use commands::{
     manifest::FileStatus,
     review::{self, ExportFormat, ReviewComment},
     services::{
-        self, builders,
+        self, builders, editing,
         files::{self, FileSections},
     },
     view::{
@@ -28,17 +28,25 @@ use commands::{
     },
 };
 
-use crate::cli::{config, watchlist};
+use crate::cli::{
+    config,
+    validate::{SourceValidationReport, ViolationSeverity},
+    watchlist,
+};
 
 use super::cast_editor::{CastEditor, EditorAction};
+use super::comment_navigator::{
+    CommentNavigatorItem, CommentNavigatorState, render_comment_navigator,
+};
 use super::components::{
     palette::{Palette, PaletteCommand},
     preview::{ArtifactPreview, wrapped_rows},
 };
+use super::file_editor::{EditorAction as FileEditorAction, FileEditor};
 use super::rich;
 use super::word_wrap::expand_gutter_wrapped;
 
-const SECTION_COUNT: usize = 16;
+const SECTION_COUNT: usize = 17;
 const LEGACY_SECTION_COUNT: usize = 13;
 const DETAIL_TAB_COUNT: usize = 6;
 const LEFT_MIN_WIDTH: u16 = 14;
@@ -46,6 +54,9 @@ const LEFT_MAX_WIDTH: u16 = 20;
 const MIDDLE_MIN_WIDTH: u16 = 24;
 const MIDDLE_MAX_WIDTH: u16 = 40;
 const MIN_DETAIL_WIDTH: u16 = 20;
+const FILE_LIST_MIN_HEIGHT: u16 = 4;
+const COMMENT_NAVIGATOR_MIN_HEIGHT: u16 = 4;
+const COMMENT_NAVIGATOR_MAX_HEIGHT: u16 = 12;
 /// Columns occupied by the code gutter: comment marker (2) plus a
 /// right-aligned line number (4) plus one space.
 const CODE_GUTTER: usize = 7;
@@ -56,7 +67,7 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("h/j/k/l", "move, drill, and go back"),
             ("arrows", "move, drill, and go back"),
-            ("Tab", "next column or detail tab"),
+            ("Tab/BackTab", "cycle panel focus"),
             ("BackTab", "previous column"),
             ("Enter", "drill or expand detail"),
             ("Esc", "back, close overlay, or quit"),
@@ -75,7 +86,9 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("R d p v", "repositories, ADRs, provenance, variants"),
             ("f t h c m", "search, settings, hooks, config, schemas"),
             ("n x y", "decks, casts, deck history"),
+            ("P", "validation problems"),
             ("H", "history for selected artifact"),
+            ("P", "live validation problems"),
         ],
     ),
     (
@@ -91,8 +104,12 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("!", "toggle problems-only"),
             ("c/m", "comment current line (Code/Diff)"),
             ("V", "select Code lines; c comments range"),
+            ("e", "edit rune source in the TUI (Code)"),
+            ("E / ;E", "edit rune source with $EDITOR (Code)"),
+            ("o", "create/open user override (Code)"),
+            ("Comments", "j/k select · Enter jump · d delete"),
             ("Y", "copy current review (alias)"),
-            ("o/O", "open gitui / jjui on repository"),
+            ("o/O", "open gitui / jjui outside Code"),
             ("D", "deploy module to a target"),
             ("L", "launch harness session in repository"),
             (";e / ;q", "cast editor / quit"),
@@ -106,6 +123,7 @@ pub enum ColumnFocus {
     Sections,
     List,
     Detail,
+    Comments,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +144,7 @@ pub enum Section {
     Decks = 13,
     Casts = 14,
     DeckHistory = 15,
+    Problems = 16,
 }
 
 impl Section {
@@ -146,6 +165,7 @@ impl Section {
         Self::Decks,
         Self::Casts,
         Self::DeckHistory,
+        Self::Problems,
     ];
 
     fn label(self) -> &'static str {
@@ -166,6 +186,7 @@ impl Section {
             Self::Decks => "Decks",
             Self::Casts => "Casts",
             Self::DeckHistory => "History",
+            Self::Problems => "Problems",
         }
     }
 
@@ -191,6 +212,7 @@ impl Section {
             "decks" | "deck" => Some(Self::Decks),
             "casts" | "cast" => Some(Self::Casts),
             "deck-history" | "deck_history" | "history" => Some(Self::DeckHistory),
+            "problems" | "problem" => Some(Self::Problems),
             _ => None,
         }
     }
@@ -215,6 +237,7 @@ impl Section {
             Self::Decks => "n",
             Self::Casts => "x",
             Self::DeckHistory => "y",
+            Self::Problems => "P",
         }
     }
 
@@ -236,6 +259,7 @@ impl Section {
             'n' | 'N' => Some(Self::Decks),
             'x' | 'X' => Some(Self::Casts),
             'y' => Some(Self::DeckHistory),
+            'P' => Some(Self::Problems),
             _ => None,
         }
     }
@@ -367,6 +391,7 @@ enum ListTarget {
     DeckEntry(String),
     Cast(String),
     HistoryCommit(String),
+    ValidationProblem(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -452,6 +477,7 @@ struct LaunchPicker {
 struct MouseRegions {
     sections: Rect,
     list: Rect,
+    comments: Rect,
     detail: Rect,
     tabs: Rect,
     /// The detail body below any tab bar, for row-accurate link clicks.
@@ -567,6 +593,9 @@ pub struct App {
     file_sections: FileSections,
     scan_receiver: Option<Receiver<Result<ScanResult, String>>>,
     scan_state: ScanState,
+    validation_receiver: Option<Receiver<Result<SourceValidationReport, String>>>,
+    validation_report: SourceValidationReport,
+    validation_loading: bool,
     focused: ColumnFocus,
     section: Section,
     cached_rows: Vec<ListRow>,
@@ -576,7 +605,11 @@ pub struct App {
     row_build_count: usize,
     preview_cache: Option<DetailCache>,
     code_cache: Option<CodeCache>,
+    /// Last source/override edited for an artifact, used by its reloaded Code view.
+    code_source_override: Option<(String, PathBuf)>,
+    file_editor: Option<FileEditor>,
     comments: CommentMap,
+    comment_navigator_state: CommentNavigatorState,
     comment_prompt: Option<CommentPrompt>,
     visual_selection: Option<VisualSelection>,
     pending_count: Option<usize>,
@@ -603,6 +636,8 @@ pub struct App {
     /// External command queued to run with the real terminal (gitui/jjui,
     /// deploys, harness launches); the event loop suspends, runs, resumes.
     pending_external: Option<ExternalCommand>,
+    /// Source path being edited by a suspended external editor.
+    external_editor_path: Option<PathBuf>,
     /// Target picker for deploying a module: options and selection.
     deploy_picker: Option<DeployPicker>,
     /// Harness picker for launching a session in a repo.
@@ -616,6 +651,7 @@ pub struct App {
     /// Line cursor for the Code tab, decoupled from the viewport: keys move
     /// it (viewport follows), the wheel scrolls without touching it.
     detail_cursor: usize,
+    pending_code_line: Option<usize>,
     /// Detail body height at the last render, for cursor-follow and paging.
     detail_viewport: usize,
     /// Synthesized artifact for the selected ADR or companion, keyed by a
@@ -648,6 +684,7 @@ pub struct App {
 impl App {
     pub fn load(root: PathBuf) -> Self {
         let mut app = Self::from_view(root, Vec::new(), Vec::new(), empty_dashboard_view());
+        app.start_validation();
         app.start_scan();
         app
     }
@@ -685,6 +722,9 @@ impl App {
             file_sections,
             scan_receiver: None,
             scan_state: ScanState::Idle,
+            validation_receiver: None,
+            validation_report: SourceValidationReport::default(),
+            validation_loading: false,
             focused: ColumnFocus::Sections,
             section: Section::Overview,
             cached_rows: Vec::new(),
@@ -694,7 +734,10 @@ impl App {
             row_build_count: 0,
             preview_cache: None,
             code_cache: None,
+            code_source_override: None,
+            file_editor: None,
             comments,
+            comment_navigator_state: CommentNavigatorState::default(),
             comment_prompt: None,
             visual_selection: None,
             pending_count: None,
@@ -719,6 +762,7 @@ impl App {
             palette: Palette::new(),
             mouse_regions: MouseRegions::default(),
             pending_external: None,
+            external_editor_path: None,
             deploy_picker: None,
             launch_picker: None,
             list_offset: 0,
@@ -728,6 +772,7 @@ impl App {
             list_filter_typing: false,
             problems_only: false,
             detail_cursor: 0,
+            pending_code_line: None,
             detail_viewport: 1,
             synthesized: None,
             search_typing: false,
@@ -803,6 +848,51 @@ impl App {
                 self.palette_error = Some("scan worker disconnected".to_string());
             }
         }
+    }
+
+    fn start_validation(&mut self) {
+        let root = self.root.clone();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result =
+                crate::cli::validate::validate_source(&root).map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+        self.validation_receiver = Some(receiver);
+        self.validation_loading = true;
+    }
+
+    pub(super) fn poll_validation(&mut self) {
+        let Some(receiver) = &self.validation_receiver else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(report)) => {
+                self.validation_report = report;
+                self.validation_loading = false;
+                self.validation_receiver = None;
+                if self.section == Section::Problems {
+                    self.invalidate_rows();
+                    self.clamp_list_selection();
+                }
+            }
+            Ok(Err(error)) => {
+                self.validation_loading = false;
+                self.validation_receiver = None;
+                self.toast = Some(format!("validation failed: {error}"));
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.validation_loading = false;
+                self.validation_receiver = None;
+                self.toast = Some("validation worker disconnected".to_string());
+            }
+        }
+    }
+
+    #[must_use]
+    pub(super) fn validation_pending(&self) -> bool {
+        self.validation_receiver.is_some()
     }
 
     fn start_scan(&mut self) {
@@ -920,6 +1010,7 @@ impl App {
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
         self.poll_history();
+        self.poll_validation();
         if let Some(editor) = self.cast_editor.as_mut() {
             editor.render(frame, frame.area());
             return;
@@ -994,20 +1085,7 @@ impl App {
                 Constraint::Min(0),
             ])
             .split(layout[1]);
-        self.mouse_regions.sections = columns[0];
-        self.mouse_regions.list = columns[1];
-        self.mouse_regions.detail = columns[2];
-        self.mouse_regions.tabs = Rect::default();
-        self.mouse_regions.detail_body = Rect::default();
-        if self.section == Section::Decks && self.view.deck.is_some() {
-            self.render_deck_entries(frame, columns[0]);
-            self.render_deck_kinds(frame, columns[1]);
-            self.render_deck_artifacts(frame, columns[2]);
-        } else {
-            self.render_sections(frame, columns[0]);
-            self.render_list(frame, columns[1]);
-            self.render_detail(frame, columns[2]);
-        }
+        self.render_columns(frame, [columns[0], columns[1], columns[2]]);
         self.render_footer(frame, layout[2]);
 
         if let Some(picker) = &self.deploy_picker {
@@ -1018,6 +1096,58 @@ impl App {
         }
         if self.help_state == HelpState::Open {
             render_help(frame, frame.area());
+        }
+    }
+
+    fn render_columns(&mut self, frame: &mut Frame<'_>, columns: [Rect; 3]) {
+        self.mouse_regions.sections = columns[0];
+        self.mouse_regions.list = columns[1];
+        self.mouse_regions.comments = Rect::default();
+        self.mouse_regions.detail = columns[2];
+        self.mouse_regions.tabs = Rect::default();
+        self.mouse_regions.detail_body = Rect::default();
+        if self.section == Section::Decks && self.view.deck.is_some() {
+            self.render_deck_entries(frame, columns[0]);
+            self.render_deck_kinds(frame, columns[1]);
+            self.render_deck_artifacts(frame, columns[2]);
+        } else {
+            let comment_items = self.comment_navigator_items();
+            let (list_area, comment_area) = if !comment_items.is_empty()
+                && columns[1].height >= FILE_LIST_MIN_HEIGHT + COMMENT_NAVIGATOR_MIN_HEIGHT
+            {
+                let available_comment_height =
+                    columns[1].height.saturating_sub(FILE_LIST_MIN_HEIGHT);
+                let max_comment_height = COMMENT_NAVIGATOR_MAX_HEIGHT.min(available_comment_height);
+                let desired_comment_height = usize_to_u16(comment_items.len()).saturating_add(2);
+                let comment_height = desired_comment_height
+                    .min(max_comment_height)
+                    .max(COMMENT_NAVIGATOR_MIN_HEIGHT);
+                let left_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(FILE_LIST_MIN_HEIGHT),
+                        Constraint::Length(comment_height),
+                    ])
+                    .split(columns[1]);
+                (left_chunks[0], Some(left_chunks[1]))
+            } else {
+                (columns[1], None)
+            };
+            self.mouse_regions.list = list_area;
+            self.render_sections(frame, columns[0]);
+            self.render_list(frame, list_area);
+            if let Some(comment_area) = comment_area {
+                self.mouse_regions.comments = comment_area;
+                self.sync_comment_navigator_selection(&comment_items);
+                render_comment_navigator(
+                    frame,
+                    &mut self.comment_navigator_state,
+                    comment_area,
+                    &comment_items,
+                    self.focused == ColumnFocus::Comments,
+                );
+            }
+            self.render_detail(frame, columns[2]);
         }
     }
 
@@ -1033,8 +1163,13 @@ impl App {
         } else {
             format!(" | ✎ {} comments (y copies)", self.comments.len())
         };
+        let validation = if self.validation_loading {
+            " | validating…".to_string()
+        } else {
+            format!(" | ✗ {}", self.validation_report.violations.len())
+        };
         let text = format!(
-            " rune tui | {scan} | ok {} stale {} modified {} new {} | {} modules{comments}",
+            " rune tui | {scan} | ok {} stale {} modified {} new {} | {} modules{comments}{validation}",
             summary.unchanged,
             summary.stale,
             summary.modified,
@@ -1048,7 +1183,13 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = if let Some(edit) = &self.pending_cast_edit {
+        let text = if let Some(editor) = &self.file_editor {
+            format!(
+                " editor [{}] · i:insert Esc:normal · :w save · :q quit · {}",
+                editor.mode_label(),
+                editor.display_path()
+            )
+        } else if let Some(edit) = &self.pending_cast_edit {
             format!(
                 " {} {} in cast {}?  Enter confirms · Esc cancels",
                 if edit.include { "include" } else { "exclude" },
@@ -1406,8 +1547,12 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let target = self.selected_target();
-        match target {
+        if self.section == Section::Problems {
+            self.render_problems_detail(frame, inner);
+            return;
+        }
+
+        match self.selected_target() {
             Some(
                 ListTarget::Artifact { module, kind, name }
                 | ListTarget::ProvenanceArtifact { module, kind, name },
@@ -1484,6 +1629,52 @@ impl App {
             Some(ListTarget::DeckEntry(name)) => self.render_deck_detail(frame, inner, &name),
             _ => self.render_overview_detail(frame, inner),
         }
+    }
+
+    fn render_problems_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if let Some(editor) = self.file_editor.as_mut() {
+            self.mouse_regions.detail_body = area;
+            editor.render(frame, area);
+            return;
+        }
+        if let Some(ListTarget::ValidationProblem(index)) = self.selected_target() {
+            self.render_validation_problem(frame, area, index);
+        } else {
+            frame.render_widget(
+                Paragraph::new("✓ no validation problems").style(Style::default().fg(Color::Green)),
+                area,
+            );
+        }
+    }
+
+    fn render_validation_problem(&self, frame: &mut Frame<'_>, area: Rect, index: usize) {
+        let Some(violation) = self.validation_report.violations.get(index) else {
+            frame.render_widget(Paragraph::new("validation problem not found"), area);
+            return;
+        };
+        let (marker, color) = match violation.severity {
+            ViolationSeverity::Error => ("✗", Color::Red),
+            ViolationSeverity::Warning => ("⚡", Color::Yellow),
+        };
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{marker} "),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    violation.artifact.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::default(),
+            Line::from(violation.message.clone()),
+        ];
+        if let Some(line) = violation.line {
+            lines.push(Line::default());
+            lines.push(Line::from(format!("line {line} · Enter edits at location")));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
 
     fn render_deck_detail(&self, frame: &mut Frame<'_>, area: Rect, name: &str) {
@@ -1622,6 +1813,10 @@ impl App {
         self.mouse_regions.tabs = chunks[0];
         self.mouse_regions.detail_body = chunks[1];
         self.render_tabs(frame, chunks[0]);
+        if let Some(editor) = self.file_editor.as_mut() {
+            editor.render(frame, chunks[1]);
+            return;
+        }
         self.prepare_artifact_detail_cache(module_index, artifact_index, chunks[1].width);
         if self.detail_tab == DetailTab::Code {
             let viewport = usize::from(chunks[1].height.max(1));
@@ -1985,39 +2180,7 @@ impl App {
     ) {
         let cache_width = width.max(1);
         if self.detail_tab == DetailTab::Code {
-            let module = &self.view.modules[module_index];
-            let artifact = &module.artifacts[artifact_index];
-            let key = format!("{}:{}", module.name, artifact.relative_path);
-            let needs_build = self
-                .code_cache
-                .as_ref()
-                .is_none_or(|cache| cache.path != key);
-            if needs_build {
-                self.detail_scroll = 0;
-                self.detail_cursor = 0;
-                self.code_search_input = None;
-                self.code_search_query.clear();
-                self.code_search_current = None;
-                let (source_path, source) = artifact_source(module, artifact);
-                let sections = source
-                    .lines()
-                    .enumerate()
-                    .filter_map(|(index, line)| line.trim_start().starts_with('#').then_some(index))
-                    .collect();
-                let lines = rich::highlight_code(&source_path, &source);
-                let source_lines = source.lines().map(str::to_string).collect();
-                self.code_cache = Some(CodeCache {
-                    path: key,
-                    origin: source_path,
-                    lines,
-                    source_lines,
-                    sections,
-                });
-                #[cfg(test)]
-                {
-                    self.code_cache_build_count += 1;
-                }
-            }
+            self.prepare_code_cache(module_index, artifact_index);
             return;
         }
         let key = {
@@ -2078,6 +2241,60 @@ impl App {
             {
                 self.preview_cache_build_count += 1;
             }
+        }
+    }
+
+    fn prepare_code_cache(&mut self, module_index: usize, artifact_index: usize) {
+        let module = &self.view.modules[module_index];
+        let artifact = &module.artifacts[artifact_index];
+        let key = format!("{}:{}", module.name, artifact.relative_path);
+        if self
+            .code_cache
+            .as_ref()
+            .is_some_and(|cache| cache.path == key)
+        {
+            return;
+        }
+        self.detail_scroll = 0;
+        self.detail_cursor = 0;
+        self.code_search_input = None;
+        self.code_search_query.clear();
+        self.code_search_current = None;
+        let (source_path, source) = self
+            .code_source_override
+            .as_ref()
+            .filter(|(artifact_key, _)| artifact_key == &key)
+            .and_then(|(_, path)| {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .map(|source| (path.to_string_lossy().into_owned(), source))
+            })
+            .unwrap_or_else(|| artifact_source(module, artifact));
+        let sections = source
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| line.trim_start().starts_with('#').then_some(index))
+            .collect();
+        let lines = rich::highlight_code(&source_path, &source);
+        let source_lines = source.lines().map(str::to_string).collect();
+        self.code_cache = Some(CodeCache {
+            path: key,
+            origin: source_path,
+            lines,
+            source_lines,
+            sections,
+        });
+        if let Some(line) = self.pending_code_line.take() {
+            let last = self
+                .code_cache
+                .as_ref()
+                .map_or(0, |cache| cache.lines.len().saturating_sub(1));
+            self.detail_cursor = line.saturating_sub(1).min(last);
+            self.detail_scroll = usize_to_u16(self.detail_cursor);
+        }
+        #[cfg(test)]
+        {
+            self.code_cache_build_count += 1;
         }
     }
 
@@ -2353,7 +2570,9 @@ impl App {
             return;
         }
         match self.focused {
-            ColumnFocus::Detail | ColumnFocus::List => self.focus_previous(),
+            ColumnFocus::Comments | ColumnFocus::Detail | ColumnFocus::List => {
+                self.focus_previous();
+            }
             ColumnFocus::Sections => self.request_quit(),
         }
     }
@@ -2478,16 +2697,22 @@ impl App {
     }
 
     pub fn focus_next(&mut self) {
+        let has_comments = !self.comments.is_empty();
         self.focused = match self.focused {
             ColumnFocus::Sections => ColumnFocus::List,
-            ColumnFocus::List | ColumnFocus::Detail => ColumnFocus::Detail,
+            ColumnFocus::List => ColumnFocus::Detail,
+            ColumnFocus::Detail if has_comments => ColumnFocus::Comments,
+            ColumnFocus::Detail | ColumnFocus::Comments => ColumnFocus::Sections,
         };
     }
 
     pub fn focus_previous(&mut self) {
+        let has_comments = !self.comments.is_empty();
         self.focused = match self.focused {
+            ColumnFocus::Sections if has_comments => ColumnFocus::Comments,
             ColumnFocus::Sections | ColumnFocus::List => ColumnFocus::Sections,
             ColumnFocus::Detail => ColumnFocus::List,
+            ColumnFocus::Comments => ColumnFocus::Detail,
         };
     }
 
@@ -2589,6 +2814,10 @@ impl App {
                         self.set_section(Section::Search);
                         return;
                     }
+                    Some(ListTarget::ValidationProblem(index)) => {
+                        self.open_validation_problem(index);
+                        return;
+                    }
                     _ => {}
                 }
                 if let Some(ListTarget::ProvenanceArtifact { .. }) = self.selected_target() {
@@ -2601,6 +2830,9 @@ impl App {
                 if let Some(artifact) = self.selected_artifact().cloned() {
                     self.preview = Some(ArtifactPreview::from_artifact(&artifact));
                 }
+            }
+            ColumnFocus::Comments => {
+                self.jump_to_selected_comment();
             }
         }
     }
@@ -2655,6 +2887,16 @@ impl App {
                         // Click on the selected row activates it, gitui-style.
                         self.drill_or_expand();
                     }
+                }
+            }
+        } else if regions.comments.contains(position) {
+            if let Some(visual_row) = bordered_row_at(regions.comments, x, y) {
+                let index =
+                    visual_row.saturating_add(self.comment_navigator_state.list_state.offset());
+                if index < self.comments.len() {
+                    self.focused = ColumnFocus::Comments;
+                    self.comment_navigator_state.select(index);
+                    self.jump_to_selected_comment();
                 }
             }
         } else if regions.detail.contains(position) {
@@ -2716,7 +2958,9 @@ impl App {
             }
             return;
         }
-        if self.mouse_regions.detail.contains(position) {
+        if self.mouse_regions.comments.contains(position) {
+            self.comment_navigator_viewport_scroll(down, usize::from(WHEEL_STEP));
+        } else if self.mouse_regions.detail.contains(position) {
             self.detail_scroll = if down {
                 self.detail_scroll.saturating_add(WHEEL_STEP)
             } else {
@@ -2738,6 +2982,7 @@ impl App {
             ColumnFocus::Sections => self.section_key(key),
             ColumnFocus::List => self.list_key(key),
             ColumnFocus::Detail => self.detail_key(key),
+            ColumnFocus::Comments => self.comment_navigator_key(key),
         }
     }
 
@@ -2755,6 +3000,10 @@ impl App {
                 }
                 (PendingNavigation::Leader, KeyCode::Char('e')) => {
                     self.open_cast_editor();
+                    true
+                }
+                (PendingNavigation::Leader, KeyCode::Char('E')) => {
+                    self.open_selected_source_external();
                     true
                 }
                 (PendingNavigation::Leader, KeyCode::Char('q')) => {
@@ -3200,6 +3449,9 @@ impl App {
     }
 
     pub fn set_detail_tab(&mut self, tab: DetailTab) {
+        if self.file_editor.is_some() {
+            return;
+        }
         if self.detail_tab == tab {
             return;
         }
@@ -3216,6 +3468,224 @@ impl App {
         } else {
             self.set_detail_tab(DetailTab::Code);
         }
+    }
+
+    #[must_use]
+    pub fn is_file_editor_open(&self) -> bool {
+        self.file_editor.is_some()
+    }
+
+    pub fn file_editor_key(&mut self, key: KeyEvent) {
+        let action = self
+            .file_editor
+            .as_mut()
+            .map_or(FileEditorAction::Continue, |editor| editor.handle_key(key));
+        match action {
+            FileEditorAction::Continue => {}
+            FileEditorAction::Discard => {
+                let path = self
+                    .file_editor
+                    .take()
+                    .map(|editor| editor.path().to_path_buf());
+                self.toast = path.map(|path| format!("discarded changes to {}", path.display()));
+            }
+            FileEditorAction::Save => self.save_file_editor(),
+        }
+    }
+
+    fn save_file_editor(&mut self) {
+        let Some(editor) = self.file_editor.take() else {
+            return;
+        };
+        let path = editor.path().to_path_buf();
+        let artifact_key = self
+            .selected_artifact()
+            .map(|artifact| format!("{}:{}", artifact.module, artifact.relative_path));
+        match editing::atomic_write(&path, &editor.text()) {
+            Ok(()) => {
+                if let Some(artifact_key) = artifact_key {
+                    self.code_source_override = Some((artifact_key, path.clone()));
+                }
+                self.invalidate_after_source_edit();
+                self.toast = Some(format!("saved {}", path.display()));
+            }
+            Err(error) => {
+                self.file_editor = Some(editor);
+                self.toast = Some(format!("save failed: {error}"));
+            }
+        }
+    }
+
+    pub fn edit_selected_source_or_cast(&mut self) {
+        if !self.is_rune_code_context() {
+            self.open_cast_editor();
+            return;
+        }
+        match self.selected_editable_source() {
+            Ok((_, path)) => self.open_file_editor_at(path, None),
+            Err(error) => self.toast = Some(error),
+        }
+    }
+
+    pub fn open_user_override_or_repo(&mut self) {
+        if !self.is_rune_code_context() {
+            self.open_repo_tool(false);
+            return;
+        }
+        let (_, source) = match self.selected_editable_source() {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.toast = Some(error);
+                return;
+            }
+        };
+        let (override_path, created) = match editing::create_user_override(&source) {
+            Ok(created) => created,
+            Err(error) => {
+                self.toast = Some(format!("could not create override: {error}"));
+                return;
+            }
+        };
+        self.open_file_editor_at(override_path.clone(), None);
+        if created && self.file_editor.is_some() {
+            self.toast = Some(format!("created override {}", override_path.display()));
+        }
+    }
+
+    pub fn open_selected_source_external(&mut self) {
+        if !self.is_rune_code_context() {
+            return;
+        }
+        let (root, path) = match self.selected_editable_source() {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.toast = Some(error);
+                return;
+            }
+        };
+        let configured = std::env::var("VISUAL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("EDITOR")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .unwrap_or_else(|| "vi".to_string());
+        let mut words = configured.split_whitespace();
+        let program = words.next().unwrap_or("vi").to_string();
+        let mut args = words.map(str::to_string).collect::<Vec<_>>();
+        args.push(path.to_string_lossy().into_owned());
+        self.external_editor_path = Some(path.clone());
+        self.pending_external = Some(ExternalCommand {
+            program,
+            args,
+            directory: root,
+        });
+        self.toast = Some(format!("opening {}", path.display()));
+    }
+
+    pub fn external_editor_finished(&mut self) -> bool {
+        let Some(path) = self.external_editor_path.take() else {
+            return false;
+        };
+        if let Some(artifact) = self.selected_artifact() {
+            self.code_source_override = Some((
+                format!("{}:{}", artifact.module, artifact.relative_path),
+                path.clone(),
+            ));
+        }
+        self.invalidate_after_source_edit();
+        self.toast = Some(format!("reloaded {}", path.display()));
+        true
+    }
+
+    fn open_file_editor_at(&mut self, path: PathBuf, line: Option<usize>) {
+        match FileEditor::open(path, line) {
+            Ok(editor) => self.file_editor = Some(editor),
+            Err(error) => self.toast = Some(error),
+        }
+    }
+
+    fn open_validation_problem(&mut self, index: usize) {
+        let Some(violation) = self.validation_report.violations.get(index).cloned() else {
+            self.toast = Some("validation problem not found".to_string());
+            return;
+        };
+        let root = match std::fs::canonicalize(&self.root) {
+            Ok(root) if !is_git_cache_source(&root) => root,
+            _ => {
+                self.toast = Some("read-only source".to_string());
+                return;
+            }
+        };
+        if std::fs::metadata(&root).map_or(true, |metadata| metadata.permissions().readonly()) {
+            self.toast = Some("read-only source".to_string());
+            return;
+        }
+        let direct = root.join(&violation.artifact);
+        let candidate = if direct.is_file() {
+            direct
+        } else {
+            root.join("runes").join(&violation.artifact)
+        };
+        let Ok(candidate) = std::fs::canonicalize(candidate) else {
+            self.toast = Some(format!("source file not found: {}", violation.artifact));
+            return;
+        };
+        if !candidate.starts_with(&root) {
+            self.toast = Some("read-only source".to_string());
+            return;
+        }
+        self.open_file_editor_at(candidate, violation.line);
+    }
+
+    fn invalidate_after_source_edit(&mut self) {
+        self.code_cache = None;
+        self.preview_cache = None;
+        self.synthesized = None;
+        self.detail_scroll = 0;
+        self.detail_cursor = 0;
+        self.start_validation();
+    }
+
+    fn is_rune_code_context(&self) -> bool {
+        self.focused == ColumnFocus::Detail
+            && self.detail_tab == DetailTab::Code
+            && self.selected_artifact().is_some()
+    }
+
+    fn selected_editable_source(&self) -> Result<(PathBuf, PathBuf), String> {
+        let artifact = self
+            .selected_artifact()
+            .ok_or_else(|| "no rune selected".to_string())?;
+        let module = self
+            .view
+            .modules
+            .iter()
+            .find(|module| module.name == artifact.module)
+            .ok_or_else(|| "source module not found".to_string())?;
+        let root = module
+            .local_path
+            .as_ref()
+            .ok_or_else(|| "read-only source".to_string())?;
+        let root = std::fs::canonicalize(root).map_err(|_| "read-only source".to_string())?;
+        if is_git_cache_source(&root)
+            || std::fs::metadata(&root).map_or(true, |metadata| metadata.permissions().readonly())
+        {
+            return Err("read-only source".to_string());
+        }
+        let relative = if artifact.source_path.is_empty() {
+            artifact.relative_path.as_str()
+        } else {
+            artifact.source_path.as_str()
+        };
+        let source = std::fs::canonicalize(root.join(relative))
+            .map_err(|_| "read-only source".to_string())?;
+        if !source.starts_with(&root) {
+            return Err("read-only source".to_string());
+        }
+        Ok((root, source))
     }
 
     pub fn preview_or_previous_section(&mut self) {
@@ -3256,6 +3726,21 @@ impl App {
     #[must_use]
     pub fn detail_cursor_for_test(&self) -> usize {
         self.detail_cursor
+    }
+
+    #[cfg(test)]
+    pub fn set_validation_report_for_test(
+        &mut self,
+        checked: usize,
+        violations: Vec<crate::cli::validate::ValidationViolation>,
+    ) {
+        self.validation_report = SourceValidationReport {
+            checked,
+            violations,
+        };
+        self.validation_loading = false;
+        self.validation_receiver = None;
+        self.invalidate_rows();
     }
 
     #[cfg(test)]
@@ -3676,6 +4161,184 @@ impl App {
             .collect()
     }
 
+    fn comment_navigator_items(&self) -> Vec<CommentNavigatorItem> {
+        self.comments
+            .iter()
+            .map(|((module, path, line), comment)| CommentNavigatorItem {
+                key: (module.clone(), path.clone(), *line),
+                kind: comment.kind,
+                path: path.clone(),
+                line: *line,
+                text: comment.text.lines().next().unwrap_or_default().to_string(),
+            })
+            .collect()
+    }
+
+    fn sync_comment_navigator_selection(&mut self, items: &[CommentNavigatorItem]) {
+        if items.is_empty() {
+            self.comment_navigator_state.list_state.select(None);
+            return;
+        }
+        if self.focused == ColumnFocus::Detail
+            && self.detail_tab == DetailTab::Code
+            && let Some(artifact) = self.selected_artifact()
+            && let Some(index) = items.iter().position(|item| {
+                item.key.0 == artifact.module
+                    && item.key.1 == artifact.relative_path
+                    && item.line == self.current_code_line()
+            })
+        {
+            self.comment_navigator_state.select(index);
+            return;
+        }
+        let selected = self
+            .comment_navigator_state
+            .selected()
+            .min(items.len().saturating_sub(1));
+        self.comment_navigator_state.select(selected);
+    }
+
+    fn comment_navigator_move(&mut self, delta: isize) {
+        let count = self.comments.len();
+        if count == 0 {
+            return;
+        }
+        let selected = self
+            .comment_navigator_state
+            .selected()
+            .saturating_add_signed(delta)
+            .min(count - 1);
+        self.comment_navigator_state.select(selected);
+        let focus = self.focused;
+        self.jump_to_selected_comment();
+        self.focused = focus;
+    }
+
+    fn jump_to_selected_comment(&mut self) -> bool {
+        let items = self.comment_navigator_items();
+        let Some(item) = items.get(self.comment_navigator_state.selected()).cloned() else {
+            self.toast = Some("No comments to navigate".to_string());
+            return false;
+        };
+        let Some((kind, name)) = self.view.modules.iter().find_map(|module| {
+            (module.name == item.key.0).then(|| {
+                module
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.relative_path == item.key.1)
+                    .map(|artifact| (artifact.kind.clone(), artifact.name.clone()))
+            })?
+        }) else {
+            self.toast = Some(format!("comment source not found: {}", item.path));
+            return false;
+        };
+        let Some(section) = Section::from_name(&kind) else {
+            self.toast = Some(format!("comment source kind not found: {kind}"));
+            return false;
+        };
+        self.set_section(section);
+        self.ensure_rows();
+        let target = ListTarget::Artifact {
+            module: item.key.0,
+            kind,
+            name,
+        };
+        if let Some(index) = self.cached_rows.iter().position(|row| row.target == target) {
+            self.list_selected[self.section as usize] = index;
+        }
+        self.detail_tab = DetailTab::Code;
+        self.code_cache = None;
+        self.pending_code_line = Some(item.line);
+        self.detail_cursor = item.line.saturating_sub(1);
+        self.detail_scroll = usize_to_u16(self.detail_cursor);
+        self.focused = ColumnFocus::Detail;
+        true
+    }
+
+    pub fn delete_selected_comment(&mut self) {
+        let items = self.comment_navigator_items();
+        let Some(item) = items.get(self.comment_navigator_state.selected()) else {
+            self.toast = Some("No comments to delete".to_string());
+            return;
+        };
+        self.comments.remove(&item.key);
+        let remaining = self.comments.len();
+        if remaining == 0 {
+            self.comment_navigator_state.list_state.select(None);
+            self.focused = ColumnFocus::List;
+        } else {
+            let selected = self.comment_navigator_state.selected().min(remaining - 1);
+            self.comment_navigator_state.select(selected);
+        }
+        self.toast = Some(match persist_comments(&self.root, &self.comments) {
+            Ok(()) => "comment deleted".to_string(),
+            Err(error) => format!("comment deleted in memory; persistence failed: {error}"),
+        });
+    }
+
+    #[must_use]
+    pub fn is_comment_navigator_focused(&self) -> bool {
+        self.focused == ColumnFocus::Comments
+    }
+
+    pub fn comment_navigator_scroll_left(&mut self) {
+        self.comment_navigator_state.scroll_left(4);
+    }
+
+    pub fn comment_navigator_scroll_right(&mut self) {
+        self.comment_navigator_state.scroll_right(4);
+    }
+
+    fn comment_navigator_viewport_scroll(&mut self, down: bool, lines: usize) {
+        let total = self.comments.len();
+        let viewport = self.comment_navigator_state.viewport_height.max(1);
+        if down {
+            let max_offset = total.saturating_sub(viewport);
+            let offset = self
+                .comment_navigator_state
+                .list_state
+                .offset()
+                .saturating_add(lines)
+                .min(max_offset);
+            *self.comment_navigator_state.list_state.offset_mut() = offset;
+            if self.comment_navigator_state.selected() < offset {
+                self.comment_navigator_state.select(offset);
+            }
+        } else {
+            let offset = self
+                .comment_navigator_state
+                .list_state
+                .offset()
+                .saturating_sub(lines);
+            *self.comment_navigator_state.list_state.offset_mut() = offset;
+            let max_visible = offset.saturating_add(viewport).saturating_sub(1);
+            if self.comment_navigator_state.selected() > max_visible {
+                self.comment_navigator_state.select(max_visible);
+            }
+        }
+    }
+
+    fn comment_navigator_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => self.comment_navigator_move(1),
+            KeyCode::Up | KeyCode::Char('k') => self.comment_navigator_move(-1),
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.comment_navigator_state.select(0);
+                let focus = self.focused;
+                self.jump_to_selected_comment();
+                self.focused = focus;
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.comment_navigator_state
+                    .select(self.comments.len().saturating_sub(1));
+                let focus = self.focused;
+                self.jump_to_selected_comment();
+                self.focused = focus;
+            }
+            _ => {}
+        }
+    }
+
     #[cfg(test)]
     pub fn add_comment_for_test(
         &mut self,
@@ -3805,21 +4468,25 @@ impl App {
             }
             return;
         }
+        let visible = self.visible_sections();
+        let current = visible
+            .iter()
+            .position(|section| *section == self.section)
+            .unwrap_or(0);
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                let next = (self.section as usize + 1).min(SECTION_COUNT - 1);
-                self.set_section(Section::from_index(next));
+                let next = (current + 1).min(visible.len().saturating_sub(1));
+                self.set_section(visible[next]);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let next = (self.section as usize).saturating_sub(1);
-                self.set_section(Section::from_index(next));
+                self.set_section(visible[current.saturating_sub(1)]);
             }
             KeyCode::Home | KeyCode::Char('g') => self.set_section(Section::Overview),
-            KeyCode::End | KeyCode::Char('G') => self.set_section(if self.view.deck.is_some() {
-                Section::DeckHistory
-            } else {
-                Section::Schemas
-            }),
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(section) = visible.last().copied() {
+                    self.set_section(section);
+                }
+            }
             _ => {}
         }
     }
@@ -4172,7 +4839,46 @@ impl App {
             Section::Decks => self.deck_rows(),
             Section::Casts => self.cast_rows(),
             Section::DeckHistory => self.history_rows(),
+            Section::Problems => self.problem_rows(),
         }
+    }
+
+    fn problem_rows(&self) -> Vec<ListRow> {
+        if self.validation_report.violations.is_empty() {
+            let detail = if self.validation_loading {
+                "validating…".to_string()
+            } else {
+                format!("{} checked", self.validation_report.checked)
+            };
+            return vec![ListRow::item(
+                "✓ no validation problems",
+                detail,
+                ListTarget::None,
+                "source",
+            )];
+        }
+        let mut rows = Vec::new();
+        let mut previous_artifact = None;
+        for (index, violation) in self.validation_report.violations.iter().enumerate() {
+            if previous_artifact.as_deref() != Some(violation.artifact.as_str()) {
+                rows.push(ListRow::header(violation.artifact.clone()));
+                previous_artifact = Some(violation.artifact.clone());
+            }
+            let marker = match violation.severity {
+                ViolationSeverity::Error => "✗",
+                ViolationSeverity::Warning => "⚡",
+            };
+            let detail = violation
+                .line
+                .map_or_else(String::new, |line| format!("line {line}"));
+            rows.push(ListRow::item(
+                format!("{marker} {}", violation.message),
+                detail,
+                ListTarget::ValidationProblem(index),
+                "source",
+            ));
+        }
+        rows
     }
 
     fn deck_rows(&self) -> Vec<ListRow> {
@@ -4546,11 +5252,13 @@ impl App {
         rows
     }
 
-    fn visible_sections(&self) -> &[Section] {
+    fn visible_sections(&self) -> Vec<Section> {
         if self.view.deck.is_some() {
-            &Section::ALL
+            Section::ALL.to_vec()
         } else {
-            &Section::ALL[..LEGACY_SECTION_COUNT]
+            let mut sections = Section::ALL[..LEGACY_SECTION_COUNT].to_vec();
+            sections.push(Section::Problems);
+            sections
         }
     }
 
@@ -5459,6 +6167,9 @@ fn render_launch_picker(frame: &mut Frame<'_>, area: Rect, picker: &LaunchPicker
 }
 
 fn hint_row(focused: ColumnFocus) -> String {
+    if focused == ColumnFocus::Comments {
+        return "j/k comments  ·  Enter jump  ·  d delete  ·  h/l scroll  ·  Tab focus".to_string();
+    }
     if focused == ColumnFocus::Detail {
         return [
             "1-6/Tab tabs",
@@ -5682,6 +6393,16 @@ fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, Str
         return (candidate.to_string_lossy().into_owned(), source);
     }
     (relative.to_string(), artifact.raw_source.clone())
+}
+
+fn is_git_cache_source(path: &Path) -> bool {
+    let configured = std::env::var_os("RUNE_GIT_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::cache_dir().map(|cache| cache.join("rune/git")));
+    configured.is_some_and(|cache| {
+        let cache = std::fs::canonicalize(&cache).unwrap_or(cache);
+        path.starts_with(cache)
+    })
 }
 
 fn comment_prompt_display(prompt: &CommentPrompt) -> String {

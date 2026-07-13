@@ -20,6 +20,7 @@ use super::{
     components::palette::{Palette, PaletteCommand},
     event,
 };
+use crate::cli::validate::{ValidationViolation, ViolationSeverity};
 
 fn buffer_position(output: &str, needle: &str) -> (u16, u16) {
     let byte_index = output.find(needle).expect("needle rendered");
@@ -542,6 +543,176 @@ fn tuicr_digest_exports_line_comments() {
 }
 
 #[test]
+fn comment_navigator_snapshot_renders_two_comments_and_jumps() {
+    let root = tempfile::tempdir().unwrap();
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].relative_path = "a.md".to_string();
+    view.modules[0].artifacts[0].source_path = "a.md".to_string();
+    view.modules[0].artifacts[0].raw_source = "one\ntwo\nthree\n".to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.add_comment_for_test(
+        "rune-core",
+        "a.md",
+        1,
+        CommentKind::Issue,
+        "tighten wording",
+    );
+    app.add_comment_for_test(
+        "rune-core",
+        "a.md",
+        3,
+        CommentKind::Note,
+        "keep this detail",
+    );
+
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("Comments · 2"));
+    assert!(snapshot.contains("[ISSUE]"));
+    assert!(snapshot.contains("tight"));
+    assert!(snapshot.contains("[NOTE]"));
+
+    for _ in 0..3 {
+        event::handle_key(&mut app, key(KeyCode::Tab));
+    }
+    assert_eq!(app.focused_column(), ColumnFocus::Comments);
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    let _ = rendered(&mut app);
+    assert_eq!(app.focused_column(), ColumnFocus::Comments);
+    assert_eq!(app.detail_cursor_for_test(), 2);
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.focused_column(), ColumnFocus::Detail);
+}
+
+#[test]
+fn deleting_from_comment_navigator_updates_storage() {
+    let root = tempfile::tempdir().unwrap();
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].relative_path = "a.md".to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.add_comment_for_test("rune-core", "a.md", 1, CommentKind::Issue, "remove me");
+    app.add_comment_for_test("rune-core", "a.md", 2, CommentKind::Note, "keep me");
+    for _ in 0..3 {
+        event::handle_key(&mut app, key(KeyCode::Tab));
+    }
+
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+
+    let comments = commands::review::load(root.path()).unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].text, "keep me");
+}
+
+#[test]
+fn problems_section_snapshot_renders_violation_and_opens_editor_at_line() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("broken.md"), "# Good\n### Skipped\n").unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    app.set_validation_report_for_test(
+        7,
+        vec![ValidationViolation {
+            artifact: "broken.md".to_string(),
+            line: Some(2),
+            severity: ViolationSeverity::Error,
+            message: "heading 'Skipped' skips from h1 to h3".to_string(),
+        }],
+    );
+    app.set_section_by_shortcut('P');
+
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("Problems"));
+    assert!(snapshot.contains("✗"));
+    assert!(snapshot.contains("broken.md"));
+    assert!(snapshot.contains("heading 'Skipped'"));
+
+    app.focus_next();
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    let editor = rendered(&mut app);
+    assert!(editor.contains("Edit ·"));
+    assert!(editor.contains("NORMAL"));
+}
+
+#[test]
+fn empty_problems_section_renders_quiet_success_line() {
+    let mut app = fixture_app();
+    app.set_validation_report_for_test(12, Vec::new());
+    app.set_section_by_shortcut('P');
+
+    let snapshot = rendered(&mut app);
+
+    assert!(snapshot.contains("✓ no validation problems"));
+}
+
+#[test]
+fn editor_save_revalidates_and_refreshes_problems() {
+    let root = tempfile::tempdir().unwrap();
+    for (name, content) in [
+        (
+            "module.yaml",
+            "name: tui-live\nversion: 0.1.0\ndescription: test\nevents: []\n",
+        ),
+        ("defaults.yaml", "{}\n"),
+        ("README.md", "# TUI live validation\n"),
+        ("LICENSE", "test\n"),
+        (".manifest", "{}\n"),
+    ] {
+        std::fs::write(root.path().join(name), content).unwrap();
+    }
+    let rules = root.path().join("rules");
+    std::fs::create_dir(&rules).unwrap();
+    std::fs::write(
+        rules.join(".mdschema"),
+        "heading_rules:\n  no_skip_levels: true\n",
+    )
+    .unwrap();
+    std::fs::write(rules.join("Broken.md"), "# Good\n### Skipped\n").unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    app.set_validation_report_for_test(
+        1,
+        vec![ValidationViolation {
+            artifact: "rules/Broken.md".to_string(),
+            line: Some(2),
+            severity: ViolationSeverity::Error,
+            message: "heading skips from h1 to h3".to_string(),
+        }],
+    );
+    app.set_section_by_shortcut('P');
+    app.focus_next();
+    event::handle_key(&mut app, key(KeyCode::Enter));
+
+    for code in [
+        KeyCode::Char('d'),
+        KeyCode::Char('d'),
+        KeyCode::Char(':'),
+        KeyCode::Char('w'),
+        KeyCode::Enter,
+    ] {
+        event::handle_key(&mut app, key(code));
+    }
+    assert!(app.validation_pending());
+    for _ in 0..500 {
+        app.poll_validation();
+        if !app.validation_pending() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    assert!(!app.validation_pending());
+    assert!(rendered(&mut app).contains("✓ no validation problems"));
+}
+
+#[test]
 fn mouse_click_selects_section_and_focuses() {
     let mut app = fixture_app();
     let output = rendered(&mut app);
@@ -768,6 +939,81 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
     let snapshot = rendered(&mut reloaded);
     assert!(snapshot.contains("◆"));
     assert!(snapshot.contains("[ISSUE] needs context"));
+}
+
+#[test]
+fn file_editor_snapshot_shows_mode_line_and_saves_back_to_code() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(root.path().join(source_path), "original body\n").unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+
+    event::handle_key(&mut app, key(KeyCode::Char('e')));
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("Edit ·"));
+    assert!(snapshot.contains("NORMAL"));
+    assert!(snapshot.contains(":w save · :q quit"));
+
+    for code in [KeyCode::Char('i'), KeyCode::Char('!'), KeyCode::Esc] {
+        event::handle_key(&mut app, key(code));
+    }
+    for code in [KeyCode::Char(':'), KeyCode::Char('w'), KeyCode::Enter] {
+        event::handle_key(&mut app, key(code));
+    }
+
+    assert!(!app.is_file_editor_open());
+    assert_eq!(
+        std::fs::read_to_string(root.path().join(source_path)).unwrap(),
+        "!original body\n"
+    );
+    assert!(rendered(&mut app).contains("!original body"));
+}
+
+#[test]
+fn override_key_creates_skill_user_copy_and_opens_it() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(root.path().join(source_path), "base body\n").unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+
+    event::handle_key(&mut app, key(KeyCode::Char('o')));
+
+    let override_path = root.path().join("skills/BuildSkill/user/SKILL.md");
+    assert_eq!(
+        std::fs::read_to_string(&override_path).unwrap(),
+        "base body\n"
+    );
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("user/SKILL.md"));
+    assert!(snapshot.contains("NORMAL"));
+
+    for code in [
+        KeyCode::Char('i'),
+        KeyCode::Char('!'),
+        KeyCode::Esc,
+        KeyCode::Char(':'),
+        KeyCode::Char('w'),
+        KeyCode::Enter,
+    ] {
+        event::handle_key(&mut app, key(code));
+    }
+    assert!(rendered(&mut app).contains("!base body"));
 }
 
 #[test]

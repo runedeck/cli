@@ -19,6 +19,10 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     app.clear_toast();
+    if app.is_file_editor_open() {
+        app.file_editor_key(key);
+        return;
+    }
     if app.is_cast_editor_open() {
         app.cast_editor_key(key);
         return;
@@ -85,20 +89,30 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('/') => app.begin_list_filter(),
         KeyCode::Char('!') => app.toggle_problems_only(),
         KeyCode::Char('r') => app.refresh(),
-        KeyCode::Char('e') => app.open_cast_editor(),
+        KeyCode::Char('e') => app.edit_selected_source_or_cast(),
+        KeyCode::Char('E') => app.open_selected_source_external(),
         KeyCode::Char('y' | 'Y') => app.copy_tuicr_review(),
+        KeyCode::Right | KeyCode::Char('l') if app.is_comment_navigator_focused() => {
+            app.comment_navigator_scroll_right();
+        }
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => app.drill_or_expand(),
+        KeyCode::Left | KeyCode::Char('h') if app.is_comment_navigator_focused() => {
+            app.comment_navigator_scroll_left();
+        }
         KeyCode::Left | KeyCode::Char('h') => app.move_back(),
         KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
         KeyCode::BackTab => app.focus_previous(),
         KeyCode::Tab => app.focus_next(),
         KeyCode::Char('p') => app.preview_or_previous_section(),
         KeyCode::Char('c') => app.comment_or_code(),
+        KeyCode::Char('d') if app.is_comment_navigator_focused() => {
+            app.delete_selected_comment();
+        }
         KeyCode::Char('d') => app.set_detail_tab(super::app::DetailTab::Diff),
         KeyCode::Char('v') => app.set_detail_tab(super::app::DetailTab::Provenance),
         KeyCode::Char('f') => app.set_detail_tab(super::app::DetailTab::Frontmatter),
         KeyCode::Char('i') => app.set_detail_tab(super::app::DetailTab::History),
-        KeyCode::Char('o') => app.open_repo_tool(false),
+        KeyCode::Char('o') => app.open_user_override_or_repo(),
         KeyCode::Char('O') => app.open_repo_tool(true),
         KeyCode::Char('D') => app.open_deploy_picker(),
         KeyCode::Char('L') => app.launch_harness(),
