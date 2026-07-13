@@ -7,13 +7,13 @@
   {VERSION} ({COMMIT}) built {TIME}
 
   Flow:
-    init        <SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>]   Scaffold a project from a skeleton
+    init        <SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>] | --module <DIR>Scaffold a project from a skeleton, or a deck module
     quest       [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
     add         <ID[,ID...]>                                          Add runes to the consumer manifest
     tui         [--source <DIR>] [--edit]                             Launch the terminal dashboard
     dashboard   [--source <DIR>] [--port <PORT>]                      Launch the read-only web dashboard
     install     [--source <DIR>] [--target <DIR>]                     Assemble and deploy rune content
-    review      <COMMAND>                                             Inspect or export TUI review comments
+    review      list | export [--target <DIR>]                        Inspect or export TUI review comments
 
   Deck:
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
@@ -28,7 +28,7 @@
     assemble    [--source <DIR>]                                      Assemble rune content into build/
     deploy      [--source <DIR>] [--target <DIR>]                     Deploy assembled runes
     copy        --source <DIR> --target <DIR>                         Copy runes without transforms
-    config      [set <KEY> <VALUE>]                                   Show or update resolved configuration
+    config      [set <KEY> <VALUE>]                                   Resolved configuration (deck, quests, lore, artifacts)
     find        <QUERY>                                               Find local runes by relevance
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware

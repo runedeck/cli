@@ -3,8 +3,13 @@ use predicates::prelude::PredicateBooleanExt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Every invocation gets a throwaway HOME so a developer's real quest
+/// binding and config can never leak into (or be written by) a test.
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    let mut command = Command::cargo_bin("rune").unwrap();
+    let home = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+    command.env("HOME", home.path());
+    command
 }
 
 fn deck_fixture() -> PathBuf {

@@ -857,8 +857,8 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "init",
-        "<SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>]",
-        "Scaffold a project from a skeleton",
+        "<SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>] | --module <DIR>",
+        "Scaffold a project from a skeleton, or a deck module",
     );
     help_command(
         help,
@@ -895,7 +895,7 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "review",
-        "<COMMAND>",
+        "list | export [--target <DIR>]",
         "Inspect or export TUI review comments",
     );
 }
@@ -970,7 +970,7 @@ fn plumbing_help(help: &mut String) {
         help,
         "config",
         "[set <KEY> <VALUE>]",
-        "Show or update resolved configuration",
+        "Resolved configuration (deck, quests, lore, artifacts)",
     );
     help_command(help, "find", "<QUERY>", "Find local runes by relevance");
     help_command(
