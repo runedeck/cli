@@ -13,7 +13,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cd ~/Developer/runedeck/rune
 cargo install --path . --all-features
 rune --version        # rune 0.3.2
-rune --help           # subcommands include add, install, validate, drift, tui, dashboard, adopt, find, launch, watch
+rune --help           # subcommands include add, install, validate, drift, review, tui, dashboard, adopt, find, launch, watch
 ```
 
 ## 2. Scaffold and bind a quest
@@ -121,6 +121,27 @@ cd "$DECK" && rune tui
 ```
 
 Expected: header shows 4 modules; sections include Decks, Casts, History. Try: Miller-column navigation decks → kinds → runes; `/` filters in-panel; `!` shows problems only; the casts section resolves membership; History renders the commit list batched (scroll keeps loading); wheel scroll moves the viewport without dragging the selection. Non-interactive render: `rune tui --snapshot`.
+
+In an artifact's Code tab, verify the review controls: `12j`, `5G`, `gg`, and
+`zz` move or position the line cursor; `]]`/`[[` jump Markdown sections; `/`
+highlights matches incrementally and `n`/`N` repeat the search. Press `V`,
+extend with `j`/`k` or a count, then `c` to comment the selected range. The
+comment box starts in insert mode; `Esc` enters normal mode, where
+`i`/`a`/`A`/`o`, `dd`, `x`, and `w`/`b` work. Save with `:w` or Ctrl-S. A
+dirty `:q`, `q`, or normal-mode `Esc` asks for confirmation before discarding.
+Mouse-wheel scrolling must move only the viewport while a visual selection is
+active. `;e` opens the cast editor and `;q` quits.
+
+After saving comments, verify the persisted and agent-facing forms:
+
+```sh
+rune review list --source "$DECK"
+rune review export --source "$DECK" --format markdown
+```
+
+Expected: `.rune-comments.yaml` contains `end_line` only for ranges; legacy
+single-line records still load. The export groups comments by file, includes
+the selected source lines, and matches what `y` copies from the TUI.
 
 ## 10. Dashboard
 

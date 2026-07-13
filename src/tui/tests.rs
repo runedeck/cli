@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, style::Color};
 
 use commands::{
     manifest::FileStatus,
@@ -750,7 +750,10 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
         event::handle_key(&mut app, key(KeyCode::Char(character)));
     }
     assert!(rendered(&mut app).contains("[ISSUE] > needs context"));
-    event::handle_key(&mut app, key(KeyCode::Enter));
+    event::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    );
 
     let sidecar = std::fs::read_to_string(temp.path().join(".rune-comments.yaml")).unwrap();
     assert!(sidecar.contains("line: 2"));
@@ -781,6 +784,243 @@ fn code_mouse_wheel_moves_viewport_without_moving_line_cursor() {
 
     assert_eq!(app.detail_scroll_for_test(), 3);
     assert_eq!(app.detail_cursor_for_test(), 0);
+}
+
+#[test]
+fn count_motion_numbered_g_and_pending_commands_match_vim() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    let source = (1..=30)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.path().join(source_path), source).unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+
+    for character in ['1', '2', 'j'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    assert_eq!(app.detail_cursor_for_test(), 12);
+
+    for character in ['5', 'G'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    assert_eq!(app.detail_cursor_for_test(), 4);
+
+    event::handle_key(&mut app, key(KeyCode::Char('g')));
+    assert_eq!(app.detail_cursor_for_test(), 4, "first g is pending");
+    event::handle_key(&mut app, key(KeyCode::Char('g')));
+    assert_eq!(app.detail_cursor_for_test(), 0);
+
+    event::handle_key(&mut app, key(KeyCode::Char('G')));
+    assert_eq!(app.detail_cursor_for_test(), 29);
+    event::handle_key(&mut app, key(KeyCode::Char('g')));
+    event::handle_key(&mut app, key(KeyCode::Char('g')));
+
+    for character in ['2', '5', 'j', 'z', 'z'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    assert_eq!(app.detail_cursor_for_test(), 25);
+    assert!(app.detail_scroll_for_test() > 0);
+}
+
+#[test]
+fn doubled_brackets_jump_code_sections() {
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].raw_source = "# First\nbody\n# Second\nmore\n".to_string();
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+
+    event::handle_key(&mut app, key(KeyCode::Char(']')));
+    event::handle_key(&mut app, key(KeyCode::Char(']')));
+    assert_eq!(app.detail_cursor_for_test(), 2);
+    event::handle_key(&mut app, key(KeyCode::Char('[')));
+    event::handle_key(&mut app, key(KeyCode::Char('[')));
+    assert_eq!(app.detail_cursor_for_test(), 0);
+}
+
+#[test]
+fn code_search_incrementally_highlights_and_navigates_matches() {
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].raw_source =
+        "needle first\nmiddle line\nneedle second\n".to_string();
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+
+    event::handle_key(&mut app, key(KeyCode::Char('/')));
+    for character in "needle".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    assert!(
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .any(|cell| { matches!(cell.bg, Color::Yellow | Color::Magenta) })
+    );
+    let snapshot = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+    assert!(snapshot.contains("/needle"));
+
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    event::handle_key(&mut app, key(KeyCode::Char('n')));
+    assert_eq!(app.detail_cursor_for_test(), 2);
+    event::handle_key(&mut app, key(KeyCode::Char('N')));
+    assert_eq!(app.detail_cursor_for_test(), 0);
+}
+
+#[test]
+fn leader_opens_cast_editor_and_quits() {
+    let mut deck_app = deck_fixture_app();
+    deck_app.set_section_by_number(14);
+    event::handle_key(&mut deck_app, key(KeyCode::Char(';')));
+    event::handle_key(&mut deck_app, key(KeyCode::Char('e')));
+    assert!(deck_app.is_cast_editor_open());
+
+    let root = tempfile::tempdir().unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    event::handle_key(&mut app, key(KeyCode::Char(';')));
+    event::handle_key(&mut app, key(KeyCode::Char('q')));
+    assert!(app.should_quit());
+}
+
+#[test]
+fn visual_range_comment_is_written_to_storage() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(
+        root.path().join(source_path),
+        "first line\nsecond line\nthird line\nfourth line\n",
+    )
+    .unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+
+    event::handle_key(&mut app, key(KeyCode::Char('V')));
+    event::handle_key(&mut app, key(KeyCode::Char('2')));
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "review this block".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    );
+
+    let sidecar = std::fs::read_to_string(root.path().join(".rune-comments.yaml")).unwrap();
+    assert!(sidecar.contains("line: 1"));
+    assert!(sidecar.contains("end_line: 3"));
+    assert!(app.tuicr_digest().contains(&format!("`{source_path}:1-3`")));
+}
+
+#[test]
+fn vim_comment_editor_supports_requested_normal_mode_subset() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = App::from_view(
+        root.path().to_path_buf(),
+        Vec::new(),
+        Vec::new(),
+        fixture_view(),
+    );
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "alpha beta".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char('b')));
+    event::handle_key(&mut app, key(KeyCode::Char('x')));
+    event::handle_key(&mut app, key(KeyCode::Char('i')));
+    event::handle_key(&mut app, key(KeyCode::Char('b')));
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char('w')));
+    event::handle_key(&mut app, key(KeyCode::Char('a')));
+    event::handle_key(&mut app, key(KeyCode::Char('!')));
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char('b')));
+    event::handle_key(&mut app, key(KeyCode::Char('o')));
+    for character in "tail".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
+    event::handle_key(&mut app, key(KeyCode::Char('o')));
+    for character in "tail".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Char(':')));
+    event::handle_key(&mut app, key(KeyCode::Char('w')));
+    event::handle_key(&mut app, key(KeyCode::Enter));
+
+    let comments = commands::review::load(root.path()).unwrap();
+    assert_eq!(comments[0].text, "alpha beta!\ntail");
+}
+
+#[test]
+fn vim_comment_editor_requires_confirmation_to_discard_dirty_text() {
+    let mut app = fixture_app();
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    event::handle_key(&mut app, key(KeyCode::Char('x')));
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.is_comment_prompt_open());
+    assert!(rendered(&mut app).contains("again discards changes"));
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    assert!(!app.is_comment_prompt_open());
 }
 
 #[test]

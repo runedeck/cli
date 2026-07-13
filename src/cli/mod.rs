@@ -19,21 +19,28 @@ mod output;
 mod provenance;
 pub(crate) mod quest;
 mod release;
+mod review;
 mod validate;
 pub(crate) mod watchlist;
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "tui"))]
-use clap::CommandFactory;
 use clap::{Parser, Subcommand};
 use commands::error::Error;
 use commands::result::ActionResult;
-use std::ffi::OsString;
+use std::{ffi::OsString, fmt::Write as _};
+
+const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("RUNE_BUILD_COMMIT"),
+    ") built ",
+    env!("RUNE_BUILD_TIME")
+);
 
 #[derive(Parser)]
-#[command(name = "rune", about = "Rune Deck toolkit", version)]
+#[command(name = "rune", about = "Rune Deck toolkit", version = BUILD_VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -442,6 +449,12 @@ enum Command {
         action: WatchAction,
     },
 
+    /// Inspect or export persisted TUI review comments
+    Review {
+        #[command(subcommand)]
+        action: ReviewAction,
+    },
+
     /// Fallback: run an external `rune-<verb>` executable with remaining args.
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -472,6 +485,25 @@ enum WatchAction {
 }
 
 #[derive(Subcommand)]
+enum ReviewAction {
+    /// List persisted comments
+    List {
+        /// Module or repository root containing `.rune-comments.yaml`.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+    /// Render comments with their source-line context
+    Export {
+        /// Module or repository root containing `.rune-comments.yaml`.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+        /// Agent-ready markdown or compact terminal output.
+        #[arg(long, value_enum, default_value_t = review::Format::Markdown)]
+        format: review::Format,
+    },
+}
+
+#[derive(Subcommand)]
 enum ConfigAction {
     /// Set a user configuration value
     Set {
@@ -487,6 +519,11 @@ enum ConfigAction {
 /// Exit codes: 0 = success, 1 = errors occurred, 2 = fatal error.
 #[allow(clippy::too_many_lines)]
 pub fn run() -> i32 {
+    if root_help_requested(std::env::args_os().skip(1)) {
+        print!("{}", root_help());
+        return 0;
+    }
+
     let args = Cli::parse();
 
     let Some(command) = args.command else {
@@ -711,6 +748,12 @@ pub fn run() -> i32 {
             "released",
         ),
         Command::Watch { action } => return run_watch(action, args.json),
+        Command::Review { action } => {
+            return exit_code(match action {
+                ReviewAction::List { source } => review::list(&source),
+                ReviewAction::Export { source, format } => review::export(&source, format),
+            });
+        }
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
     };
 
@@ -757,8 +800,189 @@ fn bare() -> i32 {
 
 #[cfg(not(feature = "tui"))]
 fn bare() -> i32 {
-    eprintln!("{}", Cli::command().render_help());
+    eprint!("{}", root_help());
     2
+}
+
+fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {
+    let Some(argument) = args.next() else {
+        return false;
+    };
+
+    args.next().is_none() && matches!(argument.to_str(), Some("--help" | "-h" | "help"))
+}
+
+fn root_help() -> String {
+    let mut help = String::new();
+    help.push_str(
+        r"      ·  · · ────────    _ __ _   _ _ __   ___   ──────── · ·  ·
+         · · ────────   | '__| | | | '_ \ / _ \  ──────── · ·
+           · · ──────   | |  | |_| | | | |  __/  ────── · ·
+             · · ────   |_|   \__,_|_| |_|\___|  ──── · ·
+
+  Deck toolkit for AI harnesses: your runes, deployed.
+",
+    );
+    writeln!(help, "  {BUILD_VERSION}\n").expect("writing root help to a string cannot fail");
+
+    flow_help(&mut help);
+    deck_help(&mut help);
+    plumbing_help(&mut help);
+
+    help.push_str(
+        r"
+  Quick start:
+    rune init N4M3Z/demo --lang rust --purpose tool
+    rune quest N4M3Z/demo
+    rune add development
+    rune tui --edit
+    rune install
+
+  rune <command> --help for flags and details
+",
+    );
+
+    help
+}
+
+fn flow_help(help: &mut String) {
+    help.push_str("  Flow:\n");
+    help_command(
+        help,
+        "init",
+        "<SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>]",
+        "Scaffold a project from a skeleton",
+    );
+    help_command(
+        help,
+        "quest",
+        "[SLUG_OR_PATH]",
+        "Bind or show the working repository",
+    );
+    help_command(
+        help,
+        "add",
+        "<ID[,ID...]>",
+        "Add runes to the consumer manifest",
+    );
+    #[cfg(feature = "tui")]
+    help_command(
+        help,
+        "tui",
+        "[--source <DIR>] [--edit]",
+        "Launch the terminal dashboard",
+    );
+    #[cfg(feature = "dashboard")]
+    help_command(
+        help,
+        "dashboard",
+        "[--source <DIR>] [--port <PORT>]",
+        "Launch the read-only web dashboard",
+    );
+    help_command(
+        help,
+        "install",
+        "[--source <DIR>] [--target <DIR>]",
+        "Assemble and deploy module content",
+    );
+    help_command(
+        help,
+        "review",
+        "<COMMAND>",
+        "Inspect or export TUI review comments",
+    );
+}
+
+fn deck_help(help: &mut String) {
+    help.push_str("\n  Deck:\n");
+    help_command(
+        help,
+        "validate",
+        "[--source <DIR>]",
+        "Validate module files against schemas",
+    );
+    help_command(
+        help,
+        "drift",
+        "[--source <DIR>] [--upstream <DIR> | --target <DIR>]",
+        "Compare source, build, and deployment drift",
+    );
+    help_command(
+        help,
+        "provenance",
+        "[--target <DIR_OR_FILE>]",
+        "Show deployed-file provenance",
+    );
+    help_command(
+        help,
+        "clean",
+        "[--source <DIR>] [--target <DIR>]",
+        "Remove stale installed files",
+    );
+    help_command(
+        help,
+        "release",
+        "[DOMAIN] [--source <DIR>]",
+        "Package module release tarballs",
+    );
+    help_command(
+        help,
+        "adopt",
+        "<URL> [--module <DIR>]",
+        "Adopt an upstream artifact with provenance",
+    );
+    help_command(
+        help,
+        "watch",
+        "<COMMAND>",
+        "Manage monitored module locations",
+    );
+}
+
+fn plumbing_help(help: &mut String) {
+    help.push_str("\n  Plumbing:\n");
+    help_command(
+        help,
+        "assemble",
+        "[--source <DIR>]",
+        "Assemble module content into build/",
+    );
+    help_command(
+        help,
+        "deploy",
+        "[--source <DIR>] [--target <DIR>]",
+        "Deploy assembled provider files",
+    );
+    help_command(
+        help,
+        "copy",
+        "--source <DIR> --target <DIR>",
+        "Copy source files without transforms",
+    );
+    help_command(
+        help,
+        "config",
+        "[set <KEY> <VALUE>]",
+        "Show or update resolved configuration",
+    );
+    help_command(help, "find", "<QUERY>", "Find local artifacts by relevance");
+    help_command(
+        help,
+        "exec",
+        "<SKILL> [-- ARGS...]",
+        "Run a script bundled with a skill",
+    );
+    help_command(
+        help,
+        "launch",
+        "<TOOL> [-- ARGS...]",
+        "Launch a coding tool with middleware",
+    );
+}
+
+fn help_command(help: &mut String, name: &str, argument_hint: &str, description: &str) {
+    writeln!(help, "    {name:<12}{argument_hint:<54}{description}")
+        .expect("writing root help to a string cannot fail");
 }
 
 /// Collapse a subcommand's `Result<exit_code, _>` into a process exit code,

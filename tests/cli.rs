@@ -9,11 +9,14 @@ fn rune() -> Command {
 
 #[test]
 fn version_flag_prints_version() {
-    rune()
-        .arg("--version")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("rune"));
+    let expected = format!(
+        "rune {} ({}) built {}\n",
+        env!("CARGO_PKG_VERSION"),
+        env!("RUNE_BUILD_COMMIT"),
+        env!("RUNE_BUILD_TIME")
+    );
+
+    rune().arg("--version").assert().success().stdout(expected);
 }
 
 #[test]
@@ -26,7 +29,48 @@ fn help_flag_lists_subcommands() {
         .stdout(predicate::str::contains("assemble"))
         .stdout(predicate::str::contains("copy"))
         .stdout(predicate::str::contains("validate"))
+        .stdout(predicate::str::contains("review"))
         .stdout(predicate::str::contains("release"));
+}
+
+#[test]
+fn root_help_spellings_render_the_custom_page() {
+    for argument in ["--help", "-h", "help"] {
+        rune()
+            .arg(argument)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "Deck toolkit for AI harnesses: your runes, deployed.",
+            ))
+            .stdout(predicate::str::contains("Quick start:"));
+    }
+}
+
+#[test]
+fn review_export_matches_agent_ready_golden_file() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("src/lib.rs"), "alpha\nbeta\ngamma\n").unwrap();
+    std::fs::write(root.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(
+        root.path().join(".rune-comments.yaml"),
+        "version: 1\ncomments:\n  - module: rune\n    path: src/main.rs\n    line: 1\n    kind: praise\n    text: clear entry point\n  - module: rune\n    path: src/lib.rs\n    line: 2\n    end_line: 3\n    kind: issue\n    text: simplify the branch\n",
+    )
+    .unwrap();
+
+    rune()
+        .args([
+            "review",
+            "export",
+            "--source",
+            root.path().to_str().unwrap(),
+            "--format",
+            "markdown",
+        ])
+        .assert()
+        .success()
+        .stdout(include_str!("fixtures/review-export.md"));
 }
 
 #[test]
@@ -80,12 +124,12 @@ fn json_flag_accepted_globally() {
         .success();
 }
 
+#[cfg(not(feature = "tui"))]
 #[test]
 fn no_args_exits_with_error() {
-    rune()
-        .assert()
-        .failure()
-        .stderr(predicate::str::is_empty().not());
+    rune().assert().failure().stderr(predicate::str::contains(
+        "Deck toolkit for AI harnesses: your runes, deployed.",
+    ));
 }
 
 #[cfg(feature = "tui")]

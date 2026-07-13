@@ -10,6 +10,7 @@ pub mod ontology;
 pub mod parse;
 pub mod provider;
 pub mod result;
+pub mod review;
 pub mod services;
 pub mod target;
 pub mod view;

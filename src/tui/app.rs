@@ -1,8 +1,6 @@
 use std::{
     collections::BTreeMap,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::mpsc::{self, Receiver},
     thread,
 };
@@ -15,11 +13,11 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use serde::{Deserialize, Serialize};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use commands::{
     manifest::FileStatus,
+    review::{self, ExportFormat, ReviewComment},
     services::{
         self, builders,
         files::{self, FileSections},
@@ -62,7 +60,10 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
             ("BackTab", "previous column"),
             ("Enter", "drill or expand detail"),
             ("Esc", "back, close overlay, or quit"),
-            ("g/G", "top or bottom"),
+            ("gg/G/{N}G", "top, bottom, or source line"),
+            ("{N}j/{N}k", "repeat Code line motion"),
+            ("zz", "center Code cursor"),
+            ("[[ / ]]", "previous or next Code section/Diff hunk"),
             ("PgUp/PgDn", "scroll detail"),
         ],
     ),
@@ -81,17 +82,20 @@ pub const KEYBINDINGS: &[(&str, &[(&str, &str)])] = &[
         "Actions",
         &[
             ("/", "filter the focused list (Search: edit query)"),
+            ("/ · n/N", "search Code; next/previous match"),
             (":", "palette"),
             ("r", "refresh"),
-            ("y", "copy install snippet or path"),
+            ("y", "copy current review"),
             ("Tab", "next detail tab"),
             ("p c d v f i", "detail tabs (outside Sections focus)"),
             ("!", "toggle problems-only"),
             ("c/m", "comment current line (Code/Diff)"),
-            ("Y", "copy tuicr comments"),
+            ("V", "select Code lines; c comments range"),
+            ("Y", "copy current review (alias)"),
             ("o/O", "open gitui / jjui on repository"),
             ("D", "deploy module to a target"),
             ("L", "launch harness session in repository"),
+            (";e / ;q", "cast editor / quit"),
         ],
     ),
     ("Global", &[("?", "help"), ("F1", "help"), ("q", "quit")]),
@@ -478,67 +482,17 @@ struct CodeCache {
     path: String,
     origin: String,
     lines: Vec<Line<'static>>,
+    source_lines: Vec<String>,
     sections: Vec<usize>,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize
-)]
-#[serde(rename_all = "lowercase")]
-pub enum CommentKind {
-    Issue,
-    Note,
-    Suggestion,
-    Praise,
-}
+pub use commands::review::CommentKind;
 
-impl CommentKind {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Issue => Self::Note,
-            Self::Note => Self::Suggestion,
-            Self::Suggestion => Self::Praise,
-            Self::Praise => Self::Issue,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Issue => "ISSUE",
-            Self::Note => "NOTE",
-            Self::Suggestion => "SUGGESTION",
-            Self::Praise => "PRAISE",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LineComment {
     kind: CommentKind,
     text: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct StoredComment {
-    module: String,
-    path: String,
-    line: usize,
-    kind: CommentKind,
-    text: String,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize)]
-struct CommentStore {
-    version: u32,
-    comments: Vec<StoredComment>,
+    end_line: Option<usize>,
 }
 
 type CommentMap = BTreeMap<(String, String, usize), LineComment>;
@@ -548,8 +502,60 @@ struct CommentPrompt {
     module: String,
     path: String,
     line_number: usize,
+    end_line: Option<usize>,
     kind: CommentKind,
     text: String,
+    original_text: String,
+    cursor: usize,
+    mode: CommentEditorMode,
+    pending_delete: bool,
+    command: Option<String>,
+    cancel_armed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommentEditorMode {
+    Normal,
+    Insert,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingNavigation {
+    GoToTop,
+    Center,
+    Leader,
+    NextSection,
+    PreviousSection,
+}
+
+impl CommentEditorMode {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "NORMAL",
+            Self::Insert => "INSERT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisualSelection {
+    anchor: usize,
+    head: usize,
+}
+
+impl VisualSelection {
+    fn ordered(self) -> (usize, usize) {
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
+    }
+
+    fn contains(self, line: usize) -> bool {
+        let (start, end) = self.ordered();
+        (start..=end).contains(&line)
+    }
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -572,6 +578,12 @@ pub struct App {
     code_cache: Option<CodeCache>,
     comments: CommentMap,
     comment_prompt: Option<CommentPrompt>,
+    visual_selection: Option<VisualSelection>,
+    pending_count: Option<usize>,
+    pending_navigation: Option<PendingNavigation>,
+    code_search_input: Option<String>,
+    code_search_query: String,
+    code_search_current: Option<(usize, usize)>,
     #[cfg(test)]
     preview_cache_build_count: usize,
     #[cfg(test)]
@@ -684,6 +696,12 @@ impl App {
             code_cache: None,
             comments,
             comment_prompt: None,
+            visual_selection: None,
+            pending_count: None,
+            pending_navigation: None,
+            code_search_input: None,
+            code_search_query: String::new(),
+            code_search_current: None,
             #[cfg(test)]
             preview_cache_build_count: 0,
             #[cfg(test)]
@@ -1013,7 +1031,7 @@ impl App {
         let comments = if self.comments.is_empty() {
             String::new()
         } else {
-            format!(" | ✎ {} comments (Y copies)", self.comments.len())
+            format!(" | ✎ {} comments (y copies)", self.comments.len())
         };
         let text = format!(
             " rune tui | {scan} | ok {} stale {} modified {} new {} | {} modules{comments}",
@@ -1038,25 +1056,69 @@ impl App {
                 edit.cast_name
             )
         } else if let Some(prompt) = &self.comment_prompt {
+            let location = prompt.end_line.map_or_else(
+                || prompt.line_number.to_string(),
+                |end| format!("{}-{end}", prompt.line_number),
+            );
+            let mode = prompt.command.as_ref().map_or_else(
+                || {
+                    format!(
+                        "{}{}",
+                        prompt.mode.label(),
+                        if prompt.text == prompt.original_text {
+                            ""
+                        } else {
+                            "*"
+                        }
+                    )
+                },
+                |command| format!(":{command}"),
+            );
+            let hint = if prompt.cancel_armed {
+                " · Esc/q again discards changes"
+            } else {
+                ""
+            };
             format!(
-                " comment [{}] {}:{} > {}",
+                " comment [{mode}] [{}] {}:{} > {}{hint}",
                 prompt.kind.label(),
                 prompt.path,
-                prompt.line_number,
-                prompt.text
+                location,
+                comment_prompt_display(prompt)
             )
+        } else if let Some(selection) = self.visual_selection {
+            let (start, end) = selection.ordered();
+            format!(
+                " VISUAL {}-{} · j/k extend · c comment · Esc cancel",
+                start + 1,
+                end + 1
+            )
+        } else if let Some(search) = &self.code_search_input {
+            format!(" /{search}")
+        } else if let Some(pending) = self.pending_navigation {
+            match pending {
+                PendingNavigation::GoToTop => " g".to_string(),
+                PendingNavigation::Center => " z".to_string(),
+                PendingNavigation::Leader => " ;".to_string(),
+                PendingNavigation::NextSection => " ]".to_string(),
+                PendingNavigation::PreviousSection => " [".to_string(),
+            }
+        } else if let Some(count) = self.pending_count {
+            format!(" {count}")
         } else if self.palette.is_open() || self.palette_error.is_some() {
             self.palette.display_text(self.palette_error.as_deref())
         } else if let Some(toast) = &self.toast {
             format!(" {toast}")
         } else if let Some((current, total)) = self.hunk_position() {
-            format!("hunk {current}/{total} · n/p hunk · j/k line · Ctrl-d/u half-page · c comment")
+            format!(
+                "hunk {current}/{total} · [[/]] hunk · j/k line · Ctrl-d/u half-page · c comment"
+            )
         } else if self.focused == ColumnFocus::Detail && self.detail_tab == DetailTab::Code {
             let origin = self
                 .code_cache
                 .as_ref()
                 .map_or("source unavailable", |cache| cache.origin.as_str());
-            format!("j/k line · n/p section · Ctrl-d/u half-page · c comment · {origin}")
+            format!("j/k line · [[/]] section · / search · n/N match · c comment · {origin}")
         } else {
             hint_row(self.focused)
         };
@@ -1933,6 +1995,9 @@ impl App {
             if needs_build {
                 self.detail_scroll = 0;
                 self.detail_cursor = 0;
+                self.code_search_input = None;
+                self.code_search_query.clear();
+                self.code_search_current = None;
                 let (source_path, source) = artifact_source(module, artifact);
                 let sections = source
                     .lines()
@@ -1940,10 +2005,12 @@ impl App {
                     .filter_map(|(index, line)| line.trim_start().starts_with('#').then_some(index))
                     .collect();
                 let lines = rich::highlight_code(&source_path, &source);
+                let source_lines = source.lines().map(str::to_string).collect();
                 self.code_cache = Some(CodeCache {
                     path: key,
                     origin: source_path,
                     lines,
+                    source_lines,
                     sections,
                 });
                 #[cfg(test)]
@@ -2101,8 +2168,22 @@ impl App {
                             },
                         );
                     }
+                    if let Some(source_line) = cache.source_lines.get(index) {
+                        highlight_code_search_matches(
+                            &mut line,
+                            source_line,
+                            &self.code_search_query,
+                            self.code_search_current,
+                            index,
+                        );
+                    }
                     if line_number == current_line {
                         line.style = selected_style(self.focused == ColumnFocus::Detail);
+                    } else if self
+                        .visual_selection
+                        .is_some_and(|selection| selection.contains(index))
+                    {
+                        line.style = Style::default().fg(Color::White).bg(Color::Blue);
                     }
                     let mut rows = vec![line];
                     if let Some(prompt) = prompt {
@@ -2248,7 +2329,7 @@ impl App {
         if !self.comments.is_empty() && !self.quit_armed {
             self.quit_armed = true;
             self.toast = Some(format!(
-                "{} unsaved comments — press q again to quit (Y copies them first)",
+                "{} unsaved comments — press q again to quit (y copies them first)",
                 self.comments.len()
             ));
             return;
@@ -2263,6 +2344,10 @@ impl App {
     /// Esc walks focus back toward Sections and quits only from there —
     /// backing out of a pane must never kill the session.
     pub fn escape(&mut self) {
+        if self.visual_selection.take().is_some() {
+            self.toast = Some("visual selection cancelled".to_string());
+            return;
+        }
         if self.section == Section::Decks && self.focused == ColumnFocus::Sections {
             self.set_section(Section::Overview);
             return;
@@ -2656,6 +2741,124 @@ impl App {
         }
     }
 
+    /// Consume Vim-style pending commands and count-prefixed Code motions.
+    pub fn navigation_prefix_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(pending) = self.pending_navigation.take() {
+            let handled = match (pending, key.code) {
+                (PendingNavigation::GoToTop, KeyCode::Char('g')) => {
+                    self.focused_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+                    true
+                }
+                (PendingNavigation::Center, KeyCode::Char('z')) => {
+                    self.center_detail_cursor();
+                    true
+                }
+                (PendingNavigation::Leader, KeyCode::Char('e')) => {
+                    self.open_cast_editor();
+                    true
+                }
+                (PendingNavigation::Leader, KeyCode::Char('q')) => {
+                    self.request_quit();
+                    true
+                }
+                (PendingNavigation::NextSection, KeyCode::Char(']')) => {
+                    self.jump_section(true);
+                    true
+                }
+                (PendingNavigation::PreviousSection, KeyCode::Char('[')) => {
+                    self.jump_section(false);
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                self.pending_count = None;
+                return true;
+            }
+        }
+
+        let count_context = self.focused == ColumnFocus::Detail
+            && matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff);
+        if count_context
+            && key.modifiers.is_empty()
+            && let KeyCode::Char(digit @ '0'..='9') = key.code
+        {
+            let digit = usize::from(digit as u8 - b'0');
+            let count = self.pending_count.unwrap_or(0);
+            self.pending_count = Some(count.saturating_mul(10).saturating_add(digit).min(999_999));
+            return true;
+        }
+
+        if count_context
+            && matches!(
+                key.code,
+                KeyCode::Char('j' | 'k') | KeyCode::Down | KeyCode::Up
+            )
+            && let Some(count) = self.pending_count.take()
+        {
+            for _ in 0..count.max(1) {
+                self.focused_key(key);
+            }
+            return true;
+        }
+        if count_context
+            && key.code == KeyCode::Char('G')
+            && let Some(count) = self.pending_count.take()
+        {
+            self.go_to_numbered_detail_line(count.max(1));
+            return true;
+        }
+        self.pending_count = None;
+
+        match key.code {
+            KeyCode::Char('g') if key.modifiers.is_empty() => {
+                self.pending_navigation = Some(PendingNavigation::GoToTop);
+                true
+            }
+            KeyCode::Char('z') if count_context && key.modifiers.is_empty() => {
+                self.pending_navigation = Some(PendingNavigation::Center);
+                true
+            }
+            KeyCode::Char(';') if key.modifiers.is_empty() => {
+                self.pending_navigation = Some(PendingNavigation::Leader);
+                true
+            }
+            KeyCode::Char(']') if count_context && key.modifiers.is_empty() => {
+                self.pending_navigation = Some(PendingNavigation::NextSection);
+                true
+            }
+            KeyCode::Char('[') if count_context && key.modifiers.is_empty() => {
+                self.pending_navigation = Some(PendingNavigation::PreviousSection);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn center_detail_cursor(&mut self) {
+        let half_viewport = self.detail_viewport.max(1) / 2;
+        self.detail_scroll = usize_to_u16(self.detail_cursor.saturating_sub(half_viewport));
+    }
+
+    fn go_to_numbered_detail_line(&mut self, line: usize) {
+        let target = match self.detail_tab {
+            DetailTab::Code => Some(line.saturating_sub(1)),
+            DetailTab::Diff => self.preview_cache.as_ref().and_then(|cache| {
+                cache
+                    .line_map
+                    .iter()
+                    .position(|source_line| *source_line == Some(line))
+            }),
+            _ => None,
+        };
+        if let Some(target) = target {
+            self.detail_cursor = target;
+            self.move_detail_cursor(0);
+        } else {
+            self.toast = Some(format!("line {line} is not visible"));
+        }
+    }
+
     pub fn set_section_by_number(&mut self, number: usize) {
         if (1..=SECTION_COUNT).contains(&number) {
             self.set_section(Section::from_index(number - 1));
@@ -3002,6 +3205,7 @@ impl App {
         }
         self.detail_tab = tab;
         self.detail_scroll = 0;
+        self.visual_selection = None;
     }
 
     pub fn comment_or_code(&mut self) {
@@ -3015,13 +3219,7 @@ impl App {
     }
 
     pub fn preview_or_previous_section(&mut self) {
-        if self.focused == ColumnFocus::Detail
-            && matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff)
-        {
-            self.jump_section(false);
-        } else {
-            self.set_detail_tab(DetailTab::Preview);
-        }
+        self.set_detail_tab(DetailTab::Preview);
     }
 
     #[cfg(test)]
@@ -3121,6 +3319,114 @@ impl App {
     }
 
     #[must_use]
+    pub fn is_code_search_input_active(&self) -> bool {
+        self.code_search_input.is_some()
+    }
+
+    pub fn code_search_input_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.code_search_input = None;
+                return;
+            }
+            KeyCode::Enter => {
+                self.code_search_input = None;
+                if self.code_search_query.is_empty() {
+                    self.toast = Some("search pattern is empty".to_string());
+                }
+                return;
+            }
+            KeyCode::Backspace => {
+                if let Some(input) = self.code_search_input.as_mut() {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(character) => {
+                if let Some(input) = self.code_search_input.as_mut() {
+                    input.push(character);
+                }
+            }
+            _ => return,
+        }
+        self.code_search_query = self.code_search_input.clone().unwrap_or_default();
+        self.code_search_current = None;
+        if !self.code_search_query.is_empty() {
+            self.jump_code_search(true, true);
+        }
+    }
+
+    fn code_search_matches(&self) -> Vec<(usize, usize)> {
+        if self.code_search_query.is_empty() {
+            return Vec::new();
+        }
+        self.code_cache.as_ref().map_or_else(Vec::new, |cache| {
+            cache
+                .source_lines
+                .iter()
+                .enumerate()
+                .flat_map(|(line, source)| {
+                    source
+                        .match_indices(&self.code_search_query)
+                        .map(move |(column, _)| (line, column))
+                })
+                .collect()
+        })
+    }
+
+    fn jump_code_search(&mut self, forward: bool, include_current: bool) {
+        let matches = self.code_search_matches();
+        if matches.is_empty() {
+            self.toast = Some(format!("no matches for {:?}", self.code_search_query));
+            return;
+        }
+        let current_index = self
+            .code_search_current
+            .and_then(|current| matches.iter().position(|candidate| *candidate == current));
+        let target = if let Some(current) = current_index {
+            if forward {
+                matches.get(current + 1)
+            } else {
+                current.checked_sub(1).and_then(|index| matches.get(index))
+            }
+        } else if forward {
+            matches.iter().find(|(line, _)| {
+                *line > self.detail_cursor || (include_current && *line == self.detail_cursor)
+            })
+        } else {
+            matches.iter().rev().find(|(line, _)| {
+                *line < self.detail_cursor || (include_current && *line == self.detail_cursor)
+            })
+        };
+        let Some(&(line, column)) = target else {
+            self.toast = Some(format!(
+                "no further matches for {:?}",
+                self.code_search_query
+            ));
+            return;
+        };
+        self.code_search_current = Some((line, column));
+        self.detail_cursor = line;
+        self.move_detail_cursor(0);
+        self.center_detail_cursor();
+    }
+
+    fn search_next_in_code(&mut self) {
+        if self.code_search_query.is_empty() {
+            self.toast = Some("no previous search".to_string());
+            return;
+        }
+        self.jump_code_search(true, false);
+    }
+
+    fn search_previous_in_code(&mut self) {
+        if self.code_search_query.is_empty() {
+            self.toast = Some("no previous search".to_string());
+            return;
+        }
+        self.jump_code_search(false, false);
+    }
+
+    #[must_use]
     pub fn is_comment_prompt_open(&self) -> bool {
         self.comment_prompt.is_some()
     }
@@ -3179,25 +3485,159 @@ impl App {
     }
 
     pub fn comment_prompt_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.save_comment_prompt();
+            return;
+        }
+        if self
+            .comment_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.command.is_some())
+        {
+            self.comment_command_key(key);
+            return;
+        }
+
+        let mode = self
+            .comment_prompt
+            .as_ref()
+            .map_or(CommentEditorMode::Insert, |prompt| prompt.mode);
+        if mode == CommentEditorMode::Insert {
+            self.comment_insert_key(key);
+            return;
+        }
+
+        self.comment_normal_key(key);
+    }
+
+    fn comment_command_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.comment_prompt = None,
-            KeyCode::Tab => {
+            KeyCode::Enter => self.run_comment_command(),
+            KeyCode::Esc => {
                 if let Some(prompt) = self.comment_prompt.as_mut() {
-                    prompt.kind = prompt.kind.next();
+                    prompt.command = None;
                 }
             }
-            KeyCode::Enter => self.save_comment_prompt(),
             KeyCode::Backspace => {
-                if let Some(prompt) = self.comment_prompt.as_mut() {
-                    prompt.text.pop();
+                if let Some(prompt) = self.comment_prompt.as_mut()
+                    && let Some(command) = prompt.command.as_mut()
+                {
+                    if command.is_empty() {
+                        prompt.command = None;
+                    } else {
+                        command.pop();
+                    }
                 }
             }
-            KeyCode::Char(character) => {
-                if let Some(prompt) = self.comment_prompt.as_mut() {
-                    prompt.text.push(character);
+            KeyCode::Char(character) if key.modifiers.is_empty() => {
+                if let Some(command) = self
+                    .comment_prompt
+                    .as_mut()
+                    .and_then(|prompt| prompt.command.as_mut())
+                {
+                    command.push(character);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn comment_insert_key(&mut self, key: KeyEvent) {
+        let Some(prompt) = self.comment_prompt.as_mut() else {
+            return;
+        };
+        prompt.cancel_armed = false;
+        prompt.pending_delete = false;
+        match key.code {
+            KeyCode::Esc => prompt.mode = CommentEditorMode::Normal,
+            KeyCode::Tab => prompt.kind = prompt.kind.next(),
+            KeyCode::Enter => insert_comment_char(prompt, '\n'),
+            KeyCode::Backspace => delete_comment_char_before(prompt),
+            KeyCode::Left => {
+                prompt.cursor = previous_char_boundary(&prompt.text, prompt.cursor);
+            }
+            KeyCode::Right => prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor),
+            KeyCode::Char(character) => insert_comment_char(prompt, character),
+            _ => {}
+        }
+    }
+
+    fn comment_normal_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            self.request_comment_cancel();
+            return;
+        }
+        let Some(prompt) = self.comment_prompt.as_mut() else {
+            return;
+        };
+        prompt.cancel_armed = false;
+        match key.code {
+            KeyCode::Tab => prompt.kind = prompt.kind.next(),
+            KeyCode::Char(':') => prompt.command = Some(String::new()),
+            KeyCode::Char('i') => prompt.mode = CommentEditorMode::Insert,
+            KeyCode::Char('a') => {
+                prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor);
+                prompt.mode = CommentEditorMode::Insert;
+            }
+            KeyCode::Char('A') => {
+                prompt.cursor = comment_line_end(&prompt.text, prompt.cursor);
+                prompt.mode = CommentEditorMode::Insert;
+            }
+            KeyCode::Char('o') => {
+                prompt.cursor = comment_line_end(&prompt.text, prompt.cursor);
+                insert_comment_char(prompt, '\n');
+                prompt.mode = CommentEditorMode::Insert;
+            }
+            KeyCode::Char('x') => delete_comment_char_at(prompt),
+            KeyCode::Char('w') => prompt.cursor = next_comment_word(&prompt.text, prompt.cursor),
+            KeyCode::Char('b') => {
+                prompt.cursor = previous_comment_word(&prompt.text, prompt.cursor);
+            }
+            KeyCode::Char('d') if prompt.pending_delete => {
+                delete_comment_line(prompt);
+                prompt.pending_delete = false;
+            }
+            KeyCode::Char('d') => prompt.pending_delete = true,
+            KeyCode::Left | KeyCode::Char('h') => {
+                prompt.cursor = previous_char_boundary(&prompt.text, prompt.cursor);
+                prompt.pending_delete = false;
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor);
+                prompt.pending_delete = false;
+            }
+            _ => prompt.pending_delete = false,
+        }
+    }
+
+    fn request_comment_cancel(&mut self) {
+        let Some(prompt) = self.comment_prompt.as_mut() else {
+            return;
+        };
+        if prompt.text != prompt.original_text && !prompt.cancel_armed {
+            prompt.cancel_armed = true;
+            prompt.pending_delete = false;
+            return;
+        }
+        self.comment_prompt = None;
+        self.toast = Some("comment cancelled".to_string());
+    }
+
+    fn run_comment_command(&mut self) {
+        let command = self
+            .comment_prompt
+            .as_mut()
+            .and_then(|prompt| prompt.command.take())
+            .unwrap_or_default();
+        match command.trim() {
+            "w" | "wq" | "x" => self.save_comment_prompt(),
+            "q" => self.request_comment_cancel(),
+            "q!" => {
+                self.comment_prompt = None;
+                self.toast = Some("comment cancelled".to_string());
+            }
+            "" => {}
+            other => self.toast = Some(format!("unknown comment command: :{other}")),
         }
     }
 
@@ -3207,20 +3647,6 @@ impl App {
         self.row_build_count
     }
 
-    pub fn copy_selected(&mut self) {
-        self.ensure_rows();
-        if let Some(path) = self
-            .selected_artifact()
-            .map(|artifact| artifact.relative_path.clone())
-        {
-            self.toast = Some(if copy_to_pbcopy(&path) {
-                format!("copied source path: {path}")
-            } else {
-                "pbcopy unavailable".to_string()
-            });
-        }
-    }
-
     pub fn copy_tuicr_review(&mut self) {
         if self.comments.is_empty() {
             self.toast = Some("no comments to copy".to_string());
@@ -3228,22 +3654,26 @@ impl App {
         }
 
         let digest = self.tuicr_digest();
-        let copied = copy_to_pbcopy(&digest);
         let count = self.comments.len();
-        self.toast = Some(if copied {
-            format!("copied {count} comments")
-        } else {
-            // stderr is invisible inside the alternate screen; a file is the
-            // only fallback that survives.
-            let fallback = std::env::temp_dir().join("rune-tuicr-review.md");
-            match std::fs::write(&fallback, &digest) {
-                Ok(()) => format!(
-                    "pbcopy unavailable — review written to {}",
-                    fallback.display()
-                ),
-                Err(error) => format!("pbcopy unavailable and file write failed: {error}"),
-            }
+        self.toast = Some(match review::copy_to_clipboard(&digest) {
+            Ok(true) => format!("copied {count} comments via terminal"),
+            Ok(false) => format!("copied {count} comments"),
+            Err(error) => format!("could not copy review: {error}"),
         });
+    }
+
+    fn review_comments(&self) -> Vec<ReviewComment> {
+        self.comments
+            .iter()
+            .map(|((module, path, line), comment)| ReviewComment {
+                module: module.clone(),
+                path: path.clone(),
+                line: *line,
+                end_line: comment.end_line,
+                kind: comment.kind,
+                text: comment.text.clone(),
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -3260,31 +3690,14 @@ impl App {
             LineComment {
                 kind,
                 text: text.into(),
+                end_line: None,
             },
         );
     }
 
     #[must_use]
     pub fn tuicr_digest(&self) -> String {
-        let mut lines = vec![
-            "I reviewed your code and have the following comments. Please address them."
-                .to_string(),
-            String::new(),
-        ];
-        lines.extend(self.comments.iter().enumerate().map(
-            |(index, ((module, path, line_number), comment))| {
-                format!(
-                    "{}. **[{}]** `{}:{}` ({}) - {}",
-                    index + 1,
-                    comment.kind.label(),
-                    path,
-                    line_number,
-                    module,
-                    comment.text
-                )
-            },
-        ));
-        lines.join("\n")
+        review::export(&self.root, &self.review_comments(), ExportFormat::Markdown)
     }
 
     fn open_comment_prompt(&mut self) {
@@ -3309,6 +3722,13 @@ impl App {
         } else {
             code_line
         };
+        let (line_number, end_line) =
+            self.visual_selection
+                .take()
+                .map_or((line_number, None), |selection| {
+                    let (start, end) = selection.ordered();
+                    (start + 1, (start != end).then_some(end + 1))
+                });
         let (kind, text) = self
             .comments
             .get(&(module.clone(), path.clone(), line_number))
@@ -3319,8 +3739,15 @@ impl App {
             module,
             path,
             line_number,
+            end_line,
             kind,
+            cursor: text.len(),
+            original_text: text.clone(),
             text,
+            mode: CommentEditorMode::Insert,
+            pending_delete: false,
+            command: None,
+            cancel_armed: false,
         });
     }
 
@@ -3343,6 +3770,7 @@ impl App {
             LineComment {
                 kind: prompt.kind,
                 text,
+                end_line: prompt.end_line,
             },
         );
         self.toast = Some(match persist_comments(&self.root, &self.comments) {
@@ -3474,8 +3902,14 @@ impl App {
         let page = isize::try_from(self.detail_viewport.max(2) - 1).unwrap_or(10);
         let half = (page / 2).max(1);
         match key.code {
-            KeyCode::Down | KeyCode::Char('j') => self.detail_step(1),
-            KeyCode::Up | KeyCode::Char('k') => self.detail_step(-1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.detail_step(1);
+                self.extend_visual_selection();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.detail_step(-1);
+                self.extend_visual_selection();
+            }
             KeyCode::PageDown | KeyCode::Char(' ') => self.detail_step(page),
             KeyCode::PageUp | KeyCode::Char('b') => self.detail_step(-page),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -3497,11 +3931,10 @@ impl App {
                 self.detail_scroll = u16::MAX;
                 self.move_detail_cursor(0);
             }
-            KeyCode::Char('n') if matches!(self.detail_tab, DetailTab::Code | DetailTab::Diff) => {
-                self.jump_section(true);
+            KeyCode::Char('n') if self.detail_tab == DetailTab::Code => self.search_next_in_code(),
+            KeyCode::Char('N') if self.detail_tab == DetailTab::Code => {
+                self.search_previous_in_code();
             }
-            KeyCode::Char(']') if self.detail_tab == DetailTab::Diff => self.jump_section(true),
-            KeyCode::Char('[') if self.detail_tab == DetailTab::Diff => self.jump_section(false),
             KeyCode::Char('p') => self.set_detail_tab(DetailTab::Preview),
             KeyCode::Char('c') => self.set_detail_tab(DetailTab::Code),
             KeyCode::Char('d') => self.set_detail_tab(DetailTab::Diff),
@@ -3515,6 +3948,39 @@ impl App {
                 }
                 self.open_comment_prompt();
             }
+            KeyCode::Char('V') if self.detail_tab == DetailTab::Code => {
+                self.visual_selection = Some(VisualSelection {
+                    anchor: self.detail_cursor,
+                    head: self.detail_cursor,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn extend_visual_selection(&mut self) {
+        if let Some(selection) = self.visual_selection.as_mut() {
+            selection.head = self.detail_cursor;
+        }
+    }
+
+    #[must_use]
+    pub fn is_visual_mode(&self) -> bool {
+        self.visual_selection.is_some()
+    }
+
+    pub fn visual_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.detail_step(1);
+                self.extend_visual_selection();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.detail_step(-1);
+                self.extend_visual_selection();
+            }
+            KeyCode::Char('c') => self.open_comment_prompt(),
+            KeyCode::Esc | KeyCode::Char('V') => self.escape(),
             _ => {}
         }
     }
@@ -3528,6 +3994,7 @@ impl App {
         self.section = section;
         self.detail_scroll = 0;
         self.detail_cursor = 0;
+        self.visual_selection = None;
         self.list_offset = 0;
         self.list_filter.clear();
         self.list_filter_typing = false;
@@ -3597,6 +4064,12 @@ impl App {
     /// Opens the in-panel filter on the focused list. In the Search section
     /// `/` edits the global query instead — that list IS the query results.
     pub fn begin_list_filter(&mut self) {
+        if self.focused == ColumnFocus::Detail && self.detail_tab == DetailTab::Code {
+            self.code_search_input = Some(String::new());
+            self.code_search_query.clear();
+            self.code_search_current = None;
+            return;
+        }
         if self.section == Section::Search {
             self.begin_search_input();
             return;
@@ -5211,85 +5684,205 @@ fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, Str
     (relative.to_string(), artifact.raw_source.clone())
 }
 
-fn load_comments(root: &Path) -> (CommentMap, Option<String>) {
-    let path = root.join(".rune-comments.yaml");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return (BTreeMap::new(), None);
-        }
-        Err(error) => {
-            return (
-                BTreeMap::new(),
-                Some(format!("could not read {}: {error}", path.display())),
-            );
-        }
-    };
-    let store: CommentStore = match serde_yaml::from_str(&content) {
-        Ok(store) => store,
-        Err(error) => {
-            return (
-                BTreeMap::new(),
-                Some(format!("could not parse {}: {error}", path.display())),
-            );
-        }
-    };
-    if store.version != 1 {
-        return (
-            BTreeMap::new(),
-            Some(format!(
-                "unsupported comment sidecar version {} in {}",
-                store.version,
-                path.display()
-            )),
-        );
+fn comment_prompt_display(prompt: &CommentPrompt) -> String {
+    let mut display = prompt.text.clone();
+    display.insert(prompt.cursor.min(display.len()), '▏');
+    display.replace('\n', "↵")
+}
+
+fn highlight_code_search_matches(
+    line: &mut Line<'static>,
+    source: &str,
+    query: &str,
+    current: Option<(usize, usize)>,
+    line_index: usize,
+) {
+    if query.is_empty() {
+        return;
     }
-    let comments = store
-        .comments
-        .into_iter()
-        .map(|comment| {
-            (
-                (comment.module, comment.path, comment.line),
-                LineComment {
-                    kind: comment.kind,
-                    text: comment.text,
-                },
-            )
-        })
-        .collect();
-    (comments, None)
+    let ranges = source
+        .match_indices(query)
+        .map(|(start, matched)| (start, start + matched.len()))
+        .collect::<Vec<_>>();
+    if ranges.is_empty() {
+        return;
+    }
+    let mut offset = 0;
+    let mut highlighted = Vec::new();
+    for (span_index, span) in std::mem::take(&mut line.spans).into_iter().enumerate() {
+        if span_index < 2 {
+            highlighted.push(span);
+            continue;
+        }
+        let text = span.content.into_owned();
+        let span_end = offset + text.len();
+        let mut cuts = vec![0, text.len()];
+        for (start, end) in &ranges {
+            if *start < span_end && *end > offset {
+                cuts.push(start.saturating_sub(offset).min(text.len()));
+                cuts.push(end.saturating_sub(offset).min(text.len()));
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        for window in cuts.windows(2) {
+            let start = window[0];
+            let end = window[1];
+            if start == end {
+                continue;
+            }
+            let absolute_start = offset + start;
+            let matching = ranges
+                .iter()
+                .find(|(match_start, match_end)| {
+                    absolute_start >= *match_start && absolute_start < *match_end
+                })
+                .copied();
+            let style = matching.map_or(span.style, |(match_start, _)| {
+                span.style
+                    .fg(Color::Black)
+                    .bg(if current == Some((line_index, match_start)) {
+                        Color::Magenta
+                    } else {
+                        Color::Yellow
+                    })
+                    .add_modifier(Modifier::BOLD)
+            });
+            highlighted.push(Span::styled(text[start..end].to_string(), style));
+        }
+        offset = span_end;
+    }
+    line.spans = highlighted;
+}
+
+fn insert_comment_char(prompt: &mut CommentPrompt, character: char) {
+    prompt.text.insert(prompt.cursor, character);
+    prompt.cursor += character.len_utf8();
+}
+
+fn delete_comment_char_before(prompt: &mut CommentPrompt) {
+    let previous = previous_char_boundary(&prompt.text, prompt.cursor);
+    if previous < prompt.cursor {
+        prompt.text.replace_range(previous..prompt.cursor, "");
+        prompt.cursor = previous;
+    }
+}
+
+fn delete_comment_char_at(prompt: &mut CommentPrompt) {
+    let next = next_char_boundary(&prompt.text, prompt.cursor);
+    if next > prompt.cursor {
+        prompt.text.replace_range(prompt.cursor..next, "");
+    }
+}
+
+fn previous_char_boundary(text: &str, cursor: usize) -> usize {
+    text[..cursor.min(text.len())]
+        .char_indices()
+        .next_back()
+        .map_or(0, |(index, _)| index)
+}
+
+fn next_char_boundary(text: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(text.len());
+    text[cursor..]
+        .chars()
+        .next()
+        .map_or(cursor, |character| cursor + character.len_utf8())
+}
+
+fn comment_line_start(text: &str, cursor: usize) -> usize {
+    text[..cursor.min(text.len())]
+        .rfind('\n')
+        .map_or(0, |index| index + 1)
+}
+
+fn comment_line_end(text: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(text.len());
+    text[cursor..]
+        .find('\n')
+        .map_or(text.len(), |offset| cursor + offset)
+}
+
+fn delete_comment_line(prompt: &mut CommentPrompt) {
+    let start = comment_line_start(&prompt.text, prompt.cursor);
+    let end = comment_line_end(&prompt.text, prompt.cursor);
+    let range = if end < prompt.text.len() {
+        start..end + 1
+    } else if start > 0 {
+        start - 1..end
+    } else {
+        start..end
+    };
+    prompt.text.replace_range(range.clone(), "");
+    prompt.cursor = range.start.min(prompt.text.len());
+}
+
+fn is_comment_word(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+fn next_comment_word(text: &str, cursor: usize) -> usize {
+    let characters = text.char_indices().collect::<Vec<_>>();
+    let mut index = characters.partition_point(|(byte, _)| *byte < cursor);
+    if index < characters.len() && is_comment_word(characters[index].1) {
+        while index < characters.len() && is_comment_word(characters[index].1) {
+            index += 1;
+        }
+    }
+    while index < characters.len() && !is_comment_word(characters[index].1) {
+        index += 1;
+    }
+    characters.get(index).map_or(text.len(), |(byte, _)| *byte)
+}
+
+fn previous_comment_word(text: &str, cursor: usize) -> usize {
+    let characters = text.char_indices().collect::<Vec<_>>();
+    let mut index = characters.partition_point(|(byte, _)| *byte < cursor);
+    while index > 0 && !is_comment_word(characters[index - 1].1) {
+        index -= 1;
+    }
+    while index > 0 && is_comment_word(characters[index - 1].1) {
+        index -= 1;
+    }
+    characters.get(index).map_or(0, |(byte, _)| *byte)
+}
+
+fn load_comments(root: &Path) -> (CommentMap, Option<String>) {
+    let comments = match review::load(root) {
+        Ok(comments) => comments,
+        Err(error) => return (BTreeMap::new(), Some(error)),
+    };
+    (
+        comments
+            .into_iter()
+            .map(|comment| {
+                (
+                    (comment.module, comment.path, comment.line),
+                    LineComment {
+                        kind: comment.kind,
+                        text: comment.text,
+                        end_line: comment.end_line,
+                    },
+                )
+            })
+            .collect(),
+        None,
+    )
 }
 
 fn persist_comments(root: &Path, comments: &CommentMap) -> Result<(), String> {
-    let path = root.join(".rune-comments.yaml");
-    let store = CommentStore {
-        version: 1,
-        comments: comments
-            .iter()
-            .map(|((module, path, line), comment)| StoredComment {
-                module: module.clone(),
-                path: path.clone(),
-                line: *line,
-                kind: comment.kind,
-                text: comment.text.clone(),
-            })
-            .collect(),
-    };
-    let content = serde_yaml::to_string(&store).map_err(|error| error.to_string())?;
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temporary = root.join(format!(
-        ".rune-comments.yaml.tmp-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::write(&temporary, content).map_err(|error| error.to_string())?;
-    if let Err(error) = std::fs::rename(&temporary, &path) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error.to_string());
-    }
-    Ok(())
+    let stored = comments
+        .iter()
+        .map(|((module, path, line), comment)| ReviewComment {
+            module: module.clone(),
+            path: path.clone(),
+            line: *line,
+            end_line: comment.end_line,
+            kind: comment.kind,
+            text: comment.text.clone(),
+        })
+        .collect::<Vec<_>>();
+    review::persist(root, &stored)
 }
 
 /// Whether unprocessed terminal input is queued. Errors (no terminal, as in
@@ -5710,25 +6303,6 @@ fn history_lines(artifact: &ArtifactView) -> Vec<Line<'static>> {
     }
     lines
 }
-fn copy_to_pbcopy(text: &str) -> bool {
-    let Ok(mut child) = Command::new("pbcopy")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    let Some(mut stdin) = child.stdin.take() else {
-        return false;
-    };
-    if stdin.write_all(text.as_bytes()).is_err() {
-        return false;
-    }
-    drop(stdin);
-    child.wait().is_ok_and(|status| status.success())
-}
-
 fn canonical_source(source: &str) -> String {
     source.trim_end_matches(".git").to_string()
 }

@@ -54,36 +54,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         app.launch_picker_key(key);
         return;
     }
-    if app.is_search_input_active()
-        && matches!(
-            key.code,
-            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Esc | KeyCode::Enter
-        )
-    {
-        app.search_input_key(key);
+    if route_text_input(app, key) {
         return;
     }
-    if app.is_list_filter_typing()
-        && matches!(
-            key.code,
-            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Esc | KeyCode::Enter
-        )
-    {
-        app.list_filter_key(key);
+    if app.navigation_prefix_key(key) {
+        return;
+    }
+    if app.is_visual_mode() {
+        app.visual_key(key);
         return;
     }
     // Digits always address the numbered detail tabs; sections are reached
     // by navigation, the palette, and the letter shortcuts (t/h/c/m) shown
     // in the Sections column.
-    if let KeyCode::Char(digit @ '1'..='6') = key.code {
-        let index = usize::from(digit as u8 - b'1');
-        app.set_detail_tab(super::app::DetailTab::ALL[index]);
+    if switch_detail_tab_for_digit(app, key) {
         return;
     }
-    if app.has_section_digit_shortcuts()
-        && let KeyCode::Char(character) = key.code
-        && app.set_section_by_shortcut(character)
-    {
+    if switch_section_for_shortcut(app, key) {
         return;
     }
 
@@ -99,8 +86,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('!') => app.toggle_problems_only(),
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('e') => app.open_cast_editor(),
-        KeyCode::Char('Y') => app.copy_tuicr_review(),
-        KeyCode::Char('y') => app.copy_selected(),
+        KeyCode::Char('y' | 'Y') => app.copy_tuicr_review(),
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => app.drill_or_expand(),
         KeyCode::Left | KeyCode::Char('h') => app.move_back(),
         KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
@@ -119,6 +105,38 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('H') => app.open_history_for_selection(),
         _ => app.focused_key(key),
     }
+}
+
+fn switch_detail_tab_for_digit(app: &mut App, key: KeyEvent) -> bool {
+    let KeyCode::Char(digit @ '1'..='6') = key.code else {
+        return false;
+    };
+    app.set_detail_tab(super::app::DetailTab::ALL[usize::from(digit as u8 - b'1')]);
+    true
+}
+
+fn route_text_input(app: &mut App, key: KeyEvent) -> bool {
+    if !matches!(
+        key.code,
+        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Esc | KeyCode::Enter
+    ) {
+        return false;
+    }
+    if app.is_code_search_input_active() {
+        app.code_search_input_key(key);
+    } else if app.is_search_input_active() {
+        app.search_input_key(key);
+    } else if app.is_list_filter_typing() {
+        app.list_filter_key(key);
+    } else {
+        return false;
+    }
+    true
+}
+
+fn switch_section_for_shortcut(app: &mut App, key: KeyEvent) -> bool {
+    app.has_section_digit_shortcuts()
+        && matches!(key.code, KeyCode::Char(character) if app.set_section_by_shortcut(character))
 }
 
 fn handle_preview_key(app: &mut App, key: KeyEvent) {

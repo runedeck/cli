@@ -3,9 +3,9 @@
 //! the CLI drops a positional or renames a flag and the templates lag, this
 //! test fails on the changing PR rather than on consumer reports a month later.
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
-use super::Cli;
+use super::{Cli, root_help};
 
 const TEMPLATE_MAKEFILE: &str = include_str!("../../templates/init/Makefile");
 const TEMPLATE_PRE_COMMIT_CONFIG: &str =
@@ -54,5 +54,41 @@ fn every_pre_commit_config_rune_call_parses() {
                 "templates/init/.pre-commit-config.yaml invocation {argv:?} rejected by clap: {error}"
             );
         });
+    }
+}
+
+#[cfg(all(feature = "tui", feature = "dashboard"))]
+#[test]
+fn root_help_matches_golden_snapshot() {
+    let actual = root_help()
+        .lines()
+        .map(|line| {
+            if line.contains(") built ") {
+                "  {VERSION} ({COMMIT}) built {TIME}"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(
+        actual,
+        include_str!("../../tests/fixtures/root-help.txt").trim_end()
+    );
+}
+
+#[test]
+fn root_help_lists_every_declared_clap_subcommand() {
+    let help = root_help();
+
+    for subcommand in Cli::command().get_subcommands() {
+        let name = subcommand.get_name();
+        assert!(
+            help.lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .any(|word| word == name),
+            "root help is missing clap subcommand `{name}`"
+        );
     }
 }
