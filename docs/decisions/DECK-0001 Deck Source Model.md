@@ -34,6 +34,24 @@ A cast resolves to a flat set of qualified ids: `extends` unions depth-first (cy
 
 Against a deck source, `validate`, `provenance`, `drift`, and `clean` iterate all domains and emit one aggregate report; a failure in any domain fails the run. `release` accepts a domain argument and packages that module exactly as it packages a single-module source today.
 
+## Resolution semantics
+
+- **Collision unit**: the assembled deploy-relative path per provider (after transforms). Deck validation fails on any duplicate across domains or across manifest sources; there is no precedence.
+- **Short form**: `<domain>/<Name>` must be unique across all kinds within the domain; ambiguity is a hard error listing the candidates. Bare `<Name>` must be unique across the whole deck, else the same error. Storage after resolution is always canonical (`<domain>/<kind>/<Name>`).
+- **Per-entry resolution order**: cast (if referenced) → union with the entry's explicit ids → entry `exclude` last. Multiple manifest entries union; see collision rule.
+- **`extends`**: parents resolve first, in listed order; pure set union; cycles are a hard error.
+- **Globs** match canonical ids (`science/skills/Lit*`), `**` crosses segments, anchored to ids not paths. `exclude` removes ids regardless of whether a parent cast added them.
+- **Domain identity**: the directory basename under `runes/`; `module.yaml` `name` must equal it or deck loading fails. `runes/` entries without `module.yaml` are skipped with a warning; nested `module.yaml` deeper than one level is ignored.
+- **Pins**: commit SHAs, exactly as the existing git source machinery defines them; fetch or checkout failure is a hard error, never a fallback.
+- **Legacy**: when both `.rune` and `.forge` exist, `.rune` wins and the run warns that `.forge` is ignored.
+- **Install failure**: fail fast at the first failing domain; files already deployed in the run stay recorded in the target manifest (same contract as today's single-module install).
+- **Hooks**: a domain's hooks deploy only when at least one of its artifacts is selected; hooks referencing another domain's files fail deck validation.
+- **`rune add <domain>`** stores the glob `<domain>/**`; adds are idempotent; unknown ids, unknown casts, and casts referencing removed artifacts are hard errors at resolve time.
+- **Deck-level config**: only the provider list for v1; nearest scope wins per key.
+- **Kinds are closed for v1** (`skills`, `agents`, `rules`, `hooks`); extending them is a spec revision.
+- **Output ordering**: domain lexicographic, then kind (skills, agents, rules, hooks), then name lexicographic — everywhere, so drift reports stay quiet.
+- **Aggregate scope**: a source with `path:` behaves as a single module for every command; a deck-root source means all domains, for `validate`, `provenance`, `drift`, and `clean` alike. `release` against a deck requires the domain argument.
+
 ## Consequences
 
 Single-module sources keep the current behavior, so all existing tests must stay green. Qualified ids make the consumer manifest self-documenting at the cost of longer entries. Directory scan means adding a domain is `mkdir` plus `module.yaml`, with no registry edit; the price is that a malformed `module.yaml` in a new domain fails deck-wide validation immediately, which is intended.
