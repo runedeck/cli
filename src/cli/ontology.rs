@@ -20,7 +20,7 @@ pub fn show(json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
-const ONTOLOGY_KEYS: [&str; 4] = ["quests", "lore", "artifacts", "owner"];
+const ONTOLOGY_KEYS: [&str; 5] = ["quests", "skeleton", "lore", "artifacts", "owner"];
 
 pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
     let nested = ONTOLOGY_KEYS.contains(&key);

@@ -28,6 +28,29 @@ fn env_beats_config_beats_default() {
 }
 
 #[test]
+fn skeleton_env_beats_config_and_has_owner_default() {
+    let config = Config {
+        ontology: Ontology {
+            skeleton: Some("/from-config".to_string()),
+            ..Ontology::default()
+        },
+        ..Config::default()
+    };
+    let from_env = resolve_config(&config, &env_from(&[("RUNE_SKELETON", "/from-env")]));
+    assert_eq!(
+        from_env.ontology.skeleton.expect("skeleton").value,
+        "/from-env"
+    );
+
+    let default = resolve_config(&Config::default(), &no_env)
+        .ontology
+        .skeleton
+        .expect("skeleton default");
+    assert!(default.value.ends_with("Developer/N4M3Z/skeleton"));
+    assert_eq!(default.source, Source::Default);
+}
+
+#[test]
 fn rune_deck_env_beats_config() {
     let config = Config {
         deck: Some("/from-config".to_string()),

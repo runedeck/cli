@@ -25,11 +25,17 @@ pub fn execute(quest: Option<&str>, clone: bool, unbind: bool) -> Result<i32, Er
     };
     let resolved = resolve_quest(requested, clone)?;
     write_binding(&state_path, &resolved)?;
+    println!("updated {}", state_path.display());
     println!("quest bound: {}", resolved.display());
     if !resolved.join(".rune").is_file() {
         println!("note: no .rune manifest yet; `rune add <deck-or-rune>` creates it");
     }
     Ok(0)
+}
+
+pub(crate) fn bind_existing(quest: &Path) -> Result<(), Error> {
+    let resolved = std::fs::canonicalize(quest).map_err(|error| io_error(quest, "read", &error))?;
+    write_binding(&state_path()?, &resolved)
 }
 
 /// The bound quest root, if a binding exists and still points at a directory.
@@ -183,9 +189,7 @@ fn write_binding(state_path: &Path, quest: &Path) -> Result<(), Error> {
     }
     let content = serde_yaml::to_string(&document)
         .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize: {error}")))?;
-    std::fs::write(state_path, content).map_err(|error| io_error(state_path, "write", &error))?;
-    println!("updated {}", state_path.display());
-    Ok(())
+    std::fs::write(state_path, content).map_err(|error| io_error(state_path, "write", &error))
 }
 
 fn io_error(path: &Path, action: &str, error: &dyn std::fmt::Display) -> Error {

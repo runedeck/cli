@@ -19,6 +19,7 @@ pub struct Config {
 #[serde(default)]
 pub struct Ontology {
     pub quests: Option<String>,
+    pub skeleton: Option<String>,
     pub owner: Option<String>,
     pub archive: Option<String>,
     pub vault: Option<String>,
@@ -169,6 +170,7 @@ pub struct ResolvedField {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ResolvedOntology {
     pub quests: Option<ResolvedValue>,
+    pub skeleton: Option<ResolvedValue>,
     pub owner: Option<ResolvedValue>,
     pub archive: Option<ResolvedValue>,
     pub vault: Option<ResolvedValue>,
@@ -199,6 +201,7 @@ pub struct ResolvedConfig {
 #[derive(Debug, Clone, Copy)]
 enum Key {
     Quests,
+    Skeleton,
     Owner,
     Archive,
     Vault,
@@ -212,8 +215,9 @@ enum Key {
 }
 
 impl Key {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Quests,
+        Self::Skeleton,
         Self::Owner,
         Self::Archive,
         Self::Vault,
@@ -229,6 +233,7 @@ impl Key {
     fn name(self) -> &'static str {
         match self {
             Self::Quests => "quests",
+            Self::Skeleton => "skeleton",
             Self::Owner => "owner",
             Self::Archive => "archive",
             Self::Vault => "vault",
@@ -245,6 +250,7 @@ impl Key {
     fn env(self) -> &'static str {
         match self {
             Self::Quests => "RUNE_QUESTS",
+            Self::Skeleton => "RUNE_SKELETON",
             Self::Owner => "RUNE_OWNER",
             Self::Archive => "RUNE_ARCHIVE",
             Self::Vault => "RUNE_VAULT",
@@ -261,6 +267,7 @@ impl Key {
     fn default(self) -> Option<&'static str> {
         match self {
             Self::Quests => Some("~/Agents"),
+            Self::Skeleton => Some("~/Developer/N4M3Z/skeleton"),
             Self::Archive => Some("~/Agents/archive"),
             Self::Vault => Some("~/Atlas/Domains"),
             Self::Lore => Some("~/Data"),
@@ -273,6 +280,7 @@ impl Key {
     fn configured(self, ontology: &Ontology) -> Option<&String> {
         match self {
             Self::Quests => ontology.quests.as_ref(),
+            Self::Skeleton => ontology.skeleton.as_ref(),
             Self::Owner => ontology.owner.as_ref(),
             Self::Archive => ontology.archive.as_ref(),
             Self::Vault => ontology.vault.as_ref(),
@@ -310,6 +318,7 @@ impl ResolvedOntology {
     fn value(&self, key: Key) -> Option<&ResolvedValue> {
         match key {
             Key::Quests => self.quests.as_ref(),
+            Key::Skeleton => self.skeleton.as_ref(),
             Key::Owner => self.owner.as_ref(),
             Key::Archive => self.archive.as_ref(),
             Key::Vault => self.vault.as_ref(),
@@ -410,6 +419,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         });
     let ontology = ResolvedOntology {
         quests: resolve_key(Key::Quests, &config.ontology, env),
+        skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
         owner: resolve_key(Key::Owner, &config.ontology, env),
         archive: resolve_key(Key::Archive, &config.ontology, env),
         vault: resolve_key(Key::Vault, &config.ontology, env),

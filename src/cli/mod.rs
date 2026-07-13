@@ -78,11 +78,35 @@ enum Command {
         row: usize,
     },
 
-    /// Initialize a new rune module with required files and schemas
+    /// Scaffold a project from skeleton archetypes
     Init {
-        /// Directory to scaffold the new module into (created if missing).
-        #[arg(long, value_name = "DIR")]
-        target: String,
+        /// Project slug or directory (created if missing).
+        #[arg(value_name = "SLUG_OR_DIR", required_unless_present = "module")]
+        target: Option<String>,
+
+        /// Scaffold a rune module for deck authoring.
+        #[arg(long, value_name = "DIR", conflicts_with = "target")]
+        module: Option<String>,
+
+        /// Project language archetype.
+        #[arg(long, value_enum, default_value_t = init::Language::Rust, conflicts_with = "module")]
+        lang: init::Language,
+
+        /// Project purpose archetype.
+        #[arg(long, value_enum, default_value_t = init::Purpose::Tool, conflicts_with = "module")]
+        purpose: init::Purpose,
+
+        /// Skeleton repository root.
+        #[arg(long, value_name = "DIR", conflicts_with = "module")]
+        skeleton: Option<String>,
+
+        /// Short project description used for ${BRIEF}.
+        #[arg(long, default_value = "", conflicts_with = "module")]
+        brief: String,
+
+        /// Bind the scaffolded project as the active quest.
+        #[arg(long, conflicts_with = "module")]
+        quest: bool,
     },
 
     /// Add a rune selection to the consumer `.rune` manifest
@@ -498,7 +522,30 @@ pub fn run() -> i32 {
                 crate::tui::run(source, edit)
             };
         }
-        Command::Init { target } => (init::execute(&target), "initialized"),
+        Command::Init {
+            target,
+            module,
+            lang,
+            purpose,
+            skeleton,
+            brief,
+            quest,
+        } => {
+            if let Some(module) = module {
+                (init::execute(&module), "initialized")
+            } else {
+                let target = target.expect("clap requires a project target or --module");
+                return init::run_project(
+                    &target,
+                    lang,
+                    purpose,
+                    skeleton.as_deref(),
+                    &brief,
+                    quest,
+                    args.json,
+                );
+            }
+        }
         Command::Add {
             rune,
             cast,

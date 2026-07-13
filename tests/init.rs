@@ -1,0 +1,187 @@
+use assert_cmd::Command;
+use predicates::prelude::*;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+fn rune() -> Command {
+    Command::cargo_bin("rune").unwrap()
+}
+
+fn skeleton_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/skeleton")
+}
+
+fn init(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    rune()
+        .env("HOME", home)
+        .env("RUNE_QUESTS", quests)
+        .arg("init")
+        .args(args)
+        .arg("--skeleton")
+        .arg(skeleton_fixture())
+        .assert()
+}
+
+#[test]
+fn project_init_composes_layers_and_substitutes_contents_and_names() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("signal-lamp");
+
+    init(
+        home.path(),
+        quests.path(),
+        &[
+            "N4M3Z/signal-lamp",
+            "--lang",
+            "shell",
+            "--purpose",
+            "tool",
+            "--brief",
+            "Warns the crew",
+        ],
+    )
+    .success()
+    .stdout(predicate::str::contains(
+        "layers: base, lang/shell, purpose/tool",
+    ))
+    .stdout(predicate::str::contains("destination:"))
+    .stdout(predicate::str::contains("rune add <deck>"))
+    .stdout(predicate::str::contains("rune tui --edit"));
+
+    let makefile = fs::read_to_string(destination.join("Makefile")).unwrap();
+    assert!(makefile.contains("NAME := signal-lamp"));
+    assert!(makefile.contains("TITLE := Signal Lamp"));
+    assert!(makefile.contains("OWNER := N4M3Z"));
+    assert!(makefile.contains("BRIEF := Warns the crew"));
+    assert!(makefile.contains("UNKNOWN := ${UNCHANGED}"));
+    assert!(destination.join("signal-lamp.txt").is_file());
+    assert!(destination.join("bin/signal-lamp").is_file());
+    assert_eq!(
+        fs::read_to_string(destination.join("README.md")).unwrap(),
+        "# Signal Lamp\n\nWarns the crew\n"
+    );
+    assert!(destination.join(".git").exists());
+    let hooks_path = std::process::Command::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(&destination)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(hooks_path.stdout).unwrap().trim(),
+        ".githooks"
+    );
+
+    #[cfg(unix)]
+    for executable in [".githooks/pre-commit", "bin/signal-lamp"] {
+        let mode = fs::metadata(destination.join(executable))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "{executable} should be executable");
+    }
+}
+
+#[test]
+fn project_init_rerun_skips_existing_without_overwriting() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("demo");
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("README.md"), "# Hand written\n").unwrap();
+
+    init(
+        home.path(),
+        quests.path(),
+        &["demo", "--lang", "shell", "--purpose", "tool"],
+    )
+    .success();
+    let second = init(
+        home.path(),
+        quests.path(),
+        &["demo", "--lang", "shell", "--purpose", "tool"],
+    );
+    second
+        .success()
+        .stdout(predicate::str::contains("already exists"))
+        .stdout(predicate::str::contains("skipped"));
+
+    assert_eq!(
+        fs::read_to_string(destination.join("README.md")).unwrap(),
+        "# Hand written\n"
+    );
+}
+
+#[test]
+fn bare_name_resolves_under_rune_quests_and_quest_flag_binds_it() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+
+    init(
+        home.path(),
+        quests.path(),
+        &["demo", "--lang", "shell", "--purpose", "tool", "--quest"],
+    )
+    .success()
+    .stdout(predicate::str::contains("quest: bound to destination"));
+
+    let destination = quests.path().join("demo");
+    assert!(destination.join("Makefile").is_file());
+    let state = fs::read_to_string(home.path().join(".config/rune/state.yaml")).unwrap();
+    assert!(state.contains(&destination.to_string_lossy().to_string()));
+}
+
+#[test]
+fn existing_directory_is_used_in_place() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    init(
+        home.path(),
+        quests.path(),
+        &[
+            &destination.path().to_string_lossy(),
+            "--lang",
+            "shell",
+            "--purpose",
+            "tool",
+        ],
+    )
+    .success();
+
+    assert!(destination.path().join("Makefile").is_file());
+    assert!(
+        !quests
+            .path()
+            .join(destination.path().file_name().unwrap())
+            .exists()
+    );
+}
+
+#[test]
+fn module_scaffolder_remains_available_behind_module_flag() {
+    let home = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    rune()
+        .env("HOME", home.path())
+        .args(["init", "--module", &destination.path().to_string_lossy()])
+        .assert()
+        .success();
+
+    assert!(destination.path().join("module.yaml").is_file());
+    assert!(destination.path().join(".manifest").is_file());
+}
+
+#[test]
+fn init_help_matches_snapshot() {
+    let output = rune().args(["init", "--help"]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        include_str!("fixtures/init-help.txt")
+    );
+}

@@ -1,0 +1,16 @@
+Scaffold a project from skeleton archetypes
+
+Usage: rune init [OPTIONS] [SLUG_OR_DIR]
+
+Arguments:
+  [SLUG_OR_DIR]  Project slug or directory (created if missing)
+
+Options:
+      --module <DIR>       Scaffold a rune module for deck authoring
+      --lang <LANG>        Project language archetype [default: rust] [possible values: rust, python, shell]
+      --purpose <PURPOSE>  Project purpose archetype [default: tool] [possible values: tool, module, spine]
+      --skeleton <DIR>     Skeleton repository root
+      --brief <BRIEF>      Short project description used for ${BRIEF} [default: ""]
+      --quest              Bind the scaffolded project as the active quest
+      --json               Output results as JSON
+  -h, --help               Print help
