@@ -25,6 +25,7 @@ fn help_flag_lists_subcommands() {
         .arg("--help")
         .assert()
         .success()
+        .stdout(predicate::str::contains("spec"))
         .stdout(predicate::str::contains("install"))
         .stdout(predicate::str::contains("assemble"))
         .stdout(predicate::str::contains("copy"))
@@ -129,12 +130,25 @@ fn validate_help_succeeds() {
 }
 
 #[test]
-fn propose_and_changes_json_expose_agent_ready_lifecycle_state() {
+fn spec_help_lists_lifecycle_actions() {
+    rune()
+        .args(["spec", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("propose"))
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("archive"))
+        .stdout(predicate::str::contains("context"));
+}
+
+#[test]
+fn spec_propose_and_list_json_expose_agent_ready_lifecycle_state() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().to_str().unwrap();
 
     rune()
         .args([
+            "spec",
             "propose",
             "improve-search",
             "--capability",
@@ -149,11 +163,100 @@ fn propose_and_changes_json_expose_agent_ready_lifecycle_state() {
         ));
 
     rune()
-        .args(["changes", "--source", source, "--json"])
+        .args(["spec", "list", "--source", source, "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"id\": \"improve-search\""))
         .stdout(predicate::str::contains("\"state\": \"draft\""));
+}
+
+#[test]
+fn spec_context_emits_markdown_and_structured_json() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().to_str().unwrap();
+
+    rune()
+        .args([
+            "spec",
+            "propose",
+            "improve-search",
+            "--capability",
+            "search",
+            "--source",
+            source,
+        ])
+        .assert()
+        .success();
+
+    rune()
+        .args(["spec", "context", "improve-search", "--source", source])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Improve Search"))
+        .stdout(predicate::str::contains("## Delta: search"))
+        .stdout(predicate::str::contains(
+            "- [ ] **TODO: 1.1 Implement the specified behavior**",
+        ));
+
+    let output = rune()
+        .args([
+            "spec",
+            "context",
+            "improve-search",
+            "--source",
+            source,
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let context: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(context["id"], "improve-search");
+    assert!(
+        context["proposal"]
+            .as_str()
+            .unwrap()
+            .contains("# Improve Search")
+    );
+    assert_eq!(context["deltas"][0]["capability"], "search");
+    assert!(
+        context["deltas"][0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("## ADDED Requirements")
+    );
+    assert_eq!(context["tasks"][0]["done"], false);
+    assert_eq!(
+        context["tasks"][0]["text"],
+        "1.1 Implement the specified behavior"
+    );
+}
+
+#[test]
+fn spec_context_distinguishes_archived_and_unknown_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().to_str().unwrap();
+    std::fs::create_dir_all(
+        root.path()
+            .join("docs/changes/archive/2026-07-15-improve-search"),
+    )
+    .unwrap();
+
+    rune()
+        .args(["spec", "context", "improve-search", "--source", source])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "change 'improve-search' is already archived",
+        ));
+
+    rune()
+        .args(["spec", "context", "missing", "--source", source])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "active change 'missing' was not found",
+        ));
 }
 
 #[test]

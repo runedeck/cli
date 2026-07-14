@@ -92,3 +92,16 @@ fn root_help_lists_every_declared_clap_subcommand() {
         );
     }
 }
+
+#[test]
+fn spec_is_the_only_top_level_spec_lifecycle_subcommand() {
+    let names = Cli::command()
+        .get_subcommands()
+        .map(|subcommand| subcommand.get_name().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(names.iter().any(|name| name == "spec"));
+    assert!(!names.iter().any(|name| name == "propose"));
+    assert!(!names.iter().any(|name| name == "changes"));
+    assert!(!names.iter().any(|name| name == "archive"));
+}

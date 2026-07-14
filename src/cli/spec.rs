@@ -92,8 +92,28 @@ struct ProposeOutput {
 }
 
 #[derive(Debug, Serialize)]
-struct ChangesOutput {
+struct ListOutput {
     changes: Vec<ChangeSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct ContextDelta {
+    capability: String,
+    body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct ContextTask {
+    text: String,
+    done: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct ContextOutput {
+    id: String,
+    proposal: String,
+    deltas: Vec<ContextDelta>,
+    tasks: Vec<ContextTask>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -239,7 +259,7 @@ pub(crate) fn propose(
             "Replace the delta spec placeholders with SHALL requirements and scenarios."
                 .to_string(),
             "Implement tasks.md, checking items as executable checks pass.".to_string(),
-            format!("Run `rune archive {id}` when every task is checked."),
+            format!("Run `rune spec archive {id}` when every task is checked."),
         ],
     };
     print_propose(&output, json)?;
@@ -247,10 +267,10 @@ pub(crate) fn propose(
 }
 
 /// List active changes and their task completion fractions.
-pub(crate) fn changes(source: &str, json: bool) -> Result<i32, Error> {
+pub(crate) fn list(source: &str, json: bool) -> Result<i32, Error> {
     let summaries = scan_changes(Path::new(source))?;
     if json {
-        print_json(&ChangesOutput { changes: summaries })?;
+        print_json(&ListOutput { changes: summaries })?;
         return Ok(0);
     }
 
@@ -266,6 +286,69 @@ pub(crate) fn changes(source: &str, json: bool) -> Result<i32, Error> {
             change.completed,
             change.total
         );
+    }
+    Ok(0)
+}
+
+/// Emit an agent-ready work order for one active change.
+pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> {
+    validate_slug(id, "change id")?;
+    let root = Path::new(source);
+    let change_dir = root.join("docs/changes").join(id);
+    if !change_dir.is_dir() {
+        if archived_change_exists(root, id)? {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "change '{id}' is already archived under {}",
+                    root.join("docs/changes/archive").display()
+                ),
+            ));
+        }
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "active change '{id}' was not found at {}",
+                change_dir.display()
+            ),
+        ));
+    }
+
+    let proposal = read(&change_dir.join("proposal.md"))?;
+    let mut deltas = Vec::new();
+    for capability_dir in read_directories(&change_dir.join("specs"))? {
+        let Some(capability) = capability_dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let delta_path = capability_dir.join("spec.md");
+        if delta_path.is_file() {
+            deltas.push(ContextDelta {
+                capability: capability.to_string(),
+                body: read(&delta_path)?,
+            });
+        }
+    }
+    if deltas.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Validate,
+            format!(
+                "change '{id}' has no delta specifications under {}",
+                change_dir.join("specs").display()
+            ),
+        ));
+    }
+
+    let tasks_content = read(&change_dir.join("tasks.md"))?;
+    let output = ContextOutput {
+        id: id.to_string(),
+        proposal: strip_frontmatter(&proposal).trim().to_string(),
+        deltas,
+        tasks: parse_tasks(&tasks_content).tasks,
+    };
+    if json {
+        print_json(&output)?;
+    } else {
+        print_context(&output);
     }
     Ok(0)
 }
@@ -520,6 +603,7 @@ struct TaskStatus {
     completed: usize,
     total: usize,
     unchecked: Vec<String>,
+    tasks: Vec<ContextTask>,
 }
 
 impl TaskStatus {
@@ -542,6 +626,10 @@ fn read_tasks(path: &Path) -> Result<TaskStatus, Error> {
         }
         Err(error) => return Err(io_error("read", path, error)),
     };
+    Ok(parse_tasks(&content))
+}
+
+fn parse_tasks(content: &str) -> TaskStatus {
     let mut status = TaskStatus::default();
     let mut fence = None;
     for line in content.lines() {
@@ -551,14 +639,17 @@ fn read_tasks(path: &Path) -> Result<TaskStatus, Error> {
         let Some(captures) = TASK.captures(line) else {
             continue;
         };
+        let text = captures[2].trim().to_string();
+        let done = &captures[1] != " ";
         status.total += 1;
-        if &captures[1] == " " {
-            status.unchecked.push(captures[2].trim().to_string());
-        } else {
+        if done {
             status.completed += 1;
+        } else {
+            status.unchecked.push(text.clone());
         }
+        status.tasks.push(ContextTask { text, done });
     }
-    Ok(status)
+    status
 }
 
 fn update_fence(line: &str, fence: &mut Option<char>) -> bool {
@@ -630,6 +721,14 @@ fn read(path: &Path) -> Result<String, Error> {
     fs::read_to_string(path).map_err(|error| io_error("read", path, error))
 }
 
+fn strip_frontmatter(content: &str) -> &str {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return content;
+    };
+    rest.find("\n---\n")
+        .map_or(content, |end| &rest[end + "\n---\n".len()..])
+}
+
 fn relative_display(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -653,6 +752,22 @@ fn read_directories(directory: &Path) -> Result<Vec<PathBuf>, Error> {
     directories.retain(|path| path.is_dir());
     directories.sort();
     Ok(directories)
+}
+
+fn archived_change_exists(root: &Path, id: &str) -> Result<bool, Error> {
+    Ok(read_directories(&root.join("docs/changes/archive"))?
+        .iter()
+        .any(|path| {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            let Some(date) = name.get(..10) else {
+                return false;
+            };
+            name.as_bytes().get(10) == Some(&b'-')
+                && name.get(11..) == Some(id)
+                && chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
+        }))
 }
 
 fn state_label(state: ChangeState) -> &'static str {
@@ -690,6 +805,26 @@ fn print_propose(output: &ProposeOutput, json: bool) -> Result<(), Error> {
         println!("  - {step}");
     }
     Ok(())
+}
+
+fn print_context(output: &ContextOutput) {
+    println!("# Work order: {}\n", output.id);
+    println!("## Proposal\n\n{}\n", output.proposal.trim());
+    for delta in &output.deltas {
+        println!("## Delta: {}\n\n{}\n", delta.capability, delta.body.trim());
+    }
+    println!("## Tasks");
+    if output.tasks.is_empty() {
+        println!("\n_No checklist tasks found._");
+        return;
+    }
+    for task in &output.tasks {
+        if task.done {
+            println!("- [x] {}", task.text);
+        } else {
+            println!("- [ ] **TODO: {}**", task.text);
+        }
+    }
 }
 
 fn print_archive(output: &ArchiveOutput, json: bool) -> Result<(), Error> {

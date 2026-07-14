@@ -16,9 +16,7 @@
     review      list | export [--target <DIR>]                        Inspect or export TUI review comments
 
   Spec:
-    propose     <CHANGE_ID> [--capability <NAME>]                     Scaffold a spec-driven change
-    changes     [--source <DIR>]                                      List change progress and lifecycle state
-    archive     <CHANGE_ID> [-y | --abandon]                          Merge or abandon a change and archive it
+    spec        propose | list | archive | context                    Spec-driven change lifecycle under docs/
 
   Deck:
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status

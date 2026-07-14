@@ -59,45 +59,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scaffold a spec-driven change under docs/changes/
-    Propose {
-        /// Stable kebab-case change identifier.
-        #[arg(value_name = "CHANGE_ID")]
-        change_id: String,
-
-        /// Capability whose delta specification should be scaffolded.
-        #[arg(long, value_name = "NAME")]
-        capability: Option<String>,
-
-        /// Deck or rune source root. Defaults to the current directory.
-        #[arg(long, value_name = "DIR", default_value = ".")]
-        source: String,
-    },
-
-    /// List active spec-driven changes and task completion
-    Changes {
-        /// Deck or rune source root. Defaults to the current directory.
-        #[arg(long, value_name = "DIR", default_value = ".")]
-        source: String,
-    },
-
-    /// Merge or abandon a spec-driven change and archive it
-    Archive {
-        /// Stable change identifier under docs/changes/.
-        #[arg(value_name = "CHANGE_ID")]
-        change_id: String,
-
-        /// Archive despite unchecked tasks, with a warning.
-        #[arg(short = 'y', conflicts_with = "abandon")]
-        yes: bool,
-
-        /// Archive as abandoned without checking tasks or merging specs.
-        #[arg(long, conflicts_with = "yes")]
-        abandon: bool,
-
-        /// Deck or rune source root. Defaults to the current directory.
-        #[arg(long, value_name = "DIR", default_value = ".")]
-        source: String,
+    /// Spec-driven change lifecycle under docs/
+    Spec {
+        #[command(subcommand)]
+        action: SpecAction,
     },
 
     /// Render the deck, specification, change, and deployment dashboard
@@ -540,6 +505,61 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum SpecAction {
+    /// Scaffold a spec-driven change under docs/changes/
+    Propose {
+        /// Stable kebab-case change identifier.
+        #[arg(value_name = "CHANGE_ID")]
+        change_id: String,
+
+        /// Capability whose delta specification should be scaffolded.
+        #[arg(long, value_name = "NAME")]
+        capability: Option<String>,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// List active spec-driven changes and task completion
+    List {
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Merge or abandon a spec-driven change and archive it
+    Archive {
+        /// Stable change identifier under docs/changes/.
+        #[arg(value_name = "CHANGE_ID")]
+        change_id: String,
+
+        /// Archive despite unchecked tasks, with a warning.
+        #[arg(short = 'y', conflicts_with = "abandon")]
+        yes: bool,
+
+        /// Archive as abandoned without checking tasks or merging specs.
+        #[arg(long, conflicts_with = "yes")]
+        abandon: bool,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Emit an agent-ready work order for an active change
+    Context {
+        /// Stable change identifier under docs/changes/.
+        #[arg(value_name = "CHANGE_ID")]
+        change_id: String,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum WatchAction {
     /// List watched locations
     List,
@@ -610,27 +630,7 @@ pub fn run() -> i32 {
     };
 
     let (result, verb) = match command {
-        Command::Propose {
-            change_id,
-            capability,
-            source,
-        } => {
-            return exit_code(spec::propose(
-                &source,
-                &change_id,
-                capability.as_deref(),
-                args.json,
-            ));
-        }
-        Command::Changes { source } => return exit_code(spec::changes(&source, args.json)),
-        Command::Archive {
-            change_id,
-            yes,
-            abandon,
-            source,
-        } => {
-            return exit_code(spec::archive(&source, &change_id, yes, abandon, args.json));
-        }
+        Command::Spec { action } => return run_spec(action, args.json),
         Command::Status { source } => {
             return exit_code(status::execute(&source, args.no_color, args.json));
         }
@@ -963,21 +963,9 @@ fn spec_help(help: &mut String) {
     help.push_str("\n  Spec:\n");
     help_command(
         help,
-        "propose",
-        "<CHANGE_ID> [--capability <NAME>]",
-        "Scaffold a spec-driven change",
-    );
-    help_command(
-        help,
-        "changes",
-        "[--source <DIR>]",
-        "List change progress and lifecycle state",
-    );
-    help_command(
-        help,
-        "archive",
-        "<CHANGE_ID> [-y | --abandon]",
-        "Merge or abandon a change and archive it",
+        "spec",
+        "propose | list | archive | context",
+        "Spec-driven change lifecycle under docs/",
     );
 }
 
@@ -1143,6 +1131,26 @@ fn exit_code<E: std::fmt::Display>(result: Result<i32, E>) -> i32 {
             2
         }
     }
+}
+
+/// Dispatch a `rune spec` subcommand to its lifecycle handler.
+fn run_spec(action: SpecAction, json: bool) -> i32 {
+    let result = match action {
+        SpecAction::Propose {
+            change_id,
+            capability,
+            source,
+        } => spec::propose(&source, &change_id, capability.as_deref(), json),
+        SpecAction::List { source } => spec::list(&source, json),
+        SpecAction::Archive {
+            change_id,
+            yes,
+            abandon,
+            source,
+        } => spec::archive(&source, &change_id, yes, abandon, json),
+        SpecAction::Context { change_id, source } => spec::context(&source, &change_id, json),
+    };
+    exit_code(result)
 }
 
 /// Dispatch a `rune watch` subcommand to its handler.
