@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
+pub const PREDICATE_TYPE: &str = "https://slsa.dev/provenance/v1";
 
 /// Typed representation of an in-toto/SLSA v1.0 provenance statement.
 ///
@@ -39,6 +40,8 @@ pub struct ProvenanceSidecar {
 pub struct ProvenanceStatement {
     #[serde(rename = "_type")]
     pub statement_type: String,
+    #[serde(rename = "predicateType", default)]
+    pub predicate_type: String,
     pub subject: Vec<Subject>,
     pub predicate: Predicate,
 }

@@ -1,6 +1,7 @@
 use crate::manifest::provenance::{
     BuildDefinition, Builder, BuilderVersion, Dependency, DigestMap, ExternalParameters, Metadata,
-    Predicate, ProvenanceSidecar, ProvenanceStatement, RunDetails, STATEMENT_TYPE, Subject,
+    PREDICATE_TYPE, Predicate, ProvenanceSidecar, ProvenanceStatement, RunDetails, STATEMENT_TYPE,
+    Subject,
 };
 
 pub fn generate_statement(
@@ -15,6 +16,7 @@ pub fn generate_statement(
     let sidecar = ProvenanceSidecar {
         provenance: ProvenanceStatement {
             statement_type: STATEMENT_TYPE.to_string(),
+            predicate_type: PREDICATE_TYPE.to_string(),
             subject: vec![Subject {
                 name: subject_name.to_string(),
                 digest: DigestMap {
@@ -67,6 +69,7 @@ pub fn generate_adopt_statement(
     let sidecar = ProvenanceSidecar {
         provenance: ProvenanceStatement {
             statement_type: STATEMENT_TYPE.to_string(),
+            predicate_type: PREDICATE_TYPE.to_string(),
             subject: vec![Subject {
                 name: subject_name.to_string(),
                 digest: DigestMap {

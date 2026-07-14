@@ -53,6 +53,10 @@ fn statement_is_valid_yaml() {
         "https://in-toto.io/Statement/v1"
     );
     assert_eq!(
+        provenance["predicateType"].as_str().unwrap(),
+        "https://slsa.dev/provenance/v1"
+    );
+    assert_eq!(
         provenance["subject"][0]["name"].as_str().unwrap(),
         "rules/AgentTeams.md"
     );
