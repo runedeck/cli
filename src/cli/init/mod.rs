@@ -542,10 +542,13 @@ fn commit_scaffold(directory: &Path, owner: &str) -> Result<(), Error> {
             "-c",
             "commit.gpgsign=false",
             "-c",
+            "core.hooksPath=",
+            "-c",
             &format!("user.name={user_name}"),
             "-c",
             "user.email=rune@localhost",
             "commit",
+            "--no-verify",
             "-m",
             "chore: scaffold from skeleton",
         ])

@@ -105,6 +105,48 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let hooks = home.path().join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let pre_commit = hooks.join("pre-commit");
+    fs::write(&pre_commit, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&pre_commit).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&pre_commit, permissions).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .env("HOME", home.path())
+            .args([
+                "config",
+                "--global",
+                "core.hooksPath",
+                hooks.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let destination = quests.path().join("hook-proof");
+    init(
+        home.path(),
+        quests.path(),
+        &["hook-proof", "--lang", "shell", "--purpose", "tool"],
+    )
+    .success();
+
+    let commits = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(destination)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(commits.stdout).unwrap().trim(), "1");
+}
+
 #[test]
 fn project_init_repo_is_silent_during_install_freshness_check() {
     let home = tempfile::tempdir().unwrap();
