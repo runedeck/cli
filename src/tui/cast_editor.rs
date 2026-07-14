@@ -374,9 +374,13 @@ impl CastEditor {
             ])
             .split(area);
         let checked = self.items.iter().filter(|item| item.checked).count();
+        let install_target = self
+            .manifest_root
+            .as_deref()
+            .map_or_else(|| "no install target".to_string(), display_install_target);
         frame.render_widget(
             Paragraph::new(format!(
-                " Cast editor · {checked}/{} selected · {}",
+                " Cast editor → {install_target} · {checked}/{} selected · {}",
                 self.items.len(),
                 if self.manifest.is_some() {
                     "writable"
@@ -489,6 +493,21 @@ fn manifest_root() -> Option<PathBuf> {
         return Some(cwd);
     }
     crate::cli::quest::bound_quest_silent().filter(|quest| quest.join(".rune").is_file())
+}
+
+fn display_install_target(path: &Path) -> String {
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(home) = dirs::home_dir() {
+        let canonical_home = home.canonicalize().unwrap_or(home);
+        if let Ok(rest) = canonical_path.strip_prefix(canonical_home) {
+            return if rest.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rest.display())
+            };
+        }
+    }
+    canonical_path.display().to_string()
 }
 
 fn fallback_deck_source(source: &Path) -> Result<PathBuf, String> {
