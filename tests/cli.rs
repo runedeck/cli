@@ -223,8 +223,18 @@ fn tui_snapshot_renders_deck_entry_columns() {
 fn tui_edit_snapshot_keeps_action_footer_visible() {
     let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
     let home = tempfile::tempdir().unwrap();
+    let target = home.path().join("Agents/inventory");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(
+        target.join(".rune"),
+        format!(
+            "version: 1\nsources:\n  deck:\n    local: {deck}\nrunes:\n  deck:\n    casts: [essentials]\n"
+        ),
+    )
+    .unwrap();
     rune()
         .env("HOME", home.path())
+        .current_dir(target)
         .args([
             "tui",
             "--snapshot",
@@ -236,6 +246,7 @@ fn tui_edit_snapshot_keeps_action_footer_visible() {
         ])
         .assert()
         .success()
+        .stdout(predicate::str::contains("Cast editor → ~/Agents/inventory"))
         .stdout(predicate::str::contains("Space toggle"))
         .stdout(predicate::str::contains("n/p deck"))
         .stdout(predicate::str::contains("I install"))
@@ -271,6 +282,80 @@ fn tui_code_snapshot_renders_raw_agent_and_edit_footer() {
         .stdout(predicate::str::contains("E $EDITOR"))
         .stdout(predicate::str::contains("o override"))
         .stdout(predicate::str::contains("source unavailable").not());
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_replays_keys_through_the_interactive_handler() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--section",
+            "3",
+            "--drill",
+            "2",
+            "--tab",
+            "code",
+            "--keys",
+            "<Enter> 5 j",
+            "--width",
+            "160",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SharedName · Code"))
+        .stdout(predicate::str::contains(" 6/"))
+        .stdout(predicate::str::contains("Esc close"));
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_replay_matches_per_key_render_transitions() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--section",
+            "3",
+            "--drill",
+            "2",
+            "--tab",
+            "code",
+            "--keys",
+            "<Enter> p <Esc> <Enter>",
+            "--width",
+            "160",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SharedName · Preview"));
+}
+
+#[cfg(feature = "tui")]
+#[test]
+fn tui_snapshot_rejects_an_unknown_key_token() {
+    let deck = format!("{}/tests/support/deck", env!("CARGO_MANIFEST_DIR"));
+    rune()
+        .args([
+            "tui",
+            "--snapshot",
+            "--source",
+            &deck,
+            "--keys",
+            "<Enter> <Nope>",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid --keys sequence: unknown token \"<Nope>\"",
+        ));
 }
 
 #[cfg(feature = "tui")]

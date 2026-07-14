@@ -19,7 +19,7 @@ use std::{
 use crossterm::{
     cursor::{Hide, Show},
     event as terminal_event,
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -55,7 +55,15 @@ pub fn run_snapshot(
     drill: u8,
     row: usize,
     edit: bool,
+    keys: Option<&str>,
 ) -> i32 {
+    let replay_keys = match keys.map(parse_key_sequence).transpose() {
+        Ok(keys) => keys.unwrap_or_default(),
+        Err(error) => {
+            eprintln!("fatal: invalid --keys sequence: {error}");
+            return 2;
+        }
+    };
     let mut app = App::load(source);
     if edit {
         app.open_cast_editor();
@@ -110,6 +118,13 @@ pub fn run_snapshot(
         eprintln!("fatal: {error}");
         return 2;
     }
+    for key in replay_keys {
+        event::handle_key(&mut app, key);
+        if let Err(error) = terminal.draw(|frame| app.render(frame)) {
+            eprintln!("fatal: {error}");
+            return 2;
+        }
+    }
     let buffer = terminal.backend().buffer();
     for y in 0..buffer.area.height {
         let mut line = String::new();
@@ -119,6 +134,37 @@ pub fn run_snapshot(
         println!("{}", line.trim_end());
     }
     0
+}
+
+/// Parses snapshot replay input. Tokens are separated by ASCII whitespace and
+/// are either one literal character or one of the documented angle-bracket
+/// names: `<Enter>`, `<Esc>`, `<Tab>`, `<BackTab>`, `<Down>`, `<Up>`, `<C-d>`.
+fn parse_key_sequence(sequence: &str) -> Result<Vec<KeyEvent>, String> {
+    sequence
+        .split_whitespace()
+        .map(|token| {
+            let (code, modifiers) = match token {
+                "<Enter>" => (KeyCode::Enter, KeyModifiers::NONE),
+                "<Esc>" => (KeyCode::Esc, KeyModifiers::NONE),
+                "<Tab>" => (KeyCode::Tab, KeyModifiers::NONE),
+                "<BackTab>" => (KeyCode::BackTab, KeyModifiers::SHIFT),
+                "<Down>" => (KeyCode::Down, KeyModifiers::NONE),
+                "<Up>" => (KeyCode::Up, KeyModifiers::NONE),
+                "<C-d>" => (KeyCode::Char('d'), KeyModifiers::CONTROL),
+                literal if literal.chars().count() == 1 => (
+                    KeyCode::Char(literal.chars().next().expect("one character was counted")),
+                    KeyModifiers::NONE,
+                ),
+                unknown => {
+                    return Err(format!(
+                        "unknown token {unknown:?}; expected one literal character or \
+                         <Enter>, <Esc>, <Tab>, <BackTab>, <Down>, <Up>, <C-d>"
+                    ));
+                }
+            };
+            Ok(KeyEvent::new(code, modifiers))
+        })
+        .collect()
 }
 
 fn detail_tab_from_name(name: &str) -> Option<DetailTab> {

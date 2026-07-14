@@ -132,6 +132,11 @@ enum Command {
         /// Render one frame to stdout as text (headless layout inspection).
         #[arg(long)]
         snapshot: bool,
+        /// Replay space-separated keys before rendering the snapshot. Tokens are
+        /// literal characters or <Enter>, <Esc>, <Tab>, <BackTab>, <Down>,
+        /// <Up>, and <C-d>.
+        #[arg(long, value_name = "SEQUENCE", requires = "snapshot")]
+        keys: Option<String>,
         /// Open directly in the consumer checkbox editor.
         #[arg(long)]
         edit: bool,
@@ -638,6 +643,7 @@ pub fn run() -> i32 {
         Command::Tui {
             source,
             snapshot,
+            keys,
             edit,
             width,
             height,
@@ -657,6 +663,7 @@ pub fn run() -> i32 {
                     drill,
                     row,
                     edit,
+                    keys.as_deref(),
                 )
             } else {
                 crate::tui::run(source, edit)

@@ -151,12 +151,18 @@ fn switch_section_for_shortcut(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_preview_key(app: &mut App, key: KeyEvent) {
+    if app.preview_navigation_prefix_key(key) {
+        return;
+    }
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.close_preview(),
         KeyCode::Down | KeyCode::Char('j') => app.preview_scroll_down(1),
         KeyCode::Up | KeyCode::Char('k') => app.preview_scroll_up(1),
         KeyCode::PageDown | KeyCode::Char(' ') => app.preview_scroll_down(10),
         KeyCode::PageUp | KeyCode::Char('b') => app.preview_scroll_up(10),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.preview_scroll_down(10);
+        }
         KeyCode::Home | KeyCode::Char('g') => app.preview_scroll_to_top(),
         KeyCode::End | KeyCode::Char('G') => app.preview_scroll_to_bottom(),
         KeyCode::Char(digit @ '1'..='6') => {
