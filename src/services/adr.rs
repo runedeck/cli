@@ -1,6 +1,8 @@
 //! Architecture Decision Record discovery and synthetic artifact construction.
 
-use super::history::{extract_frontmatter_field, git_log_for_artifact, read_source_adoption};
+use super::history::{
+    extract_frontmatter_field, git_log_for_artifact, read_source_adoption, read_source_sidecar,
+};
 use super::references::{artifact_staleness, truncate_summary};
 use super::sidecar::{parse_adoption, recorded_subject_sha};
 use super::source::{read_source_content, resolve_sidecar, strip_frontmatter};
@@ -154,6 +156,8 @@ pub fn build_adr_artifact(adr: &Adr, local_repos: &HashMap<String, PathBuf>) -> 
         content_preview: String::new(),
         content_body: content.body,
         raw_source: content.raw,
+        provenance_raw: read_source_sidecar(&adr.source_uri, Some(&adr.relative_path), local_repos)
+            .unwrap_or_default(),
         metadata: content.metadata,
         providers: BTreeMap::new(),
         git_log,
@@ -172,6 +176,8 @@ pub fn build_adr_artifact(adr: &Adr, local_repos: &HashMap<String, PathBuf>) -> 
 mod tests {
     use super::*;
 
+    const FULL_SLSA_SIDECAR: &str = "provenance:\n  _type: https://in-toto.io/Statement/v1\n  predicateType: https://slsa.dev/provenance/v1\n  subject:\n    - name: docs/decisions/ARCH-0001 Payload.md\n      digest:\n        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n  predicate:\n    buildDefinition:\n      buildType: https://github.com/runedeck/rune/copy/v1\n      externalParameters:\n        source: https://example.test/upstream\n        invocation:\n          command: copy\n    runDetails:\n      builder:\n        id: https://github.com/runedeck/rune\n      metadata:\n        startedOn: 2026-07-14T10:00:00Z\n        finishedOn: 2026-07-14T10:00:01Z\n";
+
     #[test]
     fn adr_state_classifies_authored_copied_modified() {
         assert_eq!(adr_state(None, "anything").0, "authored");
@@ -182,5 +188,48 @@ mod tests {
         );
         assert_eq!(adr_state(Some(&sidecar), content).0, "copied");
         assert_eq!(adr_state(Some(&sidecar), "edited body\n").0, "modified");
+    }
+
+    #[test]
+    fn adr_artifact_preserves_complete_slsa_payload() {
+        let repo = tempfile::tempdir().expect("ADR repo");
+        let decisions = repo.path().join("docs/decisions");
+        fs::create_dir_all(decisions.join(".provenance")).expect("provenance directory");
+        fs::write(
+            decisions.join("ARCH-0001 Payload.md"),
+            "---\nstatus: accepted\n---\n\n# Payload\n",
+        )
+        .expect("ADR fixture");
+        fs::write(
+            decisions.join(".provenance/ARCH-0001 Payload.yaml"),
+            FULL_SLSA_SIDECAR,
+        )
+        .expect("sidecar fixture");
+        let source_uri = "https://example.test/decisions";
+        let repos = HashMap::from([(source_uri.to_string(), repo.path().to_path_buf())]);
+        let adr = Adr {
+            id: "ARCH-0001".to_string(),
+            title: "Payload".to_string(),
+            status: "accepted".to_string(),
+            repo: "decisions".to_string(),
+            source_uri: source_uri.to_string(),
+            relative_path: "docs/decisions/ARCH-0001 Payload.md".to_string(),
+            state: "copied".to_string(),
+            source: String::new(),
+            summary: String::new(),
+            local_path: decisions
+                .join("ARCH-0001 Payload.md")
+                .to_string_lossy()
+                .into_owned(),
+        };
+
+        let artifact = build_adr_artifact(&adr, &repos);
+
+        assert_eq!(artifact.provenance_raw, FULL_SLSA_SIDECAR);
+        assert!(artifact.provenance_raw.contains("predicateType:"));
+        assert!(artifact.provenance_raw.contains("builder:"));
+        assert!(artifact.provenance_raw.contains("sha256:"));
+        assert!(artifact.provenance_raw.contains("invocation:"));
+        assert!(artifact.provenance_raw.contains("metadata:"));
     }
 }

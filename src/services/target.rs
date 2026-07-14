@@ -4,7 +4,7 @@
 use super::discovery::module_name_from_source;
 use super::history::{
     GIT_LOG_FORMAT, enrich_commits_with_entire, git_log_for_artifact, parse_git_log,
-    read_source_adoption, recorded_input_sha,
+    read_source_adoption, read_source_sidecar, recorded_input_sha,
 };
 use super::source::{
     load_manifest, parse_artifact_key, read_artifact_content, read_source_content, resolve_source,
@@ -177,6 +177,9 @@ pub(super) fn build_deployed_artifact(
     } else {
         String::new()
     };
+    let provenance_raw = read_source_sidecar(source_uri, source_path, local_repos)
+        .or_else(|| read_deployed_sidecar(provider_path, relative_key))
+        .unwrap_or_default();
     ArtifactView {
         name: canonical_name,
         kind: kind.to_string(),
@@ -187,6 +190,7 @@ pub(super) fn build_deployed_artifact(
         content_preview,
         content_body,
         raw_source,
+        provenance_raw,
         metadata: source_content.metadata,
         providers,
         git_log: git_log_for_artifact(source_uri, source_path, local_repos),
@@ -199,6 +203,16 @@ pub(super) fn build_deployed_artifact(
         variants: Vec::new(),
         vcs: None,
     }
+}
+
+/// Reads the canonical sidecar beside a deployed artifact when its source
+/// checkout is unavailable. Resolution stays shared with source-side reads so
+/// canonical and tolerated legacy names behave identically.
+fn read_deployed_sidecar(provider_path: &Path, relative_key: &str) -> Option<String> {
+    let relative = Path::new(relative_key);
+    let parent = provider_path.join(relative.parent()?);
+    let sidecar = super::source::resolve_sidecar(&parent, relative)?;
+    fs::read_to_string(sidecar).ok()
 }
 
 /// Builds a `PendingCompanion` from a deployed companion manifest entry,
@@ -354,13 +368,17 @@ pub(super) fn is_stale(
 mod tests {
     use super::*;
 
+    const FULL_SLSA_SIDECAR: &str = "provenance:\n  _type: https://in-toto.io/Statement/v1\n  predicateType: https://slsa.dev/provenance/v1\n  subject:\n    - name: rules/Demo.md\n      digest:\n        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n  predicate:\n    buildDefinition:\n      buildType: https://github.com/runedeck/rune/assemble/v1\n      externalParameters:\n        invocation:\n          configSource: deck.yaml\n    runDetails:\n      builder:\n        id: https://github.com/runedeck/rune\n      metadata:\n        startedOn: 2026-07-14T10:00:00Z\n        finishedOn: 2026-07-14T10:00:01Z\n";
+
     #[test]
     fn deployed_artifact_uses_deployed_bytes_when_source_repo_is_unavailable() {
         let target = tempfile::tempdir().unwrap();
         let rules = target.path().join("rules");
         fs::create_dir(&rules).unwrap();
+        fs::create_dir(rules.join(".provenance")).unwrap();
         let raw = "---\ndescription: Raw deployed rule\n---\n\nRule body.\n";
         fs::write(rules.join("Demo.md"), raw).unwrap();
+        fs::write(rules.join(".provenance/Demo.yaml"), FULL_SLSA_SIDECAR).unwrap();
 
         let artifact = build_deployed_artifact(
             target.path(),
@@ -380,5 +398,9 @@ mod tests {
         );
 
         assert_eq!(artifact.raw_source, raw);
+        assert_eq!(artifact.provenance_raw, FULL_SLSA_SIDECAR);
+        assert!(artifact.provenance_raw.contains("predicateType:"));
+        assert!(artifact.provenance_raw.contains("builder:"));
+        assert!(artifact.provenance_raw.contains("sha256:"));
     }
 }

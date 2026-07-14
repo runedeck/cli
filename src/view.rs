@@ -306,6 +306,9 @@ pub struct ArtifactView {
     pub content_preview: String,
     pub content_body: String,
     pub raw_source: String,
+    /// Complete, unparsed YAML from the artifact's SLSA provenance sidecar.
+    /// Empty when no source or deployed sidecar can be resolved.
+    pub provenance_raw: String,
     pub metadata: Vec<(String, String)>,
     pub providers: BTreeMap<String, ProviderStatus>,
     pub git_log: Vec<GitCommit>,

@@ -580,6 +580,8 @@ mod tests {
     use std::process::Stdio;
     use std::time::Duration;
 
+    const FULL_SLSA_SIDECAR: &str = "provenance:\n  _type: https://in-toto.io/Statement/v1\n  predicateType: https://slsa.dev/provenance/v1\n  subject:\n    - name: rules/Demo.md\n      digest:\n        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n  predicate:\n    buildDefinition:\n      buildType: https://github.com/runedeck/rune/assemble/v1\n      externalParameters:\n        invocation:\n          configSource: deck.yaml\n      resolvedDependencies:\n        - name: source\n          uri: git+https://example.test/repo@main\n          digest:\n            sha256: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\n    runDetails:\n      builder:\n        id: https://github.com/runedeck/rune\n      metadata:\n        startedOn: 2026-07-14T10:00:00Z\n        finishedOn: 2026-07-14T10:00:01Z\n";
+
     fn git(repo: &Path, args: &[&str]) {
         let output = Command::new("git")
             .args(args)
@@ -666,6 +668,27 @@ mod tests {
         let commits = parse_git_log(raw);
         assert_eq!(commits.len(), 1);
         assert_eq!(commits[0].sha, "abc123");
+    }
+
+    #[test]
+    fn read_source_sidecar_preserves_complete_slsa_payload() {
+        let repo = tempfile::tempdir().expect("source repo");
+        let provenance = repo.path().join("rules/.provenance");
+        fs::create_dir_all(&provenance).expect("provenance directory");
+        fs::write(provenance.join("Demo.yaml"), FULL_SLSA_SIDECAR)
+            .expect("write provenance fixture");
+        let source_uri = "https://example.test/repo";
+        let repos = HashMap::from([(source_uri.to_string(), repo.path().to_path_buf())]);
+
+        let raw = read_source_sidecar(source_uri, Some("rules/Demo.md"), &repos)
+            .expect("canonical sidecar");
+
+        assert_eq!(raw, FULL_SLSA_SIDECAR);
+        assert!(raw.contains("predicateType: https://slsa.dev/provenance/v1"));
+        assert!(raw.contains("id: https://github.com/runedeck/rune"));
+        assert!(raw.contains("sha256: 0123456789abcdef"));
+        assert!(raw.contains("invocation:"));
+        assert!(raw.contains("metadata:"));
     }
 
     #[test]

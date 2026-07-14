@@ -292,9 +292,8 @@ fn build_source_artifact(
     } else {
         String::new()
     };
-    let adoption = fs::read_to_string(sidecar_path)
-        .ok()
-        .and_then(|content| parse_adoption(&content));
+    let provenance_raw = fs::read_to_string(sidecar_path).unwrap_or_default();
+    let adoption = parse_adoption(&provenance_raw);
     let git_log = git_log_in_repo(repo_root, relative_path);
     let sidecar_warning = sidecar_name_warning(relative_path, sidecar_path);
     ArtifactView {
@@ -307,6 +306,7 @@ fn build_source_artifact(
         content_preview,
         content_body,
         raw_source,
+        provenance_raw,
         metadata,
         providers: BTreeMap::new(),
         git_log,

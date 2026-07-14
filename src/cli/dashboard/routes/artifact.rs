@@ -207,6 +207,12 @@ pub(super) async fn companion_detail(
         );
     }
 
+    let provenance_raw = scan::read_source_sidecar(
+        &source_uri,
+        Some(&companion.relative_path),
+        &state.local_repos,
+    )
+    .unwrap_or_default();
     let artifact = ArtifactView {
         name: companion.name.clone(),
         kind: "skills".to_string(),
@@ -217,6 +223,7 @@ pub(super) async fn companion_detail(
         content_preview: String::new(),
         content_body: companion.content_body.clone(),
         raw_source: companion.raw_source.clone(),
+        provenance_raw: provenance_raw.clone(),
         metadata: Vec::new(),
         providers,
         git_log: scan::git_log_for_artifact(
@@ -238,12 +245,6 @@ pub(super) async fn companion_detail(
         vcs: None,
     };
     let companion_label = format!("{parent} / {name}");
-    let provenance_raw = scan::read_source_sidecar(
-        &source_uri,
-        Some(&companion.relative_path),
-        &state.local_repos,
-    )
-    .unwrap_or_default();
     let template = templates::ArtifactDetailTemplate {
         tab: "artifact",
         version: &state.version,
@@ -652,6 +653,7 @@ mod tests {
             content_preview: String::new(),
             content_body: String::new(),
             raw_source: String::new(),
+            provenance_raw: String::new(),
             metadata: Vec::new(),
             providers: std::collections::BTreeMap::new(),
             git_log: Vec::new(),
