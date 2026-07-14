@@ -1472,16 +1472,55 @@ fn fullscreen_diff_keeps_cursor_visible_across_resize_and_tab_switches() {
     assert!(usize::from(scroll) <= cursor);
     assert!(cursor < usize::from(scroll) + 8);
 
+    // A non-motion clears the count and still acts, so letter shortcuts remain
+    // available while digits are count prefixes in Code/Diff.
     event::handle_key(&mut app, key(KeyCode::Char('2')));
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
     terminal.draw(|frame| app.render(frame)).unwrap();
-    event::handle_key(&mut app, key(KeyCode::Char('3')));
+    assert_eq!(app.preview_position_for_test().unwrap().0, DetailTab::Code);
+    event::handle_key(&mut app, key(KeyCode::Char('d')));
     terminal.draw(|frame| app.render(frame)).unwrap();
     assert_eq!(app.preview_position_for_test().unwrap().1, logical_row);
 
+    for character in ['5', 'j'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    let moved_cursor = app.preview_position_for_test().unwrap().1;
+    assert_eq!(moved_cursor, logical_row + 5);
+    let buffer = terminal.backend().buffer();
+    let selected_y = (1..9)
+        .find(|y| buffer[(1, *y)].symbol() == "▶")
+        .expect("fullscreen Diff cursor marker");
+    let selected_line = (1..119)
+        .map(|x| buffer[(x, selected_y)].symbol())
+        .collect::<String>();
+    assert!(
+        selected_line.contains('▌'),
+        "selected Diff gutter: {selected_line}"
+    );
+    assert_eq!(buffer[(2, selected_y)].bg, Color::Rgb(70, 70, 70));
+
+    for character in ['1', '2'] {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    let count_snapshot = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+    assert!(count_snapshot.contains("count: 12 — j/k repeat, Esc cancel"));
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    assert!(app.is_preview_open());
+    assert_eq!(app.preview_position_for_test().unwrap().1, moved_cursor);
     event::handle_key(&mut app, key(KeyCode::Esc));
     assert!(!app.is_preview_open());
     assert_eq!(app.detail_tab(), DetailTab::Diff);
-    assert_eq!(app.detail_cursor_for_test(), logical_row);
+    assert_eq!(app.detail_cursor_for_test(), moved_cursor);
 }
 
 #[test]

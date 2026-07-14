@@ -195,7 +195,7 @@ impl ArtifactPreview {
         position.scroll = u16::try_from(scroll.min(max_scroll)).unwrap_or(u16::MAX);
     }
 
-    pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, pending_count: Option<usize>) {
         let tab_label = self
             .pane
             .as_ref()
@@ -204,12 +204,16 @@ impl ArtifactPreview {
             " {} · {} · {} ",
             self.artifact.name, tab_label, self.artifact.relative_path
         );
+        let footer = if let Some(count) = pending_count {
+            format!(" count: {count} — j/k repeat, Esc cancel ")
+        } else if matches!(self.active_tab, DetailTab::Code | DetailTab::Diff) {
+            " p/c/d/v/f/i tabs · 0-9 count · j/k · ␣/b page · g/G ends · Esc close ".to_string()
+        } else {
+            " 1-6 tabs · j/k · ␣/b page · g/G ends · Esc close ".to_string()
+        };
         let block = Block::default()
             .title(title)
-            .title_bottom(Line::from(Span::styled(
-                " 1-6 tabs · j/k · ␣/b page · g/G ends · Esc close ",
-                styles::dim_style(),
-            )))
+            .title_bottom(Line::from(Span::styled(footer, styles::dim_style())))
             .borders(Borders::ALL)
             .border_style(styles::border_style(true))
             .style(styles::panel_style());
@@ -260,7 +264,11 @@ impl ArtifactPreview {
             if matches!(pane.tab, DetailTab::Code | DetailTab::Diff)
                 && let Some(line) = window.get_mut(render_cursor.saturating_sub(render_scroll))
             {
-                line.style = styles::selected_style();
+                if pane.tab == DetailTab::Diff {
+                    mark_diff_cursor_line(line, true);
+                } else {
+                    line.style = styles::selected_style();
+                }
             }
             frame.render_widget(
                 Paragraph::new(Text::from(window)).block(block.title_top(position_title)),
@@ -275,6 +283,27 @@ impl ArtifactPreview {
                 area,
             );
         }
+    }
+}
+
+/// Marks the selected Diff row without collapsing a wrapped continuation's
+/// combined indicator/gutter span. The first display cell is always reserved
+/// for the cursor, matching the inline Diff renderer.
+pub(in crate::tui) fn mark_diff_cursor_line(line: &mut Line<'static>, focused: bool) {
+    let Some(first) = line.spans.first_mut() else {
+        return;
+    };
+    let marker = if focused { "▶" } else { " " };
+    let original = first.content.to_string();
+    let original_style = first.style;
+    let remainder = original.chars().skip(1).collect::<String>();
+    *first = Span::styled(marker, styles::current_line_indicator_style());
+    if !remainder.is_empty() {
+        line.spans
+            .insert(1, Span::styled(remainder, original_style));
+    }
+    if focused {
+        line.style = styles::selected_style();
     }
 }
 

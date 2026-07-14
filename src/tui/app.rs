@@ -41,7 +41,7 @@ use super::comment_navigator::{
 use super::comment_panel::{CommentLineRange, format_comment_input_lines, format_comment_lines};
 use super::components::{
     palette::{Palette, PaletteCommand},
-    preview::{ArtifactPreview, wrapped_rows},
+    preview::{ArtifactPreview, mark_diff_cursor_line, wrapped_rows},
 };
 use super::file_editor::{EditorAction as FileEditorAction, FileEditor};
 use super::rich;
@@ -1051,8 +1051,9 @@ impl App {
                     preview.set_lines(tab, inner_width, lines, windowed);
                 }
             }
+            let pending_count = self.pending_count;
             if let Some(preview) = self.preview.as_mut() {
-                preview.render(frame, area);
+                preview.render(frame, area, pending_count);
             }
             return;
         }
@@ -2204,16 +2205,8 @@ impl App {
                 let scroll = usize::from(self.detail_scroll);
                 if let Some(row) = self.detail_cursor.checked_sub(scroll)
                     && let Some(line) = lines.get_mut(row)
-                    && let Some(indicator) = line.spans.first_mut()
                 {
-                    *indicator = Span::styled(
-                        if self.focused == ColumnFocus::Detail {
-                            "▶"
-                        } else {
-                            " "
-                        },
-                        styles::current_line_indicator_style(),
-                    );
+                    mark_diff_cursor_line(line, self.focused == ColumnFocus::Detail);
                 }
             }
             frame.render_widget(Paragraph::new(Text::from(lines)), area);
@@ -2702,6 +2695,7 @@ impl App {
     }
 
     pub fn close_preview(&mut self) {
+        self.pending_count = None;
         let Some(preview) = self.preview.take() else {
             return;
         };
@@ -2740,6 +2734,57 @@ impl App {
         if let Some(preview) = self.preview.as_mut() {
             preview.scroll_to_bottom();
         }
+    }
+
+    /// Handles Vim-style count prefixes in the fullscreen Code/Diff preview.
+    /// A pending count consumes a supported motion; Escape cancels only the
+    /// count, while any other non-motion clears it and continues normally.
+    pub fn preview_navigation_prefix_key(&mut self, key: KeyEvent) -> bool {
+        let count_context = self.preview.as_ref().is_some_and(|preview| {
+            matches!(preview.active_tab(), DetailTab::Code | DetailTab::Diff)
+        });
+        if count_context
+            && key.modifiers.is_empty()
+            && let KeyCode::Char(digit @ '0'..='9') = key.code
+        {
+            let digit = usize::from(digit as u8 - b'0');
+            let count = self.pending_count.unwrap_or(0);
+            self.pending_count = Some(count.saturating_mul(10).saturating_add(digit).min(999_999));
+            return true;
+        }
+
+        let Some(count) = self.pending_count.take() else {
+            return false;
+        };
+        if key.code == KeyCode::Esc {
+            return true;
+        }
+        let repeat = count.max(1);
+        match (key.code, key.modifiers) {
+            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                for _ in 0..repeat {
+                    self.preview_scroll_down(1);
+                }
+            }
+            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                for _ in 0..repeat {
+                    self.preview_scroll_up(1);
+                }
+            }
+            (KeyCode::PageDown | KeyCode::Char(' '), KeyModifiers::NONE)
+            | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                for _ in 0..repeat {
+                    self.preview_scroll_down(10);
+                }
+            }
+            (KeyCode::PageUp | KeyCode::Char('b'), KeyModifiers::NONE) => {
+                for _ in 0..repeat {
+                    self.preview_scroll_up(10);
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     #[must_use]
