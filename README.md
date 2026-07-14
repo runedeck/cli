@@ -215,13 +215,19 @@ review loop.
 The lifecycle is:
 
 ```sh
-rune propose improve-discovery --capability discovery
+rune spec propose improve-discovery --capability discovery
 # Link proposal.md to the canonical ADR, refine the delta spec, and list tasks.
-rune changes
-# An agent reads tasks.md and implements the change; there is no rune apply command.
+rune spec list
+rune spec context improve-discovery
+# An agent follows the work order, implements the change, and checks off tasks.md.
 rune validate
-rune archive improve-discovery
+rune spec archive improve-discovery
 ```
+
+`rune spec context <change-id>` is the apply entry point for an agent: it
+concatenates the proposal, capability deltas, and checklist into a Markdown
+work order with unchecked tasks highlighted. Add `--json` for structured
+automation with `id`, `proposal`, `deltas`, and `tasks` fields.
 
 Specifications use `## Purpose`, `## Requirements`, `### Requirement: ...`
 with normative `SHALL` statements, and `#### Scenario: ...` blocks containing
@@ -237,7 +243,7 @@ delta into current truth; `-y` overrides an incomplete checklist with a
 warning. Work that will not ship must still end explicitly:
 
 ```sh
-rune archive improve-discovery --abandon
+rune spec archive improve-discovery --abandon
 ```
 
 Abandoning performs no spec merge, stamps `status: abandoned` in
