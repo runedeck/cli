@@ -1,0 +1,13 @@
+ Summary  2 decks · 10 runes (4 skills · 2 agents · 3 rules · 1 hooks) · 3 casts · changes 1 draft / 1 active / 1 complete · validate 2 ✗ / 1 ⚡
+
+ Changes
+   ░░░░░░░░░░    0%  draft-change       0/2  draft
+   ██░░░░░░░░   25%  active-change      1/4  active
+   ██████████  100%  complete-change    2/2  complete
+
+ Specifications
+   lifecycle  5 requirements
+   integrity  2 requirements
+
+ Deploy targets
+   consumer  7 ok · 2 stale  /tmp/consumer

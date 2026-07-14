@@ -118,6 +118,13 @@ pub(super) fn scan_source_module(root: &Path) -> Option<ModuleView> {
     scan_source_module_with_hooks(root, false)
 }
 
+/// Scans all source artifact kinds for inventory surfaces, including opaque
+/// hook bundle files.
+#[must_use]
+pub fn scan_source_inventory(root: &Path) -> Option<ModuleView> {
+    scan_source_module_with_hooks(root, true)
+}
+
 /// Scans a deck entry, including its opaque hook bundle files.
 pub(super) fn scan_deck_source_module(root: &Path) -> Option<ModuleView> {
     scan_source_module_with_hooks(root, true)

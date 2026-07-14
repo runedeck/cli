@@ -19,7 +19,7 @@ mod target;
 mod vcs;
 
 pub use adr::build_adr_artifact;
-pub use discovery::discover_local_repos;
+pub use discovery::{discover_local_repos, scan_source_inventory};
 pub use history::{
     DEFAULT_HISTORY_BATCH_SIZE, DEFAULT_HISTORY_METADATA_WINDOW, HistoryEntry, HistoryOptions,
     HistoryScope, HistoryUpdate, HistoryWalker, extract_frontmatter_field, git_log_for_artifact,
