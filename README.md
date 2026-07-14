@@ -38,6 +38,12 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 
 **Find** — Searches local and watched rune sources by name, trigger text, and description.
 
+**Spec lifecycle** — Scaffolds, tracks, validates, and archives capability changes under `docs/`, while keeping ADRs canonical for architectural rationale.
+
+**Doctor** — Verifies deployed manifests against disk and repairs only missing or orphaned managed files, preserving user edits.
+
+**Status** — Renders a one-shot summary of deck content, specifications, changes, validation findings, and deploy targets.
+
 ## How Content Flows
 
 ```ascii
@@ -192,6 +198,50 @@ Both commands accept `--target <DIR>`. Without it, rune checks the current
 directory first and falls back to the bound quest. In the TUI, `y` copies the
 rendered review through macOS `pbcopy` when available, with terminal clipboard
 integration as the fallback.
+
+### Spec-driven skills
+
+Rune adopts the OpenSpec standard as house canon without depending on the
+OpenSpec tool. Current-truth capability specifications live at
+`docs/specs/<capability>/spec.md`; proposed work lives at
+`docs/changes/<change-id>/`, and completed work moves to the dated archive
+under `docs/changes/archive/`. There is deliberately no `openspec/` directory
+and Rune does not generate harness-specific skill files for this workflow.
+
+Use a change folder for multi-session or multi-file work. Small, local fixes
+should skip this ceremony and go directly through the normal edit, test, and
+review loop.
+
+The lifecycle is:
+
+```sh
+rune propose improve-discovery --capability discovery
+# Link proposal.md to the canonical ADR, refine the delta spec, and list tasks.
+rune changes
+# An agent reads tasks.md and implements the change; there is no rune apply command.
+rune validate
+rune archive improve-discovery
+```
+
+Specifications use `## Purpose`, `## Requirements`, `### Requirement: ...`
+with normative `SHALL` statements, and `#### Scenario: ...` blocks containing
+WHEN/THEN/AND bullets. Change specs use `## ADDED Requirements`,
+`## MODIFIED Requirements`, and `## REMOVED Requirements`. When a scenario is
+already enforced by an executable acceptance check, cite that check instead of
+restating it in prose.
+
+ADRs remain canonical for *why* a direction was chosen. `proposal.md` links
+the relevant ADR, and optional `design.md` cites it rather than repeating its
+rationale. Normal archive requires every task to be checked and merges the
+delta into current truth; `-y` overrides an incomplete checklist with a
+warning. Work that will not ship must still end explicitly:
+
+```sh
+rune archive improve-discovery --abandon
+```
+
+Abandoning performs no spec merge, stamps `status: abandoned` in
+`proposal.md`, and moves the change into the dated archive.
 
 ### Command examples
 

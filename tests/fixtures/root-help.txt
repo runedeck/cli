@@ -15,7 +15,14 @@
     install     [--source <DIR>] [--target <DIR>]                     Assemble and deploy rune content
     review      list | export [--target <DIR>]                        Inspect or export TUI review comments
 
+  Spec:
+    propose     <CHANGE_ID> [--capability <NAME>]                     Scaffold a spec-driven change
+    changes     [--source <DIR>]                                      List change progress and lifecycle state
+    archive     <CHANGE_ID> [-y | --abandon]                          Merge or abandon a change and archive it
+
   Deck:
+    status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
+    doctor      [--target <DIR>] [--verify] [--repair]                Check and repair deployment integrity
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
     drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance

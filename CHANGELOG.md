@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- Native spec-driven change lifecycle under `docs/`: `rune propose`, `rune changes`, and `rune archive`, including explicit abandoned archives and canonical-spec delta merges.
+- Spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.
+- `rune doctor` manifest integrity reporting with CI verification and conservative repair that preserves user-modified files.
+- `rune status` one-shot terminal and JSON dashboards for deck content, changes, specifications, validation, and deploy targets.
+
 ## [0.4.0] - 2026-07-13
 
 rune 0.4.0 succeeds forge-cli 0.3.x.

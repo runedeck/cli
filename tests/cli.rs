@@ -129,6 +129,34 @@ fn validate_help_succeeds() {
 }
 
 #[test]
+fn propose_and_changes_json_expose_agent_ready_lifecycle_state() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().to_str().unwrap();
+
+    rune()
+        .args([
+            "propose",
+            "improve-search",
+            "--capability",
+            "search",
+            "--source",
+            source,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "docs/changes/improve-search/tasks.md",
+        ));
+
+    rune()
+        .args(["changes", "--source", source, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"id\": \"improve-search\""))
+        .stdout(predicate::str::contains("\"state\": \"draft\""));
+}
+
+#[test]
 fn assemble_help_succeeds() {
     rune().args(["assemble", "--help"]).assert().success();
 }
