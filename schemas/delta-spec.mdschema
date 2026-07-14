@@ -1,0 +1,14 @@
+# Change delta specification structure
+
+heading_rules:
+    no_skip_levels: true
+    max_depth: 4
+
+structure:
+    - heading:
+          pattern: "^## (ADDED|MODIFIED|REMOVED) Requirements$"
+          regex: true
+      children:
+          - heading:
+                pattern: "^### Requirement: .+"
+                regex: true

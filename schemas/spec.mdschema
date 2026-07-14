@@ -1,0 +1,21 @@
+# Canonical capability specification structure
+
+heading_rules:
+    no_skip_levels: true
+    max_depth: 4
+
+structure:
+    - heading:
+          pattern: "^# .+ Specification$"
+          regex: true
+      children:
+          - heading:
+                pattern: "## Purpose"
+          - heading:
+                pattern: "## Requirements"
+          - heading:
+                pattern: "^### Requirement: .+"
+                regex: true
+          - heading:
+                pattern: "^#### Scenario: .+"
+                regex: true

@@ -86,6 +86,32 @@ fn validate_source_returns_structured_broken_adr_violations_without_printing() {
 }
 
 #[test]
+fn validate_source_reports_malformed_canonical_spec() {
+    let root = TempDir::new().unwrap();
+    for (name, content) in [
+        (
+            "module.yaml",
+            "name: spec-validation\nversion: 0.1.0\ndescription: test\nevents: []\n",
+        ),
+        ("defaults.yaml", "{}\n"),
+        ("README.md", "# Test\n"),
+        ("LICENSE", "test\n"),
+    ] {
+        std::fs::write(root.path().join(name), content).unwrap();
+    }
+    let specs = root.path().join("docs/specs/search");
+    std::fs::create_dir_all(&specs).unwrap();
+    std::fs::write(specs.join("spec.md"), "# Search\n\n## Requirements\n").unwrap();
+
+    let report = validate_source(root.path()).unwrap();
+
+    assert!(report.violations.iter().any(|violation| {
+        violation.artifact == "docs/specs/search/spec.md"
+            && violation.severity == ViolationSeverity::Error
+    }));
+}
+
+#[test]
 fn skill_directory_accepts_claude_code_optional_fields() {
     let temp_directory = TempDir::new().unwrap();
     let skill_dir = temp_directory.path().join("ExampleSkill");

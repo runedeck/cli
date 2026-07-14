@@ -209,6 +209,7 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
         let deck = commands::deck::load(module_root)
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
         let mut aggregate = ValidationReport::default();
+        check_spec_lifecycle(module_root, &mut aggregate)?;
         for deck_entry in deck.entries {
             let mut deck_entry_report = match validate_module(&deck_entry.root, false) {
                 Ok(result) => result,
@@ -294,11 +295,48 @@ fn validate_module(
         }
     }
 
+    check_spec_lifecycle(module_root, &mut report)?;
+
     plugin::check_plugin_scaffolding(module_root, &mut report);
 
     tools::run_external_checks(module_root, &mut report);
 
     Ok(report)
+}
+
+fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Result<(), Error> {
+    let has_lifecycle =
+        module_root.join("docs/specs").is_dir() || module_root.join("docs/changes").is_dir();
+    if !has_lifecycle {
+        return Ok(());
+    }
+    let violations = super::spec::validate_spec_tree(module_root)?;
+    if violations.is_empty() {
+        report.pass("specifications");
+        return Ok(());
+    }
+    for violation in violations {
+        let detail = violation.line.map_or_else(
+            || violation.message.clone(),
+            |line| format!("line {line}: {}", violation.message),
+        );
+        report.result.errors.push(format!(
+            "{}{}: {}",
+            violation.path,
+            violation
+                .line
+                .map_or_else(String::new, |line| format!(":{line}")),
+            violation.message
+        ));
+        report.push_violation_if_missing(
+            &violation.path,
+            ViolationSeverity::Error,
+            violation.message,
+            violation.line,
+        );
+        report.record(violation.path, ValidationStatus::Failed, Some(detail));
+    }
+    Ok(())
 }
 
 fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport) {
