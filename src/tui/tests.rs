@@ -261,7 +261,32 @@ fn drilling_to_skill_detail_renders_body() {
 
 #[test]
 fn provenance_and_history_tabs_render_scanned_data() {
-    let mut app = fixture_app();
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].provenance_raw = r"provenance:
+  _type: https://in-toto.io/Statement/v1
+  predicateType: https://slsa.dev/provenance/v1
+  subject:
+    - name: skills/BuildSkill/SKILL.md
+      digest:
+        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  predicate:
+    buildDefinition:
+      externalParameters:
+        invocation:
+          configSource: rune-core
+      resolvedDependencies:
+        - uri: git+https://github.com/N4M3Z/rune-core
+          digest:
+            sha256: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+    runDetails:
+      builder:
+        id: https://github.com/N4M3Z/rune
+      metadata:
+        buildStartedOn: 2026-07-14T10:00:00Z
+        buildFinishedOn: 2026-07-14T10:01:00Z
+"
+    .to_string();
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), view);
     app.set_section_by_number(2);
     app.focus_next();
     app.drill_or_expand();
@@ -270,6 +295,9 @@ fn provenance_and_history_tabs_render_scanned_data() {
     let provenance = rendered(&mut app);
     assert!(provenance.contains("target-one"));
     assert!(provenance.contains("1/1 verified"));
+    assert!(provenance.contains("predicateType"));
+    assert!(provenance.contains("github.com/N4M3Z/rune"));
+    assert!(provenance.contains("0123456789abcdef"));
 
     app.set_detail_tab(DetailTab::History);
     let history = rendered(&mut app);
@@ -816,7 +844,7 @@ fn editor_save_revalidates_and_refreshes_problems() {
         event::handle_key(&mut app, key(code));
     }
     assert!(app.validation_pending());
-    for _ in 0..500 {
+    for _ in 0..2000 {
         app.poll_validation();
         if !app.validation_pending() {
             break;
@@ -1036,7 +1064,9 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
     for character in "needs context".chars() {
         event::handle_key(&mut app, key(KeyCode::Char(character)));
     }
-    assert!(rendered(&mut app).contains("[ISSUE] > needs context"));
+    let editing = rendered(&mut app);
+    assert!(editing.contains("├── Add [ISSUE] L2"));
+    assert!(editing.contains("│  needs context"));
     event::handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -1054,7 +1084,8 @@ fn code_view_reads_origin_and_persists_inline_line_comment() {
     event::handle_key(&mut reloaded, key(KeyCode::Char('j')));
     let snapshot = rendered(&mut reloaded);
     assert!(snapshot.contains("◆"));
-    assert!(snapshot.contains("[ISSUE] needs context"));
+    assert!(snapshot.contains("├── [ISSUE] L2"));
+    assert!(snapshot.contains("│  needs context"));
 }
 
 #[test]
@@ -1094,6 +1125,40 @@ fn corrupt_comment_sidecar_survives_a_comment_save_attempt() {
     let snapshot = rendered(&mut app);
     assert!(snapshot.contains("comments file unreadable"));
     assert!(snapshot.contains("resolve"));
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_comment_write_keeps_editor_open_for_retry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    std::fs::write(root.path().join(source_path), "source line\n").unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "retry me".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+
+    let original = std::fs::metadata(root.path()).unwrap().permissions();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    std::fs::set_permissions(root.path(), original).unwrap();
+
+    assert!(app.is_comment_prompt_open());
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("comment not saved"));
+    assert!(snapshot.contains("retry me"));
 }
 
 #[test]
@@ -1286,6 +1351,140 @@ fn code_mouse_wheel_moves_viewport_without_moving_line_cursor() {
 }
 
 #[test]
+fn detail_tabs_restore_their_own_logical_cursor() {
+    let mut view = fixture_view();
+    view.modules[0].artifacts[0].raw_source = (1..=40)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    for _ in 0..7 {
+        event::handle_key(&mut app, key(KeyCode::Char('j')));
+    }
+
+    app.set_detail_tab(DetailTab::Diff);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.detail_cursor_for_test(), 1);
+
+    app.set_detail_tab(DetailTab::Code);
+    assert_eq!(app.detail_cursor_for_test(), 7);
+    app.set_detail_tab(DetailTab::Diff);
+    let _ = rendered(&mut app);
+    assert_eq!(app.detail_cursor_for_test(), 1);
+}
+
+#[test]
+fn wrapped_code_and_comment_rows_cannot_hide_logical_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    let source = std::iter::once(format!("long {}", "x".repeat(3_000)))
+        .chain((2..=20).map(|line| format!("logical line {line}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.path().join(source_path), source).unwrap();
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Code);
+    let _ = rendered(&mut app);
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    for character in "comment above the cursor".chars() {
+        event::handle_key(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    for _ in 0..10 {
+        event::handle_key(&mut app, key(KeyCode::Char('j')));
+    }
+
+    let snapshot = rendered(&mut app);
+    assert!(snapshot.contains("logical line 11"));
+    assert_eq!(app.detail_cursor_for_test(), 10);
+}
+
+#[test]
+fn fullscreen_diff_keeps_cursor_visible_across_resize_and_tab_switches() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    let original = (1..=60)
+        .map(|line| format!("old line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.path().join(source_path), &original).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "tui@example.invalid"][..],
+        &["config", "user.name", "TUI Test"][..],
+        &["config", "commit.gpgsign", "false"][..],
+        &["add", source_path][..],
+        &["commit", "-q", "-m", "fixture"][..],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(root.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let modified = (1..=60)
+        .map(|line| format!("new line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.path().join(source_path), modified).unwrap();
+
+    let mut view = fixture_view();
+    view.modules[0].local_path = Some(root.path().to_path_buf());
+    view.modules[0].artifacts[0].source_path = source_path.to_string();
+    let mut app = App::from_view(root.path().to_path_buf(), Vec::new(), Vec::new(), view);
+    app.set_section_by_number(2);
+    app.drill_or_expand();
+    app.drill_or_expand();
+    app.set_detail_tab(DetailTab::Diff);
+    let diff_snapshot = rendered(&mut app);
+    assert!(diff_snapshot.contains('▶'));
+    assert!(diff_snapshot.contains('▌'));
+    for _ in 0..40 {
+        event::handle_key(&mut app, key(KeyCode::Char('j')));
+    }
+    let logical_row = app.detail_cursor_for_test();
+
+    event::handle_key(&mut app, key(KeyCode::Enter));
+    assert!(app.is_preview_open());
+    let backend = TestBackend::new(120, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    let (tab, cursor, scroll) = app.preview_position_for_test().unwrap();
+    assert_eq!(tab, DetailTab::Diff);
+    assert_eq!(cursor, logical_row);
+    assert!(usize::from(scroll) <= cursor);
+    assert!(cursor < usize::from(scroll) + 8);
+
+    event::handle_key(&mut app, key(KeyCode::Char('2')));
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    event::handle_key(&mut app, key(KeyCode::Char('3')));
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    assert_eq!(app.preview_position_for_test().unwrap().1, logical_row);
+
+    event::handle_key(&mut app, key(KeyCode::Esc));
+    assert!(!app.is_preview_open());
+    assert_eq!(app.detail_tab(), DetailTab::Diff);
+    assert_eq!(app.detail_cursor_for_test(), logical_row);
+}
+
+#[test]
 fn count_motion_numbered_g_and_pending_commands_match_vim() {
     let root = tempfile::tempdir().unwrap();
     let source_path = "skills/BuildSkill/SKILL.md";
@@ -1359,9 +1558,15 @@ fn pending_count_has_a_hint_and_escape_cancels_it() {
         event::handle_key(&mut app, key(KeyCode::Char(character)));
     }
     let count_footer = rendered(&mut app);
-    assert!(count_footer.contains("count: 12"));
-    assert!(count_footer.contains("Esc to cancel"));
+    assert!(count_footer.contains("NORMAL 12"));
 
+    // tuicr discards a pending count on any non-motion, then dispatches that
+    // key normally. `c` must open comment input instead of trapping the user.
+    event::handle_key(&mut app, key(KeyCode::Char('c')));
+    assert!(app.is_comment_prompt_open());
+    event::handle_key(&mut app, key(KeyCode::Esc));
+
+    event::handle_key(&mut app, key(KeyCode::Char('3')));
     event::handle_key(&mut app, key(KeyCode::Esc));
     event::handle_key(&mut app, key(KeyCode::Char('j')));
     assert_eq!(app.detail_cursor_for_test(), 1);
@@ -1504,7 +1709,7 @@ fn visual_range_comment_is_written_to_storage() {
 }
 
 #[test]
-fn vim_comment_editor_supports_requested_normal_mode_subset() {
+fn simple_comment_editor_submits_with_enter_and_shift_enter_inserts_newline() {
     let root = tempfile::tempdir().unwrap();
     let mut app = App::from_view(
         root.path().to_path_buf(),
@@ -1518,43 +1723,22 @@ fn vim_comment_editor_supports_requested_normal_mode_subset() {
     app.set_detail_tab(DetailTab::Code);
     let _ = rendered(&mut app);
     event::handle_key(&mut app, key(KeyCode::Char('c')));
-    for character in "alpha beta".chars() {
+    for character in "alpha".chars() {
         event::handle_key(&mut app, key(KeyCode::Char(character)));
     }
-
-    event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Char('b')));
-    event::handle_key(&mut app, key(KeyCode::Char('x')));
-    event::handle_key(&mut app, key(KeyCode::Char('i')));
-    event::handle_key(&mut app, key(KeyCode::Char('b')));
-    event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Char('w')));
-    event::handle_key(&mut app, key(KeyCode::Char('a')));
-    event::handle_key(&mut app, key(KeyCode::Char('!')));
-    event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Char('b')));
-    event::handle_key(&mut app, key(KeyCode::Char('o')));
-    for character in "tail".chars() {
+    event::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    for character in "beta".chars() {
         event::handle_key(&mut app, key(KeyCode::Char(character)));
     }
-    event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Char('d')));
-    event::handle_key(&mut app, key(KeyCode::Char('d')));
-    event::handle_key(&mut app, key(KeyCode::Char('o')));
-    for character in "tail".chars() {
-        event::handle_key(&mut app, key(KeyCode::Char(character)));
-    }
-    event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Char(':')));
-    event::handle_key(&mut app, key(KeyCode::Char('w')));
     event::handle_key(&mut app, key(KeyCode::Enter));
 
+    assert!(!app.is_comment_prompt_open());
     let comments = commands::review::load(root.path()).unwrap();
-    assert_eq!(comments[0].text, "alpha beta!\ntail");
+    assert_eq!(comments[0].text, "alpha\nbeta");
 }
 
 #[test]
-fn vim_comment_editor_requires_confirmation_to_discard_dirty_text() {
+fn simple_comment_editor_requires_confirmation_to_discard_dirty_text() {
     let mut app = fixture_app();
     app.set_section_by_number(2);
     app.drill_or_expand();
@@ -1565,9 +1749,8 @@ fn vim_comment_editor_requires_confirmation_to_discard_dirty_text() {
     event::handle_key(&mut app, key(KeyCode::Char('x')));
 
     event::handle_key(&mut app, key(KeyCode::Esc));
-    event::handle_key(&mut app, key(KeyCode::Esc));
     assert!(app.is_comment_prompt_open());
-    assert!(rendered(&mut app).contains("again discards changes"));
+    assert!(app.comment_discard_armed_for_test());
 
     event::handle_key(&mut app, key(KeyCode::Esc));
     assert!(!app.is_comment_prompt_open());

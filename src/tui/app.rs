@@ -38,13 +38,14 @@ use super::cast_editor::{CastEditor, EditorAction};
 use super::comment_navigator::{
     CommentNavigatorItem, CommentNavigatorState, render_comment_navigator,
 };
+use super::comment_panel::{CommentLineRange, format_comment_input_lines, format_comment_lines};
 use super::components::{
     palette::{Palette, PaletteCommand},
     preview::{ArtifactPreview, wrapped_rows},
 };
 use super::file_editor::{EditorAction as FileEditorAction, FileEditor};
-use super::modal_editor::{ModalAction, ModalState};
 use super::rich;
+use super::styles;
 use super::word_wrap::expand_gutter_wrapped;
 
 const SECTION_COUNT: usize = 17;
@@ -514,6 +515,16 @@ struct CodeCache {
     sections: Vec<usize>,
 }
 
+/// Display rows for the Code pane plus the real terminal-cursor position of
+/// tuicr's inline comment input. `focus_row` is measured after gutter-aware
+/// wrapping, so comments and long source lines cannot push the selection out
+/// of the visible terminal viewport.
+struct CodeWindow {
+    rows: Vec<Line<'static>>,
+    focus_row: usize,
+    comment_cursor: Option<(usize, u16)>,
+}
+
 pub use commands::review::CommentKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -535,15 +546,7 @@ struct CommentPrompt {
     text: String,
     original_text: String,
     cursor: usize,
-    mode: CommentEditorMode,
-    pending_delete: bool,
-    modal: ModalState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommentEditorMode {
-    Normal,
-    Insert,
+    discard_armed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -555,19 +558,16 @@ enum PendingNavigation {
     PreviousSection,
 }
 
-impl CommentEditorMode {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Normal => "NORMAL",
-            Self::Insert => "INSERT",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VisualSelection {
     anchor: usize,
     head: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct DetailPosition {
+    cursor: usize,
+    scroll: u16,
 }
 
 impl VisualSelection {
@@ -658,6 +658,9 @@ pub struct App {
     pending_code_line: Option<usize>,
     /// Detail body height at the last render, for cursor-follow and paging.
     detail_viewport: usize,
+    /// Cursor and viewport are tab-local. Switching panes must not reinterpret
+    /// a Code line index as a Diff row or discard the user's logical place.
+    detail_positions: [DetailPosition; DETAIL_TAB_COUNT],
     /// Synthesized artifact for the selected ADR or companion, keyed by a
     /// stable identity so tab switches do not re-read files or re-run git.
     synthesized: Option<(String, ArtifactView)>,
@@ -778,6 +781,7 @@ impl App {
             list_filter_typing: false,
             problems_only: false,
             detail_cursor: 0,
+            detail_positions: [DetailPosition::default(); DETAIL_TAB_COUNT],
             pending_code_line: None,
             detail_viewport: 1,
             synthesized: None,
@@ -1174,22 +1178,35 @@ impl App {
         } else {
             format!(" | ✗ {}", self.validation_report.violations.len())
         };
-        let text = format!(
-            " rune tui | {scan} | ok {} stale {} modified {} new {} | {} modules{comments}{validation}",
+        let source_text = format!(
+            " {scan} · ok {} stale {} modified {} new {} · {} modules{comments}{validation} ",
             summary.unchanged,
             summary.stale,
             summary.modified,
             summary.new,
             self.view.modules.len()
         );
+        let brand = Span::styled(
+            " rune ",
+            Style::default()
+                .fg(styles::FG_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        );
+        let padding = usize::from(area.width)
+            .saturating_sub(brand.width().saturating_add(source_text.width()));
         frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(Color::Gray)),
+            Paragraph::new(Line::from(vec![
+                brand,
+                Span::raw(" ".repeat(padding)),
+                Span::styled(source_text, Style::default().fg(styles::FG_SECONDARY)),
+            ]))
+            .style(styles::status_bar_style()),
             area,
         );
     }
 
-    fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = if let Some(editor) = &self.file_editor {
+    fn footer_text(&self) -> String {
+        if let Some(editor) = &self.file_editor {
             if let Some(toast) = &self.toast {
                 format!(" editor [{}] · {toast}", editor.mode_label())
             } else {
@@ -1211,22 +1228,16 @@ impl App {
                 || prompt.line_number.to_string(),
                 |end| format!("{}-{end}", prompt.line_number),
             );
-            let mode = prompt.modal.command().map_or_else(
-                || {
-                    format!(
-                        "{}{}",
-                        prompt.mode.label(),
-                        if prompt.text == prompt.original_text {
-                            ""
-                        } else {
-                            "*"
-                        }
-                    )
-                },
-                |command| format!(":{command}"),
+            let mode = format!(
+                "COMMENT{}",
+                if prompt.text == prompt.original_text {
+                    ""
+                } else {
+                    "*"
+                }
             );
-            let hint = if prompt.modal.discard_armed() {
-                " · Esc/q again discards changes"
+            let hint = if prompt.discard_armed {
+                " · Esc again discards changes"
             } else {
                 ""
             };
@@ -1258,8 +1269,6 @@ impl App {
                 PendingNavigation::NextSection => " ]".to_string(),
                 PendingNavigation::PreviousSection => " [".to_string(),
             }
-        } else if let Some(count) = self.pending_count {
-            format!(" count: {count} — press j/k to repeat, Esc to cancel")
         } else if self.palette.is_open() || self.palette_error.is_some() {
             self.palette.display_text(self.palette_error.as_deref())
         } else if let Some(toast) = &self.toast {
@@ -1278,9 +1287,36 @@ impl App {
             )
         } else {
             hint_row(self.focused)
-        };
+        }
+    }
+
+    fn footer_mode(&self) -> String {
+        if self.comment_prompt.is_some() {
+            " COMMENT ".to_string()
+        } else if self.visual_selection.is_some() {
+            " VISUAL ".to_string()
+        } else if self.palette.is_open() {
+            " COMMAND ".to_string()
+        } else if self.code_search_input.is_some() || self.search_typing || self.list_filter_typing
+        {
+            " SEARCH ".to_string()
+        } else if let Some(count) = self.pending_count {
+            format!(" NORMAL {count} ")
+        } else if self.file_editor.is_some() {
+            " EDIT ".to_string()
+        } else {
+            " NORMAL ".to_string()
+        }
+    }
+
+    fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
+        let text = self.footer_text();
         frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(Line::from(vec![
+                Span::styled(self.footer_mode(), styles::mode_style()),
+                Span::styled(format!("   {text}"), styles::dim_style()),
+            ]))
+            .style(styles::status_bar_style()),
             area,
         );
     }
@@ -1848,12 +1884,26 @@ impl App {
                 .detail_scroll
                 .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
             let artifact = &self.view.modules[module_index].artifacts[artifact_index];
-            let lines = self.code_window(artifact, viewport);
-            // Pre-expand long lines so continuation rows align after the
-            // line-number gutter with a ↪ marker instead of sliding under it.
-            let mut rows = expand_gutter_wrapped(lines, CODE_GUTTER, usize::from(chunks[1].width));
-            rows.truncate(viewport);
-            frame.render_widget(Paragraph::new(Text::from(rows)), chunks[1]);
+            let mut window = self.code_window(artifact, viewport, usize::from(chunks[1].width));
+            let display_offset = window.focus_row.saturating_add(1).saturating_sub(viewport);
+            if display_offset > 0 {
+                window.rows.drain(..display_offset.min(window.rows.len()));
+            }
+            window.rows.truncate(viewport);
+            frame.render_widget(Paragraph::new(Text::from(window.rows)), chunks[1]);
+            if let Some((row, column)) = window.comment_cursor
+                && row >= display_offset
+                && row - display_offset < viewport
+            {
+                frame.set_cursor_position(Position {
+                    x: chunks[1]
+                        .x
+                        .saturating_add(column.min(chunks[1].width.saturating_sub(1))),
+                    y: chunks[1]
+                        .y
+                        .saturating_add(u16::try_from(row - display_offset).unwrap_or(u16::MAX)),
+                });
+            }
         } else {
             let expected_key = {
                 let module = &self.view.modules[module_index];
@@ -1966,6 +2016,7 @@ impl App {
         self.render_tabs(frame, chunks[0]);
         let cache_width = chunks[1].width.max(1);
         let key = detail_cache_key(self.detail_tab, module_name, identity);
+        let target_key = format!("{module_name}:{identity}");
         let needs_build = self
             .preview_cache
             .as_ref()
@@ -1978,12 +2029,12 @@ impl App {
                 );
                 return;
             }
-            if self
-                .preview_cache
-                .as_ref()
-                .is_some_and(|cache| cache.key != key)
-            {
+            if self.preview_cache.as_ref().is_some_and(|cache| {
+                detail_cache_target(&cache.key).is_none_or(|target| target != target_key)
+            }) {
                 self.detail_scroll = 0;
+                self.detail_cursor = 0;
+                self.detail_positions = [DetailPosition::default(); DETAIL_TAB_COUNT];
             }
             if self
                 .synthesized
@@ -2153,8 +2204,16 @@ impl App {
                 let scroll = usize::from(self.detail_scroll);
                 if let Some(row) = self.detail_cursor.checked_sub(scroll)
                     && let Some(line) = lines.get_mut(row)
+                    && let Some(indicator) = line.spans.first_mut()
                 {
-                    line.style = selected_style(self.focused == ColumnFocus::Detail);
+                    *indicator = Span::styled(
+                        if self.focused == ColumnFocus::Detail {
+                            "▶"
+                        } else {
+                            " "
+                        },
+                        styles::current_line_indicator_style(),
+                    );
                 }
             }
             frame.render_widget(Paragraph::new(Text::from(lines)), area);
@@ -2199,10 +2258,13 @@ impl App {
             self.prepare_code_cache(module_index, artifact_index);
             return;
         }
-        let key = {
+        let (key, target_key) = {
             let module = &self.view.modules[module_index];
             let artifact = &module.artifacts[artifact_index];
-            detail_cache_key(self.detail_tab, &module.name, &artifact.relative_path)
+            (
+                detail_cache_key(self.detail_tab, &module.name, &artifact.relative_path),
+                format!("{}:{}", module.name, artifact.relative_path),
+            )
         };
         let needs_build = self
             .preview_cache
@@ -2218,13 +2280,12 @@ impl App {
             }
             // A different target means new content: scrolling must restart at
             // the top, or a short document renders as a blank pane.
-            if self
-                .preview_cache
-                .as_ref()
-                .is_some_and(|cache| cache.key != key)
-            {
+            if self.preview_cache.as_ref().is_some_and(|cache| {
+                detail_cache_target(&cache.key).is_none_or(|target| target != target_key)
+            }) {
                 self.detail_scroll = 0;
                 self.detail_cursor = 0;
+                self.detail_positions = [DetailPosition::default(); DETAIL_TAB_COUNT];
             }
             let (lines, windowed) = {
                 let module = &self.view.modules[module_index];
@@ -2341,7 +2402,11 @@ impl App {
                 true,
             ),
             DetailTab::Diff => (
-                expand_gutter_wrapped(diff_lines(module, artifact, width), 10, usize::from(width)),
+                expand_gutter_wrapped(
+                    with_diff_indicators(diff_lines(module, artifact, width)),
+                    11,
+                    usize::from(width),
+                ),
                 true,
             ),
             DetailTab::Provenance => (
@@ -2369,78 +2434,97 @@ impl App {
             .map_or_else(Vec::new, |cache| cache.lines.clone())
     }
 
-    fn code_window(&self, artifact: &ArtifactView, viewport: usize) -> Vec<Line<'static>> {
+    fn code_window(&self, artifact: &ArtifactView, viewport: usize, width: usize) -> CodeWindow {
         let scroll = usize::from(self.detail_scroll);
         let current_line = self.current_code_line();
         let module = &artifact.module;
         let path = &artifact.relative_path;
-        self.code_cache.as_ref().map_or_else(Vec::new, |cache| {
-            cache
-                .lines
-                .iter()
-                .enumerate()
-                .skip(scroll)
-                .take(viewport)
-                .flat_map(|(index, cached_line)| {
-                    let mut line = cached_line.clone();
-                    let line_number = index + 1;
-                    let key = (module.clone(), path.clone(), line_number);
-                    let comment = self.comments.get(&key);
-                    let prompt = self.comment_prompt.as_ref().filter(|prompt| {
-                        prompt.module == *module
-                            && prompt.path == *path
-                            && prompt.line_number == line_number
-                    });
-                    let has_comment = comment.is_some();
-                    if let Some(marker) = line.spans.first_mut() {
-                        *marker = Span::styled(
-                            if has_comment { "◆ " } else { "  " },
-                            if has_comment {
-                                Style::default().fg(Color::Yellow)
-                            } else {
-                                Style::default().fg(Color::DarkGray)
-                            },
-                        );
-                    }
-                    if let Some(source_line) = cache.source_lines.get(index) {
-                        highlight_code_search_matches(
-                            &mut line,
-                            source_line,
-                            &self.code_search_query,
-                            self.code_search_current,
-                            index,
-                        );
-                    }
-                    if line_number == current_line {
-                        line.style = selected_style(self.focused == ColumnFocus::Detail);
-                    } else if self
-                        .visual_selection
-                        .is_some_and(|selection| selection.contains(index))
-                    {
-                        line.style = Style::default().fg(Color::White).bg(Color::Blue);
-                    }
-                    let mut rows = vec![line];
-                    if let Some(prompt) = prompt {
-                        rows.push(Line::from(vec![
-                            Span::styled("  ✎    ", Style::default().fg(Color::Yellow)),
-                            Span::styled(
-                                format!("[{}] > {}", prompt.kind.label(), prompt.text),
-                                Style::default().fg(Color::Yellow),
-                            ),
-                        ]));
-                    } else if let Some(comment) = comment {
-                        rows.push(Line::from(vec![
-                            Span::styled("  ◆    ", Style::default().fg(Color::Yellow)),
-                            Span::styled(
-                                format!("[{}] {}", comment.kind.label(), comment.text),
-                                Style::default().fg(Color::Yellow),
-                            ),
-                        ]));
-                    }
-                    rows
-                })
-                .collect()
-        })
+        let Some(cache) = self.code_cache.as_ref() else {
+            return CodeWindow {
+                rows: Vec::new(),
+                focus_row: 0,
+                comment_cursor: None,
+            };
+        };
+        let mut rows = Vec::new();
+        let mut focus_row = 0;
+        let mut comment_cursor = None;
+        for (index, cached_line) in cache.lines.iter().enumerate().skip(scroll).take(viewport) {
+            let mut line = cached_line.clone();
+            let line_number = index + 1;
+            let key = (module.clone(), path.clone(), line_number);
+            let comment = self.comments.get(&key);
+            let prompt = self.comment_prompt.as_ref().filter(|prompt| {
+                prompt.module == *module
+                    && prompt.path == *path
+                    && prompt.line_number == line_number
+            });
+            let has_comment = comment.is_some();
+            if let Some(marker) = line.spans.first_mut() {
+                *marker = Span::styled(
+                    if has_comment { "◆ " } else { "  " },
+                    if has_comment {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                );
+            }
+            if let Some(source_line) = cache.source_lines.get(index) {
+                highlight_code_search_matches(
+                    &mut line,
+                    source_line,
+                    &self.code_search_query,
+                    self.code_search_current,
+                    index,
+                );
+            }
+            let source_row = rows.len();
+            if line_number == current_line {
+                line.style = selected_style(self.focused == ColumnFocus::Detail);
+                focus_row = source_row;
+            } else if self
+                .visual_selection
+                .is_some_and(|selection| selection.contains(index))
+            {
+                line.style = Style::default().fg(Color::White).bg(Color::Blue);
+            }
+            rows.extend(expand_gutter_wrapped(vec![line], CODE_GUTTER, width));
+            if let Some(prompt) = prompt {
+                let range = Some(CommentLineRange::new(
+                    prompt.line_number,
+                    prompt.end_line.unwrap_or(prompt.line_number),
+                ));
+                let box_start = rows.len();
+                let (input_lines, cursor_info) = format_comment_input_lines(
+                    prompt.kind,
+                    &prompt.text,
+                    prompt.cursor,
+                    range,
+                    !prompt.original_text.is_empty(),
+                    width,
+                );
+                focus_row = box_start + cursor_info.line_offset;
+                comment_cursor = Some((focus_row, cursor_info.column));
+                rows.extend(input_lines);
+            } else if let Some(comment) = comment {
+                let range = Some(CommentLineRange::new(
+                    line_number,
+                    comment.end_line.unwrap_or(line_number),
+                ));
+                rows.extend(format_comment_lines(
+                    comment.kind,
+                    &comment.text,
+                    range,
+                    width,
+                ));
+            }
+        }
+        CodeWindow {
+            rows,
+            focus_row,
+            comment_cursor,
+        }
     }
 
     fn render_tabs(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2449,12 +2533,9 @@ impl App {
             .enumerate()
             .flat_map(|(index, tab)| {
                 let style = if *tab == self.detail_tab {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                    styles::mode_style()
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    styles::dim_style()
                 };
                 [
                     Span::raw(" "),
@@ -2621,7 +2702,20 @@ impl App {
     }
 
     pub fn close_preview(&mut self) {
-        self.preview = None;
+        let Some(preview) = self.preview.take() else {
+            return;
+        };
+        for tab in DetailTab::ALL {
+            let position = preview.position(tab);
+            self.detail_positions[tab as usize] = DetailPosition {
+                cursor: position.cursor,
+                scroll: position.scroll,
+            };
+        }
+        self.detail_tab = preview.active_tab();
+        let position = self.detail_positions[self.detail_tab as usize];
+        self.detail_cursor = position.cursor;
+        self.detail_scroll = position.scroll;
     }
 
     pub fn preview_scroll_down(&mut self, amount: u16) {
@@ -2847,7 +2941,18 @@ impl App {
             }
             ColumnFocus::Detail => {
                 if let Some(artifact) = self.selected_artifact().cloned() {
-                    self.preview = Some(ArtifactPreview::from_artifact(&artifact));
+                    self.remember_detail_position();
+                    let mut preview = ArtifactPreview::from_artifact_at(
+                        &artifact,
+                        self.detail_tab,
+                        self.detail_cursor,
+                        self.detail_scroll,
+                    );
+                    for tab in DetailTab::ALL {
+                        let position = self.detail_positions[tab as usize];
+                        preview.set_position(tab, position.cursor, position.scroll);
+                    }
+                    self.preview = Some(preview);
                 }
             }
             ColumnFocus::Comments => {
@@ -3008,42 +3113,8 @@ impl App {
 
     /// Consume Vim-style pending commands and count-prefixed Code motions.
     pub fn navigation_prefix_key(&mut self, key: KeyEvent) -> bool {
-        if let Some(pending) = self.pending_navigation.take() {
-            let handled = match (pending, key.code) {
-                (PendingNavigation::GoToTop, KeyCode::Char('g')) => {
-                    self.focused_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
-                    true
-                }
-                (PendingNavigation::Center, KeyCode::Char('z')) => {
-                    self.center_detail_cursor();
-                    true
-                }
-                (PendingNavigation::Leader, KeyCode::Char('e')) => {
-                    self.open_cast_editor();
-                    true
-                }
-                (PendingNavigation::Leader, KeyCode::Char('E')) => {
-                    self.open_selected_source_external();
-                    true
-                }
-                (PendingNavigation::Leader, KeyCode::Char('q')) => {
-                    self.request_quit();
-                    true
-                }
-                (PendingNavigation::NextSection, KeyCode::Char(']')) => {
-                    self.jump_section(true);
-                    true
-                }
-                (PendingNavigation::PreviousSection, KeyCode::Char('[')) => {
-                    self.jump_section(false);
-                    true
-                }
-                _ => false,
-            };
-            if handled {
-                self.pending_count = None;
-                return true;
-            }
+        if self.consume_pending_navigation(key) {
+            return true;
         }
 
         let count_context = self.focused == ColumnFocus::Detail
@@ -3065,8 +3136,15 @@ impl App {
 
         if count_context
             && matches!(
-                key.code,
-                KeyCode::Char('j' | 'k') | KeyCode::Down | KeyCode::Up
+                (key.code, key.modifiers),
+                (
+                    KeyCode::Char('j' | 'k' | ' ' | 'b')
+                        | KeyCode::Down
+                        | KeyCode::Up
+                        | KeyCode::PageDown
+                        | KeyCode::PageUp,
+                    KeyModifiers::NONE
+                ) | (KeyCode::Char('d' | 'u'), KeyModifiers::CONTROL)
             )
             && let Some(count) = self.pending_count.take()
         {
@@ -3082,18 +3160,19 @@ impl App {
             self.go_to_numbered_detail_line(count.max(1));
             return true;
         }
-        self.pending_count = None;
-
         match key.code {
             KeyCode::Char('g') if key.modifiers.is_empty() => {
+                self.pending_count = None;
                 self.pending_navigation = Some(PendingNavigation::GoToTop);
                 true
             }
             KeyCode::Char('z') if count_context && key.modifiers.is_empty() => {
+                self.pending_count = None;
                 self.pending_navigation = Some(PendingNavigation::Center);
                 true
             }
             KeyCode::Char(';') if key.modifiers.is_empty() => {
+                self.pending_count = None;
                 self.pending_navigation = Some(PendingNavigation::Leader);
                 true
             }
@@ -3105,8 +3184,58 @@ impl App {
                 self.pending_navigation = Some(PendingNavigation::PreviousSection);
                 true
             }
-            _ => false,
+            _ => {
+                self.pending_count = None;
+                false
+            }
         }
+    }
+
+    fn consume_pending_navigation(&mut self, key: KeyEvent) -> bool {
+        let Some(pending) = self.pending_navigation.take() else {
+            return false;
+        };
+        let handled = match (pending, key.code) {
+            (PendingNavigation::GoToTop, KeyCode::Char('g')) => {
+                self.focused_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+                true
+            }
+            (PendingNavigation::Center, KeyCode::Char('z')) => {
+                self.center_detail_cursor();
+                true
+            }
+            (PendingNavigation::Leader, KeyCode::Char('e')) => {
+                self.open_cast_editor();
+                true
+            }
+            (PendingNavigation::Leader, KeyCode::Char('E')) => {
+                self.open_selected_source_external();
+                true
+            }
+            (PendingNavigation::Leader, KeyCode::Char('q')) => {
+                self.request_quit();
+                true
+            }
+            (PendingNavigation::NextSection, KeyCode::Char(']')) => {
+                let count = self.pending_count.take().unwrap_or(1).max(1);
+                for _ in 0..count {
+                    self.jump_section(true);
+                }
+                true
+            }
+            (PendingNavigation::PreviousSection, KeyCode::Char('[')) => {
+                let count = self.pending_count.take().unwrap_or(1).max(1);
+                for _ in 0..count {
+                    self.jump_section(false);
+                }
+                true
+            }
+            _ => false,
+        };
+        if handled {
+            self.pending_count = None;
+        }
+        handled
     }
 
     fn center_detail_cursor(&mut self) {
@@ -3480,9 +3609,19 @@ impl App {
         if self.detail_tab == tab {
             return;
         }
+        self.remember_detail_position();
         self.detail_tab = tab;
-        self.detail_scroll = 0;
+        let position = self.detail_positions[tab as usize];
+        self.detail_cursor = position.cursor;
+        self.detail_scroll = position.scroll;
         self.visual_selection = None;
+    }
+
+    fn remember_detail_position(&mut self) {
+        self.detail_positions[self.detail_tab as usize] = DetailPosition {
+            cursor: self.detail_cursor,
+            scroll: self.detail_scroll,
+        };
     }
 
     pub fn comment_or_code(&mut self) {
@@ -3769,6 +3908,22 @@ impl App {
     }
 
     #[cfg(test)]
+    #[must_use]
+    pub fn preview_position_for_test(&self) -> Option<(DetailTab, usize, u16)> {
+        self.preview
+            .as_ref()
+            .map(|preview| (preview.active_tab(), preview.cursor(), preview.scroll()))
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn comment_discard_armed_for_test(&self) -> bool {
+        self.comment_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.discard_armed)
+    }
+
+    #[cfg(test)]
     pub fn set_validation_report_for_test(
         &mut self,
         checked: usize,
@@ -4010,118 +4165,88 @@ impl App {
     }
 
     pub fn comment_prompt_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let submit = matches!(
+            (key.code, key.modifiers),
+            (KeyCode::Enter, KeyModifiers::NONE | KeyModifiers::CONTROL)
+                | (KeyCode::Char('s'), KeyModifiers::CONTROL)
+        );
+        if submit {
             self.save_comment_prompt();
             return;
         }
-        if self
-            .comment_prompt
-            .as_ref()
-            .is_some_and(|prompt| prompt.modal.command().is_some())
-        {
-            self.comment_command_key(key);
-            return;
-        }
-
-        let mode = self
-            .comment_prompt
-            .as_ref()
-            .map_or(CommentEditorMode::Insert, |prompt| prompt.mode);
-        if mode == CommentEditorMode::Insert {
-            self.comment_insert_key(key);
-            return;
-        }
-
-        self.comment_normal_key(key);
-    }
-
-    fn comment_command_key(&mut self, key: KeyEvent) {
-        let Some(prompt) = self.comment_prompt.as_mut() else {
-            return;
-        };
-        let dirty = prompt.text != prompt.original_text;
-        let action = prompt.modal.command_key(key, dirty);
-        if prompt.modal.discard_armed() {
-            prompt.pending_delete = false;
-        }
-        match action {
-            ModalAction::Continue => {}
-            ModalAction::Save | ModalAction::SaveAndClose => self.save_comment_prompt(),
-            ModalAction::Discard => {
-                self.comment_prompt = None;
-                self.toast = Some("comment cancelled".to_string());
-            }
-            ModalAction::Unknown(command) => {
-                self.toast = Some(format!("unknown comment command: :{command}"));
-            }
-        }
-    }
-
-    fn comment_insert_key(&mut self, key: KeyEvent) {
-        let Some(prompt) = self.comment_prompt.as_mut() else {
-            return;
-        };
-        prompt.modal.clear_discard();
-        prompt.pending_delete = false;
-        match key.code {
-            KeyCode::Esc => prompt.mode = CommentEditorMode::Normal,
-            KeyCode::Tab => prompt.kind = prompt.kind.next(),
-            KeyCode::Enter => insert_comment_char(prompt, '\n'),
-            KeyCode::Backspace => delete_comment_char_before(prompt),
-            KeyCode::Left => {
-                prompt.cursor = previous_char_boundary(&prompt.text, prompt.cursor);
-            }
-            KeyCode::Right => prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor),
-            KeyCode::Char(character) => insert_comment_char(prompt, character),
-            _ => {}
-        }
-    }
-
-    fn comment_normal_key(&mut self, key: KeyEvent) {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+        if matches!(
+            (key.code, key.modifiers),
+            (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ) {
             self.request_comment_cancel();
             return;
         }
         let Some(prompt) = self.comment_prompt.as_mut() else {
             return;
         };
-        prompt.modal.clear_discard();
-        match key.code {
-            KeyCode::Tab => prompt.kind = prompt.kind.next(),
-            KeyCode::Char(':') => prompt.modal.begin_command(),
-            KeyCode::Char('i') => prompt.mode = CommentEditorMode::Insert,
-            KeyCode::Char('a') => {
-                prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor);
-                prompt.mode = CommentEditorMode::Insert;
-            }
-            KeyCode::Char('A') => {
-                prompt.cursor = comment_line_end(&prompt.text, prompt.cursor);
-                prompt.mode = CommentEditorMode::Insert;
-            }
-            KeyCode::Char('o') => {
-                prompt.cursor = comment_line_end(&prompt.text, prompt.cursor);
+        prompt.discard_armed = false;
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter, modifiers)
+                if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
                 insert_comment_char(prompt, '\n');
-                prompt.mode = CommentEditorMode::Insert;
             }
-            KeyCode::Char('x') => delete_comment_char_at(prompt),
-            KeyCode::Char('w') => prompt.cursor = next_comment_word(&prompt.text, prompt.cursor),
-            KeyCode::Char('b') => {
+            (KeyCode::Char('j' | 'k'), KeyModifiers::CONTROL) => {
+                insert_comment_char(prompt, '\n');
+            }
+            (KeyCode::Tab, _) => prompt.kind = prompt.kind.next(),
+            (KeyCode::BackTab, _) => {
+                prompt.kind = match prompt.kind {
+                    CommentKind::Issue => CommentKind::Praise,
+                    CommentKind::Note => CommentKind::Issue,
+                    CommentKind::Suggestion => CommentKind::Note,
+                    CommentKind::Praise => CommentKind::Suggestion,
+                };
+            }
+            (KeyCode::Backspace, modifiers)
+                if modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META) =>
+            {
+                let start = previous_comment_word(&prompt.text, prompt.cursor);
+                prompt.text.drain(start..prompt.cursor);
+                prompt.cursor = start;
+            }
+            (KeyCode::Backspace, KeyModifiers::NONE) => delete_comment_char_before(prompt),
+            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                let start = previous_comment_word(&prompt.text, prompt.cursor);
+                prompt.text.drain(start..prompt.cursor);
+                prompt.cursor = start;
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                prompt.text.clear();
+                prompt.cursor = 0;
+            }
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) | (KeyCode::Home, _) => {
+                prompt.cursor = comment_line_start(&prompt.text, prompt.cursor);
+            }
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) | (KeyCode::End, _) => {
+                prompt.cursor = comment_line_end(&prompt.text, prompt.cursor);
+            }
+            (KeyCode::Left, modifiers)
+                if modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+            {
                 prompt.cursor = previous_comment_word(&prompt.text, prompt.cursor);
             }
-            KeyCode::Char('d') if prompt.pending_delete => {
-                delete_comment_line(prompt);
-                prompt.pending_delete = false;
+            (KeyCode::Right, modifiers)
+                if modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+            {
+                prompt.cursor = next_comment_word(&prompt.text, prompt.cursor);
             }
-            KeyCode::Char('d') => prompt.pending_delete = true,
-            KeyCode::Left | KeyCode::Char('h') => {
+            (KeyCode::Left, KeyModifiers::NONE) => {
                 prompt.cursor = previous_char_boundary(&prompt.text, prompt.cursor);
-                prompt.pending_delete = false;
             }
-            KeyCode::Right | KeyCode::Char('l') => {
+            (KeyCode::Right, KeyModifiers::NONE) => {
                 prompt.cursor = next_char_boundary(&prompt.text, prompt.cursor);
-                prompt.pending_delete = false;
             }
-            _ => prompt.pending_delete = false,
+            (KeyCode::Char(character), _) => insert_comment_char(prompt, character),
+            _ => {
+                // Match tuicr: unrelated keys are inert in comment input.
+            }
         }
     }
 
@@ -4130,8 +4255,9 @@ impl App {
             return;
         };
         let dirty = prompt.text != prompt.original_text;
-        if prompt.modal.request_discard(dirty) == ModalAction::Continue {
-            prompt.pending_delete = false;
+        if dirty && !prompt.discard_armed {
+            prompt.discard_armed = true;
+            self.toast = Some("unsaved comment — press Esc again to discard".to_string());
             return;
         }
         self.comment_prompt = None;
@@ -4424,10 +4550,11 @@ impl App {
             cursor: text.len(),
             original_text: text.clone(),
             text,
-            mode: CommentEditorMode::Insert,
-            pending_delete: false,
-            modal: ModalState::default(),
+            discard_armed: false,
         });
+        // The tuicr editor is part of the code stream; leave enough viewport
+        // below the anchor for its header, body, and footer to remain visible.
+        self.center_detail_cursor();
     }
 
     fn save_comment_prompt(&mut self) {
@@ -4435,34 +4562,44 @@ impl App {
             self.toast = Some(error);
             return;
         }
-        let Some(prompt) = self.comment_prompt.take() else {
+        if self
+            .comment_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.text.trim().is_empty())
+        {
+            self.toast = Some("Comment cannot be empty".to_string());
+            return;
+        }
+        let Some(prompt) = self.comment_prompt.as_ref() else {
             return;
         };
         let text = prompt.text.trim().to_string();
-        if text.is_empty() {
-            self.comments
-                .remove(&(prompt.module, prompt.path, prompt.line_number));
-            self.toast = Some(match persist_comments(&self.root, &self.comments) {
-                Ok(()) => "comment cleared".to_string(),
-                Err(error) => format!("comment cleared in memory; persistence failed: {error}"),
-            });
-            return;
-        }
-        self.comments.insert(
-            (prompt.module, prompt.path, prompt.line_number),
+        let mut updated = self.comments.clone();
+        updated.insert(
+            (
+                prompt.module.clone(),
+                prompt.path.clone(),
+                prompt.line_number,
+            ),
             LineComment {
                 kind: prompt.kind,
                 text,
                 end_line: prompt.end_line,
             },
         );
-        self.toast = Some(match persist_comments(&self.root, &self.comments) {
-            Ok(()) => format!(
-                "comment saved to {}",
-                self.root.join(".rune-comments.yaml").display()
-            ),
-            Err(error) => format!("comment saved in memory; persistence failed: {error}"),
-        });
+        match persist_comments(&self.root, &updated) {
+            Ok(()) => {
+                self.comments = updated;
+                self.comment_prompt = None;
+                self.toast = Some(format!(
+                    "comment saved to {}",
+                    self.root.join(".rune-comments.yaml").display()
+                ));
+            }
+            Err(error) => {
+                self.toast = Some(format!("comment not saved: {error}"));
+            }
+        }
     }
 
     fn comments_persistence_error(&mut self) -> Option<String> {
@@ -4698,6 +4835,7 @@ impl App {
         self.section = section;
         self.detail_scroll = 0;
         self.detail_cursor = 0;
+        self.detail_positions = [DetailPosition::default(); DETAIL_TAB_COUNT];
         self.visual_selection = None;
         self.list_offset = 0;
         self.list_filter.clear();
@@ -4803,15 +4941,12 @@ impl App {
     /// After a rescan the zoom overlay's cloned artifact is stale: rebind it
     /// to the fresh view, or close it when the artifact no longer exists.
     fn refresh_open_preview(&mut self) {
-        let Some((open, scroll)) = self.preview.as_ref().map(|preview| {
+        let Some(open) = self.preview.as_ref().map(|preview| {
             let artifact = preview.artifact();
             (
-                (
-                    artifact.module.clone(),
-                    artifact.kind.clone(),
-                    artifact.name.clone(),
-                ),
-                preview.scroll(),
+                artifact.module.clone(),
+                artifact.kind.clone(),
+                artifact.name.clone(),
             )
         }) else {
             return;
@@ -4828,11 +4963,13 @@ impl App {
                     .find(|artifact| artifact.kind == open.1 && artifact.name == open.2)
             })
             .cloned();
-        self.preview = fresh.map(|artifact| {
-            let mut preview = ArtifactPreview::from_artifact(&artifact);
-            preview.scroll_down(scroll);
-            preview
-        });
+        if let Some(fresh) = fresh {
+            if let Some(preview) = self.preview.as_mut() {
+                preview.replace_artifact(&fresh);
+            }
+        } else {
+            self.preview = None;
+        }
     }
 
     fn cached_rows(&self) -> &[ListRow] {
@@ -5700,37 +5837,160 @@ impl App {
         if !artifact.sidecar_warning.is_empty() {
             lines.push(field("sidecar", artifact.sidecar_warning.clone()));
         }
-        lines.extend(sidecar_yaml_lines(module, artifact));
+        lines.extend(slsa_payload_lines(&artifact.provenance_raw));
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Full SLSA statement · raw sidecar",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        if artifact.provenance_raw.trim().is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No provenance sidecar is available for this artifact.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            lines.extend(rich::highlight_code(
+                "provenance.yaml",
+                artifact.provenance_raw.trim_end(),
+            ));
+        }
         lines
     }
 }
 
-/// The raw adoption sidecar, syntax-highlighted as YAML, appended to the
-/// provenance chain when the file exists next to the source.
-fn sidecar_yaml_lines(module: &ModuleView, artifact: &ArtifactView) -> Vec<Line<'static>> {
-    let Some(repo) = module.local_path.as_ref() else {
+/// Human-readable SLSA fields above the verbatim sidecar. The raw document is
+/// still rendered below; this index makes the high-value statement data easy
+/// to scan without hiding any extension fields.
+fn provenance_field(key: &str, value: impl Into<String>) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:<14}"), Style::default().fg(Color::Magenta)),
+        Span::raw(value.into()),
+    ])
+}
+
+fn yaml_string(value: Option<&serde_yaml::Value>) -> Option<&str> {
+    value.and_then(serde_yaml::Value::as_str)
+}
+
+fn yaml_digest(value: &serde_yaml::Value) -> &str {
+    yaml_string(value.get("digest").and_then(|map| map.get("sha256"))).unwrap_or("missing")
+}
+
+fn slsa_builder_id<'a>(
+    predicate: Option<&'a serde_yaml::Value>,
+    run: Option<&'a serde_yaml::Value>,
+) -> &'a str {
+    yaml_string(
+        run.and_then(|value| value.get("builder"))
+            .and_then(|value| value.get("id"))
+            .or_else(|| {
+                predicate
+                    .and_then(|value| value.get("builder"))
+                    .and_then(|value| value.get("id"))
+            }),
+    )
+    .unwrap_or("missing")
+}
+
+fn slsa_payload_lines(raw: &str) -> Vec<Line<'static>> {
+    if raw.trim().is_empty() {
         return Vec::new();
+    }
+    let Ok(document) = serde_yaml::from_str::<serde_yaml::Value>(raw) else {
+        return vec![
+            Line::default(),
+            provenance_field("SLSA payload", "invalid YAML"),
+        ];
     };
-    let source = if artifact.source_path.is_empty() {
-        artifact.relative_path.as_str()
-    } else {
-        artifact.source_path.as_str()
-    };
-    let sidecar = Path::new(source).with_extension("yaml");
-    let Ok(content) = std::fs::read_to_string(repo.join(&sidecar)) else {
-        return Vec::new();
-    };
+    let statement = document.get("provenance").unwrap_or(&document);
+    let predicate = statement.get("predicate");
+    let build = predicate.and_then(|value| value.get("buildDefinition"));
+    let run = predicate.and_then(|value| value.get("runDetails"));
     let mut lines = vec![
-        Line::from(""),
+        Line::default(),
         Line::from(Span::styled(
-            format!("Sidecar · {}", sidecar.display()),
+            "SLSA payload",
             Style::default().add_modifier(Modifier::BOLD),
         )),
+        provenance_field(
+            "predicateType",
+            yaml_string(statement.get("predicateType")).unwrap_or("missing from legacy sidecar"),
+        ),
+        provenance_field("builder id", slsa_builder_id(predicate, run)),
     ];
-    lines.extend(rich::highlight_code(
-        &sidecar.to_string_lossy(),
-        content.trim_end(),
-    ));
+
+    if let Some(subjects) = statement
+        .get("subject")
+        .and_then(serde_yaml::Value::as_sequence)
+    {
+        lines.push(Line::from(Span::styled(
+            format!("Subjects · {}", subjects.len()),
+            styles::file_header_style(),
+        )));
+        for subject in subjects {
+            lines.push(provenance_field(
+                "subject",
+                yaml_string(subject.get("name")).unwrap_or("unnamed"),
+            ));
+            lines.push(provenance_field("sha256", yaml_digest(subject)));
+        }
+    }
+
+    if let Some(materials) = build
+        .and_then(|value| value.get("resolvedDependencies"))
+        .or_else(|| predicate.and_then(|value| value.get("materials")))
+        .and_then(serde_yaml::Value::as_sequence)
+    {
+        lines.push(Line::from(Span::styled(
+            format!("Materials · {}", materials.len()),
+            styles::file_header_style(),
+        )));
+        for material in materials {
+            let name = yaml_string(material.get("name"))
+                .or_else(|| yaml_string(material.get("uri")))
+                .unwrap_or("unnamed");
+            lines.push(provenance_field("material", name));
+            lines.push(provenance_field("sha256", yaml_digest(material)));
+        }
+    }
+
+    if let Some(invocation) = build
+        .and_then(|value| value.get("externalParameters"))
+        .or_else(|| predicate.and_then(|value| value.get("invocation")))
+    {
+        lines.push(Line::from(Span::styled(
+            "Invocation · externalParameters",
+            styles::file_header_style(),
+        )));
+        if let Ok(rendered) = serde_yaml::to_string(invocation) {
+            lines.extend(
+                rendered
+                    .trim_end()
+                    .lines()
+                    .map(|line| provenance_field("", line.to_string())),
+            );
+        }
+    }
+
+    if let Some(metadata) = run
+        .and_then(|value| value.get("metadata"))
+        .or_else(|| predicate.and_then(|value| value.get("metadata")))
+    {
+        lines.push(Line::from(Span::styled(
+            "Metadata",
+            styles::file_header_style(),
+        )));
+        for key in [
+            "startedOn",
+            "finishedOn",
+            "buildStartedOn",
+            "buildFinishedOn",
+        ] {
+            if let Some(value) = yaml_string(metadata.get(key)) {
+                lines.push(provenance_field(key, value));
+            }
+        }
+    }
     lines
 }
 
@@ -5933,11 +6193,8 @@ fn column_block(title: &str, focused: bool) -> Block<'_> {
     Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(if focused {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        })
+        .style(styles::panel_style())
+        .border_style(styles::border_style(focused))
 }
 
 fn default_column_widths() -> MillerColumnWidths {
@@ -5994,10 +6251,7 @@ fn usize_to_u16(value: usize) -> u16 {
 
 fn selected_style(focused: bool) -> Style {
     if focused {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+        styles::selected_style().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
             .fg(Color::White)
@@ -6420,6 +6674,10 @@ fn detail_cache_key(tab: DetailTab, module: &str, path: &str) -> String {
     format!("{tab:?}:{module}:{path}")
 }
 
+fn detail_cache_target(key: &str) -> Option<&str> {
+    key.split_once(':').map(|(_, target)| target)
+}
+
 /// Reads the artifact from its current source origin. The scan-time payload is
 /// retained as a fallback for deployed-only artifacts and vanished worktrees.
 fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, String) {
@@ -6535,13 +6793,6 @@ fn delete_comment_char_before(prompt: &mut CommentPrompt) {
     }
 }
 
-fn delete_comment_char_at(prompt: &mut CommentPrompt) {
-    let next = next_char_boundary(&prompt.text, prompt.cursor);
-    if next > prompt.cursor {
-        prompt.text.replace_range(prompt.cursor..next, "");
-    }
-}
-
 fn previous_char_boundary(text: &str, cursor: usize) -> usize {
     text[..cursor.min(text.len())]
         .char_indices()
@@ -6568,20 +6819,6 @@ fn comment_line_end(text: &str, cursor: usize) -> usize {
     text[cursor..]
         .find('\n')
         .map_or(text.len(), |offset| cursor + offset)
-}
-
-fn delete_comment_line(prompt: &mut CommentPrompt) {
-    let start = comment_line_start(&prompt.text, prompt.cursor);
-    let end = comment_line_end(&prompt.text, prompt.cursor);
-    let range = if end < prompt.text.len() {
-        start..end + 1
-    } else if start > 0 {
-        start - 1..end
-    } else {
-        start..end
-    };
-    prompt.text.replace_range(range.clone(), "");
-    prompt.cursor = range.start.min(prompt.text.len());
 }
 
 fn is_comment_word(character: char) -> bool {
@@ -6700,7 +6937,7 @@ fn diff_lines(
                         format!("{:>4} {:>4} ", "", index + 1),
                         Style::default().fg(Color::DarkGray),
                     ),
-                    Span::styled(format!("+{line}"), Style::default().fg(Color::Green)),
+                    Span::styled(format!("+{line}"), styles::diff_add_style()),
                 ])
             })),
             Err(error) => lines.push(Line::from(format!("could not read {path}: {error}"))),
@@ -6765,7 +7002,8 @@ fn diff_lines(
 /// One diff content row with its old/new number gutter, advancing the
 /// counters by the row's origin.
 fn numbered_diff_row(raw: &str, old_line: &mut usize, new_line: &mut usize) -> Line<'static> {
-    let gutter = match raw.chars().next() {
+    let origin = raw.chars().next();
+    let gutter = match origin {
         Some('+') => {
             let gutter = format!("{:>4} {:>4} ", "", new_line);
             *new_line += 1;
@@ -6783,9 +7021,43 @@ fn numbered_diff_row(raw: &str, old_line: &mut usize, new_line: &mut usize) -> L
             gutter
         }
     };
-    let mut spans = vec![Span::styled(gutter, Style::default().fg(Color::DarkGray))];
-    spans.extend(diff_line_colored(raw).spans);
+    let mut spans = vec![Span::styled(gutter, styles::dim_style())];
+    match origin {
+        Some('+') => {
+            spans.push(Span::styled("▌ ", styles::diff_add_style()));
+            spans.push(Span::styled(
+                raw.strip_prefix('+').unwrap_or(raw).to_string(),
+                styles::diff_add_style(),
+            ));
+        }
+        Some('-') => {
+            spans.push(Span::styled("▌ ", styles::diff_del_style()));
+            spans.push(Span::styled(
+                raw.strip_prefix('-').unwrap_or(raw).to_string(),
+                styles::diff_del_style(),
+            ));
+        }
+        _ => {
+            spans.push(Span::styled("  ", styles::diff_context_style()));
+            spans.push(Span::styled(
+                raw.strip_prefix(' ').unwrap_or(raw).to_string(),
+                styles::diff_context_style(),
+            ));
+        }
+    }
     Line::from(spans)
+}
+
+/// Reserve tuicr's leftmost cursor-indicator cell on every unified-diff row.
+fn with_diff_indicators(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|mut line| {
+            line.spans
+                .insert(0, Span::styled(" ", styles::current_line_indicator_style()));
+            line
+        })
+        .collect()
 }
 
 /// Parses `@@ -35,7 +36,8 @@ …` into the starting old and new line numbers.
@@ -6815,11 +7087,16 @@ fn diff_line_map(lines: &[Line<'_>]) -> Vec<Option<usize>> {
     let mut map = Vec::with_capacity(lines.len());
     let mut last: Option<usize> = None;
     for line in lines {
-        let first = line.spans.first().map_or("", |span| span.content.as_ref());
-        let value = if first.trim_start().starts_with('↪') {
+        let gutter = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .find(|content| content.trim_start().starts_with('↪') || content.width() >= 10)
+            .unwrap_or("");
+        let value = if gutter.trim_start().starts_with('↪') {
             last
         } else {
-            parse_gutter_new_line(first)
+            parse_gutter_new_line(gutter)
         };
         map.push(value);
         last = value;
@@ -7000,19 +7277,17 @@ fn hunk_offsets(lines: &[Line<'_>]) -> Vec<usize> {
 
 fn diff_line_colored(line: &str) -> Line<'static> {
     let style = if line.starts_with("+++") || line.starts_with("---") {
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD)
+        styles::file_header_style()
     } else if line.starts_with('+') {
-        Style::default().fg(Color::Green)
+        styles::diff_add_style()
     } else if line.starts_with('-') {
-        Style::default().fg(Color::Red)
+        styles::diff_del_style()
     } else if line.starts_with("@@") {
-        Style::default().fg(Color::Cyan)
+        styles::diff_hunk_header_style()
     } else if line.starts_with("diff ") || line.starts_with("index ") {
-        Style::default().fg(Color::DarkGray)
+        styles::dim_style()
     } else {
-        Style::default()
+        styles::diff_context_style()
     };
     Line::from(Span::styled(line.to_string(), style))
 }

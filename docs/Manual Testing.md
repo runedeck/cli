@@ -126,9 +126,10 @@ In an artifact's Code tab, verify the review controls: `12j`, `5G`, `gg`, and
 `zz` move or position the line cursor; `]]`/`[[` jump Markdown sections; `/`
 highlights matches incrementally and `n`/`N` repeat the search. Press `V`,
 extend with `j`/`k` or a count, then `c` to comment the selected range. The
-comment box starts in insert mode; `Esc` enters normal mode, where
-`i`/`a`/`A`/`o`, `dd`, `x`, and `w`/`b` work. Save with `:w` or Ctrl-S. A
-dirty `:q`, `q`, or normal-mode `Esc` asks for confirmation before discarding.
+comment box is a direct input: type text and press Enter (or Ctrl-S) to save;
+Shift/Alt-Enter or Ctrl-J/Ctrl-K inserts a newline, Tab/Shift-Tab changes the
+comment kind, and Esc cancels. The first Esc on a dirty comment asks for
+confirmation; the second discards it.
 Mouse-wheel scrolling must move only the viewport while a visual selection is
 active. `;e` opens the cast editor and `;q` quits.
 

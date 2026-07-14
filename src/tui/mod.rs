@@ -1,11 +1,13 @@
 pub mod app;
 mod cast_editor;
 mod comment_navigator;
+mod comment_panel;
 pub mod components;
 pub mod event;
 mod file_editor;
 mod modal_editor;
 mod rich;
+mod styles;
 mod word_wrap;
 
 use std::{

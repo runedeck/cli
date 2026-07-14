@@ -1,13 +1,15 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use commands::review::CommentKind;
+
+use super::{comment_panel::wrap_segments, styles};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CommentNavigatorItem {
@@ -45,11 +47,8 @@ pub(super) fn render_comment_navigator(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if focused {
-            Color::Cyan
-        } else {
-            Color::DarkGray
-        }));
+        .style(styles::panel_style())
+        .border_style(styles::border_style(focused));
     let inner = block.inner(area);
     state.viewport_height = usize::from(inner.height);
 
@@ -59,12 +58,7 @@ pub(super) fn render_comment_navigator(
         .map(ListItem::new)
         .collect::<Vec<_>>();
     let list = List::new(rows)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(styles::selected_style())
         .block(block);
     frame.render_stateful_widget(list, area, &mut state.list_state);
 }
@@ -80,58 +74,10 @@ fn render_comment_row(item: &CommentNavigatorItem, width: usize) -> Line<'static
         .unwrap_or_default()
         .to_string();
     Line::from(vec![
-        Span::styled(kind, comment_kind_style(item.kind)),
+        Span::styled(kind, styles::comment_type_style(item.kind)),
         Span::raw(" "),
         Span::styled(location, Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
         Span::raw(first_segment),
     ])
-}
-
-fn comment_kind_style(kind: CommentKind) -> Style {
-    let color = match kind {
-        CommentKind::Issue => Color::Red,
-        CommentKind::Note => Color::Blue,
-        CommentKind::Suggestion => Color::Yellow,
-        CommentKind::Praise => Color::Green,
-    };
-    Style::default().fg(color).add_modifier(Modifier::BOLD)
-}
-
-/// Split text by display width, transliterated from tuicr's comment panel.
-pub(super) fn wrap_segments(text: &str, content_area: usize) -> Vec<&str> {
-    if content_area == 0 || text.width() <= content_area {
-        return vec![text];
-    }
-    let mut segments = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        let mut take_bytes = 0usize;
-        let mut taken_width = 0usize;
-        for character in remaining.chars() {
-            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-            if taken_width + character_width > content_area {
-                break;
-            }
-            taken_width += character_width;
-            take_bytes += character.len_utf8();
-        }
-        if take_bytes == 0 {
-            take_bytes = remaining.chars().next().map_or(0, char::len_utf8);
-        }
-        let (segment, rest) = remaining.split_at(take_bytes);
-        segments.push(segment);
-        remaining = rest;
-    }
-    segments
-}
-
-#[cfg(test)]
-mod tests {
-    use super::wrap_segments;
-
-    #[test]
-    fn wrap_segments_uses_terminal_display_width() {
-        assert_eq!(wrap_segments("a中b文", 3), vec!["a中", "b文"]);
-    }
 }
