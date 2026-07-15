@@ -331,22 +331,11 @@ fn resolve_exec(
     })
 }
 
-/// Reject a script that escapes its skill directory. Both paths are resolved to
-/// their canonical form first so `..` components and symlinks cannot slip past
-/// the containment check (path-boundary validation).
+/// Reject a script that escapes its skill directory (path-boundary validation).
 fn ensure_within(skill_dir: &Path, script_path: &Path) -> Result<(), ExecError> {
-    let base = std::fs::canonicalize(skill_dir)
-        .map_err(|error| ExecError::new(3, format!("cannot resolve skill directory: {error}")))?;
-    let target = std::fs::canonicalize(script_path)
-        .map_err(|error| ExecError::new(3, format!("cannot resolve script path: {error}")))?;
-    if target.starts_with(&base) {
-        Ok(())
-    } else {
-        Err(ExecError::new(
-            3,
-            format!("script escapes skill directory: {}", script_path.display()),
-        ))
-    }
+    commands::services::confine::confine_existing(skill_dir, script_path)
+        .map(|_| ())
+        .map_err(|message| ExecError::new(3, message))
 }
 
 fn resolve_skill_dir(skill: &str, root: &Path, extensions: &[PathBuf]) -> Option<PathBuf> {

@@ -7,6 +7,7 @@
 
 mod adr;
 pub mod builders;
+pub mod confine;
 mod discovery;
 pub mod editing;
 pub mod files;

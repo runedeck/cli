@@ -153,7 +153,7 @@ fn script_escaping_skill_dir_is_rejected() {
 
     let error = run(&options, &context(root.to_path_buf())).expect_err("traversal rejected");
     assert_eq!(error.code, 3);
-    assert!(error.message.contains("escapes skill directory"));
+    assert!(error.message.contains("escapes"), "{}", error.message);
 }
 
 #[test]

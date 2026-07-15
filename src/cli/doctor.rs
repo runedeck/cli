@@ -404,58 +404,14 @@ fn matching_build_source(
     if manifest::content_sha256(&content) != expected_digest {
         return Ok(None);
     }
-    let resolved_build = build_root.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", build_root.display()),
-        )
-    })?;
-    let resolved_candidate = candidate.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", candidate.display()),
-        )
-    })?;
-    if !resolved_candidate.starts_with(&resolved_build) {
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!(
-                "repair source escapes build directory: {}",
-                candidate.display()
-            ),
-        ));
-    }
+    let resolved_candidate = commands::services::confine::confine_existing(&build_root, &candidate)
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
     Ok(Some(resolved_candidate))
 }
 
 fn ensure_destination_within(destination: &Path, target: &Path) -> Result<(), Error> {
-    let resolved_target = target.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", target.display()),
-        )
-    })?;
-    let existing = destination
-        .ancestors()
-        .find(|ancestor| ancestor.exists())
-        .unwrap_or(target);
-    let resolved_existing = existing.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", existing.display()),
-        )
-    })?;
-    if resolved_existing.starts_with(&resolved_target) {
-        Ok(())
-    } else {
-        Err(Error::new(
-            ErrorKind::Config,
-            format!(
-                "repair destination escapes target: {}",
-                destination.display()
-            ),
-        ))
-    }
+    commands::services::confine::confine_for_write(target, destination)
+        .map_err(|message| Error::new(ErrorKind::Config, message))
 }
 
 fn prune_empty_parents(start: Option<&Path>, stop: &Path) {
