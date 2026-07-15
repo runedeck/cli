@@ -398,7 +398,7 @@ enum Command {
 
     /// Adopt an upstream rune into a single-module source with provenance
     Adopt {
-        /// HTTPS URL of the upstream rune. file:// is allowed for tests.
+        /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree. file:// is allowed for tests.
         url: String,
 
         /// Target single-module root. Defaults to the current directory.
@@ -416,6 +416,10 @@ enum Command {
         /// Rune kind to adopt.
         #[arg(long, value_enum, default_value_t = adopt::Kind::Skill)]
         kind: adopt::Kind,
+
+        /// Upstream URL to record in provenance when adopting a local directory (attribution).
+        #[arg(long, value_name = "URL")]
+        source_url: Option<String>,
 
         /// Print the planned fetch, placement, and sidecar without writing files.
         #[arg(long)]
@@ -834,6 +838,7 @@ pub fn run() -> i32 {
             name,
             companion,
             kind,
+            source_url,
             dry_run,
         } => {
             return exit_code(adopt::execute(
@@ -842,6 +847,7 @@ pub fn run() -> i32 {
                 name.as_deref(),
                 companion.as_deref(),
                 kind,
+                source_url.as_deref(),
                 dry_run,
             ));
         }

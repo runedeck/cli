@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `rune adopt` accepts a local directory and adopts the whole skill tree: `SKILL.md` is aligned to the target name, every other file (markdown companions, worker-agent prompts, scripts, binary assets) is copied byte-for-byte, and each adopted file gets its own regenerated provenance sidecar. The upstream's own `.provenance/` directories are ignored. `--source-url` records upstream attribution when adopting from a local checkout.
 - Native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`, including agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.
 - Spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.
 - `rune doctor` manifest integrity reporting with CI verification and conservative repair that preserves user-modified files.

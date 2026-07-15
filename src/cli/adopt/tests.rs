@@ -223,3 +223,102 @@ fn symlink_destination_is_rejected() {
     .expect_err("symlink destination must be rejected");
     assert!(error.contains("symlink"), "got: {error}");
 }
+
+/// Build a fixture skill tree: aligned SKILL.md, a markdown companion, a
+/// binary asset, an executable script, and an upstream `.provenance/` that
+/// adoption must ignore.
+fn skill_tree_fixture() -> tempfile::TempDir {
+    let source = tempfile::tempdir().expect("source tree");
+    let root = source.path().join("skill-creator");
+    std::fs::create_dir_all(root.join("scripts")).expect("scripts dir");
+    std::fs::create_dir_all(root.join(".provenance")).expect("upstream provenance dir");
+    std::fs::write(
+        root.join("SKILL.md"),
+        "---\nname: upstream\ndescription: Use when building skills.\n---\n\n# Upstream\n\nBody.\n",
+    )
+    .expect("SKILL.md");
+    std::fs::write(root.join("references.md"), "# Reference\n\nStatic notes.\n")
+        .expect("companion");
+    std::fs::write(root.join("logo.png"), [0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]).expect("asset");
+    std::fs::write(root.join("scripts/run.py"), "print('eval loop')\n").expect("script");
+    std::fs::write(
+        root.join(".provenance/SKILL.yaml"),
+        "upstream forge sidecar\n",
+    )
+    .expect("stale");
+    source
+}
+
+#[test]
+fn adopt_tree_copies_non_markdown_verbatim_and_aligns_skill() {
+    let dir = module();
+    let source = skill_tree_fixture();
+    let source_root = source.path().join("skill-creator");
+
+    execute(
+        source_root.to_str().expect("utf8 path"),
+        dir.path().to_str().expect("utf8 temp path"),
+        Some("BuildSkill"),
+        None,
+        Kind::Skill,
+        Some("https://github.com/anthropics/skills"),
+        false,
+    )
+    .expect("tree adoption succeeds");
+
+    let skill_root = dir.path().join("skills/BuildSkill");
+
+    let skill_md = std::fs::read_to_string(skill_root.join("SKILL.md")).expect("SKILL.md");
+    assert!(
+        skill_md.contains("name: BuildSkill"),
+        "SKILL.md aligned to new name"
+    );
+
+    let png = std::fs::read(skill_root.join("logo.png")).expect("asset");
+    assert_eq!(
+        png,
+        [0x89, 0x50, 0x4e, 0x47, 0x00, 0xff],
+        "binary asset copied byte-for-byte"
+    );
+
+    let script = std::fs::read_to_string(skill_root.join("scripts/run.py")).expect("script");
+    assert_eq!(
+        script, "print('eval loop')\n",
+        "script copied verbatim, frontmatter untouched"
+    );
+
+    let companion = std::fs::read_to_string(skill_root.join("references.md")).expect("companion");
+    assert!(
+        companion.contains("# Reference"),
+        "markdown companion copied whole"
+    );
+
+    assert!(
+        skill_root.join(".provenance/logo.yaml").is_file(),
+        "each adopted file gets a regenerated sidecar"
+    );
+    assert!(
+        skill_root.join("scripts/.provenance/run.yaml").is_file(),
+        "nested files get sidecars mirroring their directory"
+    );
+    assert!(
+        !skill_root.join(".provenance/SKILL.yaml").is_file()
+            || !std::fs::read_to_string(skill_root.join(".provenance/SKILL.yaml"))
+                .expect("sidecar")
+                .contains("upstream forge sidecar"),
+        "the upstream's own provenance must be regenerated, not carried over"
+    );
+
+    let asset_sidecar = manifest::provenance::read(&skill_root.join(".provenance/logo.yaml"))
+        .expect("asset sidecar");
+    assert_eq!(
+        asset_sidecar
+            .provenance
+            .predicate
+            .build_definition
+            .external_parameters
+            .transforms_applied,
+        vec!["copy".to_string()],
+        "verbatim copies record the copy transform, not align"
+    );
+}

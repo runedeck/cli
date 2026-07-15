@@ -11,6 +11,8 @@ use std::sync::LazyLock;
 /// misconfigured server cannot exhaust memory.
 const MAX_ADOPT_BYTES: u64 = 10 * 1024 * 1024;
 
+mod tree;
+
 #[cfg(test)]
 mod tests;
 
@@ -42,9 +44,29 @@ pub fn execute(
     name: Option<&str>,
     companion: Option<&str>,
     kind: Kind,
+    source_url: Option<&str>,
     dry_run: bool,
 ) -> Result<i32, String> {
+    if let Some(directory) = local_directory_source(url) {
+        if companion.is_some() {
+            return Err(
+                "--companion adopts a single file; a directory adopts the whole tree".to_string(),
+            );
+        }
+        let module_root = canonical_module_root(Path::new(module))?;
+        let attribution = source_url.unwrap_or(url);
+        return tree::adopt_tree(&directory, &module_root, name, attribution, dry_run);
+    }
     execute_with_fetcher(url, module, name, companion, kind, dry_run, fetch)
+}
+
+/// A bare path or `file://` URL that resolves to a directory selects
+/// whole-tree adoption; anything else is a single-file fetch.
+fn local_directory_source(url: &str) -> Option<PathBuf> {
+    let candidate = url
+        .strip_prefix("file://")
+        .map_or_else(|| PathBuf::from(url), PathBuf::from);
+    candidate.is_dir().then_some(candidate)
 }
 
 fn execute_with_fetcher<F>(

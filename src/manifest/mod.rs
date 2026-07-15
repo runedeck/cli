@@ -11,7 +11,9 @@ use sha2::{Digest, Sha256};
 
 pub use read::read;
 pub use staleness::check_sources;
-pub use statement::{generate_adopt_statement, generate_statement};
+pub use statement::{
+    generate_adopt_statement, generate_adopt_statement_with_transforms, generate_statement,
+};
 pub use status::status;
 pub use write::write;
 
@@ -67,8 +69,12 @@ pub fn sidecar_path(content_path: &std::path::Path) -> std::path::PathBuf {
 }
 
 pub fn content_sha256(content: &str) -> String {
+    content_sha256_bytes(content.as_bytes())
+}
+
+pub fn content_sha256_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
+    hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 

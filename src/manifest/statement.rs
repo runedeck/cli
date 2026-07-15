@@ -66,6 +66,24 @@ pub fn generate_adopt_statement(
     upstream_commit: &str,
     upstream_digest: &str,
 ) -> String {
+    generate_adopt_statement_with_transforms(
+        subject_name,
+        subject_digest,
+        upstream_url,
+        upstream_commit,
+        upstream_digest,
+        &["align"],
+    )
+}
+
+pub fn generate_adopt_statement_with_transforms(
+    subject_name: &str,
+    subject_digest: &str,
+    upstream_url: &str,
+    upstream_commit: &str,
+    upstream_digest: &str,
+    transforms: &[&str],
+) -> String {
     let sidecar = ProvenanceSidecar {
         provenance: ProvenanceStatement {
             statement_type: STATEMENT_TYPE.to_string(),
@@ -82,7 +100,10 @@ pub fn generate_adopt_statement(
                     external_parameters: ExternalParameters {
                         upstream_url: upstream_url.to_string(),
                         upstream_commit: Some(upstream_commit.to_string()),
-                        transforms_applied: vec!["align".to_string()],
+                        transforms_applied: transforms
+                            .iter()
+                            .map(|transform| (*transform).to_string())
+                            .collect(),
                         ..ExternalParameters::default()
                     },
                     resolved_dependencies: vec![Dependency {
