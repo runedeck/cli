@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - Security scanners (gitleaks, semgrep) run only with `rune validate --scan`, the mode commit and push hooks use. Plain `rune validate`, `rune status`, and the TUI stay in-process and fast.
+- `ruff check` honors `validate.exclude`, so a deck can skip linting adopted upstream code it copied verbatim.
 
 ### Fixed
 

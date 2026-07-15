@@ -19,7 +19,7 @@ pub fn run_external_checks(module_root: &Path, scan: bool, report: &mut Validati
     check_shellcheck(module_root, report);
     check_cargo(module_root, report);
     check_typescript(module_root, report);
-    check_ruff(module_root, report);
+    check_ruff(module_root, &exclude_patterns, report);
     if scan {
         check_gitleaks(module_root, report);
         check_semgrep(module_root, report);
@@ -213,7 +213,7 @@ fn check_typescript(module_root: &Path, report: &mut ValidationReport) {
     }
 }
 
-fn check_ruff(module_root: &Path, report: &mut ValidationReport) {
+fn check_ruff(module_root: &Path, exclude_patterns: &[String], report: &mut ValidationReport) {
     if !has_tool("ruff") {
         return;
     }
@@ -223,7 +223,16 @@ fn check_ruff(module_root: &Path, report: &mut ValidationReport) {
         return;
     }
 
-    if run_command("ruff", &["check", "."], module_root) {
+    let mut arguments = vec!["check".to_string(), ".".to_string()];
+    for pattern in exclude_patterns {
+        arguments.push("--exclude".to_string());
+        // The shared exclude form is `dir/*` (see `is_excluded`); ruff matches a
+        // directory prefix without the trailing glob.
+        arguments.push(pattern.strip_suffix("/*").unwrap_or(pattern).to_string());
+    }
+    let argument_refs: Vec<&str> = arguments.iter().map(String::as_str).collect();
+
+    if run_command("ruff", &argument_refs, module_root) {
         report.pass("ruff check");
     } else {
         report.fail("ruff check", "ruff found issues".to_string());
