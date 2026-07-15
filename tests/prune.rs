@@ -463,6 +463,57 @@ fn prune_overrides_modified_file_with_force() {
     );
 }
 
+// --- path-traversal defense: a poisoned manifest key cannot escape target ---
+
+#[test]
+fn prune_refuses_traversal_manifest_key() {
+    let module = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+
+    scaffold_module_with_repo(
+        module.path(),
+        "poison-module",
+        "https://github.com/example/poison-module",
+    );
+    create_skill(module.path(), "AlphaSkill");
+    create_skill(module.path(), "GammaSkill");
+    install(module.path(), target.path(), &[]).success();
+
+    // A file outside the target that a traversal key would reach.
+    let victim = target.path().join("victim.txt");
+    fs::write(&victim, "must survive\n").unwrap();
+
+    // Poison the deployed manifest with a stale entry whose flattened key
+    // climbs out of the target via `..` segments, injected inside the existing
+    // `skills:` mapping so the YAML stays valid.
+    let manifest_path = target.path().join(".claude/.manifest");
+    let original = fs::read_to_string(&manifest_path).unwrap();
+    let poisoned = original.replace(
+        "skills:\n",
+        "skills:\n  '..':\n    '..':\n      victim.txt:\n        fingerprint: deadbeef\n",
+    );
+    assert_ne!(
+        poisoned, original,
+        "manifest must contain a skills: mapping"
+    );
+    fs::write(&manifest_path, poisoned).unwrap();
+
+    // Drop AlphaSkill so a prune pass runs; GammaSkill keeps the provider tree alive.
+    fs::remove_dir_all(module.path().join("skills/AlphaSkill")).unwrap();
+    let output = install(module.path(), target.path(), &["--force"]).success();
+
+    assert!(
+        victim.is_file(),
+        "traversal key must not reach outside target"
+    );
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "must survive\n");
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("malformed manifest key"),
+        "prune must warn about the rejected key, got:\n{stderr}"
+    );
+}
+
 // --- hand-installed files are invisible to prune ---
 
 #[test]

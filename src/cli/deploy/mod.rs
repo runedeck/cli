@@ -329,6 +329,15 @@ fn prune_stale_files(
                 .iter()
                 .any(|prefix| key.starts_with(prefix))
         })
+        .filter(|(key, _)| {
+            let confined = std::path::Path::new(key)
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)));
+            if !confined {
+                eprintln!("rune prune: ignoring malformed manifest key {key}");
+            }
+            confined
+        })
         .filter(|(key, entry)| {
             if key.starts_with("hooks/") && !is_consumer {
                 key.starts_with(&format!("hooks/{module_deck}/"))
