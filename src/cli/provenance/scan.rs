@@ -133,12 +133,12 @@ fn collect_recursive(
             .clone();
 
         let output_hash = &sidecar.provenance.subject[0].digest.sha256;
-        let deployed_content = fs::read_to_string(&path).unwrap_or_default();
-        let deployed_hash = manifest::content_sha256(&deployed_content);
+        let verified = fs::read_to_string(&path)
+            .is_ok_and(|content| manifest::content_sha256(&content) == *output_hash);
 
         let counts = by_source.entry(source).or_insert((0, 0));
         counts.1 += 1;
-        if deployed_hash == *output_hash {
+        if verified {
             counts.0 += 1;
         }
     }
@@ -309,10 +309,18 @@ fn verify_sidecar(module_root: &Path, sidecar_path: &Path) -> SidecarReport {
     let definition = &statement.predicate.build_definition;
 
     let (verified, actual) = match resolve_in_repo(module_root, &subject.name) {
-        Some(resolved) => {
-            let hash = manifest::content_sha256(&fs::read_to_string(&resolved).unwrap_or_default());
-            (hash == subject.digest.sha256, hash)
-        }
+        Some(resolved) => match fs::read_to_string(&resolved) {
+            Ok(content) => {
+                let hash = manifest::content_sha256(&content);
+                (hash == subject.digest.sha256, hash)
+            }
+            Err(error) => {
+                return error_report(
+                    label,
+                    format!("cannot read {}: {error}", resolved.display()),
+                );
+            }
+        },
         None => (false, String::new()),
     };
 
@@ -344,13 +352,19 @@ fn verify_dependency(
         return None;
     }
     let resolved = resolve_in_repo_dependency(module_root, &dependency.uri)?;
-    let hash = manifest::content_sha256(&fs::read_to_string(&resolved).unwrap_or_default());
+    let (verified, actual) = match fs::read_to_string(&resolved) {
+        Ok(content) => {
+            let hash = manifest::content_sha256(&content);
+            (hash == dependency.digest.sha256, hash)
+        }
+        Err(_) => (false, "unreadable".to_string()),
+    };
     Some(DependencyReport {
         name: dependency.name.clone(),
         uri: dependency.uri.clone(),
-        verified: hash == dependency.digest.sha256,
+        verified,
         expected_sha256: dependency.digest.sha256.clone(),
-        actual_sha256: hash,
+        actual_sha256: actual,
     })
 }
 

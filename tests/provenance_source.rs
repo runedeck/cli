@@ -59,7 +59,10 @@ fn provenance_source_fails_on_stale_subject() {
     rune()
         .args(["provenance", "--target", repo.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .failure()
+        .stdout(predicates::str::contains(
+            "skills/Adopted/SKILL.md → stale (content changed since adoption)",
+        ));
 }
 
 #[test]

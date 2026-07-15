@@ -63,7 +63,12 @@ pub fn execute(
     let details = &statement.predicate.run_details;
     let output_hash = &statement.subject[0].digest.sha256;
 
-    let deployed_content = fs::read_to_string(file_path).unwrap_or_default();
+    let deployed_content = fs::read_to_string(file_path).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", file_path.display()),
+        )
+    })?;
     let deployed_hash = manifest::content_sha256(&deployed_content);
     let chain_verified = deployed_hash == *output_hash;
 
