@@ -188,22 +188,23 @@ impl ValidationReport {
 ///   - Required/optional files from validation config
 ///   - agents/, rules/ — frontmatter against `.schema.yaml`, structure against `.mdschema`
 ///   - skills/ — recurses into subdirectories, checks `.mdschema`
-pub fn execute(path: &str, json: bool) -> Result<i32, Error> {
-    let report = validate(path)?;
+pub fn execute(path: &str, json: bool, scan: bool) -> Result<i32, Error> {
+    let report = validate(path, scan)?;
     print_report(&report, json);
     Ok(i32::from(report.result.has_errors()))
 }
 
 /// Validate a source without printing, for live consumers such as the TUI.
+/// Security scanners stay off: they belong to commit and push hooks.
 pub(crate) fn validate_source(path: &Path) -> Result<SourceValidationReport, Error> {
-    let report = validate(&path.to_string_lossy())?;
+    let report = validate(&path.to_string_lossy(), false)?;
     Ok(SourceValidationReport {
         checked: report.items.len(),
         violations: report.violations,
     })
 }
 
-fn validate(path: &str) -> Result<ValidationReport, Error> {
+fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
     let module_root = Path::new(path);
     if commands::deck::is_deck(module_root) {
         let deck = commands::deck::load(module_root)
@@ -211,7 +212,7 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
         let mut aggregate = ValidationReport::default();
         check_spec_lifecycle(module_root, &mut aggregate)?;
         for deck_entry in deck.entries {
-            let mut deck_entry_report = match validate_module(&deck_entry.root, false) {
+            let mut deck_entry_report = match validate_module(&deck_entry.root, false, scan) {
                 Ok(result) => result,
                 Err(error) => {
                     aggregate.fail(&deck_entry.name, format!("{}: {error}", deck_entry.name));
@@ -234,12 +235,13 @@ fn validate(path: &str) -> Result<ValidationReport, Error> {
         }
         return Ok(aggregate);
     }
-    validate_module(module_root, true)
+    validate_module(module_root, true, scan)
 }
 
 fn validate_module(
     module_root: &Path,
     check_deploy_baseline: bool,
+    scan: bool,
 ) -> Result<ValidationReport, Error> {
     let mut report = ValidationReport::default();
 
@@ -299,7 +301,7 @@ fn validate_module(
 
     plugin::check_plugin_scaffolding(module_root, &mut report);
 
-    tools::run_external_checks(module_root, &mut report);
+    tools::run_external_checks(module_root, scan, &mut report);
 
     Ok(report)
 }

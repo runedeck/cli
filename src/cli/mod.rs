@@ -333,6 +333,10 @@ enum Command {
         /// Rune source or deck root to validate. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
+
+        /// Run security scanners (gitleaks, semgrep) — intended for commit and push hooks
+        #[arg(long)]
+        scan: bool,
     },
 
     /// Show provenance information for a deployed file or directory
@@ -771,8 +775,8 @@ pub fn run() -> i32 {
             target,
             skip_provenance,
         } => (copy::execute(&source, &target, skip_provenance), "copied"),
-        Command::Validate { source } => {
-            return exit_code(validate::execute(&source, args.json));
+        Command::Validate { source, scan } => {
+            return exit_code(validate::execute(&source, args.json, scan));
         }
         Command::Provenance {
             target,

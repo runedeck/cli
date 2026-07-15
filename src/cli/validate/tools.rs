@@ -10,7 +10,7 @@ const SEMGREP_ENVIRONMENT: &[(&str, &str)] = &[
     ("SEMGREP_SEND_METRICS", "off"),
 ];
 
-pub fn run_external_checks(module_root: &Path, report: &mut ValidationReport) {
+pub fn run_external_checks(module_root: &Path, scan: bool, report: &mut ValidationReport) {
     let exclude_patterns = load_exclude_patterns(module_root);
 
     check_trailing_whitespace(module_root, &exclude_patterns, report);
@@ -20,8 +20,10 @@ pub fn run_external_checks(module_root: &Path, report: &mut ValidationReport) {
     check_cargo(module_root, report);
     check_typescript(module_root, report);
     check_ruff(module_root, report);
-    check_gitleaks(module_root, report);
-    check_semgrep(module_root, report);
+    if scan {
+        check_gitleaks(module_root, report);
+        check_semgrep(module_root, report);
+    }
 }
 
 fn load_exclude_patterns(module_root: &Path) -> Vec<String> {

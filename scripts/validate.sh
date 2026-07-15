@@ -6,7 +6,15 @@ set -euo pipefail
 # Runs the same checks as `rune validate` without requiring the compiled binary.
 
 UPSTREAM_URL="https://raw.githubusercontent.com/runedeck/rune/main/scripts/validate.sh"
-MODULE_ROOT="${1:-.}"
+
+SCAN=false
+MODULE_ROOT="."
+for argument in "$@"; do
+    case "$argument" in
+        --scan) SCAN=true ;;
+        *) MODULE_ROOT="$argument" ;;
+    esac
+done
 ERRORS=0
 
 cd "$MODULE_ROOT"
@@ -232,9 +240,13 @@ check_mdschema() {
     fi
 }
 
-# --- Secret scanning ---
+# --- Secret scanning (only with --scan: commit and push hooks) ---
 
 check_secrets() {
+    if [ "$SCAN" != true ]; then
+        return
+    fi
+
     if ! command -v gitleaks >/dev/null 2>&1; then
         return
     fi
@@ -245,9 +257,13 @@ check_secrets() {
     fi
 }
 
-# --- OWASP scan ---
+# --- OWASP scan (only with --scan: commit and push hooks) ---
 
 check_semgrep() {
+    if [ "$SCAN" != true ]; then
+        return
+    fi
+
     if ! command -v semgrep >/dev/null 2>&1; then
         return
     fi

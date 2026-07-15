@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- Security scanners (gitleaks, semgrep) run only with `rune validate --scan`, the mode commit and push hooks use. Plain `rune validate`, `rune status`, and the TUI stay in-process and fast.
+
 ### Added
 
 - Native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`, including agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.

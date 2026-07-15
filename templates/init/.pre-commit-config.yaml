@@ -21,7 +21,13 @@ repos:
             types: [python]
 
           - id: gitleaks
-            name: gitleaks
+            name: gitleaks (staged)
+            entry: gitleaks git --staged --pre-commit --no-banner
+            language: system
+            pass_filenames: false
+
+          - id: gitleaks-tree
+            name: gitleaks (tree)
             entry: gitleaks detect --no-banner
             language: system
             pass_filenames: false
