@@ -78,7 +78,9 @@ fn drift_target_detects_edited_deployment() {
             target.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .failure()
+        .stdout(predicates::str::contains("rules/KeepDeployed.md"))
+        .stdout(predicates::str::contains("drifted"));
 }
 
 #[test]

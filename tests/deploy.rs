@@ -918,5 +918,9 @@ fn validate_catches_mdschema_violation() {
             module_directory.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .failure()
+        .stdout(predicates::str::contains(
+            "missing required frontmatter field 'status'",
+        ))
+        .stdout(predicates::str::contains("BadRule.md"));
 }

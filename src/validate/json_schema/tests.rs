@@ -21,6 +21,17 @@ fn frontmatter(yaml_body: &str) -> String {
     format!("---\n{yaml_body}\n---\nBody content.\n")
 }
 
+/// The violated field must be named in the diagnostic's instance path, so a
+/// failure elsewhere in the document cannot keep the test green.
+fn assert_violates(diagnostics: &[Diagnostic], path: &str) {
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.starts_with(&format!("{path}:"))),
+        "expected a violation at {path}: {diagnostics:?}"
+    );
+}
+
 fn valid_frontmatter() -> String {
     frontmatter(
         "title: Test Decision\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - architecture",
@@ -54,7 +65,7 @@ fn invalid_enum_fails() {
         "title: Test\ntype: adr\nstatus: fantasy\ncreated: \"2026-03-30\"\ntags:\n    - architecture",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/status");
 }
 
 #[test]
@@ -63,7 +74,7 @@ fn invalid_const_fails() {
         "title: Test\ntype: not-adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - architecture",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/type");
 }
 
 #[test]
@@ -72,7 +83,7 @@ fn invalid_date_format_fails() {
         "title: Test\ntype: adr\nstatus: accepted\ncreated: March 30 2026\ntags:\n    - architecture",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/created");
 }
 
 #[test]
@@ -81,7 +92,7 @@ fn invalid_tag_pattern_fails() {
         "title: Test\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - UPPER_CASE",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/tags/0");
 }
 
 #[test]
@@ -90,7 +101,7 @@ fn tags_as_string_fails() {
         "title: Test\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags: not-an-array",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/tags");
 }
 
 #[test]
@@ -98,7 +109,7 @@ fn empty_tags_fails() {
     let content =
         frontmatter("title: Test\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags: []");
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/tags");
 }
 
 #[test]
@@ -107,7 +118,7 @@ fn empty_title_fails() {
         "title: \"\"\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - architecture",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/title");
 }
 
 #[test]
@@ -116,7 +127,7 @@ fn duplicate_tags_fails() {
         "title: Test\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - architecture\n    - architecture",
     );
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/tags");
 }
 
 #[test]
@@ -126,7 +137,7 @@ fn overlong_title_fails() {
         "title: {long_title}\ntype: adr\nstatus: accepted\ncreated: \"2026-03-30\"\ntags:\n    - architecture"
     ));
     let diagnostics = validate_frontmatter_against_json_schema(&content, SCHEMA, "test.md");
-    assert!(!diagnostics.is_empty());
+    assert_violates(&diagnostics, "/title");
 }
 
 #[test]
