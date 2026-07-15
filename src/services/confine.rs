@@ -3,7 +3,7 @@
 //! root. Raw `..` components and symlinks are resolved before comparison,
 //! so neither can slip a path outside the boundary.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Resolve an EXISTING `candidate` and require it inside `base`.
 /// Returns the canonical candidate path.
@@ -25,21 +25,57 @@ pub fn confine_existing(base: &Path, candidate: &Path) -> Result<PathBuf, String
     }
 }
 
-/// Require a `candidate` that may NOT exist yet to land inside `base`:
-/// the nearest existing ancestor is canonicalized and checked instead, so
-/// a write destination is confined before anything is created.
+/// Require a `candidate` that may NOT exist yet to land inside `base`.
+/// The nearest real ancestor is canonicalized (resolving symlinks in the
+/// part that exists), then the not-yet-created suffix is resolved lexically:
+/// each `..` must not climb above `base`, and a symlinked terminal component
+/// is refused because its target cannot be proven to stay inside.
 pub fn confine_for_write(base: &Path, candidate: &Path) -> Result<(), String> {
     let resolved_base = base
         .canonicalize()
         .map_err(|error| format!("cannot resolve {}: {error}", base.display()))?;
-    let existing = candidate
-        .ancestors()
-        .find(|ancestor| ancestor.exists())
-        .unwrap_or(base);
-    let resolved = existing
+
+    let mut existing = candidate;
+    while existing.symlink_metadata().is_err() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| format!("cannot resolve any ancestor of {}", candidate.display()))?;
+    }
+    if existing
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(format!(
+            "{} escapes {}",
+            candidate.display(),
+            base.display()
+        ));
+    }
+    let resolved_existing = existing
         .canonicalize()
         .map_err(|error| format!("cannot resolve {}: {error}", existing.display()))?;
-    if resolved.starts_with(&resolved_base) {
+
+    let suffix = candidate
+        .strip_prefix(existing)
+        .map_err(|_| format!("cannot resolve {}", candidate.display()))?;
+    let mut projected = resolved_existing;
+    for component in suffix.components() {
+        match component {
+            Component::Normal(part) => projected.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                projected.pop();
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "{} escapes {}",
+                    candidate.display(),
+                    base.display()
+                ));
+            }
+        }
+    }
+    if projected.starts_with(&resolved_base) {
         Ok(())
     } else {
         Err(format!(
@@ -102,6 +138,32 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let escape = outside.path().join("new.txt");
         let error = confine_for_write(root.path(), &escape).unwrap_err();
+        assert!(error.contains("escapes"), "{error}");
+    }
+
+    #[test]
+    fn dotdot_in_nonexistent_suffix_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let escape = root
+            .path()
+            .join("missing")
+            .join("..")
+            .join("..")
+            .join("evil.txt");
+
+        let error = confine_for_write(root.path(), &escape).unwrap_err();
+        assert!(error.contains("escapes"), "{error}");
+    }
+
+    #[test]
+    fn dangling_symlink_destination_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("not-created-yet.txt");
+        let link = root.path().join("dest.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = confine_for_write(root.path(), &link).unwrap_err();
         assert!(error.contains("escapes"), "{error}");
     }
 }
