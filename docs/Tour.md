@@ -56,8 +56,8 @@ rune doctor --target .                            # ok / modified / missing / or
 ```
 
 **Review:**
-- `rune add` from a directory without `.rune` prints `note: no .rune here; acting on the
-  bound target at …` — the redirect is loud, never silent.
+- `rune add` from a directory without `.rune` asks before staging into the bound
+  target; EOF and non-interactive runs refuse — nothing lands elsewhere without consent.
 - `rune skill add <name>` resolves the bare name to `<domain>/skills/<name>`; a name that
   exists in two domains errors listing both, and `<domain>/<name>` disambiguates.
 - `rune context` names the acting root and role (consumer/deck/module/plain), the

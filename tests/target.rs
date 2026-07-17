@@ -162,6 +162,10 @@ fn target_state_tolerates_unknown_and_mistyped_history_fields() {
     let state = fs::read_to_string(state_dir.join("state.yaml")).unwrap();
     assert!(state.contains("future-field: preserved"));
     assert!(state.contains("targets:"));
+    assert!(
+        !state.contains("quest:") && !state.contains("quests:"),
+        "legacy keys must be removed on write: {state}"
+    );
 }
 
 #[test]
@@ -219,7 +223,7 @@ fn target_unbind_removes_binding() {
 }
 
 #[test]
-fn add_falls_back_to_bound_quest_when_cwd_has_no_manifest() {
+fn add_refuses_the_bound_target_redirect_without_a_terminal() {
     let home = tempfile::tempdir().unwrap();
     let targets = tempfile::tempdir().unwrap();
     let elsewhere = tempfile::tempdir().unwrap();
@@ -235,16 +239,15 @@ fn add_falls_back_to_bound_quest_when_cwd_has_no_manifest() {
         .env("RUNE_TARGETS", targets.path())
         .args(["add", "science", "--source", &deck])
         .assert()
-        .success()
-        .stdout(
-            predicates::str::contains("staged")
-                .and(predicates::str::contains("inventory"))
-                .and(predicates::str::contains("next:")),
+        .failure()
+        .stderr(
+            predicates::str::contains("staging cancelled")
+                .and(predicates::str::contains("inventory")),
         );
 
     assert!(
-        target_dir.join(".rune").is_file(),
-        "manifest must land in the bound target, not the cwd"
+        !target_dir.join(".rune").exists(),
+        "a non-interactive run must never mutate the bound target from elsewhere"
     );
     assert!(!elsewhere.path().join(".rune").exists());
 }

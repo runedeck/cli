@@ -122,11 +122,16 @@ pub fn unset(key: &str, json: bool) -> Result<i32, String> {
     let config_path = ontology::config_dir()
         .map_err(|error| error.to_string())?
         .join("config.yaml");
-    let removed = if nested {
+    let mut removed = if nested {
         remove_nested_in_file(&config_path, "ontology", key)?
     } else {
         remove_in_file(&config_path, key)?
     };
+    if key == "targets" {
+        // The legacy key still feeds the targets fallback; leaving it would
+        // silently resurrect the old value after an unset.
+        removed |= remove_nested_in_file(&config_path, "ontology", "quests")?;
+    }
     if json {
         println!(
             "{}",

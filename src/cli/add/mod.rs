@@ -73,18 +73,14 @@ fn prepare_for(
     })
 }
 
-/// Ask before staging into the bound target from another directory. In an
-/// interactive session the prompt gates the redirect; non-interactive runs
-/// (scripts, pipes) keep the loud note and proceed, since a script's cwd is
-/// deliberate.
+/// Ask before staging into the bound target from another directory. Only an
+/// interactive yes consents: EOF, closed stdin, and non-TTY runs all refuse,
+/// so a script can never mutate the bound target from the wrong directory.
+/// Scripts act deliberately by running inside a repo that carries `.rune`.
 fn confirm_redirect(bound: &Path) -> Result<bool, Error> {
     use std::io::IsTerminal as _;
     if !std::io::stdin().is_terminal() {
-        println!(
-            "note: no .rune here; acting on the bound target at {} (rune target --unbind to act on the current directory)",
-            bound.display()
-        );
-        return Ok(true);
+        return Ok(false);
     }
     print!(
         "no .rune here; stage into the bound target at {}? [Y/n] ",
@@ -186,12 +182,22 @@ pub fn list_kind(
         &target.repo_root,
         &qualifiers,
     )?;
-    let staged = target
-        .manifest
-        .runes
-        .get(&target.source_label)
-        .map(|entry| entry.include.clone())
-        .unwrap_or_default();
+    // The effective selection resolves casts, globs, and excludes; a rune is
+    // staged when the manifest would actually deploy it, not merely when its
+    // exact id sits in `include`.
+    let staged: std::collections::HashSet<String> = match crate::cli::dotrune::resolve_sources(
+        &target.manifest,
+        &target.repo_root,
+        &qualifiers,
+    ) {
+        Ok(files) => files.into_iter().filter_map(|file| file.rune_id).collect(),
+        Err(_) => target
+            .manifest
+            .runes
+            .get(&target.source_label)
+            .map(|entry| entry.include.iter().cloned().collect())
+            .unwrap_or_default(),
+    };
 
     let sheet = crate::cli::style::Sheet::detect(no_color);
     let kind_segment = kind.as_str();

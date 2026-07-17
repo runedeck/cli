@@ -190,13 +190,14 @@ impl ValidationReport {
 ///   - skills/ — recurses into subdirectories, checks `.mdschema`
 pub fn execute(path: &str, json: bool, scan: bool, force: bool) -> Result<i32, Error> {
     let module_root = Path::new(path);
-    let is_source =
-        commands::deck::is_deck(module_root) || module_root.join("module.yaml").is_file();
+    let is_source = commands::deck::is_deck(module_root)
+        || module_root.join("module.yaml").is_file()
+        || module_root.join(".rune").is_file();
     if !is_source && !force {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "{} is not a rune source (no deck.yaml or module.yaml); pass --source <deck-or-module>, or --force to validate it anyway",
+                "{} is not a rune source (no deck.yaml, module.yaml, or .rune); pass --source <deck-or-module>, or --force to validate it anyway",
                 module_root.display()
             ),
         ));

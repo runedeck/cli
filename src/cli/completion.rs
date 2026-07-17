@@ -165,8 +165,15 @@ fn install_path(shell: Shell) -> Result<PathBuf, Error> {
 }
 
 fn brew_prefix() -> Option<PathBuf> {
-    let prefix = std::env::var("HOMEBREW_PREFIX").ok()?;
-    (!prefix.is_empty()).then(|| PathBuf::from(prefix))
+    if let Ok(prefix) = std::env::var("HOMEBREW_PREFIX")
+        && !prefix.is_empty()
+    {
+        return Some(PathBuf::from(prefix));
+    }
+    ["/opt/homebrew", "/usr/local"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|prefix| prefix.join("bin/brew").is_file())
 }
 
 fn post_install_hint(shell: Shell, destination: &std::path::Path) -> Option<String> {

@@ -12,7 +12,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ```sh
 cd ~/Developer/runedeck/rune
 cargo install --path .
-rune --version        # rune 0.4.0 (<current commit>) — the hash tracks HEAD now
+rune --version        # rune 0.5.0 (<current commit>) — the hash tracks HEAD
 rune --help           # groups: Flow (setup, init, target, add, context, tui, dashboard, install, review), Spec, Deck, Plumbing (incl. skill, completion)
 ```
 
@@ -54,7 +54,7 @@ Expected: init lists `base`, `lang/shell`, `purpose/tool` and makes one commit; 
 cd "$(mktemp -d)" && rune add --cast development
 ```
 
-Expected: a loud `note: no .rune here; acting on the bound target at …` line, then `already staged … → <target>/.rune`. The write never lands in the current directory silently.
+Expected: an interactive prompt `no .rune here; stage into the bound target at …? [Y/n]`; answering n (or EOF, or any non-interactive run) cancels with `staging cancelled` and writes nothing. Nothing ever lands outside the current directory without an explicit yes.
 
 ## 5. Validate the deck
 

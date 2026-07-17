@@ -23,7 +23,7 @@ rune drift --target .                # deployed content matches source?
 rune doctor --target .               # integrity: ok / modified / missing / orphan
 ```
 
-`rune add` acts on the bound target when the current directory has no `.rune`; it prints a note when it redirects. Ambiguous ids fail loudly listing every candidate; retry with the qualified form `<domain>/<kind>/<name>`.
+`rune add` asks before staging into the bound target when the current directory has no `.rune`; non-interactive runs refuse the redirect, so run staging commands from the repo that carries `.rune`. Ambiguous ids fail loudly listing every candidate; retry with the qualified form `<domain>/<kind>/<name>`.
 
 ## Safe Scripting
 

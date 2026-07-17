@@ -249,6 +249,11 @@ fn write_binding(state_path: &Path, target: &Path) -> Result<(), Error> {
         serde_yaml::Value::from("target"),
         serde_yaml::Value::from(target.clone()),
     );
+    // Migrate on write: the legacy keys were already folded into `state`
+    // by the read above, so leaving them behind would hand older readers a
+    // stale binding.
+    mapping.remove(serde_yaml::Value::from("quest"));
+    mapping.remove(serde_yaml::Value::from("quests"));
     let mut history = vec![target];
     if let Some(active) = state.target {
         history.push(active);
