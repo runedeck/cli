@@ -188,7 +188,19 @@ impl ValidationReport {
 ///   - Required/optional files from validation config
 ///   - agents/, rules/ — frontmatter against `.schema.yaml`, structure against `.mdschema`
 ///   - skills/ — recurses into subdirectories, checks `.mdschema`
-pub fn execute(path: &str, json: bool, scan: bool) -> Result<i32, Error> {
+pub fn execute(path: &str, json: bool, scan: bool, force: bool) -> Result<i32, Error> {
+    let module_root = Path::new(path);
+    let is_source =
+        commands::deck::is_deck(module_root) || module_root.join("module.yaml").is_file();
+    if !is_source && !force {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "{} is not a rune source (no deck.yaml or module.yaml); pass --source <deck-or-module>, or --force to validate it anyway",
+                module_root.display()
+            ),
+        ));
+    }
     let report = validate(path, scan)?;
     print_report(&report, json);
     Ok(i32::from(report.result.has_errors()))

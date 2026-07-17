@@ -10,7 +10,7 @@ rune deploys markdown instruction files (runes) from a deck into provider direct
 
 ## Orientation
 
-Run `rune context --json` first: it reports the acting root and role, the quest binding, the manifest selection, which providers are deployed, active spec changes, and suggested next steps. `rune status --source <deck>` is the deck-side dashboard.
+Run `rune context --json` first: it reports the acting root and role, the target binding, the manifest selection, which providers are deployed, active spec changes, and suggested next steps. `rune status --source <deck>` is the deck-side dashboard.
 
 ## Consumer Flow
 
@@ -23,7 +23,7 @@ rune drift --target .                # deployed content matches source?
 rune doctor --target .               # integrity: ok / modified / missing / orphan
 ```
 
-`rune add` acts on the bound quest when the current directory has no `.rune`; it prints a note when it redirects. Ambiguous ids fail loudly listing every candidate; retry with the qualified form `<domain>/<kind>/<name>`.
+`rune add` acts on the bound target when the current directory has no `.rune`; it prints a note when it redirects. Ambiguous ids fail loudly listing every candidate; retry with the qualified form `<domain>/<kind>/<name>`.
 
 ## Safe Scripting
 

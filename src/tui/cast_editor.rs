@@ -75,7 +75,7 @@ impl CastEditor {
         editor.refresh_selection();
         if editor.manifest.is_none() {
             editor.status =
-                "Read-only: no cwd .rune or bound quest manifest; Space cannot write".to_string();
+                "Read-only: no cwd .rune or bound target manifest; Space cannot write".to_string();
         } else if let Some(root) = &editor.manifest_root {
             editor.status = format!("Editing {}", root.join(".rune").display());
         }
@@ -260,7 +260,7 @@ impl CastEditor {
 
     fn toggle_current(&mut self) {
         let Some(root) = self.manifest_root.clone() else {
-            self.status = "Read-only: bind a quest or create cwd .rune before editing".to_string();
+            self.status = "Read-only: bind a target or create cwd .rune before editing".to_string();
             return;
         };
         let Some(item) = self.items.get(self.cursor).cloned() else {
@@ -492,7 +492,7 @@ fn manifest_root() -> Option<PathBuf> {
     if cwd.join(".rune").is_file() {
         return Some(cwd);
     }
-    crate::cli::quest::bound_quest_silent().filter(|quest| quest.join(".rune").is_file())
+    crate::cli::target::bound_target_silent().filter(|consumer| consumer.join(".rune").is_file())
 }
 
 fn display_install_target(path: &Path) -> String {
@@ -569,7 +569,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let deck = root.path().join("deck");
-        let quest = root.path().join("quest");
+        let consumer = root.path().join("consumer");
         write(
             &deck.join("deck.yaml"),
             "schema: 1\nname: fixture-deck\nversion: 1.0.0\ndescription: Fixture.\n",
@@ -591,19 +591,20 @@ mod tests {
             "name: lab\ndescription: Lab.\nrunes: ['science/**']\n",
         );
         write(
-            &quest.join(".rune"),
+            &consumer.join(".rune"),
             &format!(
                 "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: [lab]\n",
                 deck.display()
             ),
         );
-        (root, deck, quest)
+        (root, deck, consumer)
     }
 
     #[test]
     fn preselects_cast_and_materializes_it_when_member_is_unchecked() {
-        let (_root, deck, quest) = fixture();
-        let mut editor = CastEditor::load_with_manifest_root(&deck, Some(quest.clone())).unwrap();
+        let (_root, deck, consumer) = fixture();
+        let mut editor =
+            CastEditor::load_with_manifest_root(&deck, Some(consumer.clone())).unwrap();
         assert_eq!(editor.items.iter().filter(|item| item.checked).count(), 2);
 
         editor.cursor = editor
@@ -613,7 +614,7 @@ mod tests {
             .unwrap();
         editor.toggle_current();
 
-        let manifest = dotrune::load(&quest).unwrap().unwrap();
+        let manifest = dotrune::load(&consumer).unwrap().unwrap();
         let selection = &manifest.runes["deck"];
         assert!(selection.casts.is_empty());
         assert_eq!(selection.include, ["science/agents/Researcher"]);
@@ -702,10 +703,10 @@ mod tests {
 
     #[test]
     fn inactive_stale_cast_does_not_block_active_manifest_cast() {
-        let quest = tempfile::tempdir().unwrap();
+        let consumer = tempfile::tempdir().unwrap();
         let deck = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/deck");
         write(
-            &quest.path().join(".rune"),
+            &consumer.path().join(".rune"),
             &format!(
                 "version: 1\nsources:\n  deck:\n    local: {}\nrunes:\n  deck:\n    casts: [essentials]\n",
                 deck.display()
@@ -713,7 +714,8 @@ mod tests {
         );
 
         let editor =
-            CastEditor::load_with_manifest_root(&deck, Some(quest.path().to_path_buf())).unwrap();
+            CastEditor::load_with_manifest_root(&deck, Some(consumer.path().to_path_buf()))
+                .unwrap();
 
         assert!(editor.items.iter().any(|item| item.checked));
         assert!(

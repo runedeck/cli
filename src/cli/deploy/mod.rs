@@ -498,7 +498,7 @@ fn filter_requested_providers(
 }
 
 /// Refuse to operate on a path that isn't a rune source root or a consumer
-/// quest. A consumer quest (one with `.rune`) is a valid `--source` for
+/// quest. A consumer target (one with `.rune`) is a valid `--source` for
 /// install and deploy; the assemble step has already turned its manifest
 /// into a `Vec<SourceFile>` by the time deploy runs.
 fn require_module_root(module_root: &Path) -> Result<(), Error> {
@@ -512,7 +512,7 @@ fn require_module_root(module_root: &Path) -> Result<(), Error> {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "no module.yaml or .rune at {}; --source must point to a rune source or consumer quest",
+                "no module.yaml or .rune at {}; --source must point to a rune source or consumer target",
                 module_root.display()
             ),
         ));

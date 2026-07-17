@@ -29,11 +29,11 @@ struct ContextBrief {
     root: PathBuf,
     role: &'static str,
     /// Where staging commands (`rune add`, `rune skill add`, …) act when it
-    /// differs from `root`: they follow the bound quest unless the current
+    /// differs from `root`: they follow the bound target unless the current
     /// directory has a `.rune`.
     #[serde(skip_serializing_if = "Option::is_none")]
     staging_root: Option<PathBuf>,
-    quest: Option<PathBuf>,
+    target: Option<PathBuf>,
     deck: Option<String>,
     selections: Vec<SelectionBrief>,
     providers: Vec<ProviderBrief>,
@@ -42,26 +42,26 @@ struct ContextBrief {
     next_steps: Vec<String>,
 }
 
-pub fn execute(json: bool) -> Result<i32, Error> {
+pub fn execute(json: bool, no_color: bool) -> Result<i32, Error> {
     let current_dir = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot read current directory: {error}"),
         )
     })?;
-    let quest = crate::cli::quest::bound_quest();
+    let bound = crate::cli::target::bound_target();
     let local_root = dotrune::exists(&current_dir)
         || commands::deck::is_deck(&current_dir)
         || current_dir.join("module.yaml").is_file();
     let add_target = if dotrune::exists(&current_dir) {
         current_dir.clone()
     } else {
-        quest.clone().unwrap_or_else(|| current_dir.clone())
+        bound.clone().unwrap_or_else(|| current_dir.clone())
     };
     let root = if local_root {
         current_dir
-    } else if let Some(quest_root) = quest.clone() {
-        quest_root
+    } else if let Some(bound_root) = bound.clone() {
+        bound_root
     } else {
         current_dir
     };
@@ -79,7 +79,7 @@ pub fn execute(json: bool) -> Result<i32, Error> {
         root,
         role,
         staging_root,
-        quest,
+        target: bound,
         deck,
         selections,
         providers,
@@ -93,7 +93,7 @@ pub fn execute(json: bool) -> Result<i32, Error> {
         })?;
         println!("{rendered}");
     } else {
-        print_brief(&brief);
+        print_brief(&brief, &crate::cli::style::Sheet::detect(no_color));
     }
     Ok(0)
 }
@@ -193,7 +193,7 @@ fn suggest_next_steps(
     }
     if role == "plain" {
         steps.push(
-            "no .rune here; rune add creates one (or bind a repo with rune quest <slug>)"
+            "no .rune here; rune add creates one (or bind a repo with rune target <slug>)"
                 .to_string(),
         );
     }
@@ -208,68 +208,88 @@ fn suggest_next_steps(
     steps
 }
 
-fn print_brief(brief: &ContextBrief) {
-    println!("root: {} ({})", brief.root.display(), brief.role);
+fn print_brief(brief: &ContextBrief, sheet: &crate::cli::style::Sheet) {
+    use crate::cli::style::{ARROW, DOT};
+
+    println!("{}", sheet.heading("Context"));
+    println!(
+        "{}",
+        sheet.row(
+            "root",
+            &format!("{} {}", brief.root.display(), sheet.dim(brief.role))
+        )
+    );
     if let Some(staging_root) = &brief.staging_root {
         println!(
-            "staging: {} (rune add and kind adds act here)",
-            staging_root.display()
+            "{}",
+            sheet.row(
+                "staging",
+                &sheet.yellow(&format!(
+                    "{} {ARROW} rune add and kind adds act here",
+                    staging_root.display()
+                ))
+            )
         );
     }
-    if let Some(quest) = &brief.quest {
-        println!("quest: {}", quest.display());
+    if let Some(target) = &brief.target {
+        println!("{}", sheet.row("target", &target.display().to_string()));
     }
     if let Some(deck) = &brief.deck {
-        println!("deck: {deck}");
+        println!("{}", sheet.row("deck", deck));
     }
 
     if !brief.selections.is_empty() {
-        println!("\nselection (.rune):");
+        println!("\n{}", sheet.heading("Selection (.rune)"));
         for selection in &brief.selections {
-            println!("  {} · {}", selection.source, selection.origin);
-            print_id_list("casts", &selection.casts);
-            print_id_list("include", &selection.include);
-            print_id_list("exclude", &selection.exclude);
+            println!(
+                "   {} {DOT} {}",
+                sheet.cyan(&selection.source),
+                sheet.dim(&selection.origin)
+            );
+            print_id_list(sheet, "casts", &selection.casts);
+            print_id_list(sheet, "include", &selection.include);
+            print_id_list(sheet, "exclude", &selection.exclude);
         }
     }
 
     if !brief.providers.is_empty() {
-        println!("\nproviders:");
+        println!("\n{}", sheet.heading("Providers"));
         for provider in &brief.providers {
-            println!(
-                "  {:<10} {:<12} {}",
-                provider.name,
-                provider.target,
-                if provider.deployed {
-                    "deployed"
-                } else {
-                    "not deployed"
-                }
-            );
+            let line = format!("{:<12} {:<12}", provider.name, sheet.dim(&provider.target));
+            if provider.deployed {
+                println!("{}", sheet.ok(&format!("{line} deployed")));
+            } else {
+                println!("   {} {line} {}", sheet.dim("○"), sheet.dim("not deployed"));
+            }
         }
     }
 
     if !brief.changes.is_empty() {
-        println!("\nchanges:");
+        println!("\n{}", sheet.heading("Changes"));
         for change in &brief.changes {
-            println!("  {:<32} {}/{}", change.id, change.completed, change.total);
+            println!(
+                "   {:<32} {}/{}",
+                sheet.cyan(&change.id),
+                change.completed,
+                change.total
+            );
         }
     }
 
     for warning in &brief.warnings {
-        println!("\nwarning: {warning}");
+        println!("{}", sheet.warn(warning));
     }
 
     if !brief.next_steps.is_empty() {
-        println!("\nnext:");
+        println!("\n{}", sheet.heading("Next"));
         for step in &brief.next_steps {
-            println!("  - {step}");
+            println!("   {} {step}", sheet.dim("-"));
         }
     }
 }
 
-fn print_id_list(label: &str, items: &[String]) {
+fn print_id_list(sheet: &crate::cli::style::Sheet, label: &str, items: &[String]) {
     if !items.is_empty() {
-        println!("    {label}: {}", items.join(", "));
+        println!("     {} {}", sheet.dim(label), items.join(", "));
     }
 }

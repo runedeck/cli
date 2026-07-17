@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- `rune quest` is now `rune target`; `quest` survives as a hidden alias, `RUNE_TARGETS` replaces `RUNE_QUESTS` (still honored), the config key is `targets`, and legacy state keys keep resolving.
+- Staging from a directory without `.rune` asks before acting on the bound target in interactive sessions (EOF is not consent); scripts keep the loud note and redirect.
+- `rune validate` refuses a root without `deck.yaml` or `module.yaml`; `--force` overrides, so a stray run can no longer walk unrelated directories.
+- `rune completion` split into `install [shell]` (writes to the shell's standard location, auto-detects from $SHELL) and `print <shell>`; nushell joined bash, zsh, fish, and powershell.
+- Human output flows through one shared style layer: `setup`, `config`, and `context` render the same sectioned, glyphed summaries as `status`.
+- Noun subcommands follow CLI-0019: singular canonical (`rune skill`, `rune completion`), plural accepted as hidden aliases (`rune skills add`, `rune completions`), `.rune` stays; the bare noun (`rune skill`, `rune rule`, …) lists that kind with staged markers.
 - Security scanners (gitleaks, semgrep) run only with `rune validate --scan`, the mode commit and push hooks use. Plain `rune validate`, `rune status`, and the TUI stay in-process and fast.
 - `ruff check` honors `validate.exclude`, so a deck can skip linting adopted upstream code it copied verbatim.
 - Skill `name` must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), matching the agentskills.io standard the Claude Code loader enforces; `rune validate` now rejects PascalCase skill names at author time instead of letting them fail at load.

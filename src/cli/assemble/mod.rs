@@ -57,7 +57,7 @@ pub fn execute_with_options(
         return Err(Error::new(
             commands::error::ErrorKind::Config,
             format!(
-                "no module.yaml or .rune at {}; --source must point to a rune source or consumer quest",
+                "no module.yaml or .rune at {}; --source must point to a rune source or consumer target",
                 module_root.display()
             ),
         ));

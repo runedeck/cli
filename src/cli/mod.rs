@@ -1,6 +1,7 @@
 mod add;
 mod adopt;
 mod assemble;
+mod completion;
 pub(crate) mod config;
 mod context;
 mod copy;
@@ -19,13 +20,14 @@ mod launch;
 mod ontology;
 mod output;
 mod provenance;
-pub(crate) mod quest;
 mod release;
 mod review;
 mod setup;
 mod skill;
 mod spec;
 mod status;
+pub(crate) mod style;
+pub(crate) mod target;
 pub(crate) mod validate;
 pub(crate) mod watchlist;
 
@@ -47,7 +49,7 @@ const BUILD_VERSION: &str = concat!(
 
 #[derive(Parser)]
 #[command(name = "rune", about = "Rune Deck toolkit", version = BUILD_VERSION)]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
@@ -154,9 +156,9 @@ enum Command {
         #[arg(long, default_value = "", conflicts_with = "module")]
         brief: String,
 
-        /// Bind the scaffolded project as the active quest.
-        #[arg(long, conflicts_with = "module")]
-        quest: bool,
+        /// Bind the scaffolded project as the active target.
+        #[arg(long, alias = "quest", conflicts_with = "module")]
+        bind: bool,
     },
 
     /// Add a rune selection to the consumer `.rune` manifest
@@ -178,22 +180,25 @@ enum Command {
         reference: Option<String>,
     },
 
-    /// Stage agents by name
+    /// List agents, or stage them by name
+    #[command(alias = "agents")]
     Agent {
         #[command(subcommand)]
-        action: KindAction,
+        action: Option<KindAction>,
     },
 
-    /// Stage rules by name
+    /// List rules, or stage them by name
+    #[command(alias = "rules")]
     Rule {
         #[command(subcommand)]
-        action: KindAction,
+        action: Option<KindAction>,
     },
 
-    /// Stage hooks by name
+    /// List hooks, or stage them by name
+    #[command(alias = "hooks")]
     Hook {
         #[command(subcommand)]
-        action: KindAction,
+        action: Option<KindAction>,
     },
 
     /// Print an agent-ready brief of the resolved working context
@@ -206,22 +211,23 @@ enum Command {
         defaults: bool,
     },
 
-    /// Bind the quest (working repo) that rune commands operate on
-    Quest {
-        /// Quest slug (<owner>/<name>), directory name under the quests root, path, or `-` for the previous quest. Omit to show the binding.
+    /// Bind the target (working repo) that rune commands operate on
+    #[command(alias = "quest")]
+    Target {
+        /// Target slug (<owner>/<name>), directory name under the targets root, a path, or `-` for the previous target. Omit to show the binding.
         #[arg(value_name = "SLUG_OR_PATH", allow_hyphen_values = true)]
-        quest: Option<String>,
+        target: Option<String>,
 
-        /// Clone `https://github.com/<owner>/<name>` into the quests root when the quest is missing.
-        #[arg(long, requires = "quest")]
+        /// Clone `https://github.com/<owner>/<name>` into the targets root when the target is missing.
+        #[arg(long, requires = "target")]
         clone: bool,
 
         /// Remove the binding.
-        #[arg(long, conflicts_with_all = ["quest", "clone"])]
+        #[arg(long, conflicts_with_all = ["target", "clone"])]
         unbind: bool,
 
-        /// List recent quests with the active binding marked.
-        #[arg(long, conflicts_with_all = ["quest", "clone", "unbind"])]
+        /// List recent targets with the active binding marked.
+        #[arg(long, conflicts_with_all = ["target", "clone", "unbind"])]
         list: bool,
     },
 
@@ -241,7 +247,7 @@ enum Command {
         Without --target, providers deploy under the current directory. \
         In consumer mode (.rune present at --source), --target defaults to --source.")]
     Install {
-        /// Rune source or consumer quest root to install from. Defaults to `.`.
+        /// Rune source or consumer target root to install from. Defaults to `.`.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
 
@@ -368,6 +374,10 @@ enum Command {
         /// Run security scanners (gitleaks, semgrep) — intended for commit and push hooks
         #[arg(long)]
         scan: bool,
+
+        /// Validate a directory that carries no deck.yaml or module.yaml marker.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Show provenance information for a deployed file or directory
@@ -538,20 +548,18 @@ enum Command {
         action: ReviewAction,
     },
 
-    /// Stage skills by name, and manage the rune agent skill
+    /// List skills, stage them by name, and manage the rune agent skill
+    #[command(alias = "skills")]
     Skill {
         #[command(subcommand)]
-        action: SkillAction,
+        action: Option<SkillAction>,
     },
 
-    /// Print a shell completion script to stdout
-    #[command(
-        after_help = "INSTALL:\n  bash:  rune completion bash > $(brew --prefix)/etc/bash_completion.d/rune\n  zsh:   rune completion zsh > \"${fpath[1]}/_rune\"\n  fish:  rune completion fish > ~/.config/fish/completions/rune.fish"
-    )]
+    /// Install or print shell completions
+    #[command(alias = "completions")]
     Completion {
-        /// Shell to generate completions for.
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
+        #[command(subcommand)]
+        action: CompletionAction,
     },
 
     /// Fallback: run an external `rune-<verb>` executable with remaining args.
@@ -662,6 +670,22 @@ enum WatchAction {
 }
 
 #[derive(Subcommand)]
+enum CompletionAction {
+    /// Write the completion script into the shell's standard directory
+    Install {
+        /// Shell to install for. Detected from $SHELL when omitted.
+        #[arg(value_enum)]
+        shell: Option<completion::Shell>,
+    },
+    /// Print the completion script to stdout
+    Print {
+        /// Shell to generate for.
+        #[arg(value_enum)]
+        shell: completion::Shell,
+    },
+}
+
+#[derive(Subcommand)]
 enum KindAction {
     /// Stage runes of this kind in the consumer `.rune` manifest
     Add {
@@ -709,13 +733,13 @@ enum SkillAction {
 enum ReviewAction {
     /// List persisted comments
     List {
-        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound quest.
+        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound target.
         #[arg(long, value_name = "DIR")]
         target: Option<String>,
     },
     /// Render comments with their source-line context
     Export {
-        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound quest.
+        /// Repository containing `.rune-comments.yaml`; defaults to the current directory, then the bound target.
         #[arg(long, value_name = "DIR")]
         target: Option<String>,
         /// Agent-ready markdown or compact terminal output.
@@ -735,12 +759,12 @@ enum ConfigAction {
     },
     /// Print one resolved value, raw and scriptable
     Get {
-        /// Configuration key, e.g. deck or quests.
+        /// Configuration key, e.g. deck or targets.
         key: String,
     },
     /// Remove a configured value, reverting to env or default
     Unset {
-        /// Configuration key, e.g. deck or quests.
+        /// Configuration key, e.g. deck or targets.
         key: String,
     },
     /// Print the config file location
@@ -810,7 +834,7 @@ pub fn run() -> i32 {
             purpose,
             skeleton,
             brief,
-            quest,
+            bind,
         } => {
             if let Some(module) = module {
                 (init::execute(&module), "initialized")
@@ -822,7 +846,7 @@ pub fn run() -> i32 {
                     purpose,
                     skeleton.as_deref(),
                     &brief,
-                    quest,
+                    bind,
                     args.json,
                 );
             }
@@ -840,15 +864,17 @@ pub fn run() -> i32 {
                 reference.as_deref(),
             ));
         }
-        Command::Context => return exit_code(context::execute(args.json)),
-        Command::Setup { defaults } => return exit_code(setup::execute(defaults, args.json)),
-        Command::Quest {
-            quest,
+        Command::Context => return exit_code(context::execute(args.json, args.no_color)),
+        Command::Setup { defaults } => {
+            return exit_code(setup::execute(defaults, args.json, args.no_color));
+        }
+        Command::Target {
+            target,
             clone,
             unbind,
             list,
         } => {
-            return exit_code(quest::execute(quest.as_deref(), clone, unbind, list));
+            return exit_code(target::execute(target.as_deref(), clone, unbind, list));
         }
         Command::Install {
             source,
@@ -907,8 +933,12 @@ pub fn run() -> i32 {
             target,
             skip_provenance,
         } => (copy::execute(&source, &target, skip_provenance), "copied"),
-        Command::Validate { source, scan } => {
-            return exit_code(validate::execute(&source, args.json, scan));
+        Command::Validate {
+            source,
+            scan,
+            force,
+        } => {
+            return exit_code(validate::execute(&source, args.json, scan, force));
         }
         Command::Provenance {
             target,
@@ -960,7 +990,7 @@ pub fn run() -> i32 {
                 Some(ConfigAction::Get { key }) => ontology::get(&key, args.json),
                 Some(ConfigAction::Unset { key }) => ontology::unset(&key, args.json),
                 Some(ConfigAction::Path) => ontology::path(args.json),
-                None => ontology::show(args.json),
+                None => ontology::show(args.json, args.no_color),
             });
         }
         Command::Adopt {
@@ -1010,35 +1040,55 @@ pub fn run() -> i32 {
         }
         Command::Skill { action } => {
             return match action {
-                SkillAction::Add {
+                None => exit_code(add::list_kind(
+                    commands::provider::ContentKind::Skills,
+                    None,
+                    args.no_color,
+                )),
+                Some(SkillAction::Add {
                     name,
                     source,
                     reference,
-                } => exit_code(add::execute_kind(
+                }) => exit_code(add::execute_kind(
                     commands::provider::ContentKind::Skills,
                     &name,
                     source.as_deref(),
                     reference.as_deref(),
                 )),
-                SkillAction::Install { dir } => {
+                Some(SkillAction::Install { dir }) => {
                     exit_code(skill::install(dir.as_deref(), args.json))
                 }
-                SkillAction::Show => skill::show(),
+                Some(SkillAction::Show) => skill::show(),
             };
         }
         Command::Agent { action } => {
-            return run_kind_add(commands::provider::ContentKind::Agents, action);
+            return run_kind_add(
+                commands::provider::ContentKind::Agents,
+                action,
+                args.no_color,
+            );
         }
         Command::Rule { action } => {
-            return run_kind_add(commands::provider::ContentKind::Rules, action);
+            return run_kind_add(
+                commands::provider::ContentKind::Rules,
+                action,
+                args.no_color,
+            );
         }
         Command::Hook { action } => {
-            return run_kind_add(commands::provider::ContentKind::Hooks, action);
+            return run_kind_add(
+                commands::provider::ContentKind::Hooks,
+                action,
+                args.no_color,
+            );
         }
-        Command::Completion { shell } => {
-            use clap::CommandFactory as _;
-            clap_complete::generate(shell, &mut Cli::command(), "rune", &mut std::io::stdout());
-            return 0;
+        Command::Completion { action } => {
+            return match action {
+                CompletionAction::Install { shell } => {
+                    exit_code(completion::install(shell, args.json))
+                }
+                CompletionAction::Print { shell } => completion::print(shell),
+            };
         }
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
     };
@@ -1120,7 +1170,7 @@ fn root_help() -> String {
         r"
   Quick start:
     rune init N4M3Z/demo --lang rust --purpose tool
-    rune quest N4M3Z/demo
+    rune target N4M3Z/demo
     rune add development
     rune tui --edit
     rune install
@@ -1158,7 +1208,7 @@ fn flow_help(help: &mut String) {
     );
     help_command(
         help,
-        "quest",
+        "target",
         "[SLUG_OR_PATH|-] [--list]",
         "Bind or show the working repository",
     );
@@ -1172,16 +1222,26 @@ fn flow_help(help: &mut String) {
         help,
         "skill",
         "add <NAME[,NAME...]> | install | show",
-        "Stage skills by name; ship the rune agent skill",
+        "List or stage skills; ship the rune agent skill",
     );
     help_command(
         help,
         "agent",
-        "add <NAME[,NAME...]>",
-        "Stage agents by name",
+        "[add <NAME[,NAME...]>]",
+        "List or stage agents by name",
     );
-    help_command(help, "rule", "add <NAME[,NAME...]>", "Stage rules by name");
-    help_command(help, "hook", "add <NAME[,NAME...]>", "Stage hooks by name");
+    help_command(
+        help,
+        "rule",
+        "[add <NAME[,NAME...]>]",
+        "List or stage rules by name",
+    );
+    help_command(
+        help,
+        "hook",
+        "[add <NAME[,NAME...]>]",
+        "List or stage hooks by name",
+    );
     help_command(
         help,
         "context",
@@ -1298,7 +1358,7 @@ fn plumbing_help(help: &mut String) {
         help,
         "config",
         "[set <KEY> <VALUE>]",
-        "Resolved configuration (deck, quests, lore, artifacts)",
+        "Resolved configuration (deck, targets, lore, artifacts)",
     );
     help_command(help, "find", "<QUERY>", "Find local runes by relevance");
     help_command(
@@ -1316,8 +1376,8 @@ fn plumbing_help(help: &mut String) {
     help_command(
         help,
         "completion",
-        "<SHELL>",
-        "Shell completions (bash|zsh|fish)",
+        "install [SHELL] | print <SHELL>",
+        "Shell completions (bash|zsh|fish|nushell)",
     );
 }
 
@@ -1360,13 +1420,20 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
     exit_code(result)
 }
 
-/// Dispatch a kind-scoped `add` (`rune agent|rule|hook add <name>`).
-fn run_kind_add(kind: commands::provider::ContentKind, action: KindAction) -> i32 {
-    let KindAction::Add {
+/// Dispatch a kind namespace: bare lists the kind, `add` stages by name.
+fn run_kind_add(
+    kind: commands::provider::ContentKind,
+    action: Option<KindAction>,
+    no_color: bool,
+) -> i32 {
+    let Some(KindAction::Add {
         name,
         source,
         reference,
-    } = action;
+    }) = action
+    else {
+        return exit_code(add::list_kind(kind, None, no_color));
+    };
     exit_code(add::execute_kind(
         kind,
         &name,

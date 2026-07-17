@@ -34,6 +34,7 @@ required-features = ["test-file-urls"]
 # cli
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_complete_nushell = "4"
 
 # serialization
 serde = { version = "1", features = ["derive"] }

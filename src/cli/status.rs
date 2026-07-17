@@ -209,7 +209,7 @@ fn fallback_inventory(root: &Path) -> BTreeMap<String, usize> {
 }
 
 fn render(dashboard: &StatusDashboard, color: bool) -> String {
-    let styles = Styles { color };
+    let styles = crate::cli::style::Sheet::forced(color);
     let total_runes = dashboard.summary.runes.values().sum::<usize>();
     let kinds = commands::view::KIND_ORDER
         .into_iter()
@@ -229,14 +229,22 @@ fn render(dashboard: &StatusDashboard, color: bool) -> String {
         dashboard.summary.changes.draft,
         dashboard.summary.changes.active,
         dashboard.summary.changes.complete,
-        styles.red(&format!("{} ✗", dashboard.summary.validation.errors)),
-        styles.yellow(&format!("{} ⚡", dashboard.summary.validation.warnings)),
+        styles.red(&format!(
+            "{} {}",
+            dashboard.summary.validation.errors,
+            crate::cli::style::FAIL
+        )),
+        styles.yellow(&format!(
+            "{} {}",
+            dashboard.summary.validation.warnings,
+            crate::cli::style::WARN
+        )),
     )];
 
     lines.push(String::new());
     lines.push(format!(" {}", styles.bold("Changes")));
     if dashboard.changes.is_empty() {
-        lines.push(format!("   {}", styles.dim("— none")));
+        lines.push(styles.none());
     } else {
         for change in &dashboard.changes {
             let bar = progress_bar(change.completed, change.total);
@@ -258,7 +266,7 @@ fn render(dashboard: &StatusDashboard, color: bool) -> String {
     lines.push(String::new());
     lines.push(format!(" {}", styles.bold("Specifications")));
     if dashboard.specifications.is_empty() {
-        lines.push(format!("   {}", styles.dim("— none")));
+        lines.push(styles.none());
     } else {
         for specification in &dashboard.specifications {
             let label = if specification.requirements == 1 {
@@ -277,7 +285,7 @@ fn render(dashboard: &StatusDashboard, color: bool) -> String {
     lines.push(String::new());
     lines.push(format!(" {}", styles.bold("Deploy targets")));
     if dashboard.deploy_targets.is_empty() {
-        lines.push(format!("   {}", styles.dim("— none")));
+        lines.push(styles.none());
     } else {
         for target in &dashboard.deploy_targets {
             lines.push(format!(
@@ -300,44 +308,6 @@ fn progress_bar(completed: usize, total: usize) -> String {
         .unwrap_or(0)
         .min(WIDTH);
     format!("{}{}", "█".repeat(filled), "░".repeat(WIDTH - filled))
-}
-
-struct Styles {
-    color: bool,
-}
-
-impl Styles {
-    fn paint(&self, code: u8, text: &str) -> String {
-        if self.color {
-            format!("\u{1b}[{code}m{text}\u{1b}[0m")
-        } else {
-            text.to_string()
-        }
-    }
-
-    fn bold(&self, text: &str) -> String {
-        self.paint(1, text)
-    }
-
-    fn dim(&self, text: &str) -> String {
-        self.paint(2, text)
-    }
-
-    fn red(&self, text: &str) -> String {
-        self.paint(31, text)
-    }
-
-    fn green(&self, text: &str) -> String {
-        self.paint(32, text)
-    }
-
-    fn yellow(&self, text: &str) -> String {
-        self.paint(33, text)
-    }
-
-    fn cyan(&self, text: &str) -> String {
-        self.paint(36, text)
-    }
 }
 
 #[cfg(test)]

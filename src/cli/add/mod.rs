@@ -11,6 +11,14 @@ struct Target {
 }
 
 fn prepare(source: Option<&str>, reference: Option<&str>) -> Result<Target, Error> {
+    prepare_for(source, reference, true)
+}
+
+fn prepare_for(
+    source: Option<&str>,
+    reference: Option<&str>,
+    staging: bool,
+) -> Result<Target, Error> {
     let current_dir = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -19,14 +27,17 @@ fn prepare(source: Option<&str>, reference: Option<&str>) -> Result<Target, Erro
     })?;
     let repo_root = if current_dir.join(".rune").is_file() {
         current_dir
-    } else if let Some(quest) = crate::cli::quest::bound_quest() {
-        if quest != current_dir {
-            println!(
-                "note: no .rune here; acting on the bound quest at {} (rune quest --unbind to act on the current directory)",
-                quest.display()
-            );
+    } else if let Some(bound) = crate::cli::target::bound_target() {
+        if staging && bound != current_dir && !confirm_redirect(&bound)? {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "staging cancelled; run from {} or rune target --unbind to act on the current directory",
+                    bound.display()
+                ),
+            ));
         }
-        quest
+        bound
     } else {
         current_dir
     };
@@ -60,6 +71,38 @@ fn prepare(source: Option<&str>, reference: Option<&str>) -> Result<Target, Erro
         manifest,
         source_label,
     })
+}
+
+/// Ask before staging into the bound target from another directory. In an
+/// interactive session the prompt gates the redirect; non-interactive runs
+/// (scripts, pipes) keep the loud note and proceed, since a script's cwd is
+/// deliberate.
+fn confirm_redirect(bound: &Path) -> Result<bool, Error> {
+    use std::io::IsTerminal as _;
+    if !std::io::stdin().is_terminal() {
+        println!(
+            "note: no .rune here; acting on the bound target at {} (rune target --unbind to act on the current directory)",
+            bound.display()
+        );
+        return Ok(true);
+    }
+    print!(
+        "no .rune here; stage into the bound target at {}? [Y/n] ",
+        bound.display()
+    );
+    std::io::Write::flush(&mut std::io::stdout())
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot flush stdout: {error}")))?;
+    let mut line = String::new();
+    let bytes = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot read stdin: {error}")))?;
+    if bytes == 0 {
+        println!();
+        return Ok(false);
+    }
+    Ok(matches!(
+        line.trim().to_lowercase().as_str(),
+        "" | "y" | "yes"
+    ))
 }
 
 pub fn execute(
@@ -115,6 +158,70 @@ pub fn execute_kind(
         selections.push(resolve_kind_name(kind, &name, &ids)?);
     }
     stage(target, "rune selection", &selections)
+}
+
+/// List the source deck's runes of one kind (`rune skill` bare), marking
+/// ids the manifest already includes.
+pub fn list_kind(
+    kind: commands::provider::ContentKind,
+    source: Option<&str>,
+    no_color: bool,
+) -> Result<i32, Error> {
+    let target = prepare_for(source, None, false)?;
+    let source_entry = target
+        .manifest
+        .sources
+        .get(&target.source_label)
+        .cloned()
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Config,
+                format!(".rune has no source labeled '{}'", target.source_label),
+            )
+        })?;
+    let qualifiers = valid_qualifiers(&target.repo_root)?;
+    let ids = crate::cli::dotrune::enumerate_ids(
+        &source_entry,
+        &target.source_label,
+        &target.repo_root,
+        &qualifiers,
+    )?;
+    let staged = target
+        .manifest
+        .runes
+        .get(&target.source_label)
+        .map(|entry| entry.include.clone())
+        .unwrap_or_default();
+
+    let sheet = crate::cli::style::Sheet::detect(no_color);
+    let kind_segment = kind.as_str();
+    let mut title = kind_segment.to_string();
+    if let Some(first) = title.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    println!("{}", sheet.heading(&title));
+    let mut listed = false;
+    for id in &ids {
+        let mut parts = id.splitn(3, '/');
+        let (Some(domain), Some(id_kind), Some(name)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        if id_kind != kind_segment {
+            continue;
+        }
+        listed = true;
+        let row = format!("{:<28} {}", name, sheet.dim(domain));
+        if staged.contains(id) {
+            println!("{}", sheet.ok(&format!("{row} staged")));
+        } else {
+            println!("   {} {row}", sheet.dim("○"));
+        }
+    }
+    if !listed {
+        println!("{}", sheet.none());
+    }
+    Ok(0)
 }
 
 fn resolve_kind_name(
@@ -204,14 +311,14 @@ fn stage(mut target: Target, selection_kind: &str, selections: &[String]) -> Res
     if changed || !manifest_existed {
         crate::cli::dotrune::write_atomic(&target.repo_root, &target.manifest)?;
     }
-    let quest_label = target
+    let target_label = target
         .repo_root
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("quest");
     let selection_label = selections.join(", ");
     println!(
-        "{} {selection_kind} '{selection_label}' in {quest_label} → {}",
+        "{} {selection_kind} '{selection_label}' in {target_label} → {}",
         if changed { "staged" } else { "already staged" },
         manifest_path.display()
     );

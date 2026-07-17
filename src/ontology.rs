@@ -18,6 +18,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Ontology {
+    pub targets: Option<String>,
     pub quests: Option<String>,
     pub skeleton: Option<String>,
     pub owner: Option<String>,
@@ -169,7 +170,7 @@ pub struct ResolvedField {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ResolvedOntology {
-    pub quests: Option<ResolvedValue>,
+    pub targets: Option<ResolvedValue>,
     pub skeleton: Option<ResolvedValue>,
     pub owner: Option<ResolvedValue>,
     pub archive: Option<ResolvedValue>,
@@ -200,7 +201,7 @@ pub struct ResolvedConfig {
 
 #[derive(Debug, Clone, Copy)]
 enum Key {
-    Quests,
+    Targets,
     Skeleton,
     Owner,
     Archive,
@@ -216,7 +217,7 @@ enum Key {
 
 impl Key {
     const ALL: [Self; 12] = [
-        Self::Quests,
+        Self::Targets,
         Self::Skeleton,
         Self::Owner,
         Self::Archive,
@@ -232,7 +233,7 @@ impl Key {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Quests => "quests",
+            Self::Targets => "targets",
             Self::Skeleton => "skeleton",
             Self::Owner => "owner",
             Self::Archive => "archive",
@@ -249,7 +250,7 @@ impl Key {
 
     fn env(self) -> &'static str {
         match self {
-            Self::Quests => "RUNE_QUESTS",
+            Self::Targets => "RUNE_TARGETS",
             Self::Skeleton => "RUNE_SKELETON",
             Self::Owner => "RUNE_OWNER",
             Self::Archive => "RUNE_ARCHIVE",
@@ -266,7 +267,7 @@ impl Key {
 
     fn default(self) -> Option<&'static str> {
         match self {
-            Self::Quests => Some("~/Agents"),
+            Self::Targets => Some("~/Agents"),
             Self::Skeleton => Some("~/Developer/N4M3Z/skeleton"),
             Self::Archive => Some("~/Agents/archive"),
             Self::Vault => Some("~/Atlas/Domains"),
@@ -277,9 +278,17 @@ impl Key {
         }
     }
 
+    /// Legacy environment variable still honored when the primary is unset.
+    fn env_legacy(self) -> Option<&'static str> {
+        match self {
+            Self::Targets => Some("RUNE_QUESTS"),
+            _ => None,
+        }
+    }
+
     fn configured(self, ontology: &Ontology) -> Option<&String> {
         match self {
-            Self::Quests => ontology.quests.as_ref(),
+            Self::Targets => ontology.targets.as_ref().or(ontology.quests.as_ref()),
             Self::Skeleton => ontology.skeleton.as_ref(),
             Self::Owner => ontology.owner.as_ref(),
             Self::Archive => ontology.archive.as_ref(),
@@ -317,7 +326,7 @@ impl ResolvedOntology {
 
     fn value(&self, key: Key) -> Option<&ResolvedValue> {
         match key {
-            Key::Quests => self.quests.as_ref(),
+            Key::Targets => self.targets.as_ref(),
             Key::Skeleton => self.skeleton.as_ref(),
             Key::Owner => self.owner.as_ref(),
             Key::Archive => self.archive.as_ref(),
@@ -418,7 +427,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
             })
         });
     let ontology = ResolvedOntology {
-        quests: resolve_key(Key::Quests, &config.ontology, env),
+        targets: resolve_key(Key::Targets, &config.ontology, env),
         skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
         owner: resolve_key(Key::Owner, &config.ontology, env),
         archive: resolve_key(Key::Archive, &config.ontology, env),
@@ -449,7 +458,7 @@ fn resolve_key(
     ontology: &Ontology,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Option<ResolvedValue> {
-    if let Some(value) = env(key.env()) {
+    if let Some(value) = env(key.env()).or_else(|| key.env_legacy().and_then(env)) {
         return Some(resolved_value(key, value, Source::Env));
     }
     if let Some(value) = key.configured(ontology) {

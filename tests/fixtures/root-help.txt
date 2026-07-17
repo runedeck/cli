@@ -9,12 +9,12 @@
   Flow:
     setup       [--defaults]                                          Guided first-run configuration
     init        <SLUG_OR_DIR> [--lang] [--purpose] | --module <DIR>   Scaffold a project from a skeleton, or a deck module
-    quest       [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
+    target      [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
     add         <ID[,ID...]>                                          Add runes to the consumer manifest
-    skill       add <NAME[,NAME...]> | install | show                 Stage skills by name; ship the rune agent skill
-    agent       add <NAME[,NAME...]>                                  Stage agents by name
-    rule        add <NAME[,NAME...]>                                  Stage rules by name
-    hook        add <NAME[,NAME...]>                                  Stage hooks by name
+    skill       add <NAME[,NAME...]> | install | show                 List or stage skills; ship the rune agent skill
+    agent       [add <NAME[,NAME...]>]                                List or stage agents by name
+    rule        [add <NAME[,NAME...]>]                                List or stage rules by name
+    hook        [add <NAME[,NAME...]>]                                List or stage hooks by name
     context     [--json]                                              Agent-ready brief of the working context
     tui         [--source <DIR>] [--edit]                             Launch the terminal dashboard
     dashboard   [--source <DIR>] [--port <PORT>]                      Launch the read-only web dashboard
@@ -39,15 +39,15 @@
     assemble    [--source <DIR>]                                      Assemble rune content into build/
     deploy      [--source <DIR>] [--target <DIR>]                     Deploy assembled runes
     copy        --source <DIR> --target <DIR>                         Copy runes without transforms
-    config      [set <KEY> <VALUE>]                                   Resolved configuration (deck, quests, lore, artifacts)
+    config      [set <KEY> <VALUE>]                                   Resolved configuration (deck, targets, lore, artifacts)
     find        <QUERY>                                               Find local runes by relevance
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
-    completion  <SHELL>                                               Shell completions (bash|zsh|fish)
+    completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 
   Quick start:
     rune init N4M3Z/demo --lang rust --purpose tool
-    rune quest N4M3Z/demo
+    rune target N4M3Z/demo
     rune add development
     rune tui --edit
     rune install

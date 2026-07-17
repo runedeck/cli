@@ -14,11 +14,11 @@ deploys it, tracking exactly what landed so it can detect drift and clean up.
 | **rune** | one instruction file — a skill, an agent, a rule, or a hook |
 | **deck** | a collection of runes (`runes/<domain>/` under a `deck.yaml` root) |
 | **cast** | a named selection of runes across domains, for a use case (e.g. `development`) |
-| **quest** | the project you're currently working on — the repo rune deploys *into* |
+| **target** | the project you're currently working on — the repo rune deploys *into* |
 | **`.rune`** | a consumer project's manifest: which deck, which runes/casts |
 | **`.manifest`** | rune's record (per provider dir) of what it deployed, for drift/clean/doctor |
 
-Two roles: you **author** a deck, and you **consume** it in a quest.
+Two roles: you **author** a deck, and you **consume** it in a target.
 
 ## Setup (once)
 
@@ -27,7 +27,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 rune --version              # 0.4.0 — commit hash now updates on every build
 rune setup                  # guided: discovers decks under ~/Developer, persists the choice
 rune config                 # table of resolved keys; get/set/unset/path for scripting
-rune completion zsh > "${fpath[1]}/_rune"    # tab completion (bash|zsh|fish too)
+rune completion install          # writes to the shell standard location (bash|zsh|fish|nushell)
 rune skill install          # teach AI agents on this machine to drive rune
 ```
 
@@ -41,7 +41,7 @@ names `~/.config/rune/config.yaml`; completions actually complete `rune sp<TAB>`
 
 ```sh
 rune init N4M3Z/tour-1 --brief "Tour run"      # scaffold; --lang rust|shell|python
-rune quest N4M3Z/tour-1                          # bind it; rune quest --list / rune quest -
+rune target N4M3Z/tour-1                          # bind it; rune target --list / rune target -
 rune add --cast development                       # stage a cast
 rune skill add deslop                             # stage by kind + bare name
 rune agent add TheOpponent                        # same for agents, rules, hooks
@@ -57,7 +57,7 @@ rune doctor --target .                            # ok / modified / missing / or
 
 **Review:**
 - `rune add` from a directory without `.rune` prints `note: no .rune here; acting on the
-  bound quest at …` — the redirect is loud, never silent.
+  bound target at …` — the redirect is loud, never silent.
 - `rune skill add <name>` resolves the bare name to `<domain>/skills/<name>`; a name that
   exists in two domains errors listing both, and `<domain>/<name>` disambiguates.
 - `rune context` names the acting root and role (consumer/deck/module/plain), the
@@ -71,7 +71,7 @@ rune doctor --target .                            # ok / modified / missing / or
 
 ## Part 2 — the TUI (`rune tui`)
 
-Launch from a quest or `rune tui --source <deck>`. `?` opens the keymap.
+Launch from a target or `rune tui --source <deck>`. `?` opens the keymap.
 
 - **Miller columns** decks → kinds → runes; `/` filters in-pane; `!` problems only.
 - **Code view**: `j/k`, `12j` counts (Esc cancels), `gg/G/zz`, `[[`/`]]` section jumps,

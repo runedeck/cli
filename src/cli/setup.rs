@@ -1,11 +1,11 @@
 //! Guided first-run configuration: discover a deck, persist it to the user
-//! config, and point at the follow-up steps (completions, quest binding).
+//! config, and point at the follow-up steps (completions, target binding).
 
 use commands::error::{Error, ErrorKind};
 use std::io::{BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
 
-pub fn execute(defaults: bool, json: bool) -> Result<i32, Error> {
+pub fn execute(defaults: bool, json: bool, no_color: bool) -> Result<i32, Error> {
     // JSON consumers need a machine-parseable stream, so prompts (which write
     // to stdout) are disabled and every choice falls back to its default.
     let defaults = defaults || json;
@@ -19,11 +19,12 @@ pub fn execute(defaults: bool, json: bool) -> Result<i32, Error> {
         configure_deck(defaults, &mut actions)?
     };
 
-    if let Some(quest) = crate::cli::quest::bound_quest() {
-        actions.push(format!("quest bound: {}", quest.display()));
+    if let Some(quest) = crate::cli::target::bound_target() {
+        actions.push(format!("target bound: {}", quest.display()));
     } else {
-        actions
-            .push("no quest bound; bind a working repo with rune quest <slug-or-path>".to_string());
+        actions.push(
+            "no target bound; bind a working repo with rune target <slug-or-path>".to_string(),
+        );
     }
 
     if json {
@@ -33,12 +34,19 @@ pub fn execute(defaults: bool, json: bool) -> Result<i32, Error> {
         );
         return Ok(0);
     }
+    let sheet = crate::cli::style::Sheet::detect(no_color);
+    println!("{}", sheet.heading("Setup"));
     for action in &actions {
-        println!("{action}");
+        if action.starts_with("no ") || action.contains("left unconfigured") {
+            println!("{}", sheet.warn(action));
+        } else {
+            println!("{}", sheet.ok(action));
+        }
     }
-    println!("\nshell completions: rune completion --help");
-    println!("agent skill:       rune skill install");
-    println!("next:              rune add <id> && rune install");
+    println!("\n{}", sheet.heading("Next"));
+    println!("{}", sheet.row("completions", "rune completion install"));
+    println!("{}", sheet.row("agent skill", "rune skill install"));
+    println!("{}", sheet.row("stage", "rune add <id> && rune install"));
     Ok(0)
 }
 

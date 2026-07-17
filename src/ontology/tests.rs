@@ -16,15 +16,48 @@ fn env_from<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<Stri
 fn env_beats_config_beats_default() {
     let config = Config {
         ontology: Ontology {
-            quests: Some("/from-config".to_string()),
+            targets: Some("/from-config".to_string()),
             ..Ontology::default()
         },
         ..Config::default()
     };
-    let resolved = resolve_config(&config, &env_from(&[("RUNE_QUESTS", "/from-env")]));
-    let quests = resolved.ontology.quests.expect("quests resolved");
-    assert_eq!(quests.value, "/from-env");
-    assert_eq!(quests.source, Source::Env);
+    let resolved = resolve_config(&config, &env_from(&[("RUNE_TARGETS", "/from-env")]));
+    let targets = resolved.ontology.targets.expect("targets resolved");
+    assert_eq!(targets.value, "/from-env");
+    assert_eq!(targets.source, Source::Env);
+}
+
+#[test]
+fn legacy_quests_config_and_env_still_resolve_targets() {
+    let config = Config {
+        ontology: Ontology {
+            quests: Some("/legacy-config".to_string()),
+            ..Ontology::default()
+        },
+        ..Config::default()
+    };
+    let from_config = resolve_config(&config, &no_env);
+    assert_eq!(
+        from_config
+            .ontology
+            .targets
+            .expect("legacy key resolves")
+            .value,
+        "/legacy-config"
+    );
+
+    let from_env = resolve_config(
+        &Config::default(),
+        &env_from(&[("RUNE_QUESTS", "/legacy-env")]),
+    );
+    assert_eq!(
+        from_env
+            .ontology
+            .targets
+            .expect("legacy env resolves")
+            .value,
+        "/legacy-env"
+    );
 }
 
 #[test]
@@ -131,8 +164,8 @@ fn project_yaml_is_ignored() {
     .expect("write project");
 
     let resolved = load_from_dir_with_env(dir.path(), &no_env).expect("load defaults");
-    assert!(resolved.ontology.quests.is_some_and(|quests| {
-        quests.source == Source::Default && quests.value.ends_with("Agents")
+    assert!(resolved.ontology.targets.is_some_and(|targets| {
+        targets.source == Source::Default && targets.value.ends_with("Agents")
     }));
 }
 

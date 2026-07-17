@@ -42,7 +42,7 @@ fn resolve_target(target: Option<&str>) -> Result<PathBuf, String> {
     if current_dir.join(".rune-comments.yaml").is_file() {
         return Ok(current_dir);
     }
-    Ok(crate::cli::quest::bound_quest().unwrap_or(current_dir))
+    Ok(crate::cli::target::bound_target().unwrap_or(current_dir))
 }
 
 fn list_to(root: &Path, writer: &mut impl std::io::Write) -> Result<i32, String> {

@@ -11,7 +11,7 @@ Options:
       --purpose <PURPOSE>  Project purpose archetype [default: tool] [possible values: tool, module, spine]
       --skeleton <DIR>     Skeleton repository root
       --brief <BRIEF>      Short project description used for ${BRIEF} [default: ""]
-      --quest              Bind the scaffolded project as the active quest
+      --bind               Bind the scaffolded project as the active target
       --json               Output results as JSON
       --no-color           Disable ANSI colors
   -h, --help               Print help

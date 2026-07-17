@@ -13,32 +13,33 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cd ~/Developer/runedeck/rune
 cargo install --path .
 rune --version        # rune 0.4.0 (<current commit>) — the hash tracks HEAD now
-rune --help           # groups: Flow (setup, init, quest, add, context, tui, dashboard, install, review), Spec, Deck, Plumbing (incl. skill, completion)
+rune --help           # groups: Flow (setup, init, target, add, context, tui, dashboard, install, review), Spec, Deck, Plumbing (incl. skill, completion)
 ```
 
 ## 2. First-run surface
 
 ```sh
-rune setup --defaults          # reports deck + quest state without prompting
+rune setup --defaults          # reports deck + target state without prompting
 rune config path               # ~/.config/rune/config.yaml
 rune config get deck           # raw value, exit 0; exit 1 when unset
 rune config set owner tester && rune config get owner && rune config unset owner
-rune completion zsh | head -3  # a real #compdef script; bash and fish too
+rune completion print zsh | head -3   # a real #compdef script
+rune completion install               # auto-detects $SHELL, writes the standard location
 rune skill show | head -5      # frontmatter: name rune, current version
 rune skill install --dir "$(mktemp -d)"   # prints installed → …/rune/SKILL.md; rerun prints unchanged
 ```
 
 Expected: `setup --json` emits pure JSON (no prompt text); `config unset` accepts every key `config` lists; `skill install` refuses a symlinked destination.
 
-## 3. Scaffold and bind a quest
+## 3. Scaffold and bind a target
 
 ```sh
-export RUNE_QUESTS="$(mktemp -d)"
-rune init demo --lang shell --purpose tool --brief "Manual init quest"
-cd "$RUNE_QUESTS/demo"
+export RUNE_TARGETS="$(mktemp -d)"
+rune init demo --lang shell --purpose tool --brief "Manual init target"
+cd "$RUNE_TARGETS/demo"
 test -x bin/demo && test -x .githooks/pre-commit
 git config --get core.hooksPath       # .githooks
-rune quest .                          # binds this working repo as the quest
+rune target .                          # binds this working repo as the target
 rune add --source "$DECK" --cast development
 rune context                          # root (consumer) · selection · providers · next: rune install
 rune tui --edit                       # checkbox editor with the cast selected
@@ -47,28 +48,29 @@ rune install
 
 Expected: init lists `base`, `lang/shell`, `purpose/tool` and makes one commit; `rune context` shows the staged cast and flips its `next:` suggestion to `rune doctor` once all providers are deployed.
 
-## 4. The quest-redirect note
+## 4. The target-redirect note
 
 ```sh
 cd "$(mktemp -d)" && rune add --cast development
 ```
 
-Expected: a loud `note: no .rune here; acting on the bound quest at …` line, then `already staged … → <quest>/.rune`. The write never lands in the current directory silently.
+Expected: a loud `note: no .rune here; acting on the bound target at …` line, then `already staged … → <target>/.rune`. The write never lands in the current directory silently.
 
 ## 5. Validate the deck
 
 ```sh
 cd "$DECK" && rune validate          # fast (~0.2s), aggregate over all domains, no errors
 rune validate --scan                 # + gitleaks and semgrep, the commit/push-hook mode
+cd "$(mktemp -d)" && rune validate   # refuses: not a rune source; --force overrides
 ```
 
-Expected: a PascalCase skill `name` in any `SKILL.md` fails plain `validate` with a pattern error; all shipped skills are kebab-case.
+Expected: a PascalCase skill `name` in any `SKILL.md` fails plain `validate` with a pattern error; all shipped skills are kebab-case; validate never walks a directory without `deck.yaml`/`module.yaml` unless forced.
 
 ## 6. Fresh consumer, development cast
 
 ```sh
 T=$(mktemp -d) && cd "$T"
-rune quest .                          # rebind so this directory is the acting root
+rune target .                          # rebind so this directory is the acting root
 rune add --cast development
 rune install
 ls .claude/rules                      # Deslop.md, StageForReview.md, … (rules stay PascalCase)
@@ -83,7 +85,7 @@ rune doctor --target .                # modified 1 · left untouched
 ## 7. Four providers, all cast
 
 ```sh
-T=$(mktemp -d) && cd "$T" && rune quest .
+T=$(mktemp -d) && cd "$T" && rune target .
 rune add --source "$DECK" --cast all >/dev/null && rune install >/dev/null
 for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -l)"; done
 ```
@@ -93,7 +95,7 @@ Expected: 141 files in each provider directory.
 ## 8. Qualified ids and kind-scoped add
 
 ```sh
-T=$(mktemp -d) && cd "$T" && rune quest .
+T=$(mktemp -d) && cd "$T" && rune target .
 rune skill add version-control --source "$DECK"   # bare name → development/skills/version-control
 rune agent add TheOpponent                        # → council/agents/TheOpponent
 rune rule add Deslop                              # → development/rules/Deslop
@@ -107,7 +109,7 @@ Expected: each kind command echoes the fully qualified id it staged; a bare name
 ## 9. Pinned git install (the remote-consumer path)
 
 ```sh
-T=$(mktemp -d) && cd "$T" && rune quest .
+T=$(mktemp -d) && cd "$T" && rune target .
 SHA=$(git -C "$DECK" rev-parse HEAD)
 printf 'version: 1\nsources:\n  deck:\n    git: file://%s\n    ref: %s\nartifacts:\n  deck:\n    cast: development\n' "$DECK" "$SHA" > .rune
 RUNE_GIT_ALLOW_FILE_URLS=1 rune install
@@ -169,4 +171,4 @@ sed -i '' 's/^schema: 2/schema: 1/' deck.yaml
 
 ## Reference
 
-Backups: `~/Data/Claude/backups/runedeck-*.tgz`. ADRs: `docs/decisions/` in both repos. Cleanup: `rune quest -` restores your previous quest binding after the temp-dir steps.
+Backups: `~/Data/Claude/backups/runedeck-*.tgz`. ADRs: `docs/decisions/` in both repos. Cleanup: `rune target -` restores your previous target binding after the temp-dir steps.

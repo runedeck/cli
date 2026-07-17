@@ -2,7 +2,7 @@ use commands::ontology::{self, Source};
 use std::fs;
 use std::path::Path;
 
-pub fn show(json: bool) -> Result<i32, String> {
+pub fn show(json: bool, no_color: bool) -> Result<i32, String> {
     let config = ontology::load().map_err(|error| error.to_string())?;
     if json {
         let output = serde_json::to_string_pretty(&config)
@@ -11,17 +11,28 @@ pub fn show(json: bool) -> Result<i32, String> {
         return Ok(0);
     }
 
-    println!("{:<12} {:<8} value", "key", "source");
+    let sheet = crate::cli::style::Sheet::detect(no_color);
+    println!("{}", sheet.heading("Config"));
+    println!(
+        "   {:<12} {:<8} value",
+        sheet.dim("key"),
+        sheet.dim("source")
+    );
     for field in ontology::fields(&config) {
         let source = field.source.map_or("-", format_source);
+        let badge = match source {
+            "env" => sheet.yellow(&format!("{source:<8}")),
+            "config" => sheet.cyan(&format!("{source:<8}")),
+            _ => sheet.dim(&format!("{source:<8}")),
+        };
         let value = field.value.unwrap_or_default();
-        println!("{:<12} {:<8} {value}", field.key, source);
+        println!("   {:<12} {badge} {value}", field.key);
     }
     Ok(0)
 }
 
 const ONTOLOGY_KEYS: [&str; 12] = [
-    "quests",
+    "targets",
     "skeleton",
     "owner",
     "archive",

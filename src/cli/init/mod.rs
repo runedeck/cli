@@ -218,7 +218,7 @@ fn scaffold_project(
 
 fn bind_quest_if_requested(destination: &Path, requested: bool) -> Result<bool, Error> {
     if requested {
-        super::quest::bind_existing(destination)?;
+        super::target::bind_existing(destination)?;
     }
     Ok(requested)
 }
@@ -228,12 +228,12 @@ fn resolve_project_context(
     skeleton_override: Option<&str>,
 ) -> Result<ProjectContext, Error> {
     let config = ontology::load()?;
-    let quests_root = config
+    let targets_root = config
         .ontology
-        .quests
+        .targets
         .as_ref()
         .map(|value| PathBuf::from(&value.value))
-        .ok_or_else(|| Error::new(ErrorKind::Config, "quests root is not configured"))?;
+        .ok_or_else(|| Error::new(ErrorKind::Config, "targets root is not configured"))?;
     let skeleton = skeleton_override.map_or_else(
         || {
             config
@@ -250,7 +250,7 @@ fn resolve_project_context(
         .owner
         .as_ref()
         .map_or("", |value| value.value.as_str());
-    let (destination, slug_owner) = resolve_destination(target, &quests_root)?;
+    let (destination, slug_owner) = resolve_destination(target, &targets_root)?;
     let owner = slug_owner.unwrap_or_else(|| configured_owner.to_string());
     let name = destination
         .file_name()
@@ -277,7 +277,7 @@ fn resolve_project_context(
 
 fn resolve_destination(
     requested: &str,
-    quests_root: &Path,
+    targets_root: &Path,
 ) -> Result<(PathBuf, Option<String>), Error> {
     if requested.is_empty() {
         return Err(Error::new(
@@ -303,9 +303,9 @@ fn resolve_destination(
 
     let segments: Vec<&str> = requested.split('/').collect();
     match segments.as_slice() {
-        [name] if !name.is_empty() => Ok((quests_root.join(name), None)),
+        [name] if !name.is_empty() => Ok((targets_root.join(name), None)),
         [owner, name] if !owner.is_empty() && !name.is_empty() => {
-            Ok((quests_root.join(name), Some((*owner).to_string())))
+            Ok((targets_root.join(name), Some((*owner).to_string())))
         }
         _ => Err(Error::new(
             ErrorKind::Config,
