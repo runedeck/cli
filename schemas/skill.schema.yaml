@@ -7,6 +7,9 @@ required:
 properties:
     name:
         type: string
+        # agentskills.io: skill names are lowercase letters, digits, and hyphens.
+        # The Claude Code loader rejects any other form, so validate it here.
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
     description:
         type: string
     version:

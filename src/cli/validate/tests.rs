@@ -114,11 +114,11 @@ fn validate_source_reports_malformed_canonical_spec() {
 #[test]
 fn skill_directory_accepts_claude_code_optional_fields() {
     let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("ExampleSkill");
+    let skill_dir = temp_directory.path().join("example-skill");
     std::fs::create_dir_all(&skill_dir).unwrap();
 
     let skill_md = "---\n\
-name: ExampleSkill\n\
+name: example-skill\n\
 description: \"Test skill using Claude Code optional frontmatter fields.\"\n\
 version: 0.1.0\n\
 argument-hint: \"[year]\"\n\
@@ -128,7 +128,7 @@ effort: high\n\
 when_to_use: \"When the user asks for X.\"\n\
 ---\n\
 \n\
-# ExampleSkill\n\
+# example-skill\n\
 \n\
 Body content for the test skill.\n";
     std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
@@ -146,9 +146,9 @@ Body content for the test skill.\n";
 #[test]
 fn skill_directory_validates_user_override() {
     let root = TempDir::new().unwrap();
-    let skill_dir = root.path().join("skills/OverrideSkill");
+    let skill_dir = root.path().join("skills/override-skill");
     std::fs::create_dir_all(skill_dir.join("user")).unwrap();
-    let valid = "---\nname: OverrideSkill\ndescription: Valid base skill.\nversion: 0.1.0\n---\n\n# OverrideSkill\n";
+    let valid = "---\nname: override-skill\ndescription: Valid base skill.\nversion: 0.1.0\n---\n\n# override-skill\n";
     std::fs::write(skill_dir.join("SKILL.md"), valid).unwrap();
     std::fs::write(skill_dir.join("user/SKILL.md"), "# Missing frontmatter\n").unwrap();
 
@@ -156,9 +156,31 @@ fn skill_directory_validates_user_override() {
     check::skill_directory(&skill_dir, root.path(), &mut report).unwrap();
 
     assert!(report.violations.iter().any(|violation| {
-        violation.artifact == "skills/OverrideSkill/user/SKILL.md"
+        violation.artifact == "skills/override-skill/user/SKILL.md"
             && violation.severity == ViolationSeverity::Error
     }));
+}
+
+#[test]
+fn skill_name_must_be_kebab_case() {
+    let temp_directory = TempDir::new().unwrap();
+    let skill_dir = temp_directory.path().join("PascalSkill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_md = "---\nname: PascalSkill\ndescription: Rejected by the agentskills name rule.\nversion: 0.1.0\n---\n\n# PascalSkill\n";
+    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+
+    assert!(
+        report
+            .result
+            .errors
+            .iter()
+            .any(|error| error.contains("does not match pattern")),
+        "a PascalCase skill name must fail the kebab-case pattern: {:?}",
+        report.result.errors
+    );
 }
 
 // --- tools.rs native checks ---
