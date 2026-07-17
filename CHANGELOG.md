@@ -4,12 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-17
 
 ### Changed
 
 - `rune quest` is now `rune target`; `quest` survives as a hidden alias, `RUNE_TARGETS` replaces `RUNE_QUESTS` (still honored), the config key is `targets`, and legacy state keys keep resolving.
-- Staging from a directory without `.rune` asks before acting on the bound target in interactive sessions (EOF is not consent); scripts keep the loud note and redirect.
+- Staging from a directory without `.rune` asks before acting on the bound target; only an interactive yes consents — EOF, closed stdin, and non-interactive runs refuse the redirect.
 - `rune validate` refuses a root without `deck.yaml` or `module.yaml`; `--force` overrides, so a stray run can no longer walk unrelated directories.
 - `rune completion` split into `install [shell]` (writes to the shell's standard location, auto-detects from $SHELL) and `print <shell>`; nushell joined bash, zsh, fish, and powershell.
 - Human output flows through one shared style layer: `setup`, `config`, and `context` render the same sectioned, glyphed summaries as `status`.
@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `rune spec doctor` reports relationship health across the change tree: missing proposals or deltas, empty checklists, complete-but-unarchived changes, and malformed archive names.
 - `rune spec list --specs` lists canonical capability specifications with requirement counts; `rune spec ls` is an alias for `rune spec list`.
 - `rune config get|unset|path` round out the config surface for scripting.
-- `rune add` prints a note when it redirects to the bound quest because the current directory has no `.rune`.
+- Kind namespaces list their collection bare: `rune skill` shows the deck's skills with staged markers resolved from the effective selection (casts and globs included).
 - `rune adopt` accepts a local directory and adopts the whole skill tree: `SKILL.md` is aligned to the target name, every other file (markdown companions, worker-agent prompts, scripts, binary assets) is copied byte-for-byte, and each adopted file gets its own regenerated provenance sidecar. The upstream's own `.provenance/` directories are ignored. `--source-url` records upstream attribution when adopting from a local checkout.
 - Native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`, including agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.
 - Spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.
