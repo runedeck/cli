@@ -39,3 +39,4 @@ docs/plans/
 
 # macOS
 .DS_Store
+docs/*.pdf

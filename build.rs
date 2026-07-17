@@ -12,6 +12,11 @@ fn main() {
 
     println!("cargo:rerun-if-changed=scripts/validate.sh");
     println!("cargo:rerun-if-changed=.git/HEAD");
+    if let Ok(head) = fs::read_to_string(manifest_dir.join(".git/HEAD"))
+        && let Some(reference) = head.strip_prefix("ref: ")
+    {
+        println!("cargo:rerun-if-changed=.git/{}", reference.trim());
+    }
 
     let bytes = fs::read(&script_path).unwrap_or_else(|error| {
         panic!("build.rs: read {}: {error}", script_path.display());

@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::dotrune::{DotRune, SCHEMA_VERSION, Source};
 
-pub fn execute(
-    rune: Option<&str>,
-    cast: Option<&str>,
-    source: Option<&str>,
-    reference: Option<&str>,
-) -> Result<i32, Error> {
+struct Target {
+    repo_root: PathBuf,
+    manifest: DotRune,
+    source_label: String,
+}
+
+fn prepare(source: Option<&str>, reference: Option<&str>) -> Result<Target, Error> {
     let current_dir = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -19,6 +20,12 @@ pub fn execute(
     let repo_root = if current_dir.join(".rune").is_file() {
         current_dir
     } else if let Some(quest) = crate::cli::quest::bound_quest() {
+        if quest != current_dir {
+            println!(
+                "note: no .rune here; acting on the bound quest at {} (rune quest --unbind to act on the current directory)",
+                quest.display()
+            );
+        }
         quest
     } else {
         current_dir
@@ -48,8 +55,20 @@ pub fn execute(
             Some(configured_source.as_str())
         };
     let source_label = select_source(&mut manifest, selected_source, reference)?;
-    let entry = manifest.runes.entry(source_label).or_default();
-    let mut changed = false;
+    Ok(Target {
+        repo_root,
+        manifest,
+        source_label,
+    })
+}
+
+pub fn execute(
+    rune: Option<&str>,
+    cast: Option<&str>,
+    source: Option<&str>,
+    reference: Option<&str>,
+) -> Result<i32, Error> {
+    let target = prepare(source, reference)?;
     let (selection_kind, selections) = if let Some(cast) = cast {
         ("cast", split_comma_list(cast, "cast")?)
     } else {
@@ -59,15 +78,116 @@ pub fn execute(
             .collect::<Result<Vec<_>, _>>()?;
         ("rune selection", runes)
     };
+    stage(target, selection_kind, &selections)
+}
+
+/// Stage runes of one kind by bare name (`rune skill add deslop`), resolving
+/// each name against the source deck and failing loudly on unknown or
+/// ambiguous names.
+pub fn execute_kind(
+    kind: commands::provider::ContentKind,
+    names: &str,
+    source: Option<&str>,
+    reference: Option<&str>,
+) -> Result<i32, Error> {
+    let target = prepare(source, reference)?;
+    let source_entry = target
+        .manifest
+        .sources
+        .get(&target.source_label)
+        .cloned()
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Config,
+                format!(".rune has no source labeled '{}'", target.source_label),
+            )
+        })?;
+    let qualifiers = valid_qualifiers(&target.repo_root)?;
+    let ids = crate::cli::dotrune::enumerate_ids(
+        &source_entry,
+        &target.source_label,
+        &target.repo_root,
+        &qualifiers,
+    )?;
+
+    let mut selections = Vec::new();
+    for name in split_comma_list(names, "name")? {
+        selections.push(resolve_kind_name(kind, &name, &ids)?);
+    }
+    stage(target, "rune selection", &selections)
+}
+
+fn resolve_kind_name(
+    kind: commands::provider::ContentKind,
+    name: &str,
+    ids: &[String],
+) -> Result<String, Error> {
+    let kind_segment = kind.as_str();
+    let candidates: Vec<&String> = ids
+        .iter()
+        .filter(|id| {
+            let mut parts = id.splitn(3, '/');
+            let (Some(domain), Some(id_kind), Some(id_name)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                return false;
+            };
+            id_kind == kind_segment
+                && (id_name == name
+                    || format!("{domain}/{id_name}") == name
+                    || format!("{domain}/{id_kind}/{id_name}") == name)
+        })
+        .collect();
+    match candidates.as_slice() {
+        [] => Err(Error::new(
+            ErrorKind::Config,
+            format!("no {kind_segment} rune named '{name}' in the source deck"),
+        )),
+        [only] => Ok((*only).clone()),
+        many => Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "'{name}' is ambiguous across domains:\n{}\nqualify it as <domain>/{name}",
+                many.iter()
+                    .map(|id| format!("  - {id}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        )),
+    }
+}
+
+fn valid_qualifiers(repo_root: &Path) -> Result<std::collections::HashSet<String>, Error> {
+    let merged_config = crate::cli::config::load_merged_config(repo_root)
+        .map_err(|error| Error::new(ErrorKind::Config, error.to_string()))?;
+    let providers = crate::cli::config::load_providers(&merged_config)
+        .map_err(|error| Error::new(ErrorKind::Config, error.to_string()))?;
+    let models = crate::cli::config::load_models(repo_root);
+    let provider_names: Vec<String> = providers.keys().cloned().collect();
+    Ok(crate::cli::assemble::sources::build_valid_qualifiers(
+        &provider_names,
+        &models,
+    ))
+}
+
+fn stage(mut target: Target, selection_kind: &str, selections: &[String]) -> Result<i32, Error> {
+    let manifest_path = target.repo_root.join(".rune");
+    let manifest_existed = manifest_path.is_file();
+    let entry = target
+        .manifest
+        .runes
+        .entry(target.source_label.clone())
+        .or_default();
+    let mut changed = false;
     if selection_kind == "cast" {
-        for selection in &selections {
+        for selection in selections {
             if !entry.casts.contains(selection) {
                 entry.casts.push(selection.clone());
                 changed = true;
             }
         }
     } else {
-        for selection in &selections {
+        for selection in selections {
             if !entry.include.contains(selection) {
                 entry.include.push(selection.clone());
                 changed = true;
@@ -75,16 +195,17 @@ pub fn execute(
         }
     }
 
-    match validate_selection(&manifest, &repo_root) {
+    match validate_selection(&target.manifest, &target.repo_root) {
         Ok(()) => {}
         Err(Deferred(note)) => println!("note: {note}"),
         Err(Invalid(error)) => return Err(error),
     }
 
-    if changed || !manifest_path.is_file() {
-        crate::cli::dotrune::write_atomic(&repo_root, &manifest)?;
+    if changed || !manifest_existed {
+        crate::cli::dotrune::write_atomic(&target.repo_root, &target.manifest)?;
     }
-    let quest_label = repo_root
+    let quest_label = target
+        .repo_root
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("quest");
@@ -266,4 +387,65 @@ fn normalize_rune_id(rune_id: &str) -> Result<String, Error> {
         ));
     }
     Ok(rune_id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_kind_name;
+    use commands::provider::ContentKind;
+
+    fn deck_ids() -> Vec<String> {
+        [
+            "development/skills/deslop",
+            "development/rules/Deslop",
+            "development/skills/version-control",
+            "council/skills/convene-council",
+            "research/skills/deslop",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+
+    #[test]
+    fn unique_name_resolves_to_qualified_id() {
+        let id = resolve_kind_name(ContentKind::Skills, "version-control", &deck_ids()).unwrap();
+        assert_eq!(id, "development/skills/version-control");
+    }
+
+    #[test]
+    fn kind_filter_separates_rule_from_skill() {
+        let id = resolve_kind_name(ContentKind::Rules, "Deslop", &deck_ids()).unwrap();
+        assert_eq!(id, "development/rules/Deslop");
+    }
+
+    #[test]
+    fn ambiguous_name_lists_every_candidate() {
+        let error = resolve_kind_name(ContentKind::Skills, "deslop", &deck_ids()).unwrap_err();
+        assert!(error.message().contains("development/skills/deslop"));
+        assert!(error.message().contains("research/skills/deslop"));
+    }
+
+    #[test]
+    fn domain_qualified_name_disambiguates() {
+        let id = resolve_kind_name(ContentKind::Skills, "research/deslop", &deck_ids()).unwrap();
+        assert_eq!(id, "research/skills/deslop");
+    }
+
+    #[test]
+    fn full_canonical_id_resolves_as_given() {
+        let id = resolve_kind_name(
+            ContentKind::Skills,
+            "development/skills/deslop",
+            &deck_ids(),
+        )
+        .unwrap();
+        assert_eq!(id, "development/skills/deslop");
+    }
+
+    #[test]
+    fn unknown_name_fails_loudly() {
+        let error = resolve_kind_name(ContentKind::Skills, "ghost", &deck_ids()).unwrap_err();
+        assert!(error.message().contains("no skills rune named 'ghost'"));
+    }
 }

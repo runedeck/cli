@@ -2,6 +2,7 @@ mod add;
 mod adopt;
 mod assemble;
 pub(crate) mod config;
+mod context;
 mod copy;
 #[cfg(feature = "dashboard")]
 mod dashboard;
@@ -21,6 +22,8 @@ mod provenance;
 pub(crate) mod quest;
 mod release;
 mod review;
+mod setup;
+mod skill;
 mod spec;
 mod status;
 pub(crate) mod validate;
@@ -173,6 +176,34 @@ enum Command {
         /// Full pinned commit SHA for an HTTPS source.
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
+    },
+
+    /// Stage agents by name
+    Agent {
+        #[command(subcommand)]
+        action: KindAction,
+    },
+
+    /// Stage rules by name
+    Rule {
+        #[command(subcommand)]
+        action: KindAction,
+    },
+
+    /// Stage hooks by name
+    Hook {
+        #[command(subcommand)]
+        action: KindAction,
+    },
+
+    /// Print an agent-ready brief of the resolved working context
+    Context,
+
+    /// Guided first-run configuration
+    Setup {
+        /// Accept all defaults without prompting (for CI and scripting).
+        #[arg(long)]
+        defaults: bool,
     },
 
     /// Bind the quest (working repo) that rune commands operate on
@@ -507,6 +538,22 @@ enum Command {
         action: ReviewAction,
     },
 
+    /// Stage skills by name, and manage the rune agent skill
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+
+    /// Print a shell completion script to stdout
+    #[command(
+        after_help = "INSTALL:\n  bash:  rune completion bash > $(brew --prefix)/etc/bash_completion.d/rune\n  zsh:   rune completion zsh > \"${fpath[1]}/_rune\"\n  fish:  rune completion fish > ~/.config/fish/completions/rune.fish"
+    )]
+    Completion {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Fallback: run an external `rune-<verb>` executable with remaining args.
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -530,7 +577,30 @@ enum SpecAction {
     },
 
     /// List active spec-driven changes and task completion
+    #[command(visible_alias = "ls")]
     List {
+        /// List canonical capability specifications instead of changes.
+        #[arg(long)]
+        specs: bool,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Show one active change or one canonical capability specification
+    Show {
+        /// Change id or capability name.
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Report relationship health across the spec-driven change tree
+    Doctor {
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
@@ -592,6 +662,50 @@ enum WatchAction {
 }
 
 #[derive(Subcommand)]
+enum KindAction {
+    /// Stage runes of this kind in the consumer `.rune` manifest
+    Add {
+        /// Rune names, comma-separated; qualify as <domain>/<name> when ambiguous.
+        #[arg(value_name = "NAME[,NAME...]")]
+        name: String,
+
+        /// Deck path or HTTPS git URL. Required when creating `.rune`.
+        #[arg(long, value_name = "PATH_OR_URL")]
+        source: Option<String>,
+
+        /// Full pinned commit SHA for an HTTPS source.
+        #[arg(long = "ref", value_name = "SHA")]
+        reference: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Stage skills in the consumer `.rune` manifest
+    Add {
+        /// Skill names, comma-separated; qualify as <domain>/<name> when ambiguous.
+        #[arg(value_name = "NAME[,NAME...]")]
+        name: String,
+
+        /// Deck path or HTTPS git URL. Required when creating `.rune`.
+        #[arg(long, value_name = "PATH_OR_URL")]
+        source: Option<String>,
+
+        /// Full pinned commit SHA for an HTTPS source.
+        #[arg(long = "ref", value_name = "SHA")]
+        reference: Option<String>,
+    },
+    /// Write the agent skill into a harness skills directory
+    Install {
+        /// Skills directory to install into. Defaults to ~/.claude/skills.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<String>,
+    },
+    /// Print the agent skill to stdout
+    Show,
+}
+
+#[derive(Subcommand)]
 enum ReviewAction {
     /// List persisted comments
     List {
@@ -619,6 +733,18 @@ enum ConfigAction {
         /// New value.
         value: String,
     },
+    /// Print one resolved value, raw and scriptable
+    Get {
+        /// Configuration key, e.g. deck or quests.
+        key: String,
+    },
+    /// Remove a configured value, reverting to env or default
+    Unset {
+        /// Configuration key, e.g. deck or quests.
+        key: String,
+    },
+    /// Print the config file location
+    Path,
 }
 
 /// Parse CLI arguments, dispatch to subcommand, and return an exit code.
@@ -714,6 +840,8 @@ pub fn run() -> i32 {
                 reference.as_deref(),
             ));
         }
+        Command::Context => return exit_code(context::execute(args.json)),
+        Command::Setup { defaults } => return exit_code(setup::execute(defaults, args.json)),
         Command::Quest {
             quest,
             clone,
@@ -829,6 +957,9 @@ pub fn run() -> i32 {
         Command::Config { action } => {
             return exit_code(match action {
                 Some(ConfigAction::Set { key, value }) => ontology::set(&key, &value, args.json),
+                Some(ConfigAction::Get { key }) => ontology::get(&key, args.json),
+                Some(ConfigAction::Unset { key }) => ontology::unset(&key, args.json),
+                Some(ConfigAction::Path) => ontology::path(args.json),
                 None => ontology::show(args.json),
             });
         }
@@ -876,6 +1007,38 @@ pub fn run() -> i32 {
                     review::export(target.as_deref(), format)
                 }
             });
+        }
+        Command::Skill { action } => {
+            return match action {
+                SkillAction::Add {
+                    name,
+                    source,
+                    reference,
+                } => exit_code(add::execute_kind(
+                    commands::provider::ContentKind::Skills,
+                    &name,
+                    source.as_deref(),
+                    reference.as_deref(),
+                )),
+                SkillAction::Install { dir } => {
+                    exit_code(skill::install(dir.as_deref(), args.json))
+                }
+                SkillAction::Show => skill::show(),
+            };
+        }
+        Command::Agent { action } => {
+            return run_kind_add(commands::provider::ContentKind::Agents, action);
+        }
+        Command::Rule { action } => {
+            return run_kind_add(commands::provider::ContentKind::Rules, action);
+        }
+        Command::Hook { action } => {
+            return run_kind_add(commands::provider::ContentKind::Hooks, action);
+        }
+        Command::Completion { shell } => {
+            use clap::CommandFactory as _;
+            clap_complete::generate(shell, &mut Cli::command(), "rune", &mut std::io::stdout());
+            return 0;
         }
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
     };
@@ -974,7 +1137,7 @@ fn spec_help(help: &mut String) {
     help_command(
         help,
         "spec",
-        "propose | list | archive | context",
+        "propose | list | show | doctor | archive | context",
         "Spec-driven change lifecycle under docs/",
     );
 }
@@ -983,8 +1146,14 @@ fn flow_help(help: &mut String) {
     help.push_str("  Flow:\n");
     help_command(
         help,
+        "setup",
+        "[--defaults]",
+        "Guided first-run configuration",
+    );
+    help_command(
+        help,
         "init",
-        "<SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>] | --module <DIR>",
+        "<SLUG_OR_DIR> [--lang] [--purpose] | --module <DIR>",
         "Scaffold a project from a skeleton, or a deck module",
     );
     help_command(
@@ -998,6 +1167,26 @@ fn flow_help(help: &mut String) {
         "add",
         "<ID[,ID...]>",
         "Add runes to the consumer manifest",
+    );
+    help_command(
+        help,
+        "skill",
+        "add <NAME[,NAME...]> | install | show",
+        "Stage skills by name; ship the rune agent skill",
+    );
+    help_command(
+        help,
+        "agent",
+        "add <NAME[,NAME...]>",
+        "Stage agents by name",
+    );
+    help_command(help, "rule", "add <NAME[,NAME...]>", "Stage rules by name");
+    help_command(help, "hook", "add <NAME[,NAME...]>", "Stage hooks by name");
+    help_command(
+        help,
+        "context",
+        "[--json]",
+        "Agent-ready brief of the working context",
     );
     #[cfg(feature = "tui")]
     help_command(
@@ -1124,6 +1313,12 @@ fn plumbing_help(help: &mut String) {
         "<TOOL> [-- ARGS...]",
         "Launch a coding tool with middleware",
     );
+    help_command(
+        help,
+        "completion",
+        "<SHELL>",
+        "Shell completions (bash|zsh|fish)",
+    );
 }
 
 fn help_command(help: &mut String, name: &str, argument_hint: &str, description: &str) {
@@ -1151,7 +1346,9 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
             capability,
             source,
         } => spec::propose(&source, &change_id, capability.as_deref(), json),
-        SpecAction::List { source } => spec::list(&source, json),
+        SpecAction::List { specs, source } => spec::list(&source, specs, json),
+        SpecAction::Show { name, source } => spec::show(&source, &name, json),
+        SpecAction::Doctor { source } => spec::doctor(&source, json),
         SpecAction::Archive {
             change_id,
             yes,
@@ -1161,6 +1358,21 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         SpecAction::Context { change_id, source } => spec::context(&source, &change_id, json),
     };
     exit_code(result)
+}
+
+/// Dispatch a kind-scoped `add` (`rune agent|rule|hook add <name>`).
+fn run_kind_add(kind: commands::provider::ContentKind, action: KindAction) -> i32 {
+    let KindAction::Add {
+        name,
+        source,
+        reference,
+    } = action;
+    exit_code(add::execute_kind(
+        kind,
+        &name,
+        source.as_deref(),
+        reference.as_deref(),
+    ))
 }
 
 /// Dispatch a `rune watch` subcommand to its handler.

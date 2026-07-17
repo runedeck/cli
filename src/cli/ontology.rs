@@ -20,9 +20,36 @@ pub fn show(json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
-const ONTOLOGY_KEYS: [&str; 5] = ["quests", "skeleton", "lore", "artifacts", "owner"];
+const ONTOLOGY_KEYS: [&str; 12] = [
+    "quests",
+    "skeleton",
+    "owner",
+    "archive",
+    "vault",
+    "work",
+    "lore",
+    "mount",
+    "developer",
+    "artifacts",
+    "githooks",
+    "domain",
+];
 
 pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
+    let config_path = persist(key, value)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "key": key, "value": value, "path": config_path })
+        );
+    } else {
+        println!("set {key} = {value}");
+    }
+    Ok(0)
+}
+
+/// Write one configuration value without printing; returns the config path.
+pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, String> {
     let nested = ONTOLOGY_KEYS.contains(&key);
     if key != "deck" && !nested {
         return Err(format!(
@@ -37,15 +64,107 @@ pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
     } else {
         set_in_file(&config_path, key, value)?;
     }
+    Ok(config_path)
+}
+
+pub fn get(key: &str, json: bool) -> Result<i32, String> {
+    let config = ontology::load().map_err(|error| error.to_string())?;
+    let field = ontology::fields(&config)
+        .into_iter()
+        .find(|field| field.key == key)
+        .ok_or_else(|| format!("unknown config key '{key}'"))?;
+    if json {
+        let output = serde_json::to_string_pretty(&field)
+            .map_err(|error| format!("cannot serialize config field: {error}"))?;
+        println!("{output}");
+        return Ok(i32::from(field.value.is_none()));
+    }
+    match field.value {
+        Some(value) => {
+            println!("{value}");
+            Ok(0)
+        }
+        None => Ok(1),
+    }
+}
+
+pub fn path(json: bool) -> Result<i32, String> {
+    let config_path = ontology::config_dir()
+        .map_err(|error| error.to_string())?
+        .join("config.yaml");
+    if json {
+        println!("{}", serde_json::json!({ "path": config_path }));
+    } else {
+        println!("{}", config_path.display());
+    }
+    Ok(0)
+}
+
+pub fn unset(key: &str, json: bool) -> Result<i32, String> {
+    let nested = ONTOLOGY_KEYS.contains(&key);
+    if key != "deck" && !nested {
+        return Err(format!(
+            "unsupported config key '{key}'; expected: deck, {}",
+            ONTOLOGY_KEYS.join(", ")
+        ));
+    }
+    let config_path = ontology::config_dir()
+        .map_err(|error| error.to_string())?
+        .join("config.yaml");
+    let removed = if nested {
+        remove_nested_in_file(&config_path, "ontology", key)?
+    } else {
+        remove_in_file(&config_path, key)?
+    };
     if json {
         println!(
             "{}",
-            serde_json::json!({ "key": key, "value": value, "path": config_path })
+            serde_json::json!({ "key": key, "removed": removed, "path": config_path })
         );
+    } else if removed {
+        println!("unset {key}");
     } else {
-        println!("set {key} = {value}");
+        println!("{key} was not set");
     }
     Ok(0)
+}
+
+fn remove_in_file(path: &Path, key: &str) -> Result<bool, String> {
+    let mut document = read_config_document(path)?;
+    let mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let removed = mapping
+        .remove(serde_yaml::Value::String(key.to_string()))
+        .is_some();
+    if removed {
+        write_config_document(path, &document)?;
+    }
+    Ok(removed)
+}
+
+fn remove_nested_in_file(path: &Path, section: &str, key: &str) -> Result<bool, String> {
+    let mut document = read_config_document(path)?;
+    let mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let section_key = serde_yaml::Value::String(section.to_string());
+    let Some(section_value) = mapping.get_mut(&section_key) else {
+        return Ok(false);
+    };
+    let section_mapping = section_value
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{section} in {} must be a YAML mapping", path.display()))?;
+    let removed = section_mapping
+        .remove(serde_yaml::Value::String(key.to_string()))
+        .is_some();
+    if removed {
+        if section_mapping.is_empty() {
+            mapping.remove(&section_key);
+        }
+        write_config_document(path, &document)?;
+    }
+    Ok(removed)
 }
 
 fn set_nested_in_file(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
@@ -110,7 +229,7 @@ fn format_source(source: Source) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{set_in_file, set_nested_in_file};
+    use super::{remove_in_file, remove_nested_in_file, set_in_file, set_nested_in_file};
 
     #[test]
     fn nested_setter_writes_under_ontology() {
@@ -142,5 +261,40 @@ mod tests {
                 .expect("parse updated config");
         assert_eq!(value["deck"].as_str(), Some("/tmp/deck"));
         assert_eq!(value["extensions"][0].as_str(), Some("~/Commands"));
+    }
+
+    #[test]
+    fn remove_deletes_only_the_named_key() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.yaml");
+        std::fs::write(&path, "deck: /tmp/deck\nextensions:\n    - ~/Commands\n").expect("fixture");
+
+        assert!(remove_in_file(&path, "deck").expect("remove deck"));
+        assert!(!remove_in_file(&path, "deck").expect("second remove is a no-op"));
+
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(path).expect("read updated config"))
+                .expect("parse updated config");
+        assert!(value.get("deck").is_none());
+        assert_eq!(value["extensions"][0].as_str(), Some("~/Commands"));
+    }
+
+    #[test]
+    fn nested_remove_drops_an_emptied_section() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "deck: /tmp/deck\nontology:\n    quests: /tmp/quests\n",
+        )
+        .expect("fixture");
+
+        assert!(remove_nested_in_file(&path, "ontology", "quests").expect("remove quests"));
+
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(path).expect("read updated config"))
+                .expect("parse updated config");
+        assert!(value.get("ontology").is_none());
+        assert_eq!(value["deck"].as_str(), Some("/tmp/deck"));
     }
 }

@@ -7,16 +7,22 @@
   {VERSION} ({COMMIT}) built {TIME}
 
   Flow:
-    init        <SLUG_OR_DIR> [--lang <LANG>] [--purpose <PURPOSE>] | --module <DIR>Scaffold a project from a skeleton, or a deck module
+    setup       [--defaults]                                          Guided first-run configuration
+    init        <SLUG_OR_DIR> [--lang] [--purpose] | --module <DIR>   Scaffold a project from a skeleton, or a deck module
     quest       [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
     add         <ID[,ID...]>                                          Add runes to the consumer manifest
+    skill       add <NAME[,NAME...]> | install | show                 Stage skills by name; ship the rune agent skill
+    agent       add <NAME[,NAME...]>                                  Stage agents by name
+    rule        add <NAME[,NAME...]>                                  Stage rules by name
+    hook        add <NAME[,NAME...]>                                  Stage hooks by name
+    context     [--json]                                              Agent-ready brief of the working context
     tui         [--source <DIR>] [--edit]                             Launch the terminal dashboard
     dashboard   [--source <DIR>] [--port <PORT>]                      Launch the read-only web dashboard
     install     [--source <DIR>] [--target <DIR>]                     Assemble and deploy rune content
     review      list | export [--target <DIR>]                        Inspect or export TUI review comments
 
   Spec:
-    spec        propose | list | archive | context                    Spec-driven change lifecycle under docs/
+    spec        propose | list | show | doctor | archive | context    Spec-driven change lifecycle under docs/
 
   Deck:
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
@@ -37,6 +43,7 @@
     find        <QUERY>                                               Find local runes by relevance
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
+    completion  <SHELL>                                               Shell completions (bash|zsh|fish)
 
   Quick start:
     rune init N4M3Z/demo --lang rust --purpose tool

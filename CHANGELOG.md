@@ -10,13 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Security scanners (gitleaks, semgrep) run only with `rune validate --scan`, the mode commit and push hooks use. Plain `rune validate`, `rune status`, and the TUI stay in-process and fast.
 - `ruff check` honors `validate.exclude`, so a deck can skip linting adopted upstream code it copied verbatim.
+- Skill `name` must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), matching the agentskills.io standard the Claude Code loader enforces; `rune validate` now rejects PascalCase skill names at author time instead of letting them fail at load.
 
 ### Fixed
 
 - Prune rejects manifest keys containing path traversal components instead of joining them onto the target, closing a write outside the deploy root via a poisoned `.manifest`.
+- `rune --version` reports the actual build commit: the build script now tracks the resolved git ref, not only `.git/HEAD`.
+- The root help aligns the `init` row with every other command row.
 
 ### Added
 
+- Kind-scoped staging: `rune skill add <name>`, `rune agent add <name>`, `rune rule add <name>`, and `rune hook add <name>` resolve bare names against the source deck to fully qualified ids, failing loudly on unknown or cross-domain-ambiguous names (`<domain>/<name>` disambiguates).
+- Spec templates and mdschemas resolve from the source tree first: a file under `templates/spec/` or `schemas/` at the source root overrides the embedded copy, so a repo can track upstream template updates (OpenSpec's included) by replacing the files.
+- `rune context` prints an agent-ready brief of the working context: acting root and role, quest binding, manifest selection, provider deploy state, active changes, and suggested next steps.
+- `rune completion <shell>` generates bash, zsh, fish, and PowerShell completion scripts.
+- `rune skill install|show` ships an agent skill that teaches AI coding CLIs how to drive rune; install writes it to a harness skills directory (default `~/.claude/skills/rune`).
+- `rune setup [--defaults]` guides first-run configuration: discovers decks under `~/Developer`, persists the choice, and reports quest binding and follow-up steps.
+- `rune spec show <name>` renders one active change (state, proposal, deltas, tasks) or one canonical capability specification.
+- `rune spec doctor` reports relationship health across the change tree: missing proposals or deltas, empty checklists, complete-but-unarchived changes, and malformed archive names.
+- `rune spec list --specs` lists canonical capability specifications with requirement counts; `rune spec ls` is an alias for `rune spec list`.
+- `rune config get|unset|path` round out the config surface for scripting.
+- `rune add` prints a note when it redirects to the bound quest because the current directory has no `.rune`.
 - `rune adopt` accepts a local directory and adopts the whole skill tree: `SKILL.md` is aligned to the target name, every other file (markdown companions, worker-agent prompts, scripts, binary assets) is copied byte-for-byte, and each adopted file gets its own regenerated provenance sidecar. The upstream's own `.provenance/` directories are ignored. `--source-url` records upstream attribution when adopting from a local checkout.
 - Native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`, including agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.
 - Spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.

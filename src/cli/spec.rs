@@ -88,12 +88,19 @@ struct ProposeOutput {
     change: String,
     capability: String,
     created: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    template_overrides: Vec<String>,
     next_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct ListOutput {
     changes: Vec<ChangeSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct SpecsOutput {
+    specs: Vec<SpecificationSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -227,9 +234,29 @@ pub(crate) fn propose(
         ));
     }
 
-    let proposal = substitute(PROPOSAL_TEMPLATE, id, capability);
-    let tasks = substitute(TASKS_TEMPLATE, id, capability);
-    let delta = substitute(DELTA_SPEC_TEMPLATE, id, capability);
+    let mut overrides = Vec::new();
+    let mut template = |relative: &str, embedded: &'static str| -> Result<String, Error> {
+        let (content, overridden) = load_with_override(root, relative, embedded)?;
+        if overridden {
+            overrides.push(relative.to_string());
+        }
+        Ok(content)
+    };
+    let proposal = substitute(
+        &template("templates/spec/proposal.md", PROPOSAL_TEMPLATE)?,
+        id,
+        capability,
+    );
+    let tasks = substitute(
+        &template("templates/spec/tasks.md", TASKS_TEMPLATE)?,
+        id,
+        capability,
+    );
+    let delta = substitute(
+        &template("templates/spec/delta-spec.md", DELTA_SPEC_TEMPLATE)?,
+        id,
+        capability,
+    );
     let files = [
         (change_dir.join("proposal.md"), proposal),
         (change_dir.join("tasks.md"), tasks),
@@ -254,6 +281,7 @@ pub(crate) fn propose(
         change: id.to_string(),
         capability: capability.to_string(),
         created,
+        template_overrides: overrides,
         next_steps: vec![
             "Link proposal.md to the governing ADR and fill in scope.".to_string(),
             "Replace the delta spec placeholders with SHALL requirements and scenarios."
@@ -266,8 +294,12 @@ pub(crate) fn propose(
     Ok(0)
 }
 
-/// List active changes and their task completion fractions.
-pub(crate) fn list(source: &str, json: bool) -> Result<i32, Error> {
+/// List active changes and their task completion fractions, or the
+/// canonical capability specifications with `--specs`.
+pub(crate) fn list(source: &str, specs: bool, json: bool) -> Result<i32, Error> {
+    if specs {
+        return list_specifications(Path::new(source), json);
+    }
     let summaries = scan_changes(Path::new(source))?;
     if json {
         print_json(&ListOutput { changes: summaries })?;
@@ -290,10 +322,38 @@ pub(crate) fn list(source: &str, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
+fn list_specifications(root: &Path, json: bool) -> Result<i32, Error> {
+    let summaries = scan_specifications(root)?;
+    if json {
+        print_json(&SpecsOutput { specs: summaries })?;
+        return Ok(0);
+    }
+    if summaries.is_empty() {
+        println!("No canonical specifications.");
+        return Ok(0);
+    }
+    for specification in summaries {
+        println!(
+            "{:<32} {} requirement(s)",
+            specification.capability, specification.requirements
+        );
+    }
+    Ok(0)
+}
+
 /// Emit an agent-ready work order for one active change.
 pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> {
     validate_slug(id, "change id")?;
-    let root = Path::new(source);
+    let output = load_context_output(Path::new(source), id)?;
+    if json {
+        print_json(&output)?;
+    } else {
+        print_context(&output);
+    }
+    Ok(0)
+}
+
+fn load_context_output(root: &Path, id: &str) -> Result<ContextOutput, Error> {
     let change_dir = root.join("docs/changes").join(id);
     if !change_dir.is_dir() {
         if archived_change_exists(root, id)? {
@@ -339,18 +399,12 @@ pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> 
     }
 
     let tasks_content = read(&change_dir.join("tasks.md"))?;
-    let output = ContextOutput {
+    Ok(ContextOutput {
         id: id.to_string(),
         proposal: strip_frontmatter(&proposal).trim().to_string(),
         deltas,
         tasks: parse_tasks(&tasks_content).tasks,
-    };
-    if json {
-        print_json(&output)?;
-    } else {
-        print_context(&output);
-    }
-    Ok(0)
+    })
 }
 
 /// Merge or explicitly abandon a change, then move it into the dated archive.
@@ -516,6 +570,9 @@ pub(crate) fn scan_specifications(root: &Path) -> Result<Vec<SpecificationSummar
 /// Validate canonical specs and active deltas, including archive mergeability.
 pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Error> {
     let mut violations = Vec::new();
+    let (spec_schema, _) = load_with_override(root, "schemas/spec.mdschema", SPEC_MDSCHEMA)?;
+    let (delta_schema, _) =
+        load_with_override(root, "schemas/delta-spec.mdschema", DELTA_SPEC_MDSCHEMA)?;
 
     for capability_dir in read_directories(&root.join("docs/specs"))? {
         let spec_path = capability_dir.join("spec.md");
@@ -523,7 +580,7 @@ pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Erro
             continue;
         }
         let content = read(&spec_path)?;
-        violations.extend(schema_violations(root, &spec_path, &content, SPEC_MDSCHEMA));
+        violations.extend(schema_violations(root, &spec_path, &content, &spec_schema));
         if let Err(found) = parse_canonical(&content) {
             violations.extend(found.into_iter().map(|issue| SpecViolation {
                 path: relative_display(root, &spec_path),
@@ -547,7 +604,7 @@ pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Erro
                 root,
                 &delta_path,
                 &content,
-                DELTA_SPEC_MDSCHEMA,
+                &delta_schema,
             ));
             let operations = match parse_delta(&content) {
                 Ok(operations) => operations,
@@ -721,6 +778,26 @@ fn read(path: &Path) -> Result<String, Error> {
     fs::read_to_string(path).map_err(|error| io_error("read", path, error))
 }
 
+/// Resolve a spec template or schema: a file at the same relative path under
+/// the source root wins over the embedded copy, so a repo can carry its own
+/// spec artifacts and track upstream updates by replacing the files. The
+/// boolean reports whether the repo-local override was used, so callers can
+/// surface the substitution instead of applying it silently.
+fn load_with_override(
+    root: &Path,
+    relative: &str,
+    embedded: &'static str,
+) -> Result<(String, bool), Error> {
+    let path = root.join(relative);
+    if !path.exists() {
+        return Ok((embedded.to_string(), false));
+    }
+    let confined = commands::services::confine::confine_existing(root, &path)
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let content = read(&confined)?;
+    Ok((content, true))
+}
+
 fn strip_frontmatter(content: &str) -> &str {
     let Some(rest) = content.strip_prefix("---\n") else {
         return content;
@@ -799,6 +876,9 @@ fn print_propose(output: &ProposeOutput, json: bool) -> Result<(), Error> {
     );
     for path in &output.created {
         println!("  + {path}");
+    }
+    for relative in &output.template_overrides {
+        println!("note: using template override {relative}");
     }
     println!("Next steps:");
     for step in &output.next_steps {
@@ -1247,6 +1327,233 @@ fn apply_delta(
     Ok(summary)
 }
 
+#[derive(Debug, Serialize)]
+struct ShowChangeOutput {
+    state: ChangeState,
+    completed: usize,
+    total: usize,
+    #[serde(flatten)]
+    context: ContextOutput,
+}
+
+#[derive(Debug, Serialize)]
+struct ShowSpecOutput {
+    capability: String,
+    requirements: usize,
+    content: String,
+}
+
+/// Render one active change or one canonical capability specification.
+pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
+    validate_slug(name, "item name")?;
+    let root = Path::new(source);
+    let change_dir = root.join("docs/changes").join(name);
+    let spec_path = root.join("docs/specs").join(name).join("spec.md");
+    match (change_dir.is_dir(), spec_path.is_file()) {
+        (true, true) => Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "'{name}' is both an active change and a capability specification:\n  - change: {} (rune spec context {name})\n  - specification: {}\npick one of those forms",
+                relative_display(root, &change_dir),
+                relative_display(root, &spec_path)
+            ),
+        )),
+        (true, false) => show_change(root, name, json),
+        (false, true) => show_specification(root, name, &spec_path, json),
+        (false, false) => {
+            if archived_change_exists(root, name)? {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!(
+                        "change '{name}' is already archived under {}",
+                        root.join("docs/changes/archive").display()
+                    ),
+                ));
+            }
+            Err(Error::new(
+                ErrorKind::Config,
+                format!("no active change or capability specification named '{name}'"),
+            ))
+        }
+    }
+}
+
+fn show_change(root: &Path, id: &str, json: bool) -> Result<i32, Error> {
+    let task_status = read_tasks(&root.join("docs/changes").join(id).join("tasks.md"))?;
+    let output = ShowChangeOutput {
+        state: task_status.state(),
+        completed: task_status.completed,
+        total: task_status.total,
+        context: load_context_output(root, id)?,
+    };
+    if json {
+        print_json(&output)?;
+        return Ok(0);
+    }
+    println!(
+        "{} · {} · {}/{} tasks\n",
+        output.context.id,
+        state_label(output.state),
+        output.completed,
+        output.total
+    );
+    print_context(&output.context);
+    Ok(0)
+}
+
+fn show_specification(
+    root: &Path,
+    capability: &str,
+    path: &Path,
+    json: bool,
+) -> Result<i32, Error> {
+    let content = read(path)?;
+    let requirements = parse_canonical(&content).map_or(0, |spec| spec.requirements.len());
+    if json {
+        print_json(&ShowSpecOutput {
+            capability: capability.to_string(),
+            requirements,
+            content,
+        })?;
+        return Ok(0);
+    }
+    println!(
+        "{} · {} requirement(s) · {}\n",
+        capability,
+        requirements,
+        relative_display(root, path)
+    );
+    print!("{content}");
+    Ok(0)
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorFinding {
+    severity: &'static str,
+    path: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SpecDoctorOutput {
+    changes: usize,
+    specs: usize,
+    findings: Vec<DoctorFinding>,
+}
+
+/// Report relationship health across the spec-driven change tree.
+pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {
+    let root = Path::new(source);
+    let mut findings = Vec::new();
+
+    let change_dirs = read_directories(&root.join("docs/changes"))?
+        .into_iter()
+        .filter(|path| path.file_name().is_none_or(|name| name != "archive"))
+        .collect::<Vec<_>>();
+    for change_dir in &change_dirs {
+        check_change_health(root, change_dir, &mut findings)?;
+    }
+
+    let specifications = scan_specifications(root)?;
+    for specification in &specifications {
+        if specification.requirements == 0 {
+            findings.push(DoctorFinding {
+                severity: "warning",
+                path: format!("docs/specs/{}/spec.md", specification.capability),
+                message: "canonical specification has no recognized requirements".to_string(),
+            });
+        }
+    }
+
+    for archived in read_directories(&root.join("docs/changes/archive"))? {
+        let Some(name) = archived.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let dated = name.len() > 11
+            && name.as_bytes().get(10) == Some(&b'-')
+            && name
+                .get(..10)
+                .is_some_and(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok());
+        if !dated {
+            findings.push(DoctorFinding {
+                severity: "warning",
+                path: relative_display(root, &archived),
+                message: "archive entry is not named <YYYY-MM-DD>-<change-id>".to_string(),
+            });
+        }
+    }
+
+    let output = SpecDoctorOutput {
+        changes: change_dirs.len(),
+        specs: specifications.len(),
+        findings,
+    };
+    let broken = output
+        .findings
+        .iter()
+        .any(|finding| finding.severity == "error");
+    if json {
+        print_json(&output)?;
+    } else if output.findings.is_empty() {
+        println!(
+            "spec tree healthy: {} active change(s), {} capability spec(s)",
+            output.changes, output.specs
+        );
+    } else {
+        for finding in &output.findings {
+            println!(
+                "{}: {}: {}",
+                finding.severity, finding.path, finding.message
+            );
+        }
+    }
+    Ok(i32::from(broken))
+}
+
+fn check_change_health(
+    root: &Path,
+    change_dir: &Path,
+    findings: &mut Vec<DoctorFinding>,
+) -> Result<(), Error> {
+    let display = relative_display(root, change_dir);
+    let Some(id) = change_dir.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    if !change_dir.join("proposal.md").is_file() {
+        findings.push(DoctorFinding {
+            severity: "error",
+            path: display.clone(),
+            message: "change has no proposal.md".to_string(),
+        });
+    }
+    let has_delta = read_directories(&change_dir.join("specs"))?
+        .iter()
+        .any(|capability_dir| capability_dir.join("spec.md").is_file());
+    if !has_delta {
+        findings.push(DoctorFinding {
+            severity: "error",
+            path: display.clone(),
+            message: "change has no delta specification under specs/<capability>/spec.md"
+                .to_string(),
+        });
+    }
+    let task_status = read_tasks(&change_dir.join("tasks.md"))?;
+    if task_status.total == 0 {
+        findings.push(DoctorFinding {
+            severity: "warning",
+            path: display,
+            message: "change has no checklist tasks in tasks.md".to_string(),
+        });
+    } else if task_status.state() == ChangeState::Complete {
+        findings.push(DoctorFinding {
+            severity: "warning",
+            path: display,
+            message: format!("all tasks are checked; archive with rune spec archive {id}"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1479,5 +1786,106 @@ mod tests {
                 .state,
             ChangeState::Complete
         );
+    }
+
+    #[test]
+    fn show_rejects_a_name_that_is_both_change_and_specification() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "search", "- [ ] task\n", DELTA);
+        let canonical = root.path().join("docs/specs/search/spec.md");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, ORIGINAL).unwrap();
+
+        let error = show(&root.path().to_string_lossy(), "search", false).unwrap_err();
+
+        assert!(error.message().contains("both an active change"));
+    }
+
+    #[test]
+    fn show_reports_an_archived_change_by_name() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "done", "- [x] task\n", DELTA);
+        let canonical = root.path().join("docs/specs/search/spec.md");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, ORIGINAL).unwrap();
+        archive(&root.path().to_string_lossy(), "done", false, false, false).unwrap();
+
+        let error = show(&root.path().to_string_lossy(), "done", false).unwrap_err();
+
+        assert!(error.message().contains("already archived"));
+    }
+
+    #[test]
+    fn show_renders_an_active_change() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "improve-search", "- [x] a\n- [ ] b\n", DELTA);
+
+        let code = show(&root.path().to_string_lossy(), "improve-search", false).unwrap();
+
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn spec_doctor_flags_missing_proposal_and_delta() {
+        let root = TempDir::new().unwrap();
+        let change = root.path().join("docs/changes/broken");
+        fs::create_dir_all(&change).unwrap();
+        fs::write(change.join("tasks.md"), "- [ ] task\n").unwrap();
+
+        let code = doctor(&root.path().to_string_lossy(), false).unwrap();
+
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn spec_doctor_passes_a_healthy_tree() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "healthy", "- [ ] task\n", DELTA);
+        let canonical = root.path().join("docs/specs/search/spec.md");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, ORIGINAL).unwrap();
+
+        let code = doctor(&root.path().to_string_lossy(), false).unwrap();
+
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn propose_prefers_a_repo_local_template_override() {
+        let root = TempDir::new().unwrap();
+        let overrides = root.path().join("templates/spec");
+        fs::create_dir_all(&overrides).unwrap();
+        fs::write(
+            overrides.join("proposal.md"),
+            "# Custom ${CHANGE_TITLE}\n\nOverride template body for ${CAPABILITY}.\n",
+        )
+        .unwrap();
+
+        propose(
+            &root.path().to_string_lossy(),
+            "custom-change",
+            Some("widgets"),
+            false,
+        )
+        .unwrap();
+
+        let proposal =
+            fs::read_to_string(root.path().join("docs/changes/custom-change/proposal.md")).unwrap();
+        assert!(proposal.starts_with("# Custom Custom Change"));
+        assert!(proposal.contains("Override template body for widgets."));
+    }
+
+    #[test]
+    fn list_specs_counts_canonical_requirements() {
+        let root = TempDir::new().unwrap();
+        let canonical = root.path().join("docs/specs/search/spec.md");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, ORIGINAL).unwrap();
+
+        let summaries = scan_specifications(root.path()).unwrap();
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].capability, "search");
+        assert_eq!(summaries[0].requirements, 2);
     }
 }

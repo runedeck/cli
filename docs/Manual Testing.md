@@ -12,168 +12,161 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ```sh
 cd ~/Developer/runedeck/rune
 cargo install --path .
-rune --version        # rune 0.4.0
-rune --help           # subcommands include add, install, validate, drift, review, tui, dashboard, adopt, find, launch, watch
+rune --version        # rune 0.4.0 (<current commit>) — the hash tracks HEAD now
+rune --help           # groups: Flow (setup, init, quest, add, context, tui, dashboard, install, review), Spec, Deck, Plumbing (incl. skill, completion)
 ```
 
-## 2. Scaffold and bind a quest
+## 2. First-run surface
+
+```sh
+rune setup --defaults          # reports deck + quest state without prompting
+rune config path               # ~/.config/rune/config.yaml
+rune config get deck           # raw value, exit 0; exit 1 when unset
+rune config set owner tester && rune config get owner && rune config unset owner
+rune completion zsh | head -3  # a real #compdef script; bash and fish too
+rune skill show | head -5      # frontmatter: name rune, current version
+rune skill install --dir "$(mktemp -d)"   # prints installed → …/rune/SKILL.md; rerun prints unchanged
+```
+
+Expected: `setup --json` emits pure JSON (no prompt text); `config unset` accepts every key `config` lists; `skill install` refuses a symlinked destination.
+
+## 3. Scaffold and bind a quest
 
 ```sh
 export RUNE_QUESTS="$(mktemp -d)"
 rune init demo --lang shell --purpose tool --brief "Manual init quest"
 cd "$RUNE_QUESTS/demo"
 test -x bin/demo && test -x .githooks/pre-commit
-! grep -E '\${(NAME|TITLE|BRIEF|OWNER)}' bin/demo Makefile
 git config --get core.hooksPath       # .githooks
 rune quest .                          # binds this working repo as the quest
 rune add --source "$DECK" --cast development
-rune tui --edit                       # opens the checkbox editor with the cast selected
+rune context                          # root (consumer) · selection · providers · next: rune install
+rune tui --edit                       # checkbox editor with the cast selected
 rune install
 ```
 
-Expected: init lists `base`, `lang/shell`, and `purpose/tool`, creates the quest
-under `RUNE_QUESTS`, substitutes `demo` in the shell command and Makefile,
-marks hooks and `bin/demo` executable, initializes `main`, and activates
-`.githooks`. Quest binding records this repo; the editor shows the development
-cast selected and installs the checked runes into the four provider targets.
+Expected: init lists `base`, `lang/shell`, `purpose/tool` and makes one commit; `rune context` shows the staged cast and flips its `next:` suggestion to `rune doctor` once all providers are deployed.
 
-## 3. Validate the deck
+## 4. The quest-redirect note
 
 ```sh
-cd "$DECK" && rune validate
+cd "$(mktemp -d)" && rune add --cast development
 ```
 
-Expected: an aggregate report over the four decks (council, development, meta, research); ADR schema checks pass; no errors.
+Expected: a loud `note: no .rune here; acting on the bound quest at …` line, then `already staged … → <quest>/.rune`. The write never lands in the current directory silently.
 
-## 4. Fresh consumer, development cast
+## 5. Validate the deck
+
+```sh
+cd "$DECK" && rune validate          # fast (~0.2s), aggregate over all domains, no errors
+rune validate --scan                 # + gitleaks and semgrep, the commit/push-hook mode
+```
+
+Expected: a PascalCase skill `name` in any `SKILL.md` fails plain `validate` with a pattern error; all shipped skills are kebab-case.
+
+## 6. Fresh consumer, development cast
 
 ```sh
 T=$(mktemp -d) && cd "$T"
-rune config set deck "$DECK"
+rune quest .                          # rebind so this directory is the acting root
 rune add --cast development
-cat .rune             # version, deck source, cast: development
-rune install          # deploys with a count, no warnings about skipped files
-```
-
-Inspect the target:
-
-```sh
-ls .claude/rules      # eight rules incl. Deslop.md, StageForReview.md
-ls .claude/skills     # Brainstorming, DeliveryPipeline, Deslop, LearnFrom, SystematicDebug, VerifyCompletion, VersionControl
-cat .claude/hooks/development/hooks.json    # command path rewritten to the deployed location
+rune install
+ls .claude/rules                      # Deslop.md, StageForReview.md, … (rules stay PascalCase)
+ls .claude/skills                     # brainstorming, delivery-pipeline, deslop, learn-from, systematic-debug, verify-completion, version-control
 test -x .claude/hooks/development/safety-net.sh && echo executable
-```
-
-Drift must be clean, then detect a real edit:
-
-```sh
-rune drift --target .claude                 # clean, exit 0
+rune drift --target .                 # clean, exit 0
 echo tamper >> .claude/rules/Deslop.md
-rune drift --target .claude                 # flags Deslop.md as modified
+rune drift --target .                 # flags Deslop.md as modified
+rune doctor --target .                # modified 1 · left untouched
 ```
 
-## 5. Four providers, all cast
+## 7. Four providers, all cast
 
 ```sh
-T=$(mktemp -d) && cd "$T"
+T=$(mktemp -d) && cd "$T" && rune quest .
 rune add --source "$DECK" --cast all >/dev/null && rune install >/dev/null
 for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -l)"; done
 ```
 
-Expected: 99 files in each provider directory.
+Expected: 141 files in each provider directory.
 
-## 6. Qualified ids and the ambiguity guard
+## 8. Qualified ids and kind-scoped add
 
 ```sh
-T=$(mktemp -d) && cd "$T"
-rune add --source "$DECK" development/skills/VersionControl   # single rune, ok
-rune add development/Deslop
+T=$(mktemp -d) && cd "$T" && rune quest .
+rune skill add version-control --source "$DECK"   # bare name → development/skills/version-control
+rune agent add TheOpponent                        # → council/agents/TheOpponent
+rune rule add Deslop                              # → development/rules/Deslop
+rune hook add safety-net                          # → development/hooks/safety-net
+rune skill add nonexistent                        # fatal: no skills rune named 'nonexistent'
+rune add development/skills/version-control       # fully qualified ids still work
 ```
 
-Expected: the second command fails loudly — `development/Deslop` is ambiguous (a rule and a skill share the name) and the error lists both candidates. Retry with `development/rules/Deslop`.
+Expected: each kind command echoes the fully qualified id it staged; a bare name present in two domains errors listing both and `<domain>/<name>` disambiguates.
 
-## 7. Pinned git install (the remote-consumer path)
+## 9. Pinned git install (the remote-consumer path)
 
 ```sh
-T=$(mktemp -d) && cd "$T"
+T=$(mktemp -d) && cd "$T" && rune quest .
 SHA=$(git -C "$DECK" rev-parse HEAD)
 printf 'version: 1\nsources:\n  deck:\n    git: file://%s\n    ref: %s\nartifacts:\n  deck:\n    cast: development\n' "$DECK" "$SHA" > .rune
 RUNE_GIT_ALLOW_FILE_URLS=1 rune install
 ```
 
-Expected: same deployment as step 3, materialized from the pinned commit. Over HTTPS only the transport differs.
+Expected: same deployment as step 6, materialized from the pinned commit.
 
-## 8. Legacy compatibility
+## 10. Spec lifecycle
 
 ```sh
-T=$(mktemp -d) && cd "$T"
-rune add --source "$DECK" --cast base >/dev/null
-mv .rune .forge && rune install      # legacy manifest still resolves
-mkdir .rune && rune install          # a directory named .rune does not shadow .forge
+D=$(mktemp -d) && cp -R "$DECK"/* "$D/" && cd "$D"
+rune spec propose add-widget --capability widgets
+rune spec ls                          # draft  add-widget  0/3 (alias for list)
+rune spec show add-widget             # add-widget · draft · 0/3 tasks, then the work order
+rune spec doctor                      # warning: no checked tasks yet, exit 0
+#   check the [x] boxes in docs/changes/add-widget/tasks.md, then:
+rune spec doctor                      # warning: complete; archive with rune spec archive add-widget
+rune spec archive add-widget
+rune spec list --specs                # widgets · N requirement(s)
+rune spec show widgets                # prints the canonical capability spec
 ```
 
-`FORGE_GIT_CACHE_DIR` is honored when `RUNE_GIT_CACHE_DIR` is unset; old provenance sidecars with forge URIs still verify.
+Template source of truth: drop a replacement `templates/spec/proposal.md` (or `tasks.md`, `delta-spec.md`, `schemas/*.mdschema`) at the source root and `spec propose`/`rune validate` prefer it over the embedded copy — updating from upstream (e.g. OpenSpec) is a plain file copy.
 
-## 9. TUI
+Expected: `doctor` exits 1 only when a change is structurally broken (no proposal, no delta); `show` on a name that is both a change and a spec errors listing both forms.
+
+## 11. TUI
 
 ```sh
 cd "$DECK" && rune tui
 ```
 
-Expected: header shows 4 modules; sections include Decks, Casts, History. Try: Miller-column navigation decks → kinds → runes; `/` filters in-panel; `!` shows problems only; the casts section resolves membership; History renders the commit list batched (scroll keeps loading); wheel scroll moves the viewport without dragging the selection. Non-interactive render: `rune tui --snapshot`.
-
-In an artifact's Code tab, verify the review controls: `12j`, `5G`, `gg`, and
-`zz` move or position the line cursor; `]]`/`[[` jump Markdown sections; `/`
-highlights matches incrementally and `n`/`N` repeat the search. Press `V`,
-extend with `j`/`k` or a count, then `c` to comment the selected range. The
-comment box is a direct input: type text and press Enter (or Ctrl-S) to save;
-Shift/Alt-Enter or Ctrl-J/Ctrl-K inserts a newline, Tab/Shift-Tab changes the
-comment kind, and Esc cancels. The first Esc on a dirty comment asks for
-confirmation; the second discards it.
-Mouse-wheel scrolling must move only the viewport while a visual selection is
-active. `;e` opens the cast editor and `;q` quits.
-
-After saving comments, verify the persisted and agent-facing forms:
+Miller-column navigation, `/` in-pane filter, `!` problems-only, History batched loading. Code tab: `12j`, `5G`, `gg`, `zz`, `]]`/`[[`, `/` + `n/N`, `V` + `c` range comments; Enter saves, Esc (twice when dirty) cancels; wheel scroll moves only the viewport. Then:
 
 ```sh
 rune review list --source "$DECK"
 rune review export --source "$DECK" --format markdown
 ```
 
-Expected: `.rune-comments.yaml` contains `end_line` only for ranges; legacy
-single-line records still load. The export groups comments by file, includes
-the selected source lines, and matches what `y` copies from the TUI.
-
-## 10. Dashboard
+## 12. Adopt a skill tree
 
 ```sh
-cd "$DECK" && rune dashboard
+M=$(mktemp -d) && rune init --module "$M/scratch"
+rune adopt <path-to-skill-dir> --module "$M/scratch" --name example-adopted --dry-run
+rune adopt <path-to-skill-dir> --module "$M/scratch" --name example-adopted --source-url https://example.com/upstream
+find "$M/scratch/skills/example-adopted" -name "*.yaml" -path "*.provenance*" | head
 ```
 
-Expected: a loopback URL; panels for decks (counts, validation), casts (resolved sizes), and target deploy status; entirely read-only; deck routes 404 outside a deck.
+Expected: dry-run prints the plan without writing; the real run aligns `SKILL.md`, copies every companion byte-for-byte, and writes one provenance sidecar per file.
 
-## 11. Repo hooks
-
-```sh
-cd ~/Developer/runedeck/rune
-echo >> README.md && git add README.md && git commit -m "test: hook check"
-```
-
-Expected: prek runs whitespace/yaml/shellcheck/fmt/clippy/test/semgrep, gitleaks scans staged content, `rune validate` checks ADR schemas — all before the commit lands. Undo: `git reset --hard HEAD~1` (or ask the resident agent).
-
-## 12. Guardrails worth seeing fail
+## 13. Guardrails worth seeing fail
 
 ```sh
 cd "$DECK"
 sed -i '' 's/^schema: 1/schema: 2/' deck.yaml
 rune validate         # hard error naming found schema 2 vs supported 1
 sed -i '' 's/^schema: 2/schema: 1/' deck.yaml
-
-touch runes/development/rules/junk.txt
-rune validate         # or any install: a named warning for the unsupported file, never silence
-rm runes/development/rules/junk.txt
 ```
 
 ## Reference
 
-Backups: `~/Data/Claude/backups/runedeck-*.tgz`. Checkpoint tags in the rune repo: `checkpoint-stage-a`, `checkpoint-complete`. ADRs: `docs/decisions/` in both repos.
+Backups: `~/Data/Claude/backups/runedeck-*.tgz`. ADRs: `docs/decisions/` in both repos. Cleanup: `rune quest -` restores your previous quest binding after the temp-dir steps.

@@ -77,6 +77,36 @@ pub fn resolve_sources(
     Ok(collected)
 }
 
+/// Enumerate every canonical rune id (`<domain>/<kind>/<name>`) one manifest
+/// source offers. Requires a deck-root source; single modules have no
+/// domain component to qualify against.
+pub fn enumerate_ids(
+    source: &Source,
+    source_label: &str,
+    repo_root: &Path,
+    valid_qualifiers: &HashSet<String>,
+) -> Result<Vec<String>, Error> {
+    match canonicalize_source(source, source_label, repo_root)? {
+        CanonicalSource::Module(_) => Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "source '{source_label}' resolves to a single module; kind-scoped add requires a deck-root source"
+            ),
+        )),
+        CanonicalSource::Deck(deck) => {
+            let mut ids = Vec::new();
+            for deck_entry in &deck.entries {
+                for file in sources::collect_deck(&deck_entry.root, valid_qualifiers)? {
+                    ids.push(canonical_rune_id(&deck_entry.name, &file)?);
+                }
+            }
+            ids.sort();
+            ids.dedup();
+            Ok(ids)
+        }
+    }
+}
+
 /// Materialize one manifest source and return its canonical root.
 ///
 /// Editors use this to inspect the same local or pinned-git source that the

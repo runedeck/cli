@@ -33,6 +33,7 @@ required-features = ["test-file-urls"]
 [dependencies]
 # cli
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # serialization
 serde = { version = "1", features = ["derive"] }
