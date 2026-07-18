@@ -164,6 +164,39 @@ Artifact parity extras: `rune spec propose big-change --capability alpha --capab
 
 Expected: `doctor` exits 1 only when a change is structurally broken (no proposal, no delta); `show` on a name that is both a change and a spec errors listing both forms.
 
+## 10b. Repo content: todo, adr, docs
+
+```sh
+T=$(mktemp -d) && cd "$T" && mkdir -p docs/decisions
+rune todo add "(A) verify the todo engine +rune @cli due:2026-07-25"
+rune todo                              # styled list; (A) items red
+rune todo obsidian                     # - [ ] … #rune @cli ⏫ 📅 2026-07-25
+rune todo do 1 && rune todo            # completed item renders dim, x + date
+rune adr new "Try The Lifecycle" --prefix CLI
+rune adr list                          # CLI-0001 · proposed
+rune adr new "Replace The Lifecycle" --prefix CLI
+rune adr supersede CLI-0001 CLI-0002   # status flips, cross-links both ways
+rune adr index && cat docs/decisions/README.md
+printf '# Home\n\n[missing](Nope.md)\n' > docs/README.md
+rune docs check                        # broken link error, exit 1
+```
+
+Workspace aggregation: in a consumer whose `.rune` is version 2 with a `dirs:` section, `rune todo --all` lists the root plus every member (`--json` emits one workspace document). Spec ids accept unambiguous prefixes: `rune spec show lau` reaches `launch-profiles`.
+
+## 10c. Cowork packaging and launch profiles
+
+```sh
+#   in a deployed consumer (step 6):
+rune release --format cowork           # dist/rune-cowork-plugin.zip, limits enforced
+rune launch                            # tools with install state and profiles
+rune launch ollama@llama3 --dry-run    # plan shows: ollama run llama3
+rune launch claude@nonexistent         # error listing known profiles
+```
+
+Profiles live under `launch.profiles` in `~/.config/rune/config.yaml`; `rune launch --help` carries commented examples (Anthropic pins, OpenAI-compatible base URL). Env values support `from_env:` references so secrets stay out of config.
+
+Embedded skeleton: with no configured skeleton root, `rune init` extracts the built-in layers to a per-version cache, so scaffolding works from a bare brew install.
+
 ## 11. TUI
 
 Covered in depth by the dedicated TUI walkthrough (docs/walkthroughs/). Quick pass:

@@ -3,6 +3,7 @@
 - [Tour](Tour.md) — feature tour for the review pass
 - [Manual Testing](Manual%20Testing.md) — the step-by-step walkthrough with expected results
 - [Manual Check](Manual%20Check.md) — quick verification checklist
+- [Crew Parity](Crew%20Parity.md) — capability matrix against crew, pinned with non-goals
 
 ## Walkthroughs
 
