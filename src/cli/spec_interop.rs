@@ -87,51 +87,37 @@ fn convert(root: &Path, mappings: &[(&str, &str)]) -> Result<usize, Error> {
             ),
         ));
     }
-    let mut moved = 0;
+    // Collect every planned copy first, then check every collision, then
+    // write: a late collision must not leave a partial destination tree.
+    let mut planned: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
     for (from, to) in mappings {
         let from_dir = root.join(from);
         if !from_dir.is_dir() {
             continue;
         }
-        moved += copy_tree(&from_dir, &root.join(to))?;
+        collect_copies(&from_dir, &root.join(to), &mut planned)?;
     }
-    Ok(moved)
-}
-
-fn copy_tree(from: &Path, to: &Path) -> Result<usize, Error> {
-    let mut copied = 0;
-    let entries = std::fs::read_dir(from).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot read {}: {error}", from.display()),
-        )
-    })?;
-    std::fs::create_dir_all(to).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot create {}: {error}", to.display()),
-        )
-    })?;
-    for entry in entries.flatten() {
-        let source = entry.path();
-        let Some(name) = source.file_name() else {
-            continue;
-        };
-        let destination = to.join(name);
-        if source.is_dir() {
-            copied += copy_tree(&source, &destination)?;
-            continue;
-        }
+    for (_, destination) in &planned {
         if destination.exists() {
             return Err(Error::new(
                 ErrorKind::Config,
                 format!(
-                    "{} already exists; conversion refuses to overwrite — reconcile and retry",
+                    "{} already exists; conversion refuses to overwrite — reconcile and retry (nothing was written)",
                     destination.display()
                 ),
             ));
         }
-        std::fs::copy(&source, &destination).map_err(|error| {
+    }
+    for (source, destination) in &planned {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        std::fs::copy(source, destination).map_err(|error| {
             Error::new(
                 ErrorKind::Io,
                 format!(
@@ -141,9 +127,58 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize, Error> {
                 ),
             )
         })?;
-        copied += 1;
     }
-    Ok(copied)
+    Ok(planned.len())
+}
+
+/// Walk `from` collecting file copies into `planned`. Symlinks are refused:
+/// a linked directory could recurse into an ancestor or the destination,
+/// and a linked file could pull content from outside the source tree.
+fn collect_copies(
+    from: &Path,
+    to: &Path,
+    planned: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+) -> Result<(), Error> {
+    let entries = std::fs::read_dir(from).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", from.display()),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read an entry under {}: {error}", from.display()),
+            )
+        })?;
+        let source = entry.path();
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let metadata = source.symlink_metadata().map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot inspect {}: {error}", source.display()),
+            )
+        })?;
+        if metadata.is_symlink() {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "{} is a symlink; conversion copies regular files only",
+                    source.display()
+                ),
+            ));
+        }
+        let destination = to.join(name);
+        if metadata.is_dir() {
+            collect_copies(&source, &destination, planned)?;
+        } else {
+            planned.push((source, destination));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
