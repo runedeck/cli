@@ -64,12 +64,7 @@ fn save_items(root: &Path, items: &[TodoItem]) -> Result<(), Error> {
     let path = todo_path(root);
     let mut rendered = items.iter().map(render_line).collect::<Vec<_>>().join("\n");
     rendered.push('\n');
-    std::fs::write(&path, rendered).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", path.display()),
-        )
-    })
+    crate::cli::config::write_atomic(&path, &rendered)
 }
 
 pub fn execute_at(root: &Path, action: Option<TodoAction>, json: bool) -> Result<i32, Error> {
@@ -80,7 +75,11 @@ pub fn execute_at(root: &Path, action: Option<TodoAction>, json: bool) -> Result
             let mut items = load_items(root)?;
             items.push(parse_line(&text));
             save_items(root, &items)?;
-            println!("added {}", items.len());
+            if json {
+                println!("{}", serde_json::json!({ "added": items.len() }));
+            } else {
+                println!("added {}", items.len());
+            }
             Ok(0)
         }
         Some(TodoAction::Do { position }) => {
@@ -93,7 +92,11 @@ pub fn execute_at(root: &Path, action: Option<TodoAction>, json: bool) -> Result
             }
             items[position - 1].complete_today();
             save_items(root, &items)?;
-            println!("done {position}");
+            if json {
+                println!("{}", serde_json::json!({ "done": position }));
+            } else {
+                println!("done {position}");
+            }
             Ok(0)
         }
         Some(TodoAction::Obsidian) => {
@@ -115,7 +118,11 @@ pub fn execute_at(root: &Path, action: Option<TodoAction>, json: bool) -> Result
                 }
             }
             save_items(root, &items)?;
-            println!("imported {imported}");
+            if json {
+                println!("{}", serde_json::json!({ "imported": imported }));
+            } else {
+                println!("imported {imported}");
+            }
             Ok(0)
         }
     }

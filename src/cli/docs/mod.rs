@@ -206,7 +206,8 @@ fn link_targets(content: &str) -> Vec<LinkTarget> {
     let mut targets = Vec::new();
     let mut in_code_fence = false;
     for line in content.lines() {
-        if line.trim_start().starts_with("```") {
+        let fence = line.trim_start();
+        if fence.starts_with("```") || fence.starts_with("~~~") {
             in_code_fence = !in_code_fence;
             continue;
         }
@@ -264,7 +265,14 @@ fn collect_wikilinks(line: &str, targets: &mut Vec<LinkTarget>) {
         let after = &rest[open + 2..];
         let Some(close) = after.find("]]") else { break };
         let inner = &after[..close];
-        let name = inner.split('|').next().unwrap_or_default().trim();
+        let name = inner
+            .split('|')
+            .next()
+            .unwrap_or_default()
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim();
         if !name.is_empty() {
             targets.push(LinkTarget::Wikilink(name.to_string()));
         }
@@ -273,7 +281,15 @@ fn collect_wikilinks(line: &str, targets: &mut Vec<LinkTarget>) {
 }
 
 fn push_if_internal(destination: &str, targets: &mut Vec<LinkTarget>) {
-    let destination = destination.split('#').next().unwrap_or_default().trim();
+    // `[text](path "Title")` carries an optional quoted title after the path.
+    let destination = destination
+        .split(" \"")
+        .next()
+        .unwrap_or_default()
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim();
     if destination.is_empty()
         || destination.contains("://")
         || destination.starts_with("mailto:")

@@ -128,12 +128,7 @@ fn set_enabled_at(root: &Path, name: &str, enabled: bool, json: bool) -> Result<
     if !rendered.ends_with('\n') {
         rendered.push('\n');
     }
-    std::fs::write(&config_path, rendered).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", config_path.display()),
-        )
-    })?;
+    crate::cli::config::write_atomic(&config_path, &rendered)?;
 
     if json {
         println!(

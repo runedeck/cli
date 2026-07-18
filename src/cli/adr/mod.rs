@@ -143,6 +143,12 @@ pub fn execute_at(root: &Path, action: AdrAction, json: bool) -> Result<i32, Err
 }
 
 fn new_record(root: &Path, title: &str, prefix: &str, json: bool) -> Result<i32, Error> {
+    if prefix.is_empty() || !prefix.chars().all(|letter| letter.is_ascii_uppercase()) {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("prefix must be uppercase letters only, got '{prefix}'"),
+        ));
+    }
     if title.is_empty()
         || title
             .chars()
@@ -190,13 +196,17 @@ fn new_record(root: &Path, title: &str, prefix: &str, json: bool) -> Result<i32,
         )
     })?;
     let path = dir.join(format!("{id} {title}.md"));
-    if path.exists() {
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!("{} already exists", path.display()),
-        ));
-    }
-    std::fs::write(&path, content).map_err(|error| {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot create {}: {error}", path.display()),
+            )
+        })?;
+    std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot write {}: {error}", path.display()),
@@ -266,13 +276,17 @@ fn supersede(root: &Path, old: &str, new: &str, json: bool) -> Result<i32, Error
     let old_stem = format!("{} {}", old_record.id, old_record.title);
     let new_stem = format!("{} {}", new_record.id, new_record.title);
 
-    rewrite_frontmatter(&old_record.path, |frontmatter| {
+    // Precompute both rewrites so a parse failure on either record aborts
+    // before any file changes.
+    let old_content = rewritten_frontmatter(&old_record.path, |frontmatter| {
         let updated = set_frontmatter_status(frontmatter, "superseded");
         append_related(&updated, &new_stem)
     })?;
-    rewrite_frontmatter(&new_record.path, |frontmatter| {
+    let new_content = rewritten_frontmatter(&new_record.path, |frontmatter| {
         append_related(frontmatter, &old_stem)
     })?;
+    crate::cli::config::write_atomic(&old_record.path, &old_content)?;
+    crate::cli::config::write_atomic(&new_record.path, &new_content)?;
 
     if json {
         println!("{}", serde_json::json!({ "superseded": old, "by": new }));
@@ -283,7 +297,7 @@ fn supersede(root: &Path, old: &str, new: &str, json: bool) -> Result<i32, Error
     Ok(0)
 }
 
-fn rewrite_frontmatter(path: &Path, transform: impl Fn(&str) -> String) -> Result<(), Error> {
+fn rewritten_frontmatter(path: &Path, transform: impl Fn(&str) -> String) -> Result<String, Error> {
     let content = std::fs::read_to_string(path).map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -296,23 +310,23 @@ fn rewrite_frontmatter(path: &Path, transform: impl Fn(&str) -> String) -> Resul
             format!("{} has no frontmatter", path.display()),
         ));
     };
-    let rewritten = format!("---\n{}---\n{body}", transform(frontmatter));
-    std::fs::write(path, rewritten).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", path.display()),
-        )
-    })
+    Ok(format!("---\n{}---\n{body}", transform(frontmatter)))
 }
 
 fn set_frontmatter_status(frontmatter: &str, status: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
+    let mut replaced = false;
     for line in frontmatter.lines() {
-        if line.trim_start().starts_with("status:") {
+        // Only the top-level key: nested status fields keep their indentation.
+        if line.starts_with("status:") {
             lines.push(format!("status: {status}"));
+            replaced = true;
         } else {
             lines.push(line.to_string());
         }
+    }
+    if !replaced {
+        lines.push(format!("status: {status}"));
     }
     let mut joined = lines.join("\n");
     joined.push('\n');
@@ -329,14 +343,20 @@ fn append_related(frontmatter: &str, stem: &str) -> String {
     }
     let entry = format!("    - \"{stem}\"");
     let mut lines: Vec<String> = frontmatter.lines().map(str::to_string).collect();
-    if let Some(position) = lines
-        .iter()
-        .position(|line| line.trim() == "related:" || line.trim_start().starts_with("related:"))
-    {
-        if lines[position].trim() == "related: []" {
+    if let Some(position) = lines.iter().position(|line| line.starts_with("related:")) {
+        let existing = lines[position].trim();
+        if existing == "related: []" {
             lines[position] = "related:".to_string();
+            lines.insert(position + 1, entry);
+        } else if let Some(inline) = existing
+            .strip_prefix("related: [")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            // Inline flow lists stay inline.
+            lines[position] = format!("related: [{inline}, \"{stem}\"]");
+        } else {
+            lines.insert(position + 1, entry);
         }
-        lines.insert(position + 1, entry);
     } else {
         lines.push("related:".to_string());
         lines.push(entry);
@@ -379,12 +399,7 @@ fn index(root: &Path, json: bool) -> Result<i32, Error> {
             ));
         }
     }
-    std::fs::write(&path, table).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", path.display()),
-        )
-    })?;
+    crate::cli::config::write_atomic(&path, &table)?;
     if json {
         println!(
             "{}",

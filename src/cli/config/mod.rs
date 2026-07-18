@@ -15,6 +15,32 @@ const EMBEDDED_REMAP_TOOLS: &str = include_str!(concat!(
 const EMBEDDED_MODELS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/models.yaml"));
 
+/// Write through an adjacent temporary file plus rename, so interruption
+/// never leaves a truncated file.
+pub fn write_atomic(path: &Path, content: &str) -> Result<(), Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let temporary = parent.join(format!(
+        ".{}.tmp",
+        path.file_name().map_or_else(
+            || "rune-write".to_string(),
+            |name| name.to_string_lossy().into_owned()
+        )
+    ));
+    fs::write(&temporary, content).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write {}: {error}", temporary.display()),
+        )
+    })?;
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot replace {}: {error}", path.display()),
+        )
+    })
+}
+
 /// Read a file to string with consistent error handling.
 pub fn read_file(path: &Path) -> Result<String, Error> {
     fs::read_to_string(path).map_err(|e| {
