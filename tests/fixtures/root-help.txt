@@ -29,6 +29,7 @@
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     provider    [enable|disable <name>]                               List or toggle deploy providers
+    todo        [add|do|ls|obsidian]                                  Repo tasks in TODO.txt with an Obsidian transform
     watch       <COMMAND>                                             Manage monitored rune locations
 
   Plumbing:

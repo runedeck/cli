@@ -29,6 +29,7 @@ mod spec;
 mod status;
 pub(crate) mod style;
 pub(crate) mod target;
+mod todo;
 pub(crate) mod validate;
 pub(crate) mod watchlist;
 
@@ -206,6 +207,12 @@ enum Command {
     Provider {
         #[command(subcommand)]
         action: Option<provider_cmd::ProviderAction>,
+    },
+
+    /// Repo tasks in TODO.txt (todo.txt syntax), with an Obsidian transform
+    Todo {
+        #[command(subcommand)]
+        action: Option<todo::TodoAction>,
     },
 
     /// Print an agent-ready brief of the resolved working context
@@ -896,6 +903,9 @@ pub fn run() -> i32 {
         Command::Provider { action } => {
             return exit_code(provider_cmd::execute(action, args.json));
         }
+        Command::Todo { action } => {
+            return exit_code(todo::execute(action, args.json));
+        }
         Command::Context => return exit_code(context::execute(args.json, args.no_color)),
         Command::Setup { defaults } => {
             return exit_code(setup::execute(defaults, args.json, args.no_color));
@@ -1378,6 +1388,12 @@ fn deck_help(help: &mut String) {
         "provider",
         "[enable|disable <name>]",
         "List or toggle deploy providers",
+    );
+    help_command(
+        help,
+        "todo",
+        "[add|do|ls|obsidian]",
+        "Repo tasks in TODO.txt with an Obsidian transform",
     );
     help_command(
         help,
