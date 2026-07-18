@@ -4,7 +4,7 @@
 - [x] 1.2 Idempotent steps, `--dry-run` (writes nothing), no auto-commit in workshop mode
 - [x] 1.3 Layout + git + jj colocate steps (entire hooks stay consent-gated, pending)
 - [x] 1.4 `.rune` schema v2 `dirs:` (path, role, required; v1 reader retained; .rune.local overlay pending)
-- [ ] 1.5 Vault mount association; satellites behind `--vault`, `--data`, `--remote`
+- [ ] 1.5 Vault mount association; satellites behind `--vault`, `--data`, `--remote` (deferred: needs vault-path conventions from the user)
 - [x] 1.6 `--spine` flag for non-workshop projects, gated on jj presence
 
 ## 2. Verification
