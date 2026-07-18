@@ -68,6 +68,11 @@ pub struct ProviderConfig {
     /// `config/models.yaml`). Selects which `provider/<model>/` variant
     /// directory wins during assembly; `--model` overrides it.
     pub model: Option<String>,
+    /// Deploy skills, agents, and hooks as a skills-directory plugin of
+    /// this name (`<target>/skills/<plugin>/…` with a `.claude-plugin/`
+    /// manifest), so the harness namespaces them as `<plugin>:<skill>`.
+    /// Rules keep their loose path. Absent means the loose layout.
+    pub plugin: Option<String>,
 }
 
 impl ProviderConfig {
@@ -154,6 +159,35 @@ pub struct ProviderTargetMap {
     pub rules: Option<String>,
 }
 
+#[cfg(test)]
+mod plugin_layout_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_derives_the_skills_directory_layout() {
+        let source = "providers:\n    claude:\n        target: .claude\n        plugin: rune\n";
+        let providers = load_providers(source).unwrap();
+        let claude = &providers["claude"];
+        assert_eq!(claude.default_target(), ".claude/skills/rune");
+        assert_eq!(
+            claude.target_for_kind(ContentKind::Skills),
+            ".claude/skills/rune"
+        );
+        assert_eq!(
+            claude.target_for_kind(ContentKind::Hooks),
+            ".claude/skills/rune"
+        );
+        assert_eq!(claude.target_for_kind(ContentKind::Rules), ".claude");
+    }
+
+    #[test]
+    fn plugin_with_a_by_kind_target_map_is_a_config_error() {
+        let source = "providers:\n    claude:\n        plugin: rune\n        target:\n            default: .claude\n            skills: .custom\n";
+        let error = load_providers(source).unwrap_err();
+        assert!(error.contains("plugin: null"), "actionable error: {error}");
+    }
+}
+
 // --- Loading ---
 
 #[derive(Deserialize)]
@@ -163,7 +197,38 @@ struct Wrapper {
 
 pub fn load_providers(defaults_content: &str) -> Result<HashMap<String, ProviderConfig>, String> {
     let wrapper: Wrapper = parse_yaml(defaults_content, "providers")?;
-    Ok(wrapper.providers)
+    let mut providers = wrapper.providers;
+    for (name, provider) in &mut providers {
+        apply_plugin_layout(name, provider)?;
+    }
+    Ok(providers)
+}
+
+/// Rewrite the target map of a plugin-mode provider: skills, agents, and
+/// hooks land under the plugin root (`<target>/skills/<plugin>`), rules keep
+/// their configured loose path. `plugin` combines only with a `Single`
+/// target; pairing it with an explicit by-kind map is a config error, since
+/// the two disagree about where every kind lives (set `plugin: null` to keep
+/// a custom map).
+fn apply_plugin_layout(provider_name: &str, provider: &mut ProviderConfig) -> Result<(), String> {
+    let Some(plugin) = &provider.plugin else {
+        return Ok(());
+    };
+    if matches!(provider.target, ProviderTarget::ByKind(_)) {
+        return Err(format!(
+            "provider '{provider_name}': `plugin: {plugin}` cannot combine with a by-kind target map; set `plugin: null` to use the custom map, or a single `target:` to use the plugin layout"
+        ));
+    }
+    let base = provider.default_target().trim_end_matches('/');
+    let plugin_root = format!("{base}/skills/{plugin}");
+    let rules = provider.target_for_kind(ContentKind::Rules).to_string();
+    provider.target = ProviderTarget::ByKind(ProviderTargetMap {
+        default: plugin_root,
+        agents: None,
+        skills: None,
+        rules: Some(rules),
+    });
+    Ok(())
 }
 
 pub fn load_models(models_content: &str) -> Result<HashMap<String, Vec<String>>, String> {

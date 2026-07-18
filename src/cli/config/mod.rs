@@ -65,6 +65,12 @@ pub fn load_providers(config: &str) -> Result<HashMap<String, provider::Provider
 
     match provider::load_providers(&module_config) {
         Ok(providers) => Ok(providers),
+        // A semantic conflict the user must resolve; falling back to
+        // embedded defaults would silently discard their overrides and
+        // deploy to the wrong locations.
+        Err(error) if error.contains("cannot combine with a by-kind target map") => {
+            Err(Error::new(ErrorKind::Config, error))
+        }
         Err(error) => {
             eprintln!(
                 "warning: module config incompatible with provider schema ({error}), using embedded defaults"

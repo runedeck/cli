@@ -25,6 +25,10 @@ const DELTA_SPEC_TEMPLATE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/templates/spec/delta-spec.md"
 ));
+const DESIGN_TEMPLATE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/templates/spec/design.md"
+));
 const SPEC_MDSCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/schemas/spec.mdschema"
@@ -86,7 +90,7 @@ pub(crate) struct SpecViolation {
 #[derive(Debug, Serialize)]
 struct ProposeOutput {
     change: String,
-    capability: String,
+    capabilities: Vec<String>,
     created: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     template_overrides: Vec<String>,
@@ -119,6 +123,8 @@ struct ContextTask {
 struct ContextOutput {
     id: String,
     proposal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    design: Option<String>,
     deltas: Vec<ContextDelta>,
     tasks: Vec<ContextTask>,
 }
@@ -213,16 +219,27 @@ struct MergePlan {
     summary: MergeSummary,
 }
 
-/// Scaffold a native change folder and its first capability delta.
+/// Scaffold a native change folder with one delta per capability.
 pub(crate) fn propose(
     source: &str,
     id: &str,
-    capability: Option<&str>,
+    capabilities: &[String],
+    design: bool,
     json: bool,
 ) -> Result<i32, Error> {
     validate_slug(id, "change id")?;
-    let capability = capability.unwrap_or(id);
-    validate_slug(capability, "capability")?;
+    let mut capabilities: Vec<&str> = if capabilities.is_empty() {
+        vec![id]
+    } else {
+        capabilities.iter().map(String::as_str).collect()
+    };
+    // Repeated flags are idempotent: one delta and one listing per
+    // capability, first occurrence keeps its position.
+    let mut seen = BTreeSet::new();
+    capabilities.retain(|capability| seen.insert(*capability));
+    for capability in &capabilities {
+        validate_slug(capability, "capability")?;
+    }
 
     let root = Path::new(source);
     let relative_change = PathBuf::from("docs/changes").join(id);
@@ -242,29 +259,42 @@ pub(crate) fn propose(
         }
         Ok(content)
     };
+    let capabilities_list = capabilities
+        .iter()
+        .map(|capability| format!("- {capability} (new or modified)"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let proposal = substitute(
         &template("templates/spec/proposal.md", PROPOSAL_TEMPLATE)?,
         id,
-        capability,
-    );
+        capabilities[0],
+    )
+    .replace("${CAPABILITIES}", &capabilities_list);
     let tasks = substitute(
         &template("templates/spec/tasks.md", TASKS_TEMPLATE)?,
         id,
-        capability,
+        capabilities[0],
     );
-    let delta = substitute(
-        &template("templates/spec/delta-spec.md", DELTA_SPEC_TEMPLATE)?,
-        id,
-        capability,
-    );
-    let files = [
+    let delta_template = template("templates/spec/delta-spec.md", DELTA_SPEC_TEMPLATE)?;
+
+    let mut files = vec![
         (change_dir.join("proposal.md"), proposal),
         (change_dir.join("tasks.md"), tasks),
-        (
-            change_dir.join("specs").join(capability).join("spec.md"),
-            delta,
-        ),
     ];
+    for capability in &capabilities {
+        files.push((
+            change_dir.join("specs").join(capability).join("spec.md"),
+            substitute(&delta_template, id, capability),
+        ));
+    }
+    if design {
+        let design_content = substitute(
+            &template("templates/spec/design.md", DESIGN_TEMPLATE)?,
+            id,
+            capabilities[0],
+        );
+        files.push((change_dir.join("design.md"), design_content));
+    }
 
     for (path, content) in &files {
         if let Some(parent) = path.parent() {
@@ -279,7 +309,7 @@ pub(crate) fn propose(
         .collect::<Vec<_>>();
     let output = ProposeOutput {
         change: id.to_string(),
-        capability: capability.to_string(),
+        capabilities: capabilities.iter().map(ToString::to_string).collect(),
         created,
         template_overrides: overrides,
         next_steps: vec![
@@ -294,13 +324,31 @@ pub(crate) fn propose(
     Ok(0)
 }
 
+/// Sort order for `spec list`, mirroring `openspec list`'s `--sort`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum ListSort {
+    /// Alphabetical by change id.
+    #[default]
+    Name,
+    /// Least-complete changes first, so active work surfaces on top.
+    Progress,
+}
+
 /// List active changes and their task completion fractions, or the
 /// canonical capability specifications with `--specs`.
-pub(crate) fn list(source: &str, specs: bool, json: bool) -> Result<i32, Error> {
+pub(crate) fn list(source: &str, specs: bool, sort: ListSort, json: bool) -> Result<i32, Error> {
     if specs {
         return list_specifications(Path::new(source), json);
     }
-    let summaries = scan_changes(Path::new(source))?;
+    let mut summaries = scan_changes(Path::new(source))?;
+    if sort == ListSort::Progress {
+        summaries.sort_by(|left, right| {
+            left.completion_percent()
+                .cmp(&right.completion_percent())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+    }
+    let summaries = summaries;
     if json {
         print_json(&ListOutput { changes: summaries })?;
         return Ok(0);
@@ -399,9 +447,16 @@ fn load_context_output(root: &Path, id: &str) -> Result<ContextOutput, Error> {
     }
 
     let tasks_content = read(&change_dir.join("tasks.md"))?;
+    let design_path = change_dir.join("design.md");
+    let design = if design_path.is_file() {
+        Some(read(&design_path)?.trim().to_string())
+    } else {
+        None
+    };
     Ok(ContextOutput {
         id: id.to_string(),
         proposal: strip_frontmatter(&proposal).trim().to_string(),
+        design,
         deltas,
         tasks: parse_tasks(&tasks_content).tasks,
     })
@@ -872,7 +927,8 @@ fn print_propose(output: &ProposeOutput, json: bool) -> Result<(), Error> {
     }
     println!(
         "Created change '{}' for '{}':",
-        output.change, output.capability
+        output.change,
+        output.capabilities.join(", ")
     );
     for path in &output.created {
         println!("  + {path}");
@@ -890,6 +946,9 @@ fn print_propose(output: &ProposeOutput, json: bool) -> Result<(), Error> {
 fn print_context(output: &ContextOutput) {
     println!("# Work order: {}\n", output.id);
     println!("## Proposal\n\n{}\n", output.proposal.trim());
+    if let Some(design) = &output.design {
+        println!("## Design\n\n{design}\n");
+    }
     for delta in &output.deltas {
         println!("## Delta: {}\n\n{}\n", delta.capability, delta.body.trim());
     }
@@ -1583,7 +1642,8 @@ mod tests {
         propose(
             &root.path().to_string_lossy(),
             "improve-search",
-            Some("search"),
+            &["search".to_string()],
+            false,
             false,
         )
         .unwrap();
@@ -1851,6 +1911,66 @@ mod tests {
     }
 
     #[test]
+    fn list_sort_progress_orders_least_complete_first() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "aa-done", "- [x] a\n- [x] b\n", DELTA);
+        write_change(root.path(), "zz-fresh", "- [ ] a\n- [ ] b\n", DELTA);
+
+        let mut summaries = scan_changes(root.path()).unwrap();
+        summaries.sort_by(|left, right| {
+            left.completion_percent()
+                .cmp(&right.completion_percent())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        assert_eq!(summaries[0].id, "zz-fresh");
+        assert_eq!(summaries[1].id, "aa-done");
+    }
+
+    #[test]
+    fn propose_deduplicates_repeated_capabilities() {
+        let root = TempDir::new().unwrap();
+        propose(
+            &root.path().to_string_lossy(),
+            "dupes",
+            &["alpha".to_string(), "beta".to_string(), "alpha".to_string()],
+            false,
+            false,
+        )
+        .unwrap();
+
+        let proposal =
+            fs::read_to_string(root.path().join("docs/changes/dupes/proposal.md")).unwrap();
+        assert_eq!(
+            proposal.matches("- alpha").count(),
+            1,
+            "duplicate capability flags must list once: {proposal}"
+        );
+        assert!(root.path().join("docs/changes/dupes/specs/alpha").is_dir());
+        assert!(root.path().join("docs/changes/dupes/specs/beta").is_dir());
+    }
+
+    #[test]
+    fn propose_with_design_scaffolds_and_context_includes_it() {
+        let root = TempDir::new().unwrap();
+        propose(&root.path().to_string_lossy(), "designed", &[], true, false).unwrap();
+
+        assert!(
+            root.path()
+                .join("docs/changes/designed/design.md")
+                .is_file()
+        );
+        let output = load_context_output(root.path(), "designed").unwrap();
+        assert!(
+            output
+                .design
+                .as_deref()
+                .is_some_and(|design| design.contains("Design")),
+            "context must include the design body"
+        );
+    }
+
+    #[test]
     fn propose_prefers_a_repo_local_template_override() {
         let root = TempDir::new().unwrap();
         let overrides = root.path().join("templates/spec");
@@ -1864,7 +1984,8 @@ mod tests {
         propose(
             &root.path().to_string_lossy(),
             "custom-change",
-            Some("widgets"),
+            &["widgets".to_string()],
+            false,
             false,
         )
         .unwrap();

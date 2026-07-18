@@ -162,6 +162,69 @@ fn skill_directory_validates_user_override() {
 }
 
 #[test]
+fn skill_lint_warns_on_conformance_smells_without_blocking() {
+    let temp_directory = TempDir::new().unwrap();
+    let skill_dir = temp_directory.path().join("claude-helper");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_md = "---\nname: wrong-name\ndescription: \"A <helper> for things.\"\nversion: 0.1.0\n---\n\n# wrong-name\n\nShort.\n";
+    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+
+    let warnings = report.result.warnings.join("; ");
+    assert!(warnings.contains("does not match its directory"));
+    assert!(warnings.contains("angle-bracket pair"));
+    assert!(warnings.contains("no trigger phrasing"));
+    assert!(warnings.contains("too short to instruct"));
+    assert!(
+        report.result.errors.is_empty(),
+        "lint findings must stay warnings: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
+fn skill_lint_stays_quiet_on_a_conforming_skill() {
+    let temp_directory = TempDir::new().unwrap();
+    let skill_dir = temp_directory.path().join("tidy-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_md = "---\nname: tidy-skill\ndescription: \"Keeps things tidy. USE WHEN cleaning up, organizing files.\"\nversion: 0.1.0\n---\n\n# tidy-skill\n\nA body long enough to actually instruct the model about tidying things up carefully.\n";
+    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+
+    assert!(
+        report.result.warnings.is_empty(),
+        "a conforming skill must produce no lint warnings: {:?}",
+        report.result.warnings
+    );
+}
+
+#[test]
+fn skill_lint_flags_reserved_names() {
+    let temp_directory = TempDir::new().unwrap();
+    let skill_dir = temp_directory.path().join("claude-tools");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_md = "---\nname: claude-tools\ndescription: \"Tooling. USE WHEN tooling questions arise.\"\nversion: 0.1.0\n---\n\n# claude-tools\n\nA body long enough to instruct the model about the tools in question here.\n";
+    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+
+    assert!(
+        report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("reserved word 'claude'")),
+        "reserved names must warn: {:?}",
+        report.result.warnings
+    );
+}
+
+#[test]
 fn skill_name_must_be_kebab_case() {
     let temp_directory = TempDir::new().unwrap();
     let skill_dir = temp_directory.path().join("PascalSkill");

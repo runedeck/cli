@@ -7,4 +7,7 @@ useDefault = true
 [allowlist]
 paths = [
     "evals/baselines/.*",
+    "\\.entire/.*",
+    "\\.specstory/.*",
+    "\\.jj/.*",
 ]

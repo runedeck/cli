@@ -68,6 +68,7 @@ pub fn execute_source(
 ///
 /// Each tarball wraps `.{provider}/` (with `.manifest` inside, written by
 /// install), a generated `Makefile`, and the rune source `README.md`.
+#[allow(clippy::too_many_lines)]
 pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
     let module_root = Path::new(path);
     let module_manifest = module::load(module_root).map_err(|error| {
@@ -107,8 +108,12 @@ pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
     })?;
 
     for (provider_name, provider_config) in &providers {
-        let staged_provider = staging_dir.join(provider_config.default_target());
-        if !staged_provider.is_dir() {
+        let staged_roots: Vec<&str> = provider_config
+            .target_roots()
+            .into_iter()
+            .filter(|root| staging_dir.join(root).is_dir())
+            .collect();
+        if staged_roots.is_empty() {
             continue;
         }
 
@@ -125,14 +130,34 @@ pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
             )
         })?;
 
-        // Move installed provider tree (including .manifest) into wrapper
-        let dotfolder = wrapper_dir.join(provider_config.default_target());
-        fs::rename(&staged_provider, &dotfolder).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot move {provider_name}: {error}"),
-            )
-        })?;
+        // Move every installed target root (including .manifest files) into
+        // the wrapper. Roots can nest in plugin mode (`.claude` and
+        // `.claude/skills/rune`), so shallow roots move first and carry
+        // their nested roots with them; a root that already moved with a
+        // parent is skipped.
+        let mut ordered_roots = staged_roots;
+        ordered_roots.sort_by_key(|root| Path::new(root).components().count());
+        for root in ordered_roots {
+            let staged = staging_dir.join(root);
+            if !staged.is_dir() {
+                continue;
+            }
+            let destination = wrapper_dir.join(root);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    Error::new(
+                        ErrorKind::Io,
+                        format!("cannot create {}: {error}", parent.display()),
+                    )
+                })?;
+            }
+            fs::rename(&staged, &destination).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot move {provider_name}: {error}"),
+                )
+            })?;
+        }
 
         // Add Makefile and README
         let makefile_content = MAKEFILE_TEMPLATE.replace("${PROVIDER}", provider_name);

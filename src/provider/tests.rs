@@ -213,6 +213,7 @@ fn provider_with_aliases(target: &str, aliases: Vec<&str>) -> ProviderConfig {
         effort: None,
         model: None,
         aliases: Some(aliases.into_iter().map(String::from).collect()),
+        plugin: None,
     }
 }
 
@@ -257,6 +258,7 @@ fn matches_target_no_aliases() {
         effort: None,
         model: None,
         aliases: None,
+        plugin: None,
     };
     assert!(config.matches_target("opencode", "opencode"));
     assert!(!config.matches_target("claudecode", "opencode"));

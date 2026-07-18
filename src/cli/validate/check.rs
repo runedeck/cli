@@ -152,10 +152,81 @@ pub fn skill_directory(
             None,
             report,
         );
+        lint_skill(&content, dir, &display_path, report);
         report.record_since(display_path, checkpoint);
     }
 
     Ok(())
+}
+
+/// Warning-severity conformance lint for a SKILL.md: agentskills.io limits
+/// plus trigger-phrase and reserved-name hygiene. Warnings inform; only
+/// schema errors block.
+fn lint_skill(content: &str, dir: &Path, display_path: &str, report: &mut ValidationReport) {
+    let mut warn = |message: String| {
+        report
+            .result
+            .warnings
+            .push(format!("{display_path}: {message}"));
+    };
+
+    let name = commands::parse::frontmatter_value(content, "name").unwrap_or_default();
+    let description =
+        commands::parse::frontmatter_value(content, "description").unwrap_or_default();
+    let directory_name = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    if !name.is_empty() && name != directory_name {
+        warn(format!(
+            "skill name '{name}' does not match its directory '{directory_name}' (agentskills.io requires them equal)"
+        ));
+    }
+    if name.len() > 64 {
+        warn(format!(
+            "skill name is {} characters; agentskills.io allows at most 64",
+            name.len()
+        ));
+    }
+    if description.len() > 1024 {
+        warn(format!(
+            "description is {} characters; agentskills.io allows at most 1024",
+            description.len()
+        ));
+    }
+    for reserved in ["claude", "anthropic"] {
+        if name.to_lowercase().contains(reserved) {
+            warn(format!(
+                "skill name contains the reserved word '{reserved}'; harnesses reject or shadow such names"
+            ));
+        }
+    }
+    // A lone comparison (`count > 0`) is fine; a matched pair reads as an
+    // XML-like tag, which breaks harness prompt assembly.
+    let looks_tagged =
+        |text: &str| text.contains('<') && text[text.find('<').unwrap_or(0)..].contains('>');
+    if looks_tagged(&name) || looks_tagged(&description) {
+        warn("frontmatter name or description contains an angle-bracket pair; XML-like text breaks harness prompt assembly".to_string());
+    }
+    let description_lower = description.to_lowercase();
+    if !description.is_empty()
+        && !["use when", " when ", "invoke", "use for", "use this"]
+            .iter()
+            .any(|phrase| description_lower.contains(phrase))
+    {
+        warn(
+            "description has no trigger phrasing (e.g. 'USE WHEN …'); the model cannot tell when to invoke this skill"
+                .to_string(),
+        );
+    }
+    let body = commands::parse::frontmatter_body(content).trim();
+    if body.len() < 50 {
+        warn(format!(
+            "skill body is {} characters; too short to instruct anything",
+            body.len()
+        ));
+    }
 }
 
 fn markdown_files(directory: &Path) -> Result<Vec<std::path::PathBuf>, Error> {

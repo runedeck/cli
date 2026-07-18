@@ -311,6 +311,11 @@ fn compare_provider(
             if expected_base == deployed_base && build_files.contains_key(&key) {
                 continue;
             }
+            // Deploy generates these inside a plugin root; they have no
+            // build counterpart, and the manifest fingerprint covers them.
+            if is_generated_plugin_file(&key, &deployed_base) {
+                continue;
+            }
             if is_owned_by_module(&entry, &deployed_base, module_name) {
                 result
                     .entries
@@ -318,6 +323,11 @@ fn compare_provider(
             }
         }
     }
+}
+
+fn is_generated_plugin_file(key: &str, deployed_base: &Path) -> bool {
+    matches!(key, "hooks/hooks.json" | ".claude-plugin/plugin.json")
+        && deployed_base.join(".claude-plugin/plugin.json").is_file()
 }
 
 fn only_entry(name: &str, status: DriftStatus, category: &str) -> DriftEntry {

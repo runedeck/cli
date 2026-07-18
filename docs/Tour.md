@@ -62,10 +62,10 @@ rune doctor --target .                            # ok / modified / missing / or
   exists in two domains errors listing both, and `<domain>/<name>` disambiguates.
 - `rune context` names the acting root and role (consumer/deck/module/plain), the
   selection, per-provider deploy state, and a sensible `next:` step. `--json` for agents.
-- Skill directories deploy kebab-case (`deslop`, `version-control`) and load in Claude
-  Code without a naming error.
-- The full `all` cast deploys 141 files into each of `.claude`, `.codex`, `.gemini`,
-  `.opencode`.
+- Skills deploy inside the `rune` skills-directory plugin (`.claude/skills/rune/`) and
+  load namespaced: `/rune:deslop`, `/rune:version-control`.
+- The full `all` cast deploys 145 files under `.claude` (the rune plugin tree plus loose
+  rules) and 141 into each of `.codex`, `.gemini`, `.opencode`.
 
 ---
 

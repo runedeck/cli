@@ -6,7 +6,7 @@ version: ${VERSION}
 
 # rune
 
-rune deploys markdown instruction files (runes) from a deck into provider directories (`.claude`, `.codex`, `.gemini`, `.opencode`). The consumer manifest is `.rune` at the repo root; deployment records live in per-provider `.manifest` files.
+rune deploys markdown instruction files (runes) from a deck into provider directories (`.claude`, `.codex`, `.gemini`, `.opencode`). The consumer manifest is `.rune` at the repo root; deployment records live in per-provider `.manifest` files. For Claude Code, skills, agents, and hooks deploy as the `rune` skills-directory plugin (`.claude/skills/rune/`), so skills invoke namespaced: `/rune:deslop`.
 
 ## Orientation
 

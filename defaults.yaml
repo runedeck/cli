@@ -19,6 +19,9 @@ dashboard:
 providers:
     claude:
         target: ".claude"
+        # Skills, agents, and hooks deploy as the `rune` skills-directory
+        # plugin, so the harness namespaces skills as rune:<name>.
+        plugin: rune
         model: claude-opus-4-6
         aliases:
             - claudecode

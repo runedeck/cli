@@ -128,8 +128,23 @@ pub fn execute(
             )?;
         }
 
+        // The plugin scaffolding runs after prune so the merged hook table
+        // reflects only domains that survive this deploy; the generated
+        // keys are pre-seeded so prune spares the existing generated files.
+        let plugin_scaffold = provider_config.plugin.as_ref().map(|plugin_name| {
+            (
+                plugin_name.clone(),
+                resolve_target_base(provider_config.default_target(), effective_target),
+            )
+        });
+        if let Some((_, plugin_base)) = &plugin_scaffold {
+            let deployed_keys = deployed_by_root.entry(plugin_base.clone()).or_default();
+            deployed_keys.insert(".claude-plugin/plugin.json".to_string());
+            deployed_keys.insert("hooks/hooks.json".to_string());
+        }
+
         for (target_base, mut existing_manifest) in manifests {
-            let deployed_keys = deployed_by_root.remove(&target_base).unwrap_or_default();
+            let mut deployed_keys = deployed_by_root.remove(&target_base).unwrap_or_default();
             if prune {
                 prune_stale_files(
                     &target_base,
@@ -143,6 +158,21 @@ pub fn execute(
                     force,
                     dry_run,
                 );
+            }
+            if let Some((plugin_name, plugin_base)) = &plugin_scaffold
+                && *plugin_base == target_base
+            {
+                deploy_plugin_scaffolding(
+                    plugin_name,
+                    plugin_base,
+                    &build_provider_dir,
+                    &mut existing_manifest,
+                    &mut deployed_keys,
+                    &mut result,
+                    provider_name,
+                    force,
+                    dry_run,
+                )?;
             }
             write_manifest(&target_base, &existing_manifest)?;
         }
@@ -307,6 +337,287 @@ fn deploy_provider_kind_files(
     }
     Ok(())
 }
+/// Generate the plugin-mode scaffolding: the `.claude-plugin/plugin.json`
+/// manifest that names the skill namespace, and a plugin-root
+/// `hooks/hooks.json` merging every surviving domain hook table (the
+/// harness reads only the root file). Both are manifest-tracked so prune
+/// and doctor manage them like deployed content. Runs after prune, so the
+/// merge sees exactly the domains this deploy keeps; scaffolding ignores
+/// `--only` because a partial deploy still needs a coherent plugin.
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+fn deploy_plugin_scaffolding(
+    plugin_name: &str,
+    plugin_base: &Path,
+    build_provider_dir: &Path,
+    existing_manifest: &mut HashMap<String, manifest::ManifestEntry>,
+    deployed_keys: &mut HashSet<String>,
+    result: &mut ActionResult,
+    provider_name: &str,
+    force: bool,
+    dry_run: bool,
+) -> Result<(), Error> {
+    let plugin_manifest = serde_json::json!({
+        "name": plugin_name,
+        "description": "Runes deployed by rune",
+    });
+    let mut manifest_content = serde_json::to_string_pretty(&plugin_manifest).map_err(|error| {
+        Error::new(
+            ErrorKind::Validate,
+            format!("cannot serialize plugin.json: {error}"),
+        )
+    })?;
+    manifest_content.push('\n');
+    write_generated_file(
+        ".claude-plugin/plugin.json",
+        &manifest_content,
+        plugin_base,
+        existing_manifest,
+        result,
+        provider_name,
+        force,
+    )?;
+
+    if let Some(merged) =
+        merged_hook_table(plugin_base, build_provider_dir, existing_manifest, result)?
+    {
+        write_generated_file(
+            "hooks/hooks.json",
+            &merged,
+            plugin_base,
+            existing_manifest,
+            result,
+            provider_name,
+            force,
+        )?;
+    } else if !dry_run {
+        // No domain ships hooks any more: retire the stale root table with
+        // the same protections as prune — a locally modified table survives
+        // unless forced, and removal quarantines to .trash instead of
+        // deleting. Dry runs preview only.
+        retire_generated_hook_table(plugin_base, existing_manifest, deployed_keys, force);
+    }
+    Ok(())
+}
+
+fn retire_generated_hook_table(
+    plugin_base: &Path,
+    existing_manifest: &mut HashMap<String, manifest::ManifestEntry>,
+    deployed_keys: &mut HashSet<String>,
+    force: bool,
+) {
+    const KEY: &str = "hooks/hooks.json";
+    let Some(entry) = existing_manifest.get(KEY) else {
+        deployed_keys.remove(KEY);
+        return;
+    };
+    let stale = plugin_base.join(KEY);
+    if !force
+        && let Ok(current) = fs::read_to_string(&stale)
+        && manifest::content_sha256(&current) != entry.fingerprint
+    {
+        eprintln!(
+            "rune deploy: keeping {} (modified locally; pass --force to retire it)",
+            stale.display()
+        );
+        return;
+    }
+    deployed_keys.remove(KEY);
+    existing_manifest.remove(KEY);
+    if !stale.is_file() {
+        return;
+    }
+    let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%MZ").to_string();
+    let trash_dest = plugin_base.join(".trash").join(&stamp).join(KEY);
+    let moved = trash_dest
+        .parent()
+        .map(fs::create_dir_all)
+        .transpose()
+        .is_ok()
+        && fs::rename(&stale, &trash_dest).is_ok();
+    if !moved {
+        eprintln!(
+            "warning: cannot quarantine {}; leaving it in place",
+            stale.display()
+        );
+    }
+}
+
+/// Merge every surviving domain hook table (post-prune manifest entries
+/// shaped `hooks/<domain>/hooks.json`) into one event table: per event,
+/// entries concatenate in sorted domain order. A user-modified table that no
+/// longer parses warns and falls back to the assembled build copy, so a
+/// broken local edit can neither abort the deploy nor ship an invalid root
+/// table. Returns `None` when no domain ships hooks.
+fn merged_hook_table(
+    plugin_base: &Path,
+    build_provider_dir: &Path,
+    existing_manifest: &HashMap<String, manifest::ManifestEntry>,
+    result: &mut ActionResult,
+) -> Result<Option<String>, Error> {
+    let mut domain_tables: Vec<&String> = existing_manifest
+        .keys()
+        .filter(|key| {
+            let mut parts = key.split('/');
+            parts.next() == Some("hooks")
+                && parts.next().is_some_and(|domain| !domain.is_empty())
+                && parts.next() == Some("hooks.json")
+                && parts.next().is_none()
+        })
+        .collect();
+    if domain_tables.is_empty() {
+        return Ok(None);
+    }
+    domain_tables.sort();
+
+    let mut merged_events = serde_json::Map::new();
+    for key in &domain_tables {
+        let deployed_file = plugin_base.join(key);
+        let events = match parse_hook_table(&deployed_file) {
+            Ok(events) => events,
+            Err(deployed_error) => {
+                let build_file = build_provider_dir.join(key);
+                let fallback = parse_hook_table(&build_file).map_err(|build_error| {
+                    Error::new(
+                        ErrorKind::Validate,
+                        format!("{deployed_error}; build fallback also failed: {build_error}"),
+                    )
+                })?;
+                result.warnings.push(format!(
+                    "{deployed_error}; using the assembled copy for the merged hook table"
+                ));
+                fallback
+            }
+        };
+        for (event, source) in events {
+            let slot = merged_events
+                .entry(event)
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            if let Some(target) = slot.as_array_mut() {
+                target.extend(source);
+            }
+        }
+    }
+    if merged_events.is_empty() {
+        return Ok(None);
+    }
+    let merged = serde_json::json!({ "hooks": merged_events });
+    let mut rendered = serde_json::to_string_pretty(&merged).map_err(|error| {
+        Error::new(
+            ErrorKind::Validate,
+            format!("cannot serialize merged hooks.json: {error}"),
+        )
+    })?;
+    rendered.push('\n');
+    Ok(Some(rendered))
+}
+
+/// Parse one domain hook table into its event arrays, rejecting shapes the
+/// harness would not load.
+fn parse_hook_table(file: &Path) -> Result<Vec<(String, Vec<serde_json::Value>)>, String> {
+    let content = fs::read_to_string(file)
+        .map_err(|error| format!("cannot read {}: {error}", file.display()))?;
+    let document: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("invalid {}: {error}", file.display()))?;
+    let Some(events) = document.get("hooks").and_then(serde_json::Value::as_object) else {
+        return Err(format!(
+            "{}: expected a top-level \"hooks\" object",
+            file.display()
+        ));
+    };
+    let mut parsed = Vec::new();
+    for (event, entries) in events {
+        let Some(source) = entries.as_array() else {
+            return Err(format!(
+                "{}: event \"{event}\" must hold an array of hook entries",
+                file.display()
+            ));
+        };
+        parsed.push((event.clone(), source.clone()));
+    }
+    Ok(parsed)
+}
+
+/// Write one generated file with the same status discipline as deployed
+/// content: user modifications survive unless forced, and the manifest
+/// records the fingerprint.
+fn write_generated_file(
+    relative: &str,
+    content: &str,
+    plugin_base: &Path,
+    existing_manifest: &mut HashMap<String, manifest::ManifestEntry>,
+    result: &mut ActionResult,
+    provider_name: &str,
+    force: bool,
+) -> Result<(), Error> {
+    let manifest_key = relative.to_string();
+    let target_path = plugin_base.join(relative);
+    let fingerprint = manifest::content_sha256(content);
+    let target_content = fs::read_to_string(&target_path).ok();
+    let status = manifest::status(
+        target_content.as_deref(),
+        existing_manifest.get(&manifest_key),
+        &fingerprint,
+    );
+
+    let write = match status {
+        manifest::FileStatus::New | manifest::FileStatus::Stale => true,
+        manifest::FileStatus::Modified if force => true,
+        manifest::FileStatus::Unchanged => {
+            result.skipped.push(SkippedFile {
+                target: target_path.to_string_lossy().to_string(),
+                provider: provider_name.to_owned(),
+                reason: SkipReason::Unchanged,
+            });
+            existing_manifest.insert(
+                manifest_key,
+                manifest::ManifestEntry {
+                    fingerprint,
+                    provenance: None,
+                },
+            );
+            return Ok(());
+        }
+        manifest::FileStatus::Modified => {
+            result.skipped.push(SkippedFile {
+                target: target_path.to_string_lossy().to_string(),
+                provider: provider_name.to_owned(),
+                reason: SkipReason::UserModified,
+            });
+            return Ok(());
+        }
+    };
+    if write {
+        ensure_destination_within(&target_path, plugin_base)?;
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        fs::write(&target_path, content).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", target_path.display()),
+            )
+        })?;
+        existing_manifest.insert(
+            manifest_key,
+            manifest::ManifestEntry {
+                fingerprint,
+                provenance: None,
+            },
+        );
+        result.installed.push(DeployedFile {
+            source: "generated".to_string(),
+            target: target_path.to_string_lossy().to_string(),
+            provider: provider_name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn prune_stale_files(

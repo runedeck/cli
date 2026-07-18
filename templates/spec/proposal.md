@@ -13,6 +13,10 @@ See the linked ADR for the decision rationale. This proposal records the change 
 - Describe the observable change.
 - Name compatibility or migration effects.
 
+## Capabilities
+
+${CAPABILITIES}
+
 ## Impact
 
 - List the affected runes, casts, commands, or documentation.

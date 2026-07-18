@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- OpenSpec artifact parity in the spec lifecycle: `spec propose` accepts repeated `--capability` flags (one delta per capability) and `--design` (scaffolds `design.md`, included by `spec context` and `spec show`); the proposal template carries a generated `## Capabilities` section; `spec archive --abandon -y` works scripted. Root parity is intentionally not pursued: rune roots at `docs/`, OpenSpec hardcodes `openspec/`.
+- Warning-severity conformance lint in `rune validate` for every `SKILL.md`: name must equal its directory and stay within 64 characters, description within 1024, no reserved words (`claude`, `anthropic`) in names, no angle brackets in frontmatter, a trigger phrase in the description, and a body long enough to instruct. Warnings inform; only schema errors block.
+
+### Changed
+
+- `rune --help` opens with a one-line runic wordmark (`ᚱᚢᚾᛖ rune · your runes, deployed`) — cyan sigil, bold word, dim tagline on a TTY, plain text otherwise — replacing the figlet banner.
+- The claude provider deploys skills, agents, and hooks as a skills-directory plugin at `.claude/skills/rune/` (CLI-0020): Claude Code namespaces every skill as `rune:<name>`, hooks register through the generated plugin-root `hooks/hooks.json` instead of settings.json wiring, and `${CLAUDE_PLUGIN_ROOT}` survives deployment with the domain segment added. Rules keep their loose `.claude/rules` path; `plugin: null` in config restores the loose layout; doctor, drift, and prune manage the plugin root as its own manifest-tracked target.
+
+### Fixed
+
+- `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
+
 ## [0.5.0] - 2026-07-17
 
 ### Changed

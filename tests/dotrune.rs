@@ -85,15 +85,19 @@ fn deck_install_ships_domain_hooks_and_rewrites_plugin_paths() {
     let output =
         install_local_deck(consumer.path(), "include", "'science/skills/OnlyScience'").success();
 
-    let hooks_root = consumer.path().join(".claude/hooks/science");
+    let hooks_root = consumer.path().join(".claude/skills/rune/hooks/science");
     let manifest = fs::read_to_string(hooks_root.join("hooks.json")).unwrap();
+    // Plugin mode keeps ${CLAUDE_PLUGIN_ROOT}: the harness defines it, and
+    // the command gains the domain segment below the plugin's hooks/.
     assert!(
-        manifest.contains("bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/science/safety-net.sh"),
-        "hook command must point at the deployed deck_entry bundle: {manifest}"
+        manifest.contains("bash ${CLAUDE_PLUGIN_ROOT}/hooks/science/safety-net.sh"),
+        "hook command must point at the domain bundle inside the plugin: {manifest}"
     );
+    let merged =
+        fs::read_to_string(consumer.path().join(".claude/skills/rune/hooks/hooks.json")).unwrap();
     assert!(
-        !manifest.contains("${CLAUDE_PLUGIN_ROOT}"),
-        "plugin-root paths must not survive deployment: {manifest}"
+        merged.contains("bash ${CLAUDE_PLUGIN_ROOT}/hooks/science/safety-net.sh"),
+        "the merged plugin hook table must carry the domain entry: {merged}"
     );
     assert_eq!(
         fs::read_to_string(hooks_root.join("safety-net.sh")).unwrap(),
@@ -155,12 +159,16 @@ fn dotrune_deploys_requested_artifacts_across_providers() {
 
     install(consumer.path()).success();
 
-    for provider in [".claude", ".gemini", ".opencode"] {
+    for (provider, skills_root) in [
+        (".claude", ".claude/skills/rune/skills"),
+        (".gemini", ".gemini/skills"),
+        (".opencode", ".opencode/skills"),
+    ] {
         assert!(
             consumer
                 .path()
-                .join(provider)
-                .join("skills/AlphaSkill/SKILL.md")
+                .join(skills_root)
+                .join("AlphaSkill/SKILL.md")
                 .is_file(),
             "{provider}: AlphaSkill must deploy"
         );
@@ -255,12 +263,21 @@ fn dotrune_install_is_idempotent() {
 
     install(consumer.path()).success();
     let first_manifest = fs::read(consumer.path().join(".claude/.manifest")).unwrap();
-    let first_skill = fs::read(consumer.path().join(".claude/skills/AlphaSkill/SKILL.md")).unwrap();
+    let first_skill = fs::read(
+        consumer
+            .path()
+            .join(".claude/skills/rune/skills/AlphaSkill/SKILL.md"),
+    )
+    .unwrap();
 
     install(consumer.path()).success();
     let second_manifest = fs::read(consumer.path().join(".claude/.manifest")).unwrap();
-    let second_skill =
-        fs::read(consumer.path().join(".claude/skills/AlphaSkill/SKILL.md")).unwrap();
+    let second_skill = fs::read(
+        consumer
+            .path()
+            .join(".claude/skills/rune/skills/AlphaSkill/SKILL.md"),
+    )
+    .unwrap();
 
     assert_eq!(
         first_manifest, second_manifest,
@@ -296,7 +313,7 @@ fn dotrune_defaults_target_to_source_when_omitted() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/AlphaSkill/SKILL.md")
+            .join(".claude/skills/rune/skills/AlphaSkill/SKILL.md")
             .is_file(),
         "consumer/.claude must receive AlphaSkill when --target is omitted"
     );
@@ -353,10 +370,15 @@ fn dotrune_local_deck_subpath_resolves_one_domain() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/OnlyScience/SKILL.md")
+            .join(".claude/skills/rune/skills/OnlyScience/SKILL.md")
             .is_file()
     );
-    assert!(!consumer.path().join(".claude/skills/OnlyWriting").exists());
+    assert!(
+        !consumer
+            .path()
+            .join(".claude/skills/rune/skills/OnlyWriting")
+            .exists()
+    );
 }
 
 #[test]
@@ -368,7 +390,7 @@ fn deck_resolves_canonical_rune_id() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/OnlyScience/SKILL.md")
+            .join(".claude/skills/rune/skills/OnlyScience/SKILL.md")
             .is_file()
     );
 }
@@ -382,7 +404,7 @@ fn deck_does_not_deploy_hook_without_selected_domain_artifact() {
     assert!(
         !consumer
             .path()
-            .join(".claude/hooks/science/OnEvent.md")
+            .join(".claude/skills/rune/hooks/science/OnEvent.md")
             .exists()
     );
 }
@@ -393,7 +415,9 @@ fn deck_deploys_domain_hooks_with_selected_domain_artifact() {
 
     install_local_deck(consumer.path(), "skills", "science/skills/OnlyScience").success();
 
-    let hook = consumer.path().join(".claude/hooks/science/OnEvent.md");
+    let hook = consumer
+        .path()
+        .join(".claude/skills/rune/hooks/science/OnEvent.md");
     let body = fs::read_to_string(&hook).expect("science hook must deploy with science skill");
     assert!(
         body.contains("Descriptive fixture placeholder for a hook."),
@@ -414,10 +438,18 @@ fn consumer_cast_unions_explicit_ids_then_applies_entry_exclude() {
 
     install(consumer.path()).success();
 
-    let science =
-        fs::read_to_string(consumer.path().join(".claude/skills/OnlyScience/SKILL.md")).unwrap();
-    let writing =
-        fs::read_to_string(consumer.path().join(".claude/skills/OnlyWriting/SKILL.md")).unwrap();
+    let science = fs::read_to_string(
+        consumer
+            .path()
+            .join(".claude/skills/rune/skills/OnlyScience/SKILL.md"),
+    )
+    .unwrap();
+    let writing = fs::read_to_string(
+        consumer
+            .path()
+            .join(".claude/skills/rune/skills/OnlyWriting/SKILL.md"),
+    )
+    .unwrap();
     let rule = fs::read_to_string(consumer.path().join(".claude/rules/GlobalName.md")).unwrap();
     assert!(science.contains("OnlyScience"), "{science}");
     assert!(writing.contains("OnlyWriting"), "{writing}");
@@ -428,7 +460,7 @@ fn consumer_cast_unions_explicit_ids_then_applies_entry_exclude() {
     assert!(
         !consumer
             .path()
-            .join(".claude/agents/SharedName.md")
+            .join(".claude/skills/rune/agents/SharedName.md")
             .exists()
     );
 }
@@ -475,7 +507,7 @@ fn deck_resolves_unique_domain_short_form() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/OnlyScience/SKILL.md")
+            .join(".claude/skills/rune/skills/OnlyScience/SKILL.md")
             .is_file()
     );
 }
@@ -489,7 +521,7 @@ fn deck_resolves_globally_unique_bare_name() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/OnlyScience/SKILL.md")
+            .join(".claude/skills/rune/skills/OnlyScience/SKILL.md")
             .is_file()
     );
 }
@@ -563,11 +595,16 @@ fn deck_entry_provider_list_overrides_deck_default() {
             .join(".gemini/skills/OnlyScience/SKILL.md")
             .is_file()
     );
-    assert!(!consumer.path().join(".claude/skills/OnlyScience").exists());
+    assert!(
+        !consumer
+            .path()
+            .join(".claude/skills/rune/skills/OnlyScience")
+            .exists()
+    );
     assert!(
         consumer
             .path()
-            .join(".claude/skills/OnlyWriting/SKILL.md")
+            .join(".claude/skills/rune/skills/OnlyWriting/SKILL.md")
             .is_file()
     );
     assert!(!consumer.path().join(".gemini/skills/OnlyWriting").exists());
@@ -637,7 +674,7 @@ fn single_module_source_still_resolves_bare_name() {
     assert!(
         consumer
             .path()
-            .join(".claude/skills/LegacyBareName/SKILL.md")
+            .join(".claude/skills/rune/skills/LegacyBareName/SKILL.md")
             .is_file()
     );
 }

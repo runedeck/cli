@@ -267,14 +267,10 @@ fn check_gitleaks(module_root: &Path, report: &mut ValidationReport) {
         return;
     }
 
-    if run_command(
-        "gitleaks",
-        &["detect", "--no-banner", "--no-git", "-s", "."],
-        module_root,
-    ) {
-        report.pass("gitleaks detect");
+    if run_command("gitleaks", &["dir", "--no-banner", "."], module_root) {
+        report.pass("gitleaks dir");
     } else {
-        report.fail("gitleaks detect", "gitleaks found secrets".to_string());
+        report.fail("gitleaks dir", "gitleaks found secrets".to_string());
     }
 }
 

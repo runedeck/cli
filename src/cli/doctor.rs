@@ -145,7 +145,7 @@ fn discover_targets(target: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
         return Ok(vec![(provider.to_string(), target.to_path_buf())]);
     }
 
-    let targets = PROVIDERS
+    let mut targets = PROVIDERS
         .iter()
         .filter_map(|(provider, directory)| {
             let provider_target = target.join(directory);
@@ -155,6 +155,15 @@ fn discover_targets(target: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
                 .then(|| ((*provider).to_string(), provider_target))
         })
         .collect::<Vec<_>>();
+    let nested = targets
+        .iter()
+        .flat_map(|(provider, provider_target)| {
+            nested_managed_roots(provider_target)
+                .into_iter()
+                .map(|root| (provider.clone(), root))
+        })
+        .collect::<Vec<_>>();
+    targets.extend(nested);
     if targets.is_empty() {
         return Err(Error::new(
             ErrorKind::Io,
@@ -165,6 +174,21 @@ fn discover_targets(target: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
         ));
     }
     Ok(targets)
+}
+
+/// Skills-directory plugin roots (`<target>/skills/<plugin>/.manifest`) are
+/// managed deployments of their own and get their own integrity scan.
+fn nested_managed_roots(provider_target: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(provider_target.join("skills")) else {
+        return Vec::new();
+    };
+    let mut roots = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join(".manifest").is_file())
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots
 }
 
 fn provider_for_target(target: &Path) -> Option<&'static str> {
@@ -207,7 +231,11 @@ fn validate_managed_relative(relative: &str) -> Result<(), Error> {
                 Component::Normal(name) => name.to_str(),
                 _ => None,
             })
-            .is_some_and(|name| MANAGED_DIRECTORIES.contains(&name));
+            .is_some_and(|name| {
+                // .claude-plugin holds the generated plugin manifest of a
+                // skills-directory plugin root.
+                MANAGED_DIRECTORIES.contains(&name) || name == ".claude-plugin"
+            });
     if safe {
         Ok(())
     } else {
@@ -285,6 +313,15 @@ fn collect_managed_files_recursive(
         })?;
         let name = entry.file_name();
         if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        // A skills-directory plugin root (skills/<name>/.manifest) owns its
+        // files and gets its own scan; the predicate mirrors
+        // nested_managed_roots exactly so no other .manifest-bearing
+        // directory escapes the orphan scan.
+        if entry.path().join(".manifest").is_file()
+            && entry.path().parent() == Some(target.join("skills").as_path())
+        {
             continue;
         }
         let file_type = entry.file_type().map_err(|error| {

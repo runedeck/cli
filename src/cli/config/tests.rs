@@ -61,7 +61,33 @@ fn load_providers_returns_embedded_defaults() {
 fn load_providers_module_config_overrides_target() {
     let module_config = "providers:\n    claude:\n        target: .custom-claude\n";
     let providers = load_providers(module_config).unwrap();
-    assert_eq!(providers["claude"].default_target(), ".custom-claude");
+    // claude defaults to plugin mode, so the plugin root derives from the
+    // overridden target.
+    assert_eq!(
+        providers["claude"].default_target(),
+        ".custom-claude/skills/rune"
+    );
+    assert_eq!(
+        providers["claude"].target_for_kind(commands::provider::ContentKind::Rules),
+        ".custom-claude"
+    );
+}
+
+#[test]
+fn load_providers_null_plugin_restores_the_loose_layout() {
+    let module_config = "providers:\n    claude:\n        plugin: null\n";
+    let providers = load_providers(module_config).unwrap();
+    assert_eq!(providers["claude"].default_target(), ".claude");
+}
+
+#[test]
+fn load_providers_propagates_the_plugin_by_kind_conflict() {
+    let module_config = "providers:\n    claude:\n        target:\n            default: .claude\n            skills: .custom\n";
+    let error = load_providers(module_config).unwrap_err();
+    assert!(
+        error.to_string().contains("plugin: null"),
+        "the semantic conflict must fail loudly, not fall back: {error}"
+    );
 }
 
 #[test]

@@ -27,8 +27,8 @@ repos:
             pass_filenames: false
 
           - id: gitleaks-tree
-            name: gitleaks (tree)
-            entry: gitleaks detect --no-banner
+            name: gitleaks (push range)
+            entry: gitleaks git --no-banner --log-opts "HEAD --not --remotes" .
             language: system
             pass_filenames: false
             stages: [pre-push]

@@ -576,8 +576,13 @@ enum SpecAction {
         change_id: String,
 
         /// Capability whose delta specification should be scaffolded.
+        /// Repeatable; defaults to the change id.
         #[arg(long, value_name = "NAME")]
-        capability: Option<String>,
+        capability: Vec<String>,
+
+        /// Also scaffold design.md beside the proposal.
+        #[arg(long)]
+        design: bool,
 
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -590,6 +595,10 @@ enum SpecAction {
         /// List canonical capability specifications instead of changes.
         #[arg(long)]
         specs: bool,
+
+        /// Sort order for changes.
+        #[arg(long, value_enum, default_value_t = spec::ListSort::Name)]
+        sort: spec::ListSort,
 
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -620,12 +629,13 @@ enum SpecAction {
         #[arg(value_name = "CHANGE_ID")]
         change_id: String,
 
-        /// Archive despite unchecked tasks, with a warning.
-        #[arg(short = 'y', conflicts_with = "abandon")]
+        /// Archive despite unchecked tasks, with a warning. A no-op on the
+        /// abandon path, so scripted `--abandon -y` works.
+        #[arg(short = 'y')]
         yes: bool,
 
         /// Archive as abandoned without checking tasks or merging specs.
-        #[arg(long, conflicts_with = "yes")]
+        #[arg(long)]
         abandon: bool,
 
         /// Deck or rune source root. Defaults to the current directory.
@@ -777,7 +787,7 @@ enum ConfigAction {
 #[allow(clippy::too_many_lines)]
 pub fn run() -> i32 {
     if root_help_requested(std::env::args_os().skip(1)) {
-        print!("{}", root_help());
+        print!("{}", root_help_styled(&style::Sheet::detect(false)));
         return 0;
     }
 
@@ -1136,7 +1146,7 @@ fn bare() -> i32 {
 
 #[cfg(not(feature = "tui"))]
 fn bare() -> i32 {
-    eprint!("{}", root_help());
+    eprint!("{}", root_help_styled(&style::Sheet::detect(false)));
     2
 }
 
@@ -1148,18 +1158,23 @@ fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {
     args.next().is_none() && matches!(argument.to_str(), Some("--help" | "-h" | "help"))
 }
 
+#[cfg(test)]
 fn root_help() -> String {
-    let mut help = String::new();
-    help.push_str(
-        r"      ·  · · ────────    _ __ _   _ _ __   ___   ──────── · ·  ·
-         · · ────────   | '__| | | | '_ \ / _ \  ──────── · ·
-           · · ──────   | |  | |_| | | | |  __/  ────── · ·
-             · · ────   |_|   \__,_|_| |_|\___|  ──── · ·
+    root_help_styled(&style::Sheet::forced(false))
+}
 
-  Deck toolkit for AI harnesses: your runes, deployed.
-",
-    );
-    writeln!(help, "  {BUILD_VERSION}\n").expect("writing root help to a string cannot fail");
+fn root_help_styled(sheet: &style::Sheet) -> String {
+    let mut help = String::new();
+    writeln!(
+        help,
+        "  {} {} {}",
+        sheet.bold(&sheet.cyan("ᚱᚢᚾᛖ")),
+        sheet.bold("rune"),
+        sheet.dim("· your runes, deployed"),
+    )
+    .expect("writing root help to a string cannot fail");
+    writeln!(help, "  {}\n", sheet.dim(BUILD_VERSION))
+        .expect("writing root help to a string cannot fail");
 
     flow_help(&mut help);
     spec_help(&mut help);
@@ -1404,9 +1419,14 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         SpecAction::Propose {
             change_id,
             capability,
+            design,
             source,
-        } => spec::propose(&source, &change_id, capability.as_deref(), json),
-        SpecAction::List { specs, source } => spec::list(&source, specs, json),
+        } => spec::propose(&source, &change_id, &capability, design, json),
+        SpecAction::List {
+            specs,
+            sort,
+            source,
+        } => spec::list(&source, specs, sort, json),
         SpecAction::Show { name, source } => spec::show(&source, &name, json),
         SpecAction::Doctor { source } => spec::doctor(&source, json),
         SpecAction::Archive {

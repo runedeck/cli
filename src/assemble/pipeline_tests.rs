@@ -22,6 +22,7 @@ fn make_provider(assembly: Option<Vec<&str>>) -> ProviderConfig {
         effort: None,
         aliases: None,
         model: None,
+        plugin: None,
     }
 }
 
@@ -163,6 +164,7 @@ fn unknown_rule_collected_as_error() {
             effort: None,
             aliases: None,
             model: None,
+            plugin: None,
         },
     );
 

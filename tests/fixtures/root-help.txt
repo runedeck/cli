@@ -1,9 +1,4 @@
-      ·  · · ────────    _ __ _   _ _ __   ___   ──────── · ·  ·
-         · · ────────   | '__| | | | '_ \ / _ \  ──────── · ·
-           · · ──────   | |  | |_| | | | |  __/  ────── · ·
-             · · ────   |_|   \__,_|_| |_|\___|  ──── · ·
-
-  Deck toolkit for AI harnesses: your runes, deployed.
+  ᚱᚢᚾᛖ rune · your runes, deployed
   {VERSION} ({COMMIT}) built {TIME}
 
   Flow:

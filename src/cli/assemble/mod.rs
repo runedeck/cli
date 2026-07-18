@@ -242,7 +242,12 @@ fn assemble_source_for_provider(
     let (transformed_content, transformed_filename) = if is_hook {
         let deck = hook_deck(source)?;
         let content = if relative_within_kind == "hooks.json" {
-            rewrite_hook_commands(&assembled, provider_config.default_target(), deck)?
+            rewrite_hook_commands(
+                &assembled,
+                provider_config.default_target(),
+                deck,
+                provider_config.plugin.is_some(),
+            )?
         } else {
             assembled.clone()
         };
@@ -316,6 +321,7 @@ fn rewrite_hook_commands(
     content: &str,
     provider_target: &str,
     deck: &str,
+    plugin_mode: bool,
 ) -> Result<String, Error> {
     let mut manifest: serde_json::Value = serde_json::from_str(content).map_err(|error| {
         commands::error::Error::new(
@@ -323,10 +329,16 @@ fn rewrite_hook_commands(
             format!("invalid hooks/hooks.json: {error}"),
         )
     })?;
-    let deployed_root = format!(
-        "${{CLAUDE_PROJECT_DIR}}/{}/hooks/{deck}",
-        provider_target.trim_end_matches('/')
-    );
+    // A plugin deployment keeps ${CLAUDE_PLUGIN_ROOT}: the harness defines
+    // it, and scripts live one domain directory below the plugin's hooks/.
+    let deployed_root = if plugin_mode {
+        format!("${{CLAUDE_PLUGIN_ROOT}}/hooks/{deck}")
+    } else {
+        format!(
+            "${{CLAUDE_PROJECT_DIR}}/{}/hooks/{deck}",
+            provider_target.trim_end_matches('/')
+        )
+    };
     rewrite_command_values(&mut manifest, &deployed_root);
     serde_json::to_string_pretty(&manifest)
         .map(|mut value| {

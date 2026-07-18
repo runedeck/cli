@@ -41,9 +41,7 @@ fn root_help_spellings_render_the_custom_page() {
             .arg(argument)
             .assert()
             .success()
-            .stdout(predicate::str::contains(
-                "Deck toolkit for AI harnesses: your runes, deployed.",
-            ))
+            .stdout(predicate::str::contains("ᚱᚢᚾᛖ rune · your runes, deployed"))
             .stdout(predicate::str::contains("Quick start:"));
     }
 }

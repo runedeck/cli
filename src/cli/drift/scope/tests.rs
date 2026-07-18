@@ -53,6 +53,7 @@ fn run(build: &std::path::Path, deployed: &std::path::Path, module: &str) -> Dri
         effort: None,
         aliases: None,
         model: None,
+        plugin: None,
     };
     compare_provider(
         &mut result,
