@@ -1516,6 +1516,9 @@ enum PrefixMatch {
 /// An unambiguous prefix works everywhere a full id does, so `spec show
 /// add` reaches `add-widget` without shell completion.
 fn prefix_match(root: &Path, prefix: &str) -> PrefixMatch {
+    if prefix.len() < 2 {
+        return PrefixMatch::None;
+    }
     let mut changes: Vec<String> = read_directories(&changes_root(root))
         .unwrap_or_default()
         .into_iter()

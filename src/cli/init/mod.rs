@@ -307,17 +307,38 @@ struct EmbeddedSkeleton;
 /// skeleton root and no network. Extraction lands in a per-version cache
 /// directory and is skipped when already present.
 fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
-    let cache_root = dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(format!("rune/skeleton-{}", env!("CARGO_PKG_VERSION")));
+    let cache_base = dirs::cache_dir().ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "cannot resolve the user cache directory; set a skeleton root with `rune config set skeleton <dir>`".to_string(),
+        )
+    })?;
+    let cache_root = cache_base.join(format!("rune/skeleton-{}", env!("CARGO_PKG_VERSION")));
     if cache_root.join("base").is_dir() {
         return Ok(cache_root);
+    }
+    // Stage the full extraction, then rename into place: a crash mid-way
+    // never leaves a half-written tree that looks ready.
+    let staging = cache_base.join(format!(
+        "rune/.skeleton-{}.{}.tmp",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    ));
+    if staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
     }
     for relative in EmbeddedSkeleton::iter() {
         let Some(content) = EmbeddedSkeleton::get(&relative) else {
             continue;
         };
-        let destination = cache_root.join(relative.as_ref());
+        let relative_path = Path::new(relative.as_ref());
+        if relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            continue;
+        }
+        let destination = staging.join(relative_path);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 Error::new(
@@ -327,13 +348,28 @@ fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
             })?;
         }
         fs::write(&destination, content.data.as_ref()).map_err(|error| {
+            let _ = fs::remove_dir_all(&staging);
             Error::new(
                 ErrorKind::Io,
                 format!("cannot write {}: {error}", destination.display()),
             )
         })?;
     }
-    Ok(cache_root)
+    match fs::rename(&staging, &cache_root) {
+        Ok(()) => Ok(cache_root),
+        // A concurrent extractor renamed first; its tree is equivalent.
+        Err(_) if cache_root.join("base").is_dir() => {
+            let _ = fs::remove_dir_all(&staging);
+            Ok(cache_root)
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot place {}: {error}", cache_root.display()),
+            ))
+        }
+    }
 }
 
 fn jj_on_path() -> bool {

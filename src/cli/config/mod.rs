@@ -105,13 +105,16 @@ pub fn write_atomic_all(writes: &[(&Path, &str)]) -> Result<(), Error> {
         }
         staged.push((temporary, path));
     }
-    for (temporary, path) in &staged {
-        fs::rename(temporary, path).map_err(|error| {
-            Error::new(
+    for (index, (temporary, path)) in staged.iter().enumerate() {
+        if let Err(error) = fs::rename(temporary, path) {
+            for (remaining, _) in &staged[index..] {
+                let _ = fs::remove_file(remaining);
+            }
+            return Err(Error::new(
                 ErrorKind::Io,
                 format!("cannot replace {}: {error}", path.display()),
-            )
-        })?;
+            ));
+        }
     }
     Ok(())
 }

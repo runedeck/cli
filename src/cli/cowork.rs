@@ -42,21 +42,21 @@ pub fn package(source: &str, json: bool) -> Result<i32, Error> {
             format!("cannot create {}: {error}", dist.display()),
         )
     })?;
+    // Zip into a temporary name so the previous archive survives a failed
+    // run; -y stores symlinks instead of following them, closing the window
+    // between the budget scan and archiving.
     let archive = dist.join("rune-cowork-plugin.zip");
-    if archive.exists() {
-        std::fs::remove_file(&archive).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot replace {}: {error}", archive.display()),
-            )
-        })?;
+    let staging = dist.join(format!(".rune-cowork-plugin.{}.zip", std::process::id()));
+    if staging.exists() {
+        let _ = std::fs::remove_file(&staging);
     }
-    let archive_absolute = std::path::absolute(&archive)
+    let staging_absolute = std::path::absolute(&staging)
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot resolve dist path: {error}")))?;
     let status = std::process::Command::new("zip")
         .arg("-r")
         .arg("-q")
-        .arg(&archive_absolute)
+        .arg("-y")
+        .arg(&staging_absolute)
         .arg(".")
         .current_dir(&plugin_root)
         .status()
@@ -67,11 +67,19 @@ pub fn package(source: &str, json: bool) -> Result<i32, Error> {
             )
         })?;
     if !status.success() {
+        let _ = std::fs::remove_file(&staging);
         return Err(Error::new(
             ErrorKind::Io,
             format!("zip exited with {status}"),
         ));
     }
+    std::fs::rename(&staging, &archive).map_err(|error| {
+        let _ = std::fs::remove_file(&staging);
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot place {}: {error}", archive.display()),
+        )
+    })?;
 
     if json {
         println!(
