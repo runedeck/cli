@@ -28,6 +28,7 @@ mod review;
 mod setup;
 mod skill;
 mod spec;
+mod spec_interop;
 mod status;
 pub(crate) mod style;
 pub(crate) mod target;
@@ -653,6 +654,28 @@ enum SpecAction {
 
     /// Report relationship health across the spec-driven change tree
     Doctor {
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Write the OpenSpec tree (openspec/) from the native root
+    Export {
+        /// Emit the OpenSpec layout. The only export format today.
+        #[arg(long)]
+        openspec: bool,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Bring an openspec/ tree into the native root
+    Import {
+        /// Read the OpenSpec layout. The only import format today.
+        #[arg(long)]
+        openspec: bool,
+
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
@@ -1508,6 +1531,26 @@ pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
 /// Dispatch a `rune spec` subcommand to its lifecycle handler.
 fn run_spec(action: SpecAction, json: bool) -> i32 {
     let result = match action {
+        SpecAction::Export { openspec, source } => {
+            if openspec {
+                spec_interop::export_openspec(&source, json)
+            } else {
+                Err(Error::new(
+                    commands::error::ErrorKind::Config,
+                    "pass --openspec; it is the only export format today".to_string(),
+                ))
+            }
+        }
+        SpecAction::Import { openspec, source } => {
+            if openspec {
+                spec_interop::import_openspec(&source, json)
+            } else {
+                Err(Error::new(
+                    commands::error::ErrorKind::Config,
+                    "pass --openspec; it is the only import format today".to_string(),
+                ))
+            }
+        }
         SpecAction::Propose {
             change_id,
             capability,
