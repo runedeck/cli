@@ -1,0 +1,10 @@
+{
+    "name": "${NAME}",
+    "version": "0.1.0",
+    "description": "${BRIEF}",
+    "type": "module",
+    "license": "EUPL-1.2",
+    "scripts": {
+        "test": "node --test"
+    }
+}

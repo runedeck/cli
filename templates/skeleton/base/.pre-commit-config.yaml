@@ -1,0 +1,27 @@
+repos:
+    - repo: builtin
+      hooks:
+          - id: trailing-whitespace
+          - id: check-yaml
+          - id: check-json
+
+    - repo: local
+      hooks:
+          - id: shellcheck
+            name: shellcheck
+            entry: shellcheck -S warning
+            language: system
+            types: [shell]
+
+          - id: gitleaks
+            name: gitleaks (staged)
+            entry: gitleaks git --staged --pre-commit --no-banner
+            language: system
+            pass_filenames: false
+
+          - id: gitleaks-tree
+            name: gitleaks (push range)
+            entry: gitleaks git --no-banner --log-opts "HEAD --not --remotes" .
+            language: system
+            pass_filenames: false
+            stages: [pre-push]

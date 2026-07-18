@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Push-time checks: the pre-push prek stage (secret scan over the tree).
+
+if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+    prek run --all-files --stage pre-push
+elif command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --no-banner --log-opts "HEAD --not --remotes"
+fi

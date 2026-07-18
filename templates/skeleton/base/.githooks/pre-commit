@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Commit-time checks: prek hooks when configured, staged secret scan as floor.
+
+if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+    prek run
+elif command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --staged --pre-commit --no-banner
+else
+    echo "  ⚠  neither prek nor gitleaks found — commit checks skipped" >&2
+    echo "     install: cargo binstall prek   or   brew install gitleaks" >&2
+fi

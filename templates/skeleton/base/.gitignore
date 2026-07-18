@@ -1,0 +1,10 @@
+build/
+dist/
+.DS_Store
+
+# rune-deployed provider trees and review comments
+.claude/
+.codex/
+.gemini/
+.opencode/
+.rune-comments.yaml

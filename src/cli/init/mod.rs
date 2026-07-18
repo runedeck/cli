@@ -299,6 +299,43 @@ fn lexically_normalized(path: &Path) -> PathBuf {
     normalized
 }
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "templates/skeleton/"]
+struct EmbeddedSkeleton;
+
+/// The binary ships the skeleton layers, so init works with no configured
+/// skeleton root and no network. Extraction lands in a per-version cache
+/// directory and is skipped when already present.
+fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
+    let cache_root = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("rune/skeleton-{}", env!("CARGO_PKG_VERSION")));
+    if cache_root.join("base").is_dir() {
+        return Ok(cache_root);
+    }
+    for relative in EmbeddedSkeleton::iter() {
+        let Some(content) = EmbeddedSkeleton::get(&relative) else {
+            continue;
+        };
+        let destination = cache_root.join(relative.as_ref());
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        fs::write(&destination, content.data.as_ref()).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", destination.display()),
+            )
+        })?;
+    }
+    Ok(cache_root)
+}
+
 fn jj_on_path() -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
@@ -390,7 +427,8 @@ fn resolve_project_context(
                 .skeleton
                 .as_ref()
                 .map(|value| PathBuf::from(&value.value))
-                .ok_or_else(|| Error::new(ErrorKind::Config, "skeleton root is not configured"))
+                .filter(|root| root.is_dir())
+                .map_or_else(materialize_embedded_skeleton, Ok)
         },
         |path| Ok(ontology::expand_tilde(path)),
     )?;

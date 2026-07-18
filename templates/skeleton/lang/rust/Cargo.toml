@@ -1,0 +1,16 @@
+[package]
+name = "${NAME}"
+version = "0.1.0"
+edition = "2024"
+license = "EUPL-1.2"
+description = "${BRIEF}"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

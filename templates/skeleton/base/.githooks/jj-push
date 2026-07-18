@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# jj runs no git hooks, so the pre-push checks live here instead.
+# `make install` wires this as the repo-local jj `push` alias:
+#   jj config set --repo aliases.push '["util","exec","--","bash","<repo>/.githooks/jj-push"]'
+# Runs the same checks as git's pre-push hook, then hands off to jj git push.
+
+cd "$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null || dirname "$0")"
+
+bash "$(dirname "$0")/pre-push"
+
+exec jj git push "$@"

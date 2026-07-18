@@ -1,0 +1,13 @@
+[project]
+name = "${NAME}"
+version = "0.1.0"
+description = "${BRIEF}"
+license = "EUPL-1.2"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S"]
