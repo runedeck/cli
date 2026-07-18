@@ -34,8 +34,53 @@ pub enum TodoAction {
     },
 }
 
-pub fn execute(action: Option<TodoAction>, json: bool) -> Result<i32, Error> {
+pub fn execute(action: Option<TodoAction>, all: bool, json: bool) -> Result<i32, Error> {
+    if all {
+        return aggregate(Path::new("."), json);
+    }
     execute_at(Path::new("."), action, json)
+}
+
+/// One listing per workspace member: the consumer root itself, then every
+/// `dirs:` entry of its `.rune` that carries a TODO.txt. Missing required
+/// members error; optional members note and skip.
+fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
+    let manifest = crate::cli::dotrune::load(root)?.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "no .rune here; --all aggregates over its dirs: members".to_string(),
+        )
+    })?;
+    let sheet = crate::cli::style::Sheet::detect(false);
+    let mut members: Vec<(String, std::path::PathBuf)> =
+        vec![(".".to_string(), root.to_path_buf())];
+    for member in &manifest.dirs {
+        let member_root = root.join(&member.path);
+        if !member_root.is_dir() {
+            if member.required {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!("required workspace member '{}' is missing", member.path),
+                ));
+            }
+            if !json {
+                println!(
+                    "{}",
+                    sheet.dim(&format!("{} — absent, skipped", member.path))
+                );
+            }
+            continue;
+        }
+        members.push((member.path.clone(), member_root));
+    }
+    let mut exit = 0;
+    for (label, member_root) in members {
+        if !json {
+            println!("{}", sheet.heading(&label));
+        }
+        exit = exit.max(list(&member_root, None, json)?);
+    }
+    Ok(exit)
 }
 
 fn todo_path(root: &Path) -> std::path::PathBuf {

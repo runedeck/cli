@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const SCHEMA_VERSION: u32 = 1;
+/// Version 2 adds the `dirs:` workspace-member section; version 1 files
+/// keep parsing unchanged.
+pub const SCHEMA_VERSION_DIRS: u32 = 2;
 
 /// Test-only escape hatch: when this env var is set, `file://` URLs pass
 /// validation so integration tests can use a local bare repo as the origin
@@ -22,6 +25,25 @@ pub struct DotRune {
     pub sources: BTreeMap<String, Source>,
     #[serde(default)]
     pub runes: BTreeMap<String, RuneList>,
+    /// Workspace directories associated with this consumer (schema v2):
+    /// wiki, data, out, and other members that tools like `rune todo --all`
+    /// aggregate over. Committed paths are relative to the `.rune` file;
+    /// machine-specific absolute paths belong in a gitignored `.rune.local`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<WorkspaceDir>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceDir {
+    pub path: String,
+    /// What the directory is to this workspace: wiki, data, out, or free text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role: String,
+    /// Missing required members are errors for aggregating tools; optional
+    /// members warn and skip.
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// Where to find a producer module. `Local` for a sibling checkout on disk,
@@ -242,14 +264,50 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
     let manifest: DotRune = serde_yaml::from_str(content)
         .map_err(|error| Error::new(ErrorKind::Parse, format!(".rune: {error}")))?;
 
-    if manifest.version != SCHEMA_VERSION {
+    if manifest.version != SCHEMA_VERSION && manifest.version != SCHEMA_VERSION_DIRS {
         return Err(Error::new(
             ErrorKind::Parse,
             format!(
-                ".rune: schema version {} is not supported (this build only understands version {})",
-                manifest.version, SCHEMA_VERSION
+                ".rune: schema version {} is not supported (this build understands versions {SCHEMA_VERSION} and {SCHEMA_VERSION_DIRS})",
+                manifest.version
             ),
         ));
+    }
+    if manifest.version == SCHEMA_VERSION && !manifest.dirs.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Parse,
+            ".rune: dirs requires version 2".to_string(),
+        ));
+    }
+    for member in &manifest.dirs {
+        let path = std::path::Path::new(&member.path);
+        if path.is_absolute() || member.path.starts_with('~') {
+            return Err(Error::new(
+                ErrorKind::Parse,
+                format!(
+                    ".rune: dirs path '{}' must be relative to the .rune file; machine paths belong in .rune.local",
+                    member.path
+                ),
+            ));
+        }
+        // Leading `..` components reach sibling members (`../wiki`); interior
+        // `..` after a normal segment is a traversal smell and is rejected.
+        let mut seen_normal = false;
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir if seen_normal => {
+                    return Err(Error::new(
+                        ErrorKind::Parse,
+                        format!(
+                            ".rune: dirs path '{}' mixes .. inside the path",
+                            member.path
+                        ),
+                    ));
+                }
+                std::path::Component::Normal(_) => seen_normal = true,
+                _ => {}
+            }
+        }
     }
 
     for source_label in manifest.runes.keys() {

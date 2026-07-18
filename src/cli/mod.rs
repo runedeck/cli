@@ -216,6 +216,10 @@ enum Command {
     Todo {
         #[command(subcommand)]
         action: Option<todo::TodoAction>,
+
+        /// Aggregate over every `dirs:` member of this workspace's `.rune`.
+        #[arg(long)]
+        all: bool,
     },
 
     /// Architecture decision records under docs/decisions
@@ -940,8 +944,8 @@ pub fn run() -> i32 {
         Command::Provider { action } => {
             return exit_code(provider_cmd::execute(action, args.json));
         }
-        Command::Todo { action } => {
-            return exit_code(todo::execute(action, args.json));
+        Command::Todo { action, all } => {
+            return exit_code(todo::execute(action, all, args.json));
         }
         Command::Adr { action } => {
             return exit_code(adr::execute(action, args.json));
