@@ -1,5 +1,5 @@
 name: rune-cli
-version: 0.3.2
+version: 0.5.0
 type: binary
 description: "Rune Deck toolkit — assemble, validate, and deploy runes (skills, agents, rules) from the deck across AI coding harnesses"
 events: []

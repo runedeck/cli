@@ -2,6 +2,89 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn consumer_root_validates_without_module_structure_errors() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::write(
+        temp_directory.path().join(".rune"),
+        "version: 1\nsources: {}\nrunes: {}\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(temp_directory.path().join(".claude")).unwrap();
+
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+
+    assert!(
+        report.result.errors.is_empty(),
+        "consumer root must not fail module checks: {:?}",
+        report.result.errors
+    );
+    assert!(
+        report
+            .items
+            .iter()
+            .any(|item| item.name == ".rune" && item.status == ValidationStatus::Passed),
+        "expected a passing .rune item"
+    );
+    assert!(
+        report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".claude/.manifest")),
+        "expected a missing-manifest warning: {:?}",
+        report.result.warnings
+    );
+}
+
+#[test]
+fn consumer_root_reports_unparseable_dotrune() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::write(temp_directory.path().join(".rune"), "version: [broken\n").unwrap();
+
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+
+    assert!(
+        report
+            .result
+            .errors
+            .iter()
+            .any(|error| error.contains(".rune")),
+        "expected a .rune parse error: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
+fn module_root_with_dotrune_also_runs_consumer_checks() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::write(temp_directory.path().join("module.yaml"), "name: demo\n").unwrap();
+    std::fs::write(
+        temp_directory.path().join(".rune"),
+        "version: 1\nsources: {}\nrunes: {}\n",
+    )
+    .unwrap();
+
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+
+    assert!(
+        report
+            .items
+            .iter()
+            .any(|item| item.name == ".rune" && item.status == ValidationStatus::Passed),
+        "module + .rune root must validate both roles"
+    );
+    assert!(
+        report
+            .result
+            .errors
+            .iter()
+            .any(|error| error.contains("defaults.yaml")),
+        "module checks must still run: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
 fn check_module_structure_reports_missing_required_files() {
     let temp_directory = TempDir::new().unwrap();
     let mut report = ValidationReport::default();

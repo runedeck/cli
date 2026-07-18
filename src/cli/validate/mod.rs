@@ -248,7 +248,61 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
         }
         return Ok(aggregate);
     }
-    validate_module(module_root, true, scan)
+    let is_module = module_root.join("module.yaml").is_file();
+    let is_consumer = module_root.join(".rune").is_file();
+    if is_consumer && !is_module {
+        return validate_consumer(module_root, scan);
+    }
+    let mut report = validate_module(module_root, true, scan)?;
+    if is_consumer {
+        let mut consumer_report = ValidationReport::default();
+        consumer_checks(module_root, &mut consumer_report)?;
+        append_report(&mut report, consumer_report);
+    }
+    Ok(report)
+}
+
+/// Consumer roots (a `.rune` file, no deck or module manifest) hold deployed
+/// provider trees, not source artifacts; module structure rules do not apply.
+fn validate_consumer(consumer_root: &Path, scan: bool) -> Result<ValidationReport, Error> {
+    let mut report = ValidationReport::default();
+    consumer_checks(consumer_root, &mut report)?;
+    tools::run_external_checks(consumer_root, scan, &mut report);
+    Ok(report)
+}
+
+fn consumer_checks(consumer_root: &Path, report: &mut ValidationReport) -> Result<(), Error> {
+    match crate::cli::dotrune::load(consumer_root) {
+        Ok(_) => report.pass(".rune"),
+        Err(error) => report.fail(".rune", format!(".rune: {error}")),
+    }
+
+    let providers = crate::cli::config::load_providers("")?;
+    let mut provider_targets: Vec<String> = providers
+        .values()
+        .flat_map(|provider| {
+            commands::provider::ContentKind::ALL
+                .iter()
+                .map(|kind| provider.target_for_kind(*kind).to_string())
+        })
+        .collect();
+    provider_targets.sort();
+    provider_targets.dedup();
+    for target in provider_targets {
+        let target_dir = consumer_root.join(&target);
+        if !target_dir.is_dir() {
+            continue;
+        }
+        if target_dir.join(".manifest").is_file() {
+            report.pass(format!("{target}/.manifest"));
+        } else {
+            report.warn(
+                format!("{target}/.manifest"),
+                format!("{target}/.manifest: missing — run rune install to establish baseline"),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_module(

@@ -108,10 +108,19 @@ pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
             format!("cannot write {}: {error}", destination.display()),
         )
     })?;
+    let cleared_caches = if shell == Shell::Zsh {
+        invalidate_zsh_completion_cache(&home()?)
+    } else {
+        0
+    };
     if json {
         println!(
             "{}",
-            serde_json::json!({ "shell": shell.name(), "installed": destination })
+            serde_json::json!({
+                "shell": shell.name(),
+                "installed": destination,
+                "cleared_caches": cleared_caches,
+            })
         );
         return Ok(0);
     }
@@ -164,6 +173,31 @@ fn install_path(shell: Shell) -> Result<PathBuf, Error> {
     }
 }
 
+/// Zsh caches completion lookups in ~/.zcompdump* files; a stale cache keeps
+/// ignoring a freshly installed _rune until compinit rebuilds it. Removing the
+/// cache forces the rebuild on the next shell start.
+fn invalidate_zsh_completion_cache(home: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(home) else {
+        return 0;
+    };
+    let mut cleared = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(".zcompdump") {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => cleared += 1,
+            Err(error) => eprintln!(
+                "warning: cannot remove completion cache {}: {error}",
+                entry.path().display()
+            ),
+        }
+    }
+    cleared
+}
+
 fn brew_prefix() -> Option<PathBuf> {
     if let Ok(prefix) = std::env::var("HOMEBREW_PREFIX")
         && !prefix.is_empty()
@@ -182,7 +216,8 @@ fn post_install_hint(shell: Shell, destination: &std::path::Path) -> Option<Stri
             "add to ~/.zshrc before compinit: fpath+=(~/.zfunc)\nthen restart the shell"
                 .to_string(),
         ),
-        Shell::Zsh | Shell::Fish | Shell::Nushell => Some("restart the shell to load".to_string()),
+        Shell::Zsh => Some("completion cache cleared; restart the shell to rebuild it".to_string()),
+        Shell::Fish | Shell::Nushell => Some("restart the shell to load".to_string()),
         Shell::Bash => {
             Some("requires the bash-completion package; restart the shell to load".to_string())
         }
@@ -210,5 +245,20 @@ mod tests {
         let fish = install_path(Shell::Fish).unwrap();
         assert!(fish.ends_with(".config/fish/completions/rune.fish"));
         assert!(install_path(Shell::Powershell).is_err());
+    }
+
+    #[test]
+    fn zsh_cache_invalidation_removes_only_zcompdump_files() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".zcompdump"), "stale cache").unwrap();
+        std::fs::write(home.path().join(".zcompdump-host-5.9"), "stale cache").unwrap();
+        std::fs::write(home.path().join(".zshrc"), "# shell config, must survive").unwrap();
+
+        let cleared = invalidate_zsh_completion_cache(home.path());
+
+        assert_eq!(cleared, 2);
+        assert!(!home.path().join(".zcompdump").exists());
+        assert!(!home.path().join(".zcompdump-host-5.9").exists());
+        assert!(home.path().join(".zshrc").exists());
     }
 }

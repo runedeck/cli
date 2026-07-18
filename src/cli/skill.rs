@@ -21,12 +21,12 @@ pub fn show() -> i32 {
 }
 
 pub fn install(directory: Option<&str>, json: bool) -> Result<i32, Error> {
-    let base = match directory {
+    let root = match directory {
         Some(directory) => PathBuf::from(directory),
         None => dirs::home_dir()
-            .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?
-            .join(".claude/skills"),
+            .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?,
     };
+    let base = root.join(".claude/skills");
     let destination = base.join("rune");
     let skill_path = destination.join("SKILL.md");
     fs::create_dir_all(&base).map_err(|error| {
@@ -81,11 +81,11 @@ mod tests {
     }
 
     #[test]
-    fn install_writes_skill_under_given_directory() {
+    fn install_writes_skill_under_the_project_claude_tree() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let dir = temp.path().join("skills");
-        install(Some(dir.to_str().expect("utf-8 path")), true).expect("install");
-        let written = std::fs::read_to_string(dir.join("rune/SKILL.md")).expect("skill written");
+        install(Some(temp.path().to_str().expect("utf-8 path")), true).expect("install");
+        let written = std::fs::read_to_string(temp.path().join(".claude/skills/rune/SKILL.md"))
+            .expect("skill written");
         assert!(written.contains("# rune"));
     }
 }
