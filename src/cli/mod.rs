@@ -496,7 +496,7 @@ enum Command {
 
     /// Launch a coding tool with composable environment middleware
     #[command(
-        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool"
+        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch claude@sol\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:4000   # your endpoint\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: LITELLM_MASTER_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. ollama profiles double as models: rune launch ollama@llama3"
     )]
     Launch {
         /// Coding tool to launch, such as `claude` or `claude@sol` for a
