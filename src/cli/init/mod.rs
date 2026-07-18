@@ -324,6 +324,19 @@ fn is_explicit_path(requested: &str, expanded: &Path) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn merge_gitignore(previous: &[u8], addition: &[u8], layer_name: &str) -> Vec<u8> {
+    let mut merged = previous.to_vec();
+    if !merged.ends_with(b"\n") {
+        merged.push(b'\n');
+    }
+    merged.extend_from_slice(format!("\n# layer: {layer_name}\n").as_bytes());
+    merged.extend_from_slice(addition);
+    if !merged.ends_with(b"\n") {
+        merged.push(b'\n');
+    }
+    merged
+}
+
 fn collect_layer(
     layer_root: &Path,
     current: &Path,
@@ -382,6 +395,12 @@ fn collect_layer(
             )
         })?;
         let contents = substitute_bytes(&raw, replacements);
+        if relative == Path::new(".gitignore")
+            && let Some(previous) = templates.get_mut(&relative)
+        {
+            previous.contents = merge_gitignore(&previous.contents, &contents, layer_name);
+            continue;
+        }
         if let Some(previous) = templates.insert(
             relative.clone(),
             ProjectTemplate {
