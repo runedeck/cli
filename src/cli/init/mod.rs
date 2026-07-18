@@ -58,12 +58,18 @@ impl std::fmt::Display for Purpose {
     }
 }
 
+// Independent step outcomes for the JSON report; an enum would force
+// consumers to decode combinations that are genuinely orthogonal.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Serialize)]
 struct ProjectResult {
     destination: PathBuf,
     layers: Vec<String>,
     overrides: Vec<String>,
     git_initialized: bool,
+    jj_colocated: bool,
+    workshop: bool,
+    dry_run: bool,
     quest_bound: bool,
     #[serde(flatten)]
     action: ActionResult,
@@ -81,6 +87,24 @@ struct ProjectContext {
     name: String,
     title: String,
     owner: String,
+    under_workshop_root: bool,
+}
+
+/// How much scaffolding beyond the file layers this init performs.
+// Each bool mirrors an independent CLI switch.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InitOptions {
+    /// Workshop mode: private/public/assets layout, jj colocation, no
+    /// automatic commit. Defaults on when the destination lives under the
+    /// targets root; `--workshop` forces it elsewhere.
+    pub workshop: bool,
+    /// VCS spine (jj colocation) for a plain project, gated on jj presence.
+    pub spine: bool,
+    /// Print the plan without writing anything.
+    pub dry_run: bool,
+    /// Bind the scaffolded project as the active target afterwards.
+    pub bind: bool,
 }
 
 pub fn run_project(
@@ -89,10 +113,10 @@ pub fn run_project(
     purpose: Purpose,
     skeleton: Option<&str>,
     brief: &str,
-    bind_quest: bool,
+    options: InitOptions,
     json: bool,
 ) -> i32 {
-    match scaffold_project(target, language, purpose, skeleton, brief, bind_quest) {
+    match scaffold_project(target, language, purpose, skeleton, brief, options) {
         Ok(result) => {
             print_project(&result, json);
             i32::from(result.action.has_errors())
@@ -110,7 +134,7 @@ fn scaffold_project(
     purpose: Purpose,
     skeleton_override: Option<&str>,
     brief: &str,
-    bind_quest: bool,
+    options: InitOptions,
 ) -> Result<ProjectResult, Error> {
     let context = resolve_project_context(target, skeleton_override)?;
     let ProjectContext {
@@ -119,7 +143,9 @@ fn scaffold_project(
         name,
         title,
         owner,
+        under_workshop_root,
     } = context;
+    let workshop = options.workshop || under_workshop_root;
     let replacements = [
         ("${NAME}", name.as_str()),
         ("${TITLE}", title.as_str()),
@@ -157,63 +183,110 @@ fn scaffold_project(
         )?;
     }
 
+    let mut action = ActionResult::new();
+    if options.dry_run {
+        for (relative, template) in &templates {
+            action.installed.push(DeployedFile {
+                source: template
+                    .source
+                    .strip_prefix(&skeleton)
+                    .unwrap_or(&template.source)
+                    .to_string_lossy()
+                    .into_owned(),
+                target: relative.to_string_lossy().into_owned(),
+                provider: template.layer.clone(),
+            });
+        }
+        return Ok(ProjectResult {
+            destination,
+            layers: layers.into_iter().map(|(name, _)| name).collect(),
+            overrides,
+            git_initialized: false,
+            jj_colocated: false,
+            workshop,
+            dry_run: true,
+            quest_bound: false,
+            action,
+        });
+    }
+
     fs::create_dir_all(&destination).map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot create {}: {error}", destination.display()),
         )
     })?;
+    write_templates(&destination, &skeleton, templates, &mut action)?;
 
-    let mut action = ActionResult::new();
-    for (relative, template) in templates {
-        let target_path = destination.join(&relative);
-        let target_display = relative.to_string_lossy().into_owned();
-        if target_path.exists() {
-            action.skipped.push(SkippedFile {
-                target: target_display,
-                provider: template.layer,
-                reason: SkipReason::AlreadyExists,
-            });
-            continue;
-        }
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
-        }
-        fs::write(&target_path, &template.contents).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", target_path.display()),
-            )
-        })?;
-        make_executable_if_needed(&target_path, &relative)?;
-        action.installed.push(DeployedFile {
-            source: template
-                .source
-                .strip_prefix(&skeleton)
-                .unwrap_or(&template.source)
-                .to_string_lossy()
-                .into_owned(),
-            target: target_display,
-            provider: template.layer,
-        });
+    if workshop {
+        create_workshop_layout(&destination)?;
     }
 
-    let git_initialized = initialize_git(&destination, &owner)?;
-    let quest_bound = bind_quest_if_requested(&destination, bind_quest)?;
+    // Workshop scaffolds never commit automatically: the layout and hooks
+    // land, the first commit stays a human decision.
+    let git_initialized = initialize_git(&destination, &owner, !workshop)?;
+    let jj_colocated = if workshop || options.spine {
+        colocate_jj(&destination)?
+    } else {
+        false
+    };
+    let quest_bound = bind_quest_if_requested(&destination, options.bind)?;
 
     Ok(ProjectResult {
         destination,
         layers: layers.into_iter().map(|(name, _)| name).collect(),
         overrides,
         git_initialized,
+        jj_colocated,
+        workshop,
+        dry_run: false,
         quest_bound,
         action,
     })
+}
+
+fn create_workshop_layout(destination: &Path) -> Result<(), Error> {
+    for member in ["private", "public", "assets"] {
+        let member_dir = destination.join(member);
+        if !member_dir.is_dir() {
+            fs::create_dir_all(&member_dir).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", member_dir.display()),
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Colocate jj beside git when the jj binary is present; absent jj is a
+/// note, not an error, so plain-git machines scaffold identically.
+fn colocate_jj(destination: &Path) -> Result<bool, Error> {
+    if destination.join(".jj").exists() {
+        return Ok(false);
+    }
+    let jj_available = std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
+    });
+    if !jj_available {
+        return Ok(false);
+    }
+    let output = Command::new("jj")
+        .args(["git", "init", "--colocate"])
+        .current_dir(destination)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    if !output.status.success() {
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!(
+                "jj git init --colocate failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(true)
 }
 
 fn bind_quest_if_requested(destination: &Path, requested: bool) -> Result<bool, Error> {
@@ -266,12 +339,14 @@ fn resolve_project_context(
             )
         })?
         .to_string();
+    let under_workshop_root = destination.starts_with(&targets_root);
     Ok(ProjectContext {
         destination,
         skeleton,
         title: title_case(&name),
         name,
         owner,
+        under_workshop_root,
     })
 }
 
@@ -324,6 +399,52 @@ fn is_explicit_path(requested: &str, expanded: &Path) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn write_templates(
+    destination: &Path,
+    skeleton: &Path,
+    templates: BTreeMap<PathBuf, ProjectTemplate>,
+    action: &mut ActionResult,
+) -> Result<(), Error> {
+    for (relative, template) in templates {
+        let target_path = destination.join(&relative);
+        let target_display = relative.to_string_lossy().into_owned();
+        if target_path.exists() {
+            action.skipped.push(SkippedFile {
+                target: target_display,
+                provider: template.layer,
+                reason: SkipReason::AlreadyExists,
+            });
+            continue;
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        fs::write(&target_path, &template.contents).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", target_path.display()),
+            )
+        })?;
+        make_executable_if_needed(&target_path, &relative)?;
+        action.installed.push(DeployedFile {
+            source: template
+                .source
+                .strip_prefix(skeleton)
+                .unwrap_or(&template.source)
+                .to_string_lossy()
+                .into_owned(),
+            target: target_display,
+            provider: template.layer,
+        });
+    }
+    Ok(())
+}
+
 fn merge_gitignore(previous: &[u8], addition: &[u8], layer_name: &str) -> Vec<u8> {
     let mut merged = previous.to_vec();
     if !merged.ends_with(b"\n") {
@@ -522,7 +643,7 @@ fn make_executable_if_needed(_target: &Path, _relative: &Path) -> Result<(), Err
     Ok(())
 }
 
-fn initialize_git(destination: &Path, owner: &str) -> Result<bool, Error> {
+fn initialize_git(destination: &Path, owner: &str, commit: bool) -> Result<bool, Error> {
     let has_git = destination.join(".git").exists();
     let has_jj = destination.join(".jj").exists();
     let initialized = if has_git || has_jj {
@@ -532,7 +653,7 @@ fn initialize_git(destination: &Path, owner: &str) -> Result<bool, Error> {
         true
     };
     if destination.join(".git").exists() {
-        if !git_has_head(destination)? {
+        if commit && !git_has_head(destination)? {
             run_git(["add", "-A"], Some(destination))?;
             commit_scaffold(destination, owner)?;
         }

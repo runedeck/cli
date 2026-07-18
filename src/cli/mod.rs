@@ -164,6 +164,19 @@ enum Command {
         /// Bind the scaffolded project as the active target.
         #[arg(long, alias = "quest", conflicts_with = "module")]
         bind: bool,
+
+        /// Workshop scaffold: private/public/assets layout, jj colocation,
+        /// no automatic commit. Defaults on under the targets root.
+        #[arg(long, conflicts_with = "module")]
+        workshop: bool,
+
+        /// VCS spine (jj colocation) for a plain project.
+        #[arg(long, conflicts_with_all = ["module", "workshop"])]
+        spine: bool,
+
+        /// Print the scaffold plan without writing anything.
+        #[arg(long, conflicts_with = "module")]
+        dry_run: bool,
     },
 
     /// Add a rune selection to the consumer `.rune` manifest
@@ -912,6 +925,9 @@ pub fn run() -> i32 {
             skeleton,
             brief,
             bind,
+            workshop,
+            spine,
+            dry_run,
         } => {
             if let Some(module) = module {
                 (init::execute(&module), "initialized")
@@ -923,7 +939,12 @@ pub fn run() -> i32 {
                     purpose,
                     skeleton.as_deref(),
                     &brief,
-                    bind,
+                    init::InitOptions {
+                        workshop,
+                        spine,
+                        dry_run,
+                        bind,
+                    },
                     args.json,
                 );
             }

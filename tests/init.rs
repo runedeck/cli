@@ -79,21 +79,17 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8(branch.stdout).unwrap().trim(), "main");
-    let commits = std::process::Command::new("git")
-        .args(["rev-list", "--count", "HEAD"])
+    // Under the targets root init runs in workshop mode: layout lands,
+    // the first commit stays a human decision.
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&destination)
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8(commits.stdout).unwrap().trim(), "1");
-    let subject = std::process::Command::new("git")
-        .args(["log", "-1", "--format=%s"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
-    assert_eq!(
-        String::from_utf8(subject.stdout).unwrap().trim(),
-        "chore: scaffold from skeleton"
-    );
+    assert!(!head.status.success(), "workshop init must not auto-commit");
+    for member in ["private", "public", "assets"] {
+        assert!(destination.join(member).is_dir(), "missing {member}/");
+    }
 
     #[cfg(unix)]
     for executable in [".githooks/pre-commit", "bin/signal-lamp"] {
@@ -139,12 +135,12 @@ fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
     )
     .success();
 
-    let commits = std::process::Command::new("git")
-        .args(["rev-list", "--count", "HEAD"])
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(destination)
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8(commits.stdout).unwrap().trim(), "1");
+    assert!(!head.status.success(), "workshop init must not auto-commit");
 }
 
 #[test]
