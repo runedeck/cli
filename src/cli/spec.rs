@@ -1484,10 +1484,69 @@ pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
                     ),
                 ));
             }
-            Err(Error::new(
-                ErrorKind::Config,
-                format!("no active change or capability specification named '{name}'"),
-            ))
+            match prefix_match(root, name) {
+                PrefixMatch::Change(id) => show_change(root, &id, json),
+                PrefixMatch::Specification(capability) => {
+                    let path = specs_root(root).join(&capability).join("spec.md");
+                    show_specification(root, &capability, &path, json)
+                }
+                PrefixMatch::Ambiguous(candidates) => Err(Error::new(
+                    ErrorKind::Config,
+                    format!(
+                        "'{name}' matches more than one item: {}",
+                        candidates.join(", ")
+                    ),
+                )),
+                PrefixMatch::None => Err(Error::new(
+                    ErrorKind::Config,
+                    format!("no active change or capability specification named '{name}'"),
+                )),
+            }
+        }
+    }
+}
+
+enum PrefixMatch {
+    Change(String),
+    Specification(String),
+    Ambiguous(Vec<String>),
+    None,
+}
+
+/// An unambiguous prefix works everywhere a full id does, so `spec show
+/// add` reaches `add-widget` without shell completion.
+fn prefix_match(root: &Path, prefix: &str) -> PrefixMatch {
+    let mut changes: Vec<String> = read_directories(&changes_root(root))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|directory| {
+            directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .filter(|id| id != "archive" && id.starts_with(prefix))
+        .collect();
+    let mut specifications: Vec<String> = read_directories(&specs_root(root))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|directory| {
+            directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .filter(|capability| capability.starts_with(prefix))
+        .collect();
+    changes.sort();
+    specifications.sort();
+    match (changes.len(), specifications.len()) {
+        (1, 0) => PrefixMatch::Change(changes.remove(0)),
+        (0, 1) => PrefixMatch::Specification(specifications.remove(0)),
+        (0, 0) => PrefixMatch::None,
+        _ => {
+            changes.append(&mut specifications);
+            PrefixMatch::Ambiguous(changes)
         }
     }
 }
@@ -1689,6 +1748,26 @@ mod tests {
         .unwrap();
         fs::write(change.join("tasks.md"), tasks).unwrap();
         fs::write(change.join("specs/search/spec.md"), delta).unwrap();
+    }
+
+    #[test]
+    fn show_resolves_unambiguous_prefixes_and_rejects_ambiguity() {
+        let root = TempDir::new().unwrap();
+        write_change(root.path(), "add-widget", "- [ ] a\n", DELTA);
+        write_change(root.path(), "add-gadget", "- [ ] a\n", DELTA);
+        write_change(root.path(), "remove-legacy", "- [ ] a\n", DELTA);
+
+        match prefix_match(root.path(), "rem") {
+            PrefixMatch::Change(id) => assert_eq!(id, "remove-legacy"),
+            _ => panic!("expected a unique change match"),
+        }
+        match prefix_match(root.path(), "add") {
+            PrefixMatch::Ambiguous(candidates) => {
+                assert_eq!(candidates, vec!["add-gadget", "add-widget"]);
+            }
+            _ => panic!("expected ambiguity"),
+        }
+        assert!(matches!(prefix_match(root.path(), "zz"), PrefixMatch::None));
     }
 
     #[test]
