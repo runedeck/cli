@@ -20,14 +20,39 @@ const SENSITIVE_ENV_KEYS: &[&str] = &[
     "DYLD_LIBRARY_PATH",
 ];
 
+const KNOWN_TOOLS: &[&str] = &["claude", "codex", "agy", "opencode", "grok", "ollama"];
+
 pub fn execute_cli(tool: &str, rest: &[OsString]) -> Result<i32, String> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let root = dispatch::rune_root_from(&cwd)?;
     let config = ontology::load().map_err(|error| error.to_string())?;
-    let options = parse_cli_tail(rest, &config.launch)?;
+    if tool.is_empty() {
+        return Ok(list_tools(&config.launch));
+    }
+    let (tool_name, profile_name) = match tool.split_once('@') {
+        Some((name, profile)) => (name, Some(profile)),
+        None => (tool, None),
+    };
+    let profile = resolve_profile(tool_name, profile_name, &config.launch)?.cloned();
+    let mut options = parse_cli_tail(rest, &config.launch)?;
+    if let Some(profile) = &profile {
+        options.middleware.extend(profile.with.iter().cloned());
+        let mut args: Vec<OsString> = profile.args.iter().map(OsString::from).collect();
+        args.append(&mut options.args);
+        options.args = args;
+    }
+    if tool_name == "ollama"
+        && let Some(model) = profile_name.filter(|_| profile.is_none())
+    {
+        options.args.insert(0, OsString::from("run"));
+        options.args.insert(1, OsString::from(model));
+    }
     let context = LaunchContext { cwd, root, config };
-    let tool = resolve_tool(tool, &context.config.launch);
+    let tool = resolve_tool(tool_name, &context.config.launch);
     let mut plan = compose_plan(&options.middleware, options.tmux.as_deref(), &context)?;
+    if let Some(profile) = &profile {
+        apply_profile_env(profile, &mut plan)?;
+    }
     let argv = build_argv(&tool, &options.args, &plan);
     if options.dry_run {
         println!("{}", format_dry_run(&tool, &argv, &plan));
@@ -171,6 +196,93 @@ fn split_middleware_list(value: &str) -> Vec<String> {
         .filter(|name| !name.is_empty())
         .map(ToString::to_string)
         .collect()
+}
+
+/// A named profile must exist when requested for a non-ollama tool; for
+/// ollama the name falls back to a model for `ollama run`.
+fn resolve_profile<'config>(
+    tool: &str,
+    profile: Option<&str>,
+    launch: &'config Launch,
+) -> Result<Option<&'config ontology::LaunchProfile>, String> {
+    let Some(name) = profile else {
+        return Ok(None);
+    };
+    let found = launch
+        .profiles
+        .get(tool)
+        .and_then(|profiles| profiles.get(name));
+    if found.is_none() && tool != "ollama" {
+        let known = launch
+            .profiles
+            .get(tool)
+            .map(|profiles| {
+                let mut names: Vec<&str> = profiles.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                names.join(", ")
+            })
+            .filter(|names| !names.is_empty())
+            .unwrap_or_else(|| "none defined".to_string());
+        return Err(format!(
+            "no launch profile '{name}' for {tool} (profiles: {known})"
+        ));
+    }
+    Ok(found)
+}
+
+fn apply_profile_env(
+    profile: &ontology::LaunchProfile,
+    plan: &mut LaunchPlan,
+) -> Result<(), String> {
+    let mut keys: Vec<&String> = profile.env.keys().collect();
+    keys.sort_unstable();
+    for key in keys {
+        let value = match &profile.env[key] {
+            ontology::ProfileEnvValue::Literal(value) => value.clone(),
+            ontology::ProfileEnvValue::FromEnv { from_env } => std::env::var(from_env)
+                .map_err(|_| format!("profile references unset environment variable {from_env}"))?,
+        };
+        plan.env.push((OsString::from(key), OsString::from(value)));
+    }
+    Ok(())
+}
+
+fn list_tools(launch: &Launch) -> i32 {
+    let sheet = crate::cli::style::Sheet::detect(false);
+    println!("{}", sheet.heading("launchable tools"));
+    for tool in KNOWN_TOOLS {
+        let binary = launch
+            .tools
+            .get(*tool)
+            .and_then(|configured| configured.binary.clone())
+            .unwrap_or_else(|| (*tool).to_string());
+        let installed = which_on_path(&binary);
+        let state = if installed {
+            sheet.green("installed")
+        } else {
+            sheet.dim("not found")
+        };
+        let mut profiles: Vec<&str> = launch
+            .profiles
+            .get(*tool)
+            .map(|profiles| profiles.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        profiles.sort_unstable();
+        let suffix = if profiles.is_empty() {
+            String::new()
+        } else {
+            sheet.dim(&format!("  @{}", profiles.join(" @")))
+        };
+        println!("   {:<10} {state}{suffix}", sheet.bold(tool));
+    }
+    0
+}
+
+fn which_on_path(binary: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|directory| directory.join(binary).is_file())
 }
 
 fn resolve_tool(name: &str, launch: &Launch) -> ResolvedTool {

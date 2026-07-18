@@ -347,3 +347,60 @@ fn pxpipe_pre_step_command_with_args_builds_argv() {
         vec![OsString::from("--port"), OsString::from("47821")]
     );
 }
+
+#[test]
+fn profile_resolution_errors_with_known_names() {
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "claude".to_string(),
+        [("sol".to_string(), ontology::LaunchProfile::default())]
+            .into_iter()
+            .collect(),
+    );
+
+    let error = resolve_profile("claude", Some("missing"), &launch).unwrap_err();
+    assert!(error.contains("no launch profile 'missing'"), "{error}");
+    assert!(
+        error.contains("sol"),
+        "error must list known names: {error}"
+    );
+
+    let found = resolve_profile("claude", Some("sol"), &launch).unwrap();
+    assert!(found.is_some());
+}
+
+#[test]
+fn ollama_profile_name_falls_back_to_a_model() {
+    let launch = Launch::default();
+    let resolved = resolve_profile("ollama", Some("llama3"), &launch).unwrap();
+    assert!(resolved.is_none(), "unknown ollama profile is a model name");
+}
+
+#[test]
+fn profile_env_supports_literals_and_from_env_references() {
+    let mut profile = ontology::LaunchProfile::default();
+    profile.env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        ontology::ProfileEnvValue::Literal("claude-fable-5".to_string()),
+    );
+    let mut plan = LaunchPlan::default();
+    apply_profile_env(&profile, &mut plan).unwrap();
+    assert_eq!(
+        plan.env,
+        vec![(
+            OsString::from("ANTHROPIC_MODEL"),
+            OsString::from("claude-fable-5")
+        )]
+    );
+
+    let mut broken = ontology::LaunchProfile::default();
+    broken.env.insert(
+        "KEY".to_string(),
+        ontology::ProfileEnvValue::FromEnv {
+            from_env: "RUNE_TEST_UNSET_VARIABLE".to_string(),
+        },
+    );
+    let mut plan = LaunchPlan::default();
+    let error = apply_profile_env(&broken, &mut plan).unwrap_err();
+    assert!(error.contains("RUNE_TEST_UNSET_VARIABLE"), "{error}");
+}

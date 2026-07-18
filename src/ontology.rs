@@ -40,6 +40,29 @@ pub struct Launch {
     pub default_with: Vec<String>,
     pub tools: HashMap<String, LaunchTool>,
     pub middleware: LaunchMiddleware,
+    /// Named launch presets per tool: `launch.profiles.claude.sol` selects
+    /// via `rune launch claude@sol`.
+    pub profiles: HashMap<String, HashMap<String, LaunchProfile>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct LaunchProfile {
+    pub env: HashMap<String, ProfileEnvValue>,
+    pub args: Vec<String>,
+    pub with: Vec<String>,
+}
+
+/// A literal value or a reference resolved from the parent environment at
+/// launch time (`from_env: KEY`), so secrets never live in config files.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ProfileEnvValue {
+    Literal(String),
+    FromEnv {
+        #[serde(rename = "from_env")]
+        from_env: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]

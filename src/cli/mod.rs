@@ -499,7 +499,9 @@ enum Command {
         after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool"
     )]
     Launch {
-        /// Coding tool to launch, such as `claude`.
+        /// Coding tool to launch, such as `claude` or `claude@sol` for a
+        /// named profile. Without a tool, lists tools and profiles.
+        #[arg(default_value = "")]
         tool: String,
 
         /// Launch options and tool args after `--`.
