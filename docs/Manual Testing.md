@@ -102,6 +102,16 @@ for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -
 
 Expected: 145 files under .claude (the plugin manifest, merged hooks.json, and a second .manifest for the plugin root join the tree), 141 in each other provider directory. Claude Code loads the tree as the rune@skills-dir plugin, so skills invoke as /rune:<name>.
 
+## 7b. Providers and assembly rules
+
+```sh
+rune provider                        # name · enabled · target · plugin per provider
+rune provider disable gemini         # writes providers.gemini.enabled into ./config.yaml
+rune provider enable gemini
+```
+
+Expected: agentskills ships disabled (deploys only via `--provider agentskills`); assembly transforms are named rules per provider in `defaults.yaml` (`kebab-case`, `kebab-case-agents`, `remap-tools`, `strip-links`, `agents-to-toml`) and a module's `config.yaml` can override the list per provider.
+
 ## 8. Qualified ids and kind-scoped add
 
 ```sh
