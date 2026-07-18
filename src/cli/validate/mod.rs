@@ -378,8 +378,8 @@ fn validate_module(
 }
 
 fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Result<(), Error> {
-    let has_lifecycle =
-        module_root.join("docs/specs").is_dir() || module_root.join("docs/changes").is_dir();
+    let has_lifecycle = super::spec::specs_root(module_root).is_dir()
+        || super::spec::changes_root(module_root).is_dir();
     if !has_lifecycle {
         return Ok(());
     }

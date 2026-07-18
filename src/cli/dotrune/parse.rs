@@ -290,8 +290,8 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
                 ),
             ));
         }
-        // One leading `..` reaches sibling members (`../wiki`); deeper chains
-        // and interior `..` are traversal, not workspace layout.
+        // One leading `..` reaches sibling members (`../wiki`); deeper chains,
+        // interior `..`, and parent-only paths are traversal, not layout.
         let mut seen_normal = false;
         let mut parent_hops = 0u32;
         for component in path.components() {
@@ -320,6 +320,15 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
                 std::path::Component::Normal(_) => seen_normal = true,
                 _ => {}
             }
+        }
+        if !seen_normal {
+            return Err(Error::new(
+                ErrorKind::Parse,
+                format!(
+                    ".rune: dirs path '{}' names no directory; parent-only and empty paths are not members",
+                    member.path
+                ),
+            ));
         }
     }
 

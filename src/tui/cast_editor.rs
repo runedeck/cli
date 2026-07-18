@@ -22,6 +22,8 @@ struct EditorRune {
     kind: String,
     checked: bool,
     cast_origins: Vec<String>,
+    description: String,
+    content_preview: String,
 }
 
 #[derive(Debug)]
@@ -33,6 +35,8 @@ pub struct CastEditor {
     cursor: usize,
     viewport_offset: usize,
     status: String,
+    /// Tab-toggled artifact preview pane beside the checklist.
+    preview: bool,
 }
 
 impl CastEditor {
@@ -48,6 +52,7 @@ impl CastEditor {
                 cursor: 0,
                 viewport_offset: 0,
                 status: error,
+                preview: false,
             },
         }
     }
@@ -70,6 +75,7 @@ impl CastEditor {
             cursor: 0,
             viewport_offset: 0,
             status: String::new(),
+            preview: false,
         };
         editor.load_inventory(source)?;
         editor.refresh_selection();
@@ -120,6 +126,8 @@ impl CastEditor {
                         kind: singular_kind(&artifact.kind).to_string(),
                         checked: false,
                         cast_origins: Vec::new(),
+                        description: artifact.description.clone(),
+                        content_preview: artifact.content_preview.clone(),
                     });
                 }
             }
@@ -210,6 +218,7 @@ impl CastEditor {
             }
             KeyCode::Char('n') => self.jump_group(true),
             KeyCode::Char('p') => self.jump_group(false),
+            KeyCode::Tab => self.preview = !self.preview,
             KeyCode::Char(' ') => self.toggle_current(),
             KeyCode::Enter | KeyCode::Char('I') => self.install(),
             _ => {}
@@ -380,7 +389,7 @@ impl CastEditor {
             .map_or_else(|| "no install target".to_string(), display_install_target);
         frame.render_widget(
             Paragraph::new(format!(
-                " Cast editor → {install_target} · {checked}/{} selected · {}",
+                " Cast editor · {checked}/{} selected · {} → {install_target}",
                 self.items.len(),
                 if self.manifest.is_some() {
                     "writable"
@@ -392,9 +401,19 @@ impl CastEditor {
             layout[0],
         );
 
+        let (list_area, preview_area) = if self.preview {
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .split(layout[1]);
+            (panes[0], Some(panes[1]))
+        } else {
+            (layout[1], None)
+        };
+
         let block = Block::default().borders(Borders::ALL).title(" Runes ");
-        let inner = block.inner(layout[1]);
-        frame.render_widget(block, layout[1]);
+        let inner = block.inner(list_area);
+        frame.render_widget(block, list_area);
         let (rows, cursor_row) = self.display_rows();
         let height = usize::from(inner.height.max(1));
         if cursor_row < self.viewport_offset {
@@ -411,7 +430,29 @@ impl CastEditor {
             .collect::<Vec<_>>();
         frame.render_widget(List::new(visible), inner);
 
-        let hints = "Space toggle · j/k move · n/p deck · I install · q quit";
+        if let Some(preview_area) = preview_area {
+            let (title, body) = self.items.get(self.cursor).map_or_else(
+                || (" Preview ".to_string(), String::new()),
+                |item| {
+                    let mut text = String::new();
+                    if !item.description.is_empty() {
+                        text.push_str(&item.description);
+                        text.push_str("\n\n");
+                    }
+                    text.push_str(&item.content_preview);
+                    (format!(" {} ({}) ", item.name, item.kind), text)
+                },
+            );
+            let preview_block = Block::default().borders(Borders::ALL).title(title);
+            let preview_inner = preview_block.inner(preview_area);
+            frame.render_widget(preview_block, preview_area);
+            frame.render_widget(
+                Paragraph::new(body).wrap(ratatui::widgets::Wrap { trim: false }),
+                preview_inner,
+            );
+        }
+
+        let hints = "Space toggle · j/k move · n/p deck · Tab preview · I install · q quit";
         let footer = if self.status.is_empty() {
             format!(" {hints}")
         } else {

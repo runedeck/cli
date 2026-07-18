@@ -347,7 +347,9 @@ fn tui_edit_snapshot_keeps_action_footer_visible() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Cast editor → ~/Agents/inventory"))
+        .stdout(predicate::str::contains(
+            "Cast editor · 2/11 selected · writable → ~/Agents/inventory",
+        ))
         .stdout(predicate::str::contains("Space toggle"))
         .stdout(predicate::str::contains("n/p deck"))
         .stdout(predicate::str::contains("I install"))

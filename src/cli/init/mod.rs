@@ -271,6 +271,25 @@ fn dry_run_result(
     }
 }
 
+/// Resolve `.` and `..` components without touching the filesystem, so a
+/// not-yet-created destination like `/targets/../outside/x` compares by
+/// where it actually lands.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(Component::ParentDir);
+                }
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
 fn jj_on_path() -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
@@ -388,13 +407,17 @@ fn resolve_project_context(
         })?
         .to_string();
     // Canonicalize where possible so symlinked targets roots still match;
-    // the destination may not exist yet, so its comparison side stays
-    // lexical against both the raw and canonical root forms.
+    // the destination may not exist yet, so it normalizes lexically
+    // (resolving `.` and `..` components) before the containment check.
+    // The root itself is not "under" the root.
     let canonical_root = targets_root
         .canonicalize()
         .unwrap_or_else(|_| targets_root.clone());
-    let under_workshop_root =
-        destination.starts_with(&targets_root) || destination.starts_with(&canonical_root);
+    let normalized_destination = lexically_normalized(&destination);
+    let under_workshop_root = (normalized_destination.starts_with(&targets_root)
+        || normalized_destination.starts_with(&canonical_root))
+        && normalized_destination != targets_root
+        && normalized_destination != canonical_root;
     Ok(ProjectContext {
         destination,
         skeleton,
