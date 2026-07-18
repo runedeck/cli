@@ -69,6 +69,53 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<(), Error> {
     })
 }
 
+/// Multi-file variant: stage every temporary before renaming any of them,
+/// so a write failure aborts with no destination touched. The rename
+/// sequence itself remains the residual non-atomic window.
+pub fn write_atomic_all(writes: &[(&Path, &str)]) -> Result<(), Error> {
+    let mut staged: Vec<(std::path::PathBuf, &Path)> = Vec::new();
+    for (path, content) in writes {
+        if path.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
+            for (temporary, _) in &staged {
+                let _ = fs::remove_file(temporary);
+            }
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("{} is a symlink; refusing to replace it", path.display()),
+            ));
+        }
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let sequence = WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let base_name = path.file_name().map_or_else(
+            || "rune-write".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let temporary = parent.join(format!(
+            ".{base_name}.{}.{sequence}.tmp",
+            std::process::id()
+        ));
+        if let Err(error) = fs::write(&temporary, content) {
+            for (earlier, _) in &staged {
+                let _ = fs::remove_file(earlier);
+            }
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", temporary.display()),
+            ));
+        }
+        staged.push((temporary, path));
+    }
+    for (temporary, path) in &staged {
+        fs::rename(temporary, path).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot replace {}: {error}", path.display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Read a file to string with consistent error handling.
 pub fn read_file(path: &Path) -> Result<String, Error> {
     fs::read_to_string(path).map_err(|e| {

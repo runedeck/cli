@@ -285,8 +285,10 @@ fn supersede(root: &Path, old: &str, new: &str, json: bool) -> Result<i32, Error
     let new_content = rewritten_frontmatter(&new_record.path, |frontmatter| {
         append_related(frontmatter, &old_stem)
     })?;
-    crate::cli::config::write_atomic(&old_record.path, &old_content)?;
-    crate::cli::config::write_atomic(&new_record.path, &new_content)?;
+    crate::cli::config::write_atomic_all(&[
+        (&old_record.path, &old_content),
+        (&new_record.path, &new_content),
+    ])?;
 
     if json {
         println!("{}", serde_json::json!({ "superseded": old, "by": new }));
