@@ -8,7 +8,7 @@ Setup (once):
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
-rune config set deck ~/Developer/runedeck/runedeck   # already set; harmless to repeat
+rune config set deck ~/Developer/runedeck/deck   # already set; harmless to repeat
 ```
 
 Pick a fresh slug for the flagship walkthrough (avoids collisions):
@@ -67,7 +67,7 @@ rune add --cast development
 11. **`rune status`** — from the deck or a consumer, a one-shot dashboard:
 
     ```sh
-    rune status --source ~/Developer/runedeck/runedeck
+    rune status --source ~/Developer/runedeck/deck
     ```
 
     Summary line (decks · runes by kind · casts · change states · validate counts), then
@@ -88,7 +88,7 @@ rune add --cast development
     Try it in a throwaway copy of the deck so you don't touch the real one:
 
     ```sh
-    D=$(mktemp -d) && cp -R ~/Developer/runedeck/runedeck/* "$D/" && cd "$D"
+    D=$(mktemp -d) && cp -R ~/Developer/runedeck/deck/* "$D/" && cd "$D"
     rune spec propose add-widget --capability widgets # scaffolds docs/changes/add-widget/
     rune spec list                                    # → draft  add-widget  0/3
     rune spec context add-widget                      # Markdown work order; add --json for agents

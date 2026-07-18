@@ -3,7 +3,7 @@
 A hands-on walkthrough of the rune + deck system. Every step names its expected result. `DECK` is the content repo; steps assume `~/.cargo/bin` on PATH.
 
 ```sh
-export DECK=~/Developer/runedeck/runedeck
+export DECK=~/Developer/runedeck/deck
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 

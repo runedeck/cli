@@ -24,7 +24,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-The CLI's source unit is a single module directory (`module.yaml` at root). The runedeck (runedeck/runedeck) holds many decks under `runes/<deck>/`, and target repos declare what they draw in a consumer manifest at their root. A rune is a skill, an agent, or a rule; rune names are only unique within a deck, consumer manifests must be reproducible, and a target repo must be able to draw from the runedeck over git.
+The CLI's source unit is a single module directory (`module.yaml` at root). The runedeck (runedeck/deck) holds many decks under `runes/<deck>/`, and target repos declare what they draw in a consumer manifest at their root. A rune is a skill, an agent, or a rule; rune names are only unique within a deck, consumer manifests must be reproducible, and a target repo must be able to draw from the runedeck over git.
 
 ## Considered Options
 
