@@ -69,6 +69,9 @@ pub fn parse_line(line: &str) -> TodoItem {
     if tokens.peek() == Some(&"x") {
         item.done = true;
         tokens.next();
+        if tokens.peek().is_some_and(|token| is_priority(token)) {
+            item.priority = tokens.next().and_then(|token| token.chars().nth(1));
+        }
         if tokens.peek().is_some_and(|token| is_date(token)) {
             item.completion_date = tokens.next().map(str::to_string);
         }
@@ -110,6 +113,9 @@ pub fn render_line(item: &TodoItem) -> String {
     let mut parts: Vec<String> = Vec::new();
     if item.done {
         parts.push("x".to_string());
+        if let Some(priority) = item.priority {
+            parts.push(format!("({priority})"));
+        }
         if let Some(completion) = &item.completion_date {
             parts.push(completion.clone());
         }

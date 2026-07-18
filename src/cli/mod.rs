@@ -1066,10 +1066,10 @@ pub fn run() -> i32 {
             source_url,
             dry_run,
         } => {
-            if std::env::args()
-                .nth(1)
-                .is_some_and(|argument| argument == "adopt")
-            {
+            let subcommand_name = std::env::args()
+                .skip(1)
+                .find(|argument| !argument.starts_with('-'));
+            if subcommand_name.as_deref() == Some("adopt") {
                 eprintln!(
                     "note: `rune adopt` is now `rune import`; the adopt name will drive the harness adoption process in a future release"
                 );
@@ -1412,7 +1412,7 @@ fn deck_help(help: &mut String) {
     help_command(
         help,
         "todo",
-        "[add|do|ls|obsidian]",
+        "[add|do|ls|obsidian|import]",
         "Repo tasks in TODO.txt with an Obsidian transform",
     );
     help_command(

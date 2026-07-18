@@ -29,7 +29,7 @@
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     provider    [enable|disable <name>]                               List or toggle deploy providers
-    todo        [add|do|ls|obsidian]                                  Repo tasks in TODO.txt with an Obsidian transform
+    todo        [add|do|ls|obsidian|import]                           Repo tasks in TODO.txt with an Obsidian transform
     adr         new|list|supersede|index                              Architecture decision records under docs/decisions
     docs        check|dev                                             Docs tree checks and a local mint preview
     watch       <COMMAND>                                             Manage monitored rune locations

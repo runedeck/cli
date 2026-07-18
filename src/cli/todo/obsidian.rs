@@ -69,7 +69,10 @@ pub fn to_obsidian(item: &TodoItem) -> String {
 
 pub fn from_obsidian(line: &str) -> Option<TodoItem> {
     let trimmed = line.trim_start();
-    let (done, rest) = if let Some(rest) = trimmed.strip_prefix("- [x]") {
+    let (done, rest) = if let Some(rest) = trimmed
+        .strip_prefix("- [x]")
+        .or_else(|| trimmed.strip_prefix("- [X]"))
+    {
         (true, rest)
     } else {
         (false, trimmed.strip_prefix("- [ ]")?)

@@ -26,6 +26,23 @@ fn parse_and_render_round_trip_open_and_done_items() {
 }
 
 #[test]
+fn done_items_carry_an_optional_priority() {
+    let line = "x (A) 2026-07-18 2026-07-17 finish the review +rune";
+    let item = parse_line(line);
+    assert!(item.done);
+    assert_eq!(item.priority, Some('A'));
+    assert_eq!(item.completion_date.as_deref(), Some("2026-07-18"));
+    assert_eq!(render_line(&item), line);
+}
+
+#[test]
+fn uppercase_checkbox_imports_as_done() {
+    let item = from_obsidian("- [X] shipped thing ✅ 2026-07-18").unwrap();
+    assert!(item.done);
+    assert_eq!(item.completion_date.as_deref(), Some("2026-07-18"));
+}
+
+#[test]
 fn urls_are_not_mistaken_for_extensions() {
     let item = parse_line("read https://example.com/guide +docs");
     assert!(item.extensions.is_empty(), "{:?}", item.extensions);
