@@ -136,6 +136,21 @@ fn read_file_errors_on_missing_path() {
 }
 
 #[test]
+fn gemini_targets_the_documented_workspace_directory() {
+    // Conformance pin against the Gemini CLI docs (geminicli.com, 2026-04):
+    // skills live in .gemini/skills/, agents in .gemini/agents/, and
+    // .agents/skills is the alias the opt-in agentskills provider covers.
+    let providers = load_providers("").unwrap();
+    let gemini = &providers["gemini"];
+    assert_eq!(gemini.default_target(), ".gemini");
+    assert_eq!(
+        gemini.target_for_kind(commands::provider::ContentKind::Skills),
+        ".gemini"
+    );
+    assert_eq!(providers["agentskills"].default_target(), ".agents");
+}
+
+#[test]
 fn agentskills_is_opt_in_by_default() {
     let providers = load_providers("").unwrap();
     assert!(

@@ -6,6 +6,7 @@ mod completion;
 pub(crate) mod config;
 mod context;
 mod copy;
+mod cowork;
 #[cfg(feature = "dashboard")]
 mod dashboard;
 mod deploy;
@@ -587,6 +588,10 @@ enum Command {
         /// Embed assets into the binary
         #[arg(long)]
         embed: bool,
+
+        /// Package the assembled claude plugin tree as a Cowork upload zip.
+        #[arg(long, value_parser = ["cowork"], conflicts_with_all = ["deck", "embed"])]
+        format: Option<String>,
     },
 
     /// Manage the watchlist of rune and deployment locations to monitor
@@ -1145,10 +1150,16 @@ pub fn run() -> i32 {
             deck,
             source,
             embed,
-        } => (
-            release::execute_source(&source, deck.as_deref(), embed),
-            "released",
-        ),
+            format,
+        } => {
+            if format.as_deref() == Some("cowork") {
+                return exit_code(cowork::package(&source, args.json));
+            }
+            (
+                release::execute_source(&source, deck.as_deref(), embed),
+                "released",
+            )
+        }
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
             return exit_code(match action {
