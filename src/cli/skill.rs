@@ -16,7 +16,23 @@ fn rendered() -> String {
 }
 
 pub fn show() -> i32 {
-    print!("{}", rendered());
+    let sheet = crate::cli::style::Sheet::detect(false);
+    let content = rendered();
+    if let Some((frontmatter, body)) = commands::parse::split_frontmatter(&content) {
+        println!("{}", sheet.heading("rune skill"));
+        for line in frontmatter.lines() {
+            match line.split_once(':') {
+                Some((key, value)) => {
+                    println!("{}", sheet.row(key.trim(), value.trim()));
+                }
+                None => println!("   {}", sheet.dim(line)),
+            }
+        }
+        println!();
+        print!("{body}");
+    } else {
+        print!("{content}");
+    }
     0
 }
 
