@@ -354,17 +354,32 @@ pub(crate) fn list(source: &str, specs: bool, sort: ListSort, json: bool) -> Res
         return Ok(0);
     }
 
+    let sheet = crate::cli::style::Sheet::detect(false);
     if summaries.is_empty() {
-        println!("No active changes.");
+        println!("{}", sheet.dim("No active changes."));
         return Ok(0);
     }
     for change in summaries {
+        let label = state_label(change.state);
+        let state = match label {
+            "draft" => sheet.magenta(label),
+            "active" => sheet.yellow(label),
+            "complete" => sheet.green(label),
+            other => sheet.dim(other),
+        };
+        let progress = format!("{}/{}", change.completed, change.total);
+        let progress = if change.total > 0 && change.completed == change.total {
+            sheet.green(&progress)
+        } else if change.completed == 0 {
+            sheet.dim(&progress)
+        } else {
+            sheet.yellow(&progress)
+        };
         println!(
-            "{:<10} {:<32} {}/{}",
-            state_label(change.state),
-            change.id,
-            change.completed,
-            change.total
+            "{state}{:<pad$} {} {progress}",
+            "",
+            sheet.bold(&format!("{:<32}", change.id)),
+            pad = 10usize.saturating_sub(label.len()),
         );
     }
     Ok(0)

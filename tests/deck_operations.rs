@@ -78,6 +78,7 @@ fn aggregate_drift_reports_all_domains_and_fails_for_one_domain() {
     let drift = rune()
         .args([
             "drift",
+            "--all",
             "--source",
             source.path().to_str().unwrap(),
             "--upstream",

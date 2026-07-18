@@ -36,7 +36,7 @@ pub fn run(source: PathBuf, edit: bool) -> i32 {
     match launch(source, edit) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("fatal: {error}");
+            crate::cli::print_fatal(&error);
             2
         }
     }
@@ -60,7 +60,7 @@ pub fn run_snapshot(
     let replay_keys = match keys.map(parse_key_sequence).transpose() {
         Ok(keys) => keys.unwrap_or_default(),
         Err(error) => {
-            eprintln!("fatal: invalid --keys sequence: {error}");
+            crate::cli::print_fatal(&format!("invalid --keys sequence: {error}"));
             return 2;
         }
     };
@@ -110,18 +110,18 @@ pub fn run_snapshot(
     let mut terminal = match Terminal::new(backend) {
         Ok(terminal) => terminal,
         Err(error) => {
-            eprintln!("fatal: {error}");
+            crate::cli::print_fatal(&error);
             return 2;
         }
     };
     if let Err(error) = terminal.draw(|frame| app.render(frame)) {
-        eprintln!("fatal: {error}");
+        crate::cli::print_fatal(&error);
         return 2;
     }
     for key in replay_keys {
         event::handle_key(&mut app, key);
         if let Err(error) = terminal.draw(|frame| app.render(frame)) {
-            eprintln!("fatal: {error}");
+            crate::cli::print_fatal(&error);
             return 2;
         }
     }

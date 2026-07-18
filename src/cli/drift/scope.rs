@@ -24,6 +24,7 @@ pub fn execute(
     source: &str,
     target_base: &str,
     ignore: &[String],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let module_root = Path::new(source);
@@ -77,7 +78,7 @@ pub fn execute(
             Err(error) => eprintln!("failed to serialize drift result: {error}"),
         }
     } else {
-        print_drift_result(&result);
+        print_drift_result(&result, show_all);
     }
 
     let has_drift = result.entries.iter().any(|entry| {
@@ -97,6 +98,7 @@ pub fn execute(
 pub fn execute_discovered(
     target_base: &Path,
     discovered_targets: &[PathBuf],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let mut result = DriftResult::default();
@@ -137,7 +139,7 @@ pub fn execute_discovered(
             Err(error) => eprintln!("failed to serialize drift result: {error}"),
         }
     } else {
-        print_drift_result(&result);
+        print_drift_result(&result, show_all);
     }
 
     let has_drift = result.entries.iter().any(|entry| {
@@ -159,6 +161,7 @@ pub fn execute_deck(
     deck: &commands::deck::Deck,
     target_base: &str,
     _ignore: &[String],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let merged_config = config::load_merged_config(&deck.root)?;
@@ -218,7 +221,7 @@ pub fn execute_deck(
             Err(error) => eprintln!("failed to serialize drift result: {error}"),
         }
     } else {
-        print_drift_result(&result);
+        print_drift_result(&result, show_all);
     }
     let has_drift = result.entries.iter().any(|entry| {
         matches!(

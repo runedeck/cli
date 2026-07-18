@@ -468,12 +468,26 @@ fn prune_empty_parents(start: Option<&Path>, stop: &Path) {
 }
 
 fn print_human(report: &DoctorReport, repaired: bool) {
+    let sheet = crate::cli::style::Sheet::detect(false);
     if repaired && !report.repairs.is_empty() {
-        println!("Repaired {} deployment finding(s).", report.repairs.len());
+        println!(
+            "{}",
+            sheet.heading(&format!(
+                "repaired {} deployment finding(s)",
+                report.repairs.len()
+            ))
+        );
         for repair in &report.repairs {
             println!(
-                "  {} {} -> {}",
-                repair.action, repair.path, repair.destination
+                "   {} {} {} {}",
+                sheet.green(crate::cli::style::OK),
+                repair.action,
+                repair.path,
+                sheet.dim(&format!(
+                    "{} {}",
+                    crate::cli::style::ARROW,
+                    repair.destination
+                ))
             );
         }
         println!();
@@ -487,27 +501,55 @@ fn print_human(report: &DoctorReport, repaired: bool) {
                 .filter(|finding| finding.status == status)
                 .count()
         };
-        println!("{} ({})", target.target, target.provider);
         println!(
-            "  ok {} · modified {} · missing {} · orphan {}",
-            count(IntegrityStatus::Ok),
-            count(IntegrityStatus::Modified),
-            count(IntegrityStatus::Missing),
-            count(IntegrityStatus::Orphan)
+            "{} {}",
+            sheet.heading(&target.target),
+            sheet.dim(&format!("({})", target.provider))
+        );
+        let summarize = |label: &str, total: usize, painted: String| {
+            if total == 0 {
+                sheet.dim(&format!("{label} 0"))
+            } else {
+                painted
+            }
+        };
+        let modified = count(IntegrityStatus::Modified);
+        let missing = count(IntegrityStatus::Missing);
+        let orphan = count(IntegrityStatus::Orphan);
+        println!(
+            "   {} {} {} {} {} {} {}",
+            sheet.green(&format!("ok {}", count(IntegrityStatus::Ok))),
+            crate::cli::style::DOT,
+            summarize(
+                "modified",
+                modified,
+                sheet.yellow(&format!("modified {modified}"))
+            ),
+            crate::cli::style::DOT,
+            summarize("missing", missing, sheet.red(&format!("missing {missing}"))),
+            crate::cli::style::DOT,
+            summarize("orphan", orphan, sheet.magenta(&format!("orphan {orphan}"))),
         );
         for finding in &target.findings {
             match finding.status {
                 IntegrityStatus::Ok => {}
                 IntegrityStatus::Modified => println!(
-                    "  modified {} (left untouched; use `rune install --force` to replace it)",
-                    finding.path
+                    "{} {}",
+                    sheet.warn(&format!("modified {}", finding.path)),
+                    sheet.dim("(left untouched; `rune install --force` replaces it)")
                 ),
-                IntegrityStatus::Missing => println!("  missing  {}", finding.path),
-                IntegrityStatus::Orphan => println!("  orphan   {}", finding.path),
+                IntegrityStatus::Missing => {
+                    println!("{}", sheet.fail(&format!("missing  {}", finding.path)));
+                }
+                IntegrityStatus::Orphan => {
+                    println!("   {} orphan   {}", sheet.magenta(DOT_MARK), finding.path);
+                }
             }
         }
     }
 }
+
+const DOT_MARK: &str = "●";
 
 #[cfg(test)]
 mod tests {

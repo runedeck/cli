@@ -73,9 +73,18 @@ fn rendered_dashboard_matches_golden_without_color() {
 #[test]
 fn rendered_dashboard_uses_the_color_contract() {
     let actual = render(&dashboard_fixture(), true);
-    assert!(actual.contains("\u{1b}[36m"), "specifications use cyan");
-    assert!(actual.contains("\u{1b}[33m"), "active changes use yellow");
-    assert!(actual.contains("\u{1b}[32m"), "completed items use green");
+    assert!(
+        actual.contains("\u{1b}[38;2;125;207;255m"),
+        "specifications use the accent tone"
+    );
+    assert!(
+        actual.contains("\u{1b}[38;2;224;175;104m"),
+        "active changes use the alert tone"
+    );
+    assert!(
+        actual.contains("\u{1b}[38;2;158;206;106m"),
+        "completed items use the good tone"
+    );
     assert!(actual.contains("\u{1b}[2m"), "identifiers use dim styling");
 }
 

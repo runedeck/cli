@@ -417,6 +417,10 @@ enum Command {
         /// Comma-separated keys to ignore (use "body" to ignore body drift)
         #[arg(long, value_delimiter = ',')]
         ignore: Vec<String>,
+
+        /// Show unchanged files too; the default lists only drifted entries
+        #[arg(long)]
+        all: bool,
     },
 
     /// Remove stale files from previous installs
@@ -967,12 +971,14 @@ pub fn run() -> i32 {
             upstream,
             target,
             ignore,
+            all,
         } => {
             return exit_code(drift::execute(
                 &source,
                 upstream.as_deref(),
                 target.as_deref(),
                 &ignore,
+                all,
                 args.json,
             ));
         }
@@ -1407,10 +1413,16 @@ fn exit_code<E: std::fmt::Display>(result: Result<i32, E>) -> i32 {
     match result {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("fatal: {error}");
+            print_fatal(&error);
             2
         }
     }
+}
+
+/// One fatal line, red where stderr is a terminal, plain otherwise.
+pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
+    let sheet = style::Sheet::detect_stderr(false);
+    eprintln!("{} {error}", sheet.red("fatal:"));
 }
 
 /// Dispatch a `rune spec` subcommand to its lifecycle handler.
@@ -1481,7 +1493,7 @@ fn report(result: Result<ActionResult, Error>, json: bool, verb: &str) -> i32 {
             i32::from(action_result.has_errors())
         }
         Err(error) => {
-            eprintln!("fatal: {error}");
+            print_fatal(&error);
             2
         }
     }

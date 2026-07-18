@@ -55,11 +55,12 @@ pub fn execute(
     upstream_path: Option<&str>,
     target_path: Option<&str>,
     ignore_keys: &[String],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     if upstream_path.is_none() && target_path.is_none() {
         let (current_dir, targets) = discover_current_provider_targets()?;
-        return scope::execute_discovered(&current_dir, &targets, json_output);
+        return scope::execute_discovered(&current_dir, &targets, show_all, json_output);
     }
 
     if commands::deck::is_deck(Path::new(module_path)) {
@@ -67,9 +68,11 @@ pub fn execute(
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
         return match (upstream_path, target_path) {
             (Some(upstream), None) => {
-                execute_deck_upstream(&deck, upstream, ignore_keys, json_output)
+                execute_deck_upstream(&deck, upstream, ignore_keys, show_all, json_output)
             }
-            (None, Some(target)) => scope::execute_deck(&deck, target, ignore_keys, json_output),
+            (None, Some(target)) => {
+                scope::execute_deck(&deck, target, ignore_keys, show_all, json_output)
+            }
             (None, None) => Err(Error::new(
                 ErrorKind::Config,
                 "drift mode was not selected".to_string(),
@@ -81,8 +84,12 @@ pub fn execute(
         };
     }
     match (upstream_path, target_path) {
-        (Some(upstream), None) => execute_upstream(module_path, upstream, ignore_keys, json_output),
-        (None, Some(target)) => scope::execute(module_path, target, ignore_keys, json_output),
+        (Some(upstream), None) => {
+            execute_upstream(module_path, upstream, ignore_keys, show_all, json_output)
+        }
+        (None, Some(target)) => {
+            scope::execute(module_path, target, ignore_keys, show_all, json_output)
+        }
         (None, None) => Err(Error::new(
             ErrorKind::Config,
             "drift mode was not selected".to_string(),
@@ -126,6 +133,7 @@ fn execute_deck_upstream(
     deck: &commands::deck::Deck,
     upstream_path: &str,
     ignore_keys: &[String],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let upstream = commands::deck::load(Path::new(upstream_path))
@@ -174,7 +182,7 @@ fn execute_deck_upstream(
             Err(error) => eprintln!("failed to serialize drift result: {error}"),
         }
     } else {
-        print_drift_result(&aggregate);
+        print_drift_result(&aggregate, show_all);
     }
     Ok(i32::from(failed))
 }
@@ -183,6 +191,7 @@ fn execute_upstream(
     module_path: &str,
     upstream_path: &str,
     ignore_keys: &[String],
+    show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let result = build_upstream_result(module_path, upstream_path, ignore_keys, ContentKind::ALL)?;
@@ -193,7 +202,7 @@ fn execute_upstream(
             Err(error) => eprintln!("failed to serialize drift result: {error}"),
         }
     } else {
-        print_drift_result(&result);
+        print_drift_result(&result, show_all);
     }
 
     Ok(i32::from(has_drift(&result)))
@@ -707,7 +716,18 @@ fn collect_markdown_recursive(
 
 // --- Output ---
 
-fn print_drift_result(result: &DriftResult) {
+fn print_drift_result(result: &DriftResult, show_all: bool) {
+    let is_quiet =
+        |entry: &DriftEntry| matches!(entry.status, DriftStatus::Identical | DriftStatus::Expected);
+    let hidden = if show_all {
+        0
+    } else {
+        result
+            .entries
+            .iter()
+            .filter(|entry| is_quiet(entry))
+            .count()
+    };
     let categories: Vec<&str> = {
         let mut seen = Vec::new();
         for entry in &result.entries {
@@ -720,15 +740,27 @@ fn print_drift_result(result: &DriftResult) {
 
     println!();
     for category in &categories {
-        println!(" {}", Style::new().bold().apply_to(category));
-
-        for entry in result
+        let visible: Vec<&DriftEntry> = result
             .entries
             .iter()
             .filter(|entry| entry.category == *category)
-        {
+            .filter(|entry| show_all || !is_quiet(entry))
+            .collect();
+        if visible.is_empty() {
+            continue;
+        }
+        println!(" {}", Style::new().bold().apply_to(category));
+        for entry in visible {
             print_drift_entry(entry);
         }
+    }
+    if hidden > 0 {
+        println!(
+            "   {}",
+            Style::new()
+                .dim()
+                .apply_to(format!("{hidden} unchanged hidden — --all shows them"))
+        );
     }
 
     let red = Style::new().red();
