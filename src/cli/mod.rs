@@ -441,8 +441,9 @@ enum Command {
         action: Option<ConfigAction>,
     },
 
-    /// Adopt an upstream rune into a single-module source with provenance
-    Adopt {
+    /// Import an upstream rune into a single-module source with provenance
+    #[command(alias = "adopt")]
+    Import {
         /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree. file:// is allowed for tests.
         url: String,
 
@@ -1016,7 +1017,7 @@ pub fn run() -> i32 {
                 None => ontology::show(args.json, args.no_color),
             });
         }
-        Command::Adopt {
+        Command::Import {
             url,
             module,
             name,
@@ -1025,6 +1026,14 @@ pub fn run() -> i32 {
             source_url,
             dry_run,
         } => {
+            if std::env::args()
+                .nth(1)
+                .is_some_and(|argument| argument == "adopt")
+            {
+                eprintln!(
+                    "note: `rune adopt` is now `rune import`; the adopt name will drive the harness adoption process in a future release"
+                );
+            }
             return exit_code(adopt::execute(
                 &url,
                 &module,
@@ -1350,9 +1359,9 @@ fn deck_help(help: &mut String) {
     );
     help_command(
         help,
-        "adopt",
+        "import",
         "<URL> [--module <DIR>]",
-        "Adopt an upstream rune with provenance",
+        "Import an upstream rune with provenance",
     );
     help_command(
         help,

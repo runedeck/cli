@@ -1,8 +1,8 @@
 ## 1. Implementation
 
-- [ ] 1.1 Rename: `rune import` carries the copy; `adopt` alias prints the rename note
+- [x] 1.1 Rename: `rune import` carries the copy; `adopt` alias prints the rename note
 - [ ] 1.2 Provenance gains the pending-review state written by import
-- [ ] 1.3 Adoption skill in the deck formalizing the process
+- [x] 1.3 Adoption skill in the deck formalizing the process (adopt-artifact wraps rune import)
 - [ ] 1.4 `rune adopt` = import + harness launch with the adoption skill
 
 ## 2. Verification
