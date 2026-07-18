@@ -247,6 +247,15 @@ fn dry_run_result(
         overrides.push(format!("plan: {step}"));
     }
     for (relative, template) in templates {
+        // Model the real run: targets that already exist would be skipped.
+        if destination.join(relative).exists() {
+            action.skipped.push(SkippedFile {
+                target: relative.to_string_lossy().into_owned(),
+                provider: template.layer.clone(),
+                reason: SkipReason::AlreadyExists,
+            });
+            continue;
+        }
         action.installed.push(DeployedFile {
             source: template
                 .source

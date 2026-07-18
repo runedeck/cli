@@ -100,14 +100,33 @@ fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
         }
         members.push((member.path.clone(), member_root));
     }
-    let mut exit = 0;
-    for (label, member_root) in members {
-        if !json {
-            println!("{}", sheet.heading(&label));
+    if json {
+        // One workspace-level document: a member array, each with its tasks.
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        for (label, member_root) in members {
+            let items = load_items(&member_root)?;
+            let tasks: Vec<serde_json::Value> = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    serde_json::json!({
+                        "position": index + 1,
+                        "done": item.done,
+                        "priority": item.priority,
+                        "text": item.text,
+                    })
+                })
+                .collect();
+            rows.push(serde_json::json!({ "member": label, "tasks": tasks }));
         }
-        exit = exit.max(list(&member_root, None, json)?);
+        println!("{}", serde_json::json!({ "workspace": rows }));
+        return Ok(0);
     }
-    Ok(exit)
+    for (label, member_root) in members {
+        println!("{}", sheet.heading(&label));
+        list(&member_root, None, false)?;
+    }
+    Ok(0)
 }
 
 fn todo_path(root: &Path) -> std::path::PathBuf {

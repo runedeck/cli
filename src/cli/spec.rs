@@ -56,7 +56,13 @@ fn spec_base(root: &Path) -> &'static str {
         .and_then(|merged| commands::yaml::yaml_list(&merged, "spec.root"));
     match configured.as_deref() {
         Some("openspec") => "openspec",
-        Some(_) => "docs",
+        Some("docs") => "docs",
+        Some(other) => {
+            eprintln!(
+                "warning: spec.root '{other}' is not supported (docs | openspec); using docs"
+            );
+            "docs"
+        }
         None => {
             let native = root.join("docs").join("changes").is_dir()
                 || root.join("docs").join("specs").is_dir();
