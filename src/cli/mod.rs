@@ -175,7 +175,7 @@ enum Command {
         #[arg(long, conflicts_with_all = ["module", "workshop"])]
         spine: bool,
 
-        /// Print the scaffold plan without writing anything.
+        /// Print the scaffold plan without writing to the destination.
         #[arg(long, conflicts_with = "module")]
         dry_run: bool,
     },

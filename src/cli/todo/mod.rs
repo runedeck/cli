@@ -108,14 +108,7 @@ fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
             let tasks: Vec<serde_json::Value> = items
                 .iter()
                 .enumerate()
-                .map(|(index, item)| {
-                    serde_json::json!({
-                        "position": index + 1,
-                        "done": item.done,
-                        "priority": item.priority,
-                        "text": item.text,
-                    })
-                })
+                .map(|(index, item)| task_json(index, item))
                 .collect();
             rows.push(serde_json::json!({ "member": label, "tasks": tasks }));
         }
@@ -127,6 +120,19 @@ fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
         list(&member_root, None, false)?;
     }
     Ok(0)
+}
+
+/// One task serializer for both the plain listing and the workspace
+/// aggregation, so machine consumers see one schema.
+fn task_json(index: usize, item: &TodoItem) -> serde_json::Value {
+    serde_json::json!({
+        "position": index + 1,
+        "done": item.done,
+        "priority": item.priority,
+        "text": item.text,
+        "projects": item.projects,
+        "contexts": item.contexts,
+    })
 }
 
 fn todo_path(root: &Path) -> std::path::PathBuf {
@@ -230,16 +236,7 @@ fn list(root: &Path, filter: Option<&str>, json: bool) -> Result<i32, Error> {
             .iter()
             .enumerate()
             .filter(|(_, item)| matches(item))
-            .map(|(index, item)| {
-                serde_json::json!({
-                    "position": index + 1,
-                    "done": item.done,
-                    "priority": item.priority,
-                    "text": item.text,
-                    "projects": item.projects,
-                    "contexts": item.contexts,
-                })
-            })
+            .map(|(index, item)| task_json(index, item))
             .collect();
         println!("{}", serde_json::json!({ "tasks": rows }));
         return Ok(0);

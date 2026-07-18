@@ -110,6 +110,14 @@ fn plugin_tree(claude_root: &Path) -> Option<std::path::PathBuf> {
     let skills = claude_root.join("skills");
     for entry in std::fs::read_dir(skills).ok()?.flatten() {
         let candidate = entry.path();
+        // The plugin root is the security boundary; a symlinked candidate
+        // would archive whatever it points at.
+        if candidate
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.is_symlink())
+        {
+            continue;
+        }
         if candidate.join(".claude-plugin/plugin.json").is_file() {
             return Some(candidate);
         }

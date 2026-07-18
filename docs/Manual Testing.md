@@ -40,7 +40,7 @@ Expected: `completion install` reports the cleared completion cache and completi
 
 ```sh
 export RUNE_TARGETS="$(mktemp -d)"
-rune init demo --lang shell --purpose tool --dry-run   # plan only, writes nothing
+rune init demo --lang shell --purpose tool --dry-run   # plan only, destination untouched
 rune init demo --lang shell --purpose tool --brief "Manual init target"
 cd "$RUNE_TARGETS/demo"
 test -x bin/demo && test -x .githooks/pre-commit && echo hooks-ok

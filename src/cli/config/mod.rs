@@ -73,12 +73,23 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<(), Error> {
 /// so a write failure aborts with no destination touched. The rename
 /// sequence itself remains the residual non-atomic window.
 pub fn write_atomic_all(writes: &[(&Path, &str)]) -> Result<(), Error> {
+    for (index, (path, _)) in writes.iter().enumerate() {
+        if writes[..index].iter().any(|(earlier, _)| earlier == path) {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("{} appears twice in one write set", path.display()),
+            ));
+        }
+    }
     let mut staged: Vec<(std::path::PathBuf, &Path)> = Vec::new();
+    let cleanup = |staged: &[(std::path::PathBuf, &Path)]| {
+        for (temporary, _) in staged {
+            let _ = fs::remove_file(temporary);
+        }
+    };
     for (path, content) in writes {
         if path.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
-            for (temporary, _) in &staged {
-                let _ = fs::remove_file(temporary);
-            }
+            cleanup(&staged);
             return Err(Error::new(
                 ErrorKind::Config,
                 format!("{} is a symlink; refusing to replace it", path.display()),
@@ -94,10 +105,19 @@ pub fn write_atomic_all(writes: &[(&Path, &str)]) -> Result<(), Error> {
             ".{base_name}.{}.{sequence}.tmp",
             std::process::id()
         ));
-        if let Err(error) = fs::write(&temporary, content) {
-            for (earlier, _) in &staged {
-                let _ = fs::remove_file(earlier);
-            }
+        let outcome = (|| -> std::io::Result<()> {
+            use std::io::Write as _;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(content.as_bytes())?;
+            let _ = file.sync_all();
+            Ok(())
+        })();
+        if let Err(error) = outcome {
+            let _ = fs::remove_file(&temporary);
+            cleanup(&staged);
             return Err(Error::new(
                 ErrorKind::Io,
                 format!("cannot write {}: {error}", temporary.display()),

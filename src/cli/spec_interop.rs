@@ -108,25 +108,37 @@ fn convert(root: &Path, mappings: &[(&str, &str)]) -> Result<usize, Error> {
             ));
         }
     }
+    let mut written: Vec<&std::path::Path> = Vec::new();
     for (source, destination) in &planned {
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
-        }
-        std::fs::copy(source, destination).map_err(|error| {
-            Error::new(
+        let outcome = (|| -> std::io::Result<()> {
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            // create_new closes the window between the preflight collision
+            // check and the write: a raced destination errors, never
+            // overwrites.
+            let mut reader = std::fs::File::open(source)?;
+            let mut writer = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(destination)?;
+            std::io::copy(&mut reader, &mut writer)?;
+            Ok(())
+        })();
+        if let Err(error) = outcome {
+            for cleanup in &written {
+                let _ = std::fs::remove_file(cleanup);
+            }
+            return Err(Error::new(
                 ErrorKind::Io,
                 format!(
-                    "cannot copy {} → {}: {error}",
+                    "cannot copy {} → {}: {error} (already-converted files were removed)",
                     source.display(),
                     destination.display()
                 ),
-            )
-        })?;
+            ));
+        }
+        written.push(destination);
     }
     Ok(planned.len())
 }

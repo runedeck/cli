@@ -263,6 +263,12 @@ fn list(root: &Path, json: bool) -> Result<i32, Error> {
 }
 
 fn supersede(root: &Path, old: &str, new: &str, json: bool) -> Result<i32, Error> {
+    if old == new {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("{old} cannot supersede itself"),
+        ));
+    }
     let records = scan(root)?;
     let find = |id: &str| {
         records

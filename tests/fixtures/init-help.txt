@@ -14,7 +14,7 @@ Options:
       --bind               Bind the scaffolded project as the active target
       --workshop           Workshop scaffold: private/public/assets layout, jj colocation, no automatic commit. Defaults on under the targets root
       --spine              VCS spine (jj colocation) for a plain project
-      --dry-run            Print the scaffold plan without writing anything
+      --dry-run            Print the scaffold plan without writing to the destination
       --json               Output results as JSON
       --no-color           Disable ANSI colors
   -h, --help               Print help

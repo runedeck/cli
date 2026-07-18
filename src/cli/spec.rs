@@ -1533,6 +1533,9 @@ fn prefix_match(root: &Path, prefix: &str) -> PrefixMatch {
     let mut specifications: Vec<String> = read_directories(&specs_root(root))
         .unwrap_or_default()
         .into_iter()
+        // The same predicate exact lookup uses: a capability is a
+        // directory carrying spec.md, not any directory.
+        .filter(|directory| directory.join("spec.md").is_file())
         .filter_map(|directory| {
             directory
                 .file_name()
