@@ -659,9 +659,9 @@ enum SpecAction {
         source: String,
     },
 
-    /// Write the OpenSpec tree (openspec/) from the native root
+    /// Write the `OpenSpec` tree (`openspec/`) from the native root
     Export {
-        /// Emit the OpenSpec layout. The only export format today.
+        /// Emit the `OpenSpec` layout. The only export format today.
         #[arg(long)]
         openspec: bool,
 
@@ -670,9 +670,9 @@ enum SpecAction {
         source: String,
     },
 
-    /// Bring an openspec/ tree into the native root
+    /// Bring an `openspec/` tree into the native root
     Import {
-        /// Read the OpenSpec layout. The only import format today.
+        /// Read the `OpenSpec` layout. The only import format today.
         #[arg(long)]
         openspec: bool,
 

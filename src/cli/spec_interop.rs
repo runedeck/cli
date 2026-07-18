@@ -1,5 +1,5 @@
-//! OpenSpec interop: convert between rune's native spec root
-//! (`docs/changes` + `docs/specs`) and OpenSpec's hardcoded `openspec/`
+//! `OpenSpec` interop: convert between rune's native spec root
+//! (`docs/changes` + `docs/specs`) and `OpenSpec`'s hardcoded `openspec/`
 //! tree. The artifact dialect already matches, so conversion moves
 //! structure and never rewrites artifact bodies; existing destinations
 //! are refused rather than merged.

@@ -38,6 +38,37 @@ const DELTA_SPEC_MDSCHEMA: &str = include_str!(concat!(
     "/schemas/delta-spec.mdschema"
 ));
 
+/// One resolver answers where changes and specs live: the native
+/// `docs/` root, or `openspec/` when `spec.root: openspec` is configured
+/// or only an `openspec/` tree exists. Every consumer (commands, doctor,
+/// completions) routes through these two functions.
+pub(crate) fn changes_root(root: &Path) -> PathBuf {
+    root.join(spec_base(root)).join("changes")
+}
+
+pub(crate) fn specs_root(root: &Path) -> PathBuf {
+    root.join(spec_base(root)).join("specs")
+}
+
+fn spec_base(root: &Path) -> &'static str {
+    let configured = crate::cli::config::load_merged_config(root)
+        .ok()
+        .and_then(|merged| commands::yaml::yaml_list(&merged, "spec.root"));
+    match configured.as_deref() {
+        Some("openspec") => "openspec",
+        Some(_) => "docs",
+        None => {
+            let native = root.join("docs").join("changes").is_dir()
+                || root.join("docs").join("specs").is_dir();
+            if !native && root.join("openspec").is_dir() {
+                "openspec"
+            } else {
+                "docs"
+            }
+        }
+    }
+}
+
 static SLUG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[a-z0-9]+(?:-[a-z0-9]+)*$").expect("static slug regex is valid")
 });
@@ -242,8 +273,7 @@ pub(crate) fn propose(
     }
 
     let root = Path::new(source);
-    let relative_change = PathBuf::from("docs/changes").join(id);
-    let change_dir = root.join(&relative_change);
+    let change_dir = changes_root(root).join(id);
     if change_dir.exists() {
         return Err(Error::new(
             ErrorKind::Config,
@@ -417,14 +447,14 @@ pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> 
 }
 
 fn load_context_output(root: &Path, id: &str) -> Result<ContextOutput, Error> {
-    let change_dir = root.join("docs/changes").join(id);
+    let change_dir = changes_root(root).join(id);
     if !change_dir.is_dir() {
         if archived_change_exists(root, id)? {
             return Err(Error::new(
                 ErrorKind::Config,
                 format!(
                     "change '{id}' is already archived under {}",
-                    root.join("docs/changes/archive").display()
+                    changes_root(root).join("archive").display()
                 ),
             ));
         }
@@ -487,7 +517,7 @@ pub(crate) fn archive(
 ) -> Result<i32, Error> {
     validate_slug(id, "change id")?;
     let root = Path::new(source);
-    let change_dir = root.join("docs/changes").join(id);
+    let change_dir = changes_root(root).join(id);
     if !change_dir.is_dir() {
         return Err(Error::new(
             ErrorKind::Config,
@@ -499,7 +529,7 @@ pub(crate) fn archive(
     }
 
     let archive_name = format!("{}-{id}", Utc::now().format("%Y-%m-%d"));
-    let archive_dir = root.join("docs/changes/archive").join(&archive_name);
+    let archive_dir = changes_root(root).join("archive").join(&archive_name);
     if archive_dir.exists() {
         return Err(Error::new(
             ErrorKind::Config,
@@ -587,7 +617,7 @@ pub(crate) fn archive(
 
 /// Scan active changes without printing, for status and other services.
 pub(crate) fn scan_changes(root: &Path) -> Result<Vec<ChangeSummary>, Error> {
-    let changes_dir = root.join("docs/changes");
+    let changes_dir = changes_root(root);
     let mut entries = read_directories(&changes_dir)?;
     entries.retain(|path| path.file_name().is_some_and(|name| name != "archive"));
 
@@ -610,7 +640,7 @@ pub(crate) fn scan_changes(root: &Path) -> Result<Vec<ChangeSummary>, Error> {
 
 /// Scan canonical specifications and count recognized requirements.
 pub(crate) fn scan_specifications(root: &Path) -> Result<Vec<SpecificationSummary>, Error> {
-    let specs_dir = root.join("docs/specs");
+    let specs_dir = specs_root(root);
     let mut summaries = Vec::new();
     for capability_dir in read_directories(&specs_dir)? {
         let Some(capability) = capability_dir
@@ -644,7 +674,7 @@ pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Erro
     let (delta_schema, _) =
         load_with_override(root, "schemas/delta-spec.mdschema", DELTA_SPEC_MDSCHEMA)?;
 
-    for capability_dir in read_directories(&root.join("docs/specs"))? {
+    for capability_dir in read_directories(&specs_root(root))? {
         let spec_path = capability_dir.join("spec.md");
         if !spec_path.is_file() {
             continue;
@@ -660,7 +690,7 @@ pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Erro
         }
     }
 
-    for change_dir in read_directories(&root.join("docs/changes"))? {
+    for change_dir in read_directories(&changes_root(root))? {
         if change_dir.file_name().is_some_and(|name| name == "archive") {
             continue;
         }
@@ -690,7 +720,7 @@ pub(crate) fn validate_spec_tree(root: &Path) -> Result<Vec<SpecViolation>, Erro
             let Some(capability) = capability_dir.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            let canonical_path = root.join("docs/specs").join(capability).join("spec.md");
+            let canonical_path = specs_root(root).join(capability).join("spec.md");
             let mut canonical = if canonical_path.is_file() {
                 let canonical_content = read(&canonical_path)?;
                 match parse_canonical(&canonical_content) {
@@ -902,7 +932,7 @@ fn read_directories(directory: &Path) -> Result<Vec<PathBuf>, Error> {
 }
 
 fn archived_change_exists(root: &Path, id: &str) -> Result<bool, Error> {
-    Ok(read_directories(&root.join("docs/changes/archive"))?
+    Ok(read_directories(&changes_root(root).join("archive"))?
         .iter()
         .any(|path| {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -1064,7 +1094,7 @@ fn build_merge_plans(root: &Path, change_dir: &Path) -> Result<Vec<MergePlan>, E
         }
         let operations = parse_delta(&read(&delta_path)?)
             .map_err(|issues| issues_error(&delta_path, "invalid delta specification", &issues))?;
-        let destination = root.join("docs/specs").join(capability).join("spec.md");
+        let destination = specs_root(root).join(capability).join("spec.md");
         let mut canonical = if destination.is_file() {
             parse_canonical(&read(&destination)?).map_err(|issues| {
                 issues_error(&destination, "invalid canonical specification", &issues)
@@ -1421,8 +1451,8 @@ struct ShowSpecOutput {
 pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
     validate_slug(name, "item name")?;
     let root = Path::new(source);
-    let change_dir = root.join("docs/changes").join(name);
-    let spec_path = root.join("docs/specs").join(name).join("spec.md");
+    let change_dir = changes_root(root).join(name);
+    let spec_path = specs_root(root).join(name).join("spec.md");
     match (change_dir.is_dir(), spec_path.is_file()) {
         (true, true) => Err(Error::new(
             ErrorKind::Config,
@@ -1440,7 +1470,7 @@ pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
                     ErrorKind::Config,
                     format!(
                         "change '{name}' is already archived under {}",
-                        root.join("docs/changes/archive").display()
+                        changes_root(root).join("archive").display()
                     ),
                 ));
             }
@@ -1453,7 +1483,7 @@ pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
 }
 
 fn show_change(root: &Path, id: &str, json: bool) -> Result<i32, Error> {
-    let task_status = read_tasks(&root.join("docs/changes").join(id).join("tasks.md"))?;
+    let task_status = read_tasks(&changes_root(root).join(id).join("tasks.md"))?;
     let output = ShowChangeOutput {
         state: task_status.state(),
         completed: task_status.completed,
@@ -1520,7 +1550,7 @@ pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {
     let root = Path::new(source);
     let mut findings = Vec::new();
 
-    let change_dirs = read_directories(&root.join("docs/changes"))?
+    let change_dirs = read_directories(&changes_root(root))?
         .into_iter()
         .filter(|path| path.file_name().is_none_or(|name| name != "archive"))
         .collect::<Vec<_>>();
@@ -1539,7 +1569,7 @@ pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {
         }
     }
 
-    for archived in read_directories(&root.join("docs/changes/archive"))? {
+    for archived in read_directories(&changes_root(root).join("archive"))? {
         let Some(name) = archived.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -1640,7 +1670,7 @@ mod tests {
     const MERGED: &str = "# Search Specification\n\n## Purpose\n\nFind runes.\n\n## Requirements\n\n### Requirement: Existing\n\nThe system SHALL replace this behavior.\n\n#### Scenario: Replacement behavior\n\n- **WHEN** search runs\n- **THEN** replacement results appear\n\n### Requirement: Added\n\nThe system SHALL add this behavior.\n\n#### Scenario: Added behavior\n\n- **WHEN** new search runs\n- **THEN** new results appear\n";
 
     fn write_change(root: &Path, id: &str, tasks: &str, delta: &str) {
-        let change = root.join("docs/changes").join(id);
+        let change = changes_root(root).join(id);
         fs::create_dir_all(change.join("specs/search")).unwrap();
         fs::write(
             change.join("proposal.md"),
@@ -1649,6 +1679,21 @@ mod tests {
         .unwrap();
         fs::write(change.join("tasks.md"), tasks).unwrap();
         fs::write(change.join("specs/search/spec.md"), delta).unwrap();
+    }
+
+    #[test]
+    fn resolver_prefers_native_and_detects_openspec_roots() {
+        let native = TempDir::new().unwrap();
+        fs::create_dir_all(native.path().join("docs/changes")).unwrap();
+        assert!(changes_root(native.path()).ends_with("docs/changes"));
+
+        let openspec = TempDir::new().unwrap();
+        fs::create_dir_all(openspec.path().join("openspec/changes")).unwrap();
+        assert!(changes_root(openspec.path()).ends_with("openspec/changes"));
+        assert!(specs_root(openspec.path()).ends_with("openspec/specs"));
+
+        let empty = TempDir::new().unwrap();
+        assert!(changes_root(empty.path()).ends_with("docs/changes"));
     }
 
     #[test]
