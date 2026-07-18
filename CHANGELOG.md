@@ -8,11 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch claude@sol` applies a named env/args/with preset from `launch.profiles`; env values support `from_env` references so secrets stay out of config; bare `rune launch` lists tools with install state and profiles; `rune launch ollama@<model>` dispatches `ollama run`.
+- `rune provider` lists deploy providers (name, enabled state, target, plugin) and `enable`/`disable` write `providers.<name>.enabled` into the local `config.yaml`.
+- `rune todo`: `TODO.txt` at the repo root in todo.txt syntax, with `add`, `do`, `ls` filters (`+project`, `@context`, priority), `obsidian` output, and `import` from Obsidian Tasks markdown through a shared item model that preserves unknown extensions.
+- `rune spec list --sort progress` surfaces least-complete changes first.
+- Consumer-root validation: a `.rune` root gets `.rune` parsing and per-provider manifest checks instead of module structure errors; roots carrying both `module.yaml` and `.rune` compose both check sets, and deck roots with `.rune` include the consumer role.
+
 - OpenSpec artifact parity in the spec lifecycle: `spec propose` accepts repeated `--capability` flags (one delta per capability) and `--design` (scaffolds `design.md`, included by `spec context` and `spec show`); the proposal template carries a generated `## Capabilities` section; `spec archive --abandon -y` works scripted. Root parity is intentionally not pursued: rune roots at `docs/`, OpenSpec hardcodes `openspec/`.
 - Warning-severity conformance lint in `rune validate` for every `SKILL.md`: name must equal its directory and stay within 64 characters, description within 1024, no reserved words (`claude`, `anthropic`) in names, no angle brackets in frontmatter, a trigger phrase in the description, and a body long enough to instruct. Warnings inform; only schema errors block.
 
 ### Changed
 
+- `rune adopt` is now `rune import`; `adopt` survives as a deprecated alias printing the rename note and is reserved for the harness-driven adoption process.
+- The agentskills provider (`.agents` layout) is opt-in: it deploys only when named with `--provider` or re-enabled via `rune provider enable agentskills`.
+- `rune drift` lists only drifted entries by default; `--all` restores the full listing with a hidden-identical count. Ignored drift (`Expected`) stays visible.
+- Terminal output styles through one truecolor sheet with basic-ANSI and plain fallbacks: `fatal:` lines render red, `doctor` and `spec list` are restyled, `skill show` renders frontmatter as a detail view, and the global `--no-color` reaches every writer.
+- `rune completion install` clears the zsh compinit dump (`ZDOTDIR`-aware, only names compinit produces) so a stale cache cannot ignore the fresh script; `rune skill install --dir` treats the argument as a project root and installs under `.claude/skills/rune/`.
 - `rune --help` opens with a one-line runic wordmark (`ᚱᚢᚾᛖ rune · your runes, deployed`) — cyan sigil, bold word, dim tagline on a TTY, plain text otherwise — replacing the figlet banner.
 - The claude provider deploys skills, agents, and hooks as a skills-directory plugin at `.claude/skills/rune/` (CLI-0020): Claude Code namespaces every skill as `rune:<name>`, hooks register through the generated plugin-root `hooks/hooks.json` instead of settings.json wiring, and `${CLAUDE_PLUGIN_ROOT}` survives deployment with the domain segment added. Rules keep their loose `.claude/rules` path; `plugin: null` in config restores the loose layout; doctor, drift, and prune manage the plugin root as its own manifest-tracked target.
 
