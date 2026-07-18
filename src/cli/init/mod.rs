@@ -185,29 +185,15 @@ fn scaffold_project(
 
     let mut action = ActionResult::new();
     if options.dry_run {
-        for (relative, template) in &templates {
-            action.installed.push(DeployedFile {
-                source: template
-                    .source
-                    .strip_prefix(&skeleton)
-                    .unwrap_or(&template.source)
-                    .to_string_lossy()
-                    .into_owned(),
-                target: relative.to_string_lossy().into_owned(),
-                provider: template.layer.clone(),
-            });
-        }
-        return Ok(ProjectResult {
+        return Ok(dry_run_result(
             destination,
-            layers: layers.into_iter().map(|(name, _)| name).collect(),
+            &skeleton,
+            layers,
             overrides,
-            git_initialized: false,
-            jj_colocated: false,
+            &templates,
             workshop,
-            dry_run: true,
-            quest_bound: false,
-            action,
-        });
+            options,
+        ));
     }
 
     fs::create_dir_all(&destination).map_err(|error| {
@@ -245,6 +231,71 @@ fn scaffold_project(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn dry_run_result(
+    destination: PathBuf,
+    skeleton: &Path,
+    layers: Vec<(String, PathBuf)>,
+    mut overrides: Vec<String>,
+    templates: &BTreeMap<PathBuf, ProjectTemplate>,
+    workshop: bool,
+    options: InitOptions,
+) -> ProjectResult {
+    let mut action = ActionResult::new();
+    let jj_planned = (workshop || options.spine) && jj_on_path();
+    for step in planned_steps(workshop, jj_planned, options.bind) {
+        overrides.push(format!("plan: {step}"));
+    }
+    for (relative, template) in templates {
+        action.installed.push(DeployedFile {
+            source: template
+                .source
+                .strip_prefix(skeleton)
+                .unwrap_or(&template.source)
+                .to_string_lossy()
+                .into_owned(),
+            target: relative.to_string_lossy().into_owned(),
+            provider: template.layer.clone(),
+        });
+    }
+    ProjectResult {
+        destination,
+        layers: layers.into_iter().map(|(name, _)| name).collect(),
+        overrides,
+        git_initialized: false,
+        jj_colocated: false,
+        workshop,
+        dry_run: true,
+        quest_bound: false,
+        action,
+    }
+}
+
+fn jj_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
+    })
+}
+
+/// The side effects a real run would perform beyond writing templates,
+/// listed in the dry-run report so the plan covers every step.
+fn planned_steps(workshop: bool, jj_planned: bool, bind: bool) -> Vec<String> {
+    let mut steps = vec!["git init -b main + hooksPath .githooks".to_string()];
+    if workshop {
+        steps.push("workshop layout: private/ public/ assets/".to_string());
+        steps.push("no automatic commit (workshop mode)".to_string());
+    } else {
+        steps.push("commit scaffold".to_string());
+    }
+    if jj_planned {
+        steps.push("jj git init --colocate".to_string());
+    }
+    if bind {
+        steps.push("bind as active target".to_string());
+    }
+    steps
+}
+
 fn create_workshop_layout(destination: &Path) -> Result<(), Error> {
     for member in ["private", "public", "assets"] {
         let member_dir = destination.join(member);
@@ -266,10 +317,7 @@ fn colocate_jj(destination: &Path) -> Result<bool, Error> {
     if destination.join(".jj").exists() {
         return Ok(false);
     }
-    let jj_available = std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
-    });
-    if !jj_available {
+    if !jj_on_path() {
         return Ok(false);
     }
     let output = Command::new("jj")
@@ -339,7 +387,14 @@ fn resolve_project_context(
             )
         })?
         .to_string();
-    let under_workshop_root = destination.starts_with(&targets_root);
+    // Canonicalize where possible so symlinked targets roots still match;
+    // the destination may not exist yet, so its comparison side stays
+    // lexical against both the raw and canonical root forms.
+    let canonical_root = targets_root
+        .canonicalize()
+        .unwrap_or_else(|_| targets_root.clone());
+    let under_workshop_root =
+        destination.starts_with(&targets_root) || destination.starts_with(&canonical_root);
     Ok(ProjectContext {
         destination,
         skeleton,

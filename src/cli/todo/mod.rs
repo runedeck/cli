@@ -36,7 +36,17 @@ pub enum TodoAction {
 
 pub fn execute(action: Option<TodoAction>, all: bool, json: bool) -> Result<i32, Error> {
     if all {
-        return aggregate(Path::new("."), json);
+        match action {
+            None | Some(TodoAction::Ls { filter: None }) => {
+                return aggregate(Path::new("."), json);
+            }
+            Some(_) => {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    "--all only lists across the workspace; run add/do/import in the member's directory".to_string(),
+                ));
+            }
+        }
     }
     execute_at(Path::new("."), action, json)
 }
@@ -70,6 +80,23 @@ fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
                 );
             }
             continue;
+        }
+        // Use-time guard, independent of parse-time validation: the resolved
+        // member stays inside the workspace container (the root's parent).
+        let container = root
+            .canonicalize()
+            .ok()
+            .and_then(|canonical| canonical.parent().map(std::path::Path::to_path_buf));
+        if let (Some(container), Ok(canonical_member)) = (&container, member_root.canonicalize())
+            && !canonical_member.starts_with(container)
+        {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "workspace member '{}' resolves outside the workspace container",
+                    member.path
+                ),
+            ));
         }
         members.push((member.path.clone(), member_root));
     }

@@ -60,7 +60,11 @@ fn spec_base(root: &Path) -> &'static str {
         None => {
             let native = root.join("docs").join("changes").is_dir()
                 || root.join("docs").join("specs").is_dir();
-            if !native && root.join("openspec").is_dir() {
+            // A bare openspec/ (a project.md stub, an aborted export) is not
+            // a spec tree; only its changes/specs dirs flip the base.
+            let openspec = root.join("openspec").join("changes").is_dir()
+                || root.join("openspec").join("specs").is_dir();
+            if !native && openspec {
                 "openspec"
             } else {
                 "docs"

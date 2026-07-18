@@ -290,19 +290,32 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
                 ),
             ));
         }
-        // Leading `..` components reach sibling members (`../wiki`); interior
-        // `..` after a normal segment is a traversal smell and is rejected.
+        // One leading `..` reaches sibling members (`../wiki`); deeper chains
+        // and interior `..` are traversal, not workspace layout.
         let mut seen_normal = false;
+        let mut parent_hops = 0u32;
         for component in path.components() {
             match component {
-                std::path::Component::ParentDir if seen_normal => {
-                    return Err(Error::new(
-                        ErrorKind::Parse,
-                        format!(
-                            ".rune: dirs path '{}' mixes .. inside the path",
-                            member.path
-                        ),
-                    ));
+                std::path::Component::ParentDir => {
+                    if seen_normal {
+                        return Err(Error::new(
+                            ErrorKind::Parse,
+                            format!(
+                                ".rune: dirs path '{}' mixes .. inside the path",
+                                member.path
+                            ),
+                        ));
+                    }
+                    parent_hops += 1;
+                    if parent_hops > 1 {
+                        return Err(Error::new(
+                            ErrorKind::Parse,
+                            format!(
+                                ".rune: dirs path '{}' climbs beyond the sibling level; one leading .. is the limit",
+                                member.path
+                            ),
+                        ));
+                    }
                 }
                 std::path::Component::Normal(_) => seen_normal = true,
                 _ => {}
