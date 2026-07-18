@@ -1,5 +1,6 @@
 mod add;
 mod adopt;
+mod adr;
 mod assemble;
 mod completion;
 pub(crate) mod config;
@@ -213,6 +214,12 @@ enum Command {
     Todo {
         #[command(subcommand)]
         action: Option<todo::TodoAction>,
+    },
+
+    /// Architecture decision records under docs/decisions
+    Adr {
+        #[command(subcommand)]
+        action: adr::AdrAction,
     },
 
     /// Print an agent-ready brief of the resolved working context
@@ -906,6 +913,9 @@ pub fn run() -> i32 {
         Command::Todo { action } => {
             return exit_code(todo::execute(action, args.json));
         }
+        Command::Adr { action } => {
+            return exit_code(adr::execute(action, args.json));
+        }
         Command::Context => return exit_code(context::execute(args.json, args.no_color)),
         Command::Setup { defaults } => {
             return exit_code(setup::execute(defaults, args.json, args.no_color));
@@ -1394,6 +1404,12 @@ fn deck_help(help: &mut String) {
         "todo",
         "[add|do|ls|obsidian]",
         "Repo tasks in TODO.txt with an Obsidian transform",
+    );
+    help_command(
+        help,
+        "adr",
+        "new|list|supersede|index",
+        "Architecture decision records under docs/decisions",
     );
     help_command(
         help,

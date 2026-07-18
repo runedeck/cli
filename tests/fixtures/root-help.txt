@@ -30,6 +30,7 @@
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     provider    [enable|disable <name>]                               List or toggle deploy providers
     todo        [add|do|ls|obsidian]                                  Repo tasks in TODO.txt with an Obsidian transform
+    adr         new|list|supersede|index                              Architecture decision records under docs/decisions
     watch       <COMMAND>                                             Manage monitored rune locations
 
   Plumbing:
