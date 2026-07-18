@@ -205,6 +205,7 @@ fn map_tool_passes_through_unmapped() {
 
 fn provider_with_aliases(target: &str, aliases: Vec<&str>) -> ProviderConfig {
     ProviderConfig {
+        enabled: true,
         target: ProviderTarget::Single(target.to_string()),
         assembly: None,
         deploy: None,
@@ -250,6 +251,7 @@ fn matches_target_rejects_unknown() {
 #[test]
 fn matches_target_no_aliases() {
     let config = ProviderConfig {
+        enabled: true,
         target: ProviderTarget::Single(".opencode".to_string()),
         assembly: None,
         deploy: None,

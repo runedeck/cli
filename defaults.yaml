@@ -72,6 +72,7 @@ providers:
             light: [gemini-2.0-flash]
 
     agentskills:
+        enabled: false
         target: ".agents"
         aliases:
             - agents

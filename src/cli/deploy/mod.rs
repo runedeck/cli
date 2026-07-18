@@ -42,7 +42,9 @@ pub fn execute(
     let merged_config = config::load_merged_config(module_root)?;
     let mut providers = config::load_providers(&merged_config)?;
 
-    if !requested_providers.is_empty() {
+    if requested_providers.is_empty() {
+        providers.retain(|_, provider| provider.enabled);
+    } else {
         providers = filter_requested_providers(&providers, requested_providers)?;
     }
 

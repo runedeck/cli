@@ -73,6 +73,14 @@ pub struct ProviderConfig {
     /// manifest), so the harness namespaces them as `<plugin>:<skill>`.
     /// Rules keep their loose path. Absent means the loose layout.
     pub plugin: Option<String>,
+    /// Opt-in providers (`enabled: false`) deploy only when named
+    /// explicitly with `--provider`; the default set skips them.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl ProviderConfig {

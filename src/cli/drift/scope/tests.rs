@@ -45,6 +45,7 @@ fn deploy_owned_file(
 fn run(build: &std::path::Path, deployed: &std::path::Path, module: &str) -> DriftResult {
     let mut result = DriftResult::default();
     let provider_config = ProviderConfig {
+        enabled: true,
         target: ProviderTarget::Single(".".to_string()),
         assembly: None,
         deploy: None,

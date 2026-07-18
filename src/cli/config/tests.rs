@@ -134,3 +134,14 @@ fn read_file_errors_on_missing_path() {
     let error = result.unwrap_err();
     assert_eq!(error.kind(), commands::error::ErrorKind::Io);
 }
+
+#[test]
+fn agentskills_is_opt_in_by_default() {
+    let providers = load_providers("").unwrap();
+    assert!(
+        !providers["agentskills"].enabled,
+        "agentskills deploys only when named with --provider"
+    );
+    assert!(providers["claude"].enabled);
+    assert!(providers["codex"].enabled);
+}
