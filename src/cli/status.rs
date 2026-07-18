@@ -209,7 +209,7 @@ fn fallback_inventory(root: &Path) -> BTreeMap<String, usize> {
 }
 
 fn render(dashboard: &StatusDashboard, color: bool) -> String {
-    let styles = crate::cli::style::Sheet::forced(color);
+    let styles = crate::cli::style::Sheet::resolved(color);
     let total_runes = dashboard.summary.runes.values().sum::<usize>();
     let kinds = commands::view::KIND_ORDER
         .into_iter()

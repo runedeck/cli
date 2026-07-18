@@ -798,6 +798,11 @@ pub fn run() -> i32 {
     }
 
     let args = Cli::parse();
+    if args.no_color {
+        style::set_global_no_color();
+        console::set_colors_enabled(false);
+        console::set_colors_enabled_stderr(false);
+    }
 
     let Some(command) = args.command else {
         return bare();

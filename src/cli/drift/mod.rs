@@ -717,8 +717,9 @@ fn collect_markdown_recursive(
 // --- Output ---
 
 fn print_drift_result(result: &DriftResult, show_all: bool) {
-    let is_quiet =
-        |entry: &DriftEntry| matches!(entry.status, DriftStatus::Identical | DriftStatus::Expected);
+    // Only truly identical entries hide by default; `Expected` marks real
+    // differences accepted via --ignore and stays visible.
+    let is_quiet = |entry: &DriftEntry| matches!(entry.status, DriftStatus::Identical);
     let hidden = if show_all {
         0
     } else {
@@ -759,7 +760,7 @@ fn print_drift_result(result: &DriftResult, show_all: bool) {
             "   {}",
             Style::new()
                 .dim()
-                .apply_to(format!("{hidden} unchanged hidden — --all shows them"))
+                .apply_to(format!("{hidden} identical hidden — --all shows them"))
         );
     }
 

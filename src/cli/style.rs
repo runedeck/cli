@@ -54,11 +54,27 @@ pub struct Sheet {
 }
 
 impl Sheet {
-    /// Explicit color choice, for callers that already resolved detection.
+    /// Explicit color choice for tests and golden fixtures: full depth on,
+    /// plain off. Runtime callers that resolved "color yes/no" upstream use
+    /// `resolved`, which still respects the terminal's depth.
+    #[cfg(test)]
     pub fn forced(color: bool) -> Self {
         Self {
             depth: if color { Depth::True } else { Depth::Plain },
         }
+    }
+
+    /// A caller-resolved color decision with terminal-appropriate depth:
+    /// truecolor terminals get the palette, others basic ANSI.
+    pub fn resolved(color: bool) -> Self {
+        let depth = if !color {
+            Depth::Plain
+        } else if truecolor_terminal() {
+            Depth::True
+        } else {
+            Depth::Ansi
+        };
+        Self { depth }
     }
 
     pub fn detect(no_color: bool) -> Self {
@@ -71,7 +87,10 @@ impl Sheet {
     }
 
     fn with_terminal(no_color: bool, is_terminal: bool) -> Self {
-        let colored = !no_color && std::env::var_os("NO_COLOR").is_none() && is_terminal;
+        let colored = !no_color
+            && !global_no_color()
+            && std::env::var_os("NO_COLOR").is_none()
+            && is_terminal;
         let depth = if !colored {
             Depth::Plain
         } else if truecolor_terminal() {
@@ -157,6 +176,18 @@ impl Sheet {
     pub fn none(&self) -> String {
         format!("   {}", self.dim("— none"))
     }
+}
+
+static GLOBAL_NO_COLOR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Record the global `--no-color` flag once at dispatch; every later
+/// detection consults it, so commands need no per-call threading.
+pub fn set_global_no_color() {
+    let _ = GLOBAL_NO_COLOR.set(true);
+}
+
+fn global_no_color() -> bool {
+    GLOBAL_NO_COLOR.get().copied().unwrap_or(false)
 }
 
 fn truecolor_terminal() -> bool {

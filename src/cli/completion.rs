@@ -109,7 +109,7 @@ pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
         )
     })?;
     let cleared_caches = if shell == Shell::Zsh {
-        invalidate_zsh_completion_cache(&home()?)
+        invalidate_zsh_completion_cache(&zsh_dump_directory()?)
     } else {
         0
     };
@@ -173,18 +173,38 @@ fn install_path(shell: Shell) -> Result<PathBuf, Error> {
     }
 }
 
-/// Zsh caches completion lookups in ~/.zcompdump* files; a stale cache keeps
-/// ignoring a freshly installed _rune until compinit rebuilds it. Removing the
-/// cache forces the rebuild on the next shell start.
-fn invalidate_zsh_completion_cache(home: &std::path::Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(home) else {
-        return 0;
+/// Compinit writes its dump under `$ZDOTDIR` when set, `$HOME` otherwise.
+fn zsh_dump_directory() -> Result<PathBuf, Error> {
+    if let Some(zdotdir) = std::env::var_os("ZDOTDIR")
+        && !zdotdir.is_empty()
+    {
+        return Ok(PathBuf::from(zdotdir));
+    }
+    home()
+}
+
+/// Zsh caches completion lookups in a compinit dump; a stale dump keeps
+/// ignoring a freshly installed _rune until compinit rebuilds it. Removing
+/// the dump forces the rebuild on the next shell start. Only names compinit
+/// itself produces are touched: `.zcompdump`, its compiled `.zwc` twin, and
+/// the oh-my-zsh `.zcompdump-<host>-<version>` variants (which end in a
+/// digit) — never other dotfiles that merely share the prefix.
+fn invalidate_zsh_completion_cache(dump_directory: &std::path::Path) -> usize {
+    let entries = match std::fs::read_dir(dump_directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "warning: cannot scan {} for completion caches: {error}",
+                dump_directory.display()
+            );
+            return 0;
+        }
     };
     let mut cleared = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !name.starts_with(".zcompdump") {
+        if !is_compinit_dump_name(name) {
             continue;
         }
         match std::fs::remove_file(entry.path()) {
@@ -196,6 +216,17 @@ fn invalidate_zsh_completion_cache(home: &std::path::Path) -> usize {
         }
     }
     cleared
+}
+
+fn is_compinit_dump_name(name: &str) -> bool {
+    if name == ".zcompdump" || name == ".zcompdump.zwc" {
+        return true;
+    }
+    let Some(variant) = name.strip_prefix(".zcompdump-") else {
+        return false;
+    };
+    let variant = variant.strip_suffix(".zwc").unwrap_or(variant);
+    variant.ends_with(|character: char| character.is_ascii_digit())
 }
 
 fn brew_prefix() -> Option<PathBuf> {
@@ -248,17 +279,25 @@ mod tests {
     }
 
     #[test]
-    fn zsh_cache_invalidation_removes_only_zcompdump_files() {
+    fn zsh_cache_invalidation_removes_only_compinit_dumps() {
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join(".zcompdump"), "stale cache").unwrap();
+        std::fs::write(home.path().join(".zcompdump.zwc"), "compiled cache").unwrap();
         std::fs::write(home.path().join(".zcompdump-host-5.9"), "stale cache").unwrap();
+        std::fs::write(
+            home.path().join(".zcompdump-notes"),
+            "user file, must survive",
+        )
+        .unwrap();
         std::fs::write(home.path().join(".zshrc"), "# shell config, must survive").unwrap();
 
         let cleared = invalidate_zsh_completion_cache(home.path());
 
-        assert_eq!(cleared, 2);
+        assert_eq!(cleared, 3);
         assert!(!home.path().join(".zcompdump").exists());
+        assert!(!home.path().join(".zcompdump.zwc").exists());
         assert!(!home.path().join(".zcompdump-host-5.9").exists());
+        assert!(home.path().join(".zcompdump-notes").exists());
         assert!(home.path().join(".zshrc").exists());
     }
 }

@@ -246,10 +246,15 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
             }
             append_report(&mut aggregate, deck_entry_report);
         }
+        if module_root.join(".rune").exists() {
+            let mut consumer_report = ValidationReport::default();
+            consumer_checks(module_root, &mut consumer_report)?;
+            append_report(&mut aggregate, consumer_report);
+        }
         return Ok(aggregate);
     }
     let is_module = module_root.join("module.yaml").is_file();
-    let is_consumer = module_root.join(".rune").is_file();
+    let is_consumer = module_root.join(".rune").exists();
     if is_consumer && !is_module {
         return validate_consumer(module_root, scan);
     }
@@ -277,14 +282,13 @@ fn consumer_checks(consumer_root: &Path, report: &mut ValidationReport) -> Resul
         Err(error) => report.fail(".rune", format!(".rune: {error}")),
     }
 
-    let providers = crate::cli::config::load_providers("")?;
+    // The same provider set installation would use: the consumer's merged
+    // config (custom targets, plugin: null) over the embedded defaults.
+    let merged_config = crate::cli::config::load_merged_config(consumer_root)?;
+    let providers = crate::cli::config::load_providers(&merged_config)?;
     let mut provider_targets: Vec<String> = providers
         .values()
-        .flat_map(|provider| {
-            commands::provider::ContentKind::ALL
-                .iter()
-                .map(|kind| provider.target_for_kind(*kind).to_string())
-        })
+        .flat_map(|provider| provider.target_roots().into_iter().map(ToString::to_string))
         .collect();
     provider_targets.sort();
     provider_targets.dedup();
