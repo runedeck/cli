@@ -28,6 +28,7 @@
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
+    provider    [enable|disable <name>]                               List or toggle deploy providers
     watch       <COMMAND>                                             Manage monitored rune locations
 
   Plumbing:

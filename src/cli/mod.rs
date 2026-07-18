@@ -20,6 +20,7 @@ mod launch;
 mod ontology;
 mod output;
 mod provenance;
+mod provider_cmd;
 mod release;
 mod review;
 mod setup;
@@ -199,6 +200,12 @@ enum Command {
     Hook {
         #[command(subcommand)]
         action: Option<KindAction>,
+    },
+
+    /// List deploy providers, or toggle them for this source
+    Provider {
+        #[command(subcommand)]
+        action: Option<provider_cmd::ProviderAction>,
     },
 
     /// Print an agent-ready brief of the resolved working context
@@ -886,6 +893,9 @@ pub fn run() -> i32 {
                 reference.as_deref(),
             ));
         }
+        Command::Provider { action } => {
+            return exit_code(provider_cmd::execute(action, args.json));
+        }
         Command::Context => return exit_code(context::execute(args.json, args.no_color)),
         Command::Setup { defaults } => {
             return exit_code(setup::execute(defaults, args.json, args.no_color));
@@ -1362,6 +1372,12 @@ fn deck_help(help: &mut String) {
         "import",
         "<URL> [--module <DIR>]",
         "Import an upstream rune with provenance",
+    );
+    help_command(
+        help,
+        "provider",
+        "[enable|disable <name>]",
+        "List or toggle deploy providers",
     );
     help_command(
         help,
