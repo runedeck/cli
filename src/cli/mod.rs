@@ -10,6 +10,7 @@ mod copy;
 mod dashboard;
 mod deploy;
 mod dispatch;
+mod docs;
 mod doctor;
 pub(crate) mod dotrune;
 mod drift;
@@ -220,6 +221,12 @@ enum Command {
     Adr {
         #[command(subcommand)]
         action: adr::AdrAction,
+    },
+
+    /// Docs tree checks and a local mint preview
+    Docs {
+        #[command(subcommand)]
+        action: docs::DocsAction,
     },
 
     /// Print an agent-ready brief of the resolved working context
@@ -916,6 +923,9 @@ pub fn run() -> i32 {
         Command::Adr { action } => {
             return exit_code(adr::execute(action, args.json));
         }
+        Command::Docs { action } => {
+            return exit_code(docs::execute(&action, args.json));
+        }
         Command::Context => return exit_code(context::execute(args.json, args.no_color)),
         Command::Setup { defaults } => {
             return exit_code(setup::execute(defaults, args.json, args.no_color));
@@ -1410,6 +1420,12 @@ fn deck_help(help: &mut String) {
         "adr",
         "new|list|supersede|index",
         "Architecture decision records under docs/decisions",
+    );
+    help_command(
+        help,
+        "docs",
+        "check|dev",
+        "Docs tree checks and a local mint preview",
     );
     help_command(
         help,
