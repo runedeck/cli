@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Session capture rides the baseline hook's extension point: Entire uploads
+# checkpoint state before the push checks run.
+if command -v entire >/dev/null 2>&1; then
+    entire hooks git pre-push "$@" || true
+fi
