@@ -20,7 +20,9 @@ touched code only; do not demand unrelated repository-wide cleanup.
 
 ## Errors
 
-- Fallible functions return Result<T, String>; no anyhow or thiserror.
+- Fallible functions return Result with the repository Error struct and
+  its non_exhaustive ErrorKind enum (RUST-0001, RUST-0009); no anyhow,
+  no thiserror, no bare Result<T, String>.
 - Library code never panics: .unwrap() and .expect() are test-only.
   Only binary entry points (main.rs, CLI dispatch) may panic on
   unrecoverable errors.
@@ -40,7 +42,9 @@ touched code only; do not demand unrelated repository-wide cleanup.
 
 ## Style
 
-- #[forbid(unsafe_code)] stays in every crate.
+- Unsafe code stays forbidden through the workspace lints table
+  (unsafe_code = "forbid" under [lints.rust] in Cargo.toml); flag any
+  edit that weakens or removes it.
 - Names carry the documentation: flag comments that narrate what the
   next line does, and abbreviations under five characters where a full
   word fits (manifest, not mfst).
