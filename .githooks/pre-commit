@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# rune module pre-commit hook
-# Canonical source: https://github.com/runedeck/rune/blob/main/templates/git/pre-commit
+# Commit-time checks: prek hooks when configured, staged secret scan as the
+# floor. A machine with neither tool fails loudly rather than committing
+# unscanned, matching the pre-push hook's stance.
 
-if command -v prek >/dev/null 2>&1; then
-    prek run --all-files
-elif command -v rune >/dev/null 2>&1; then
-    rune validate
+if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+    prek run
+elif command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --staged --pre-commit --no-banner
 else
-    echo ""
-    echo "  ⚠  Neither prek nor rune found — using validate.sh fallback"
-    echo "     Install: cargo install --locked rune-cli   or   cargo binstall prek"
-    echo ""
-    bash scripts/validate.sh .
+    echo "  ⚠  neither prek nor gitleaks found — commit checks cannot run" >&2
+    echo "     install: brew install prek gitleaks" >&2
+    exit 1
 fi

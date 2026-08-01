@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# jj runs no git hooks, so the pre-push checks relocate here.
-# Wired by `make install` as the repo-local jj `push` alias (absolute path so it
-# resolves from any working directory):
+# jj runs no git hooks, so the pre-push checks live here instead.
+# `make install` wires this as the repo-local jj `push` alias:
 #   jj config set --repo aliases.push '["util","exec","--","bash","<repo>/.githooks/jj-push"]'
-# Runs the same checks as git's pre-push hook, then hands off to jj git push.
+# Every local branch diverged from its origin counterpart is fed to pre-push
+# as a synthesized ref-update line, the same protocol git uses, so bookmark
+# pushes get range-scoped checks instead of a HEAD-only fallback. Branches
+# tracking other remotes are outside this net. Then hands off to jj git push.
 
-# cd to the repo root so prek finds .pre-commit-config.yaml regardless of cwd.
 cd "$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null || dirname "$0")"
 
-if command -v prek >/dev/null 2>&1; then
-    prek run --all-files --stage pre-push
-elif command -v rune >/dev/null 2>&1; then
-    rune validate
-fi
+zero=0000000000000000000000000000000000000000
+
+synthesize_ref_updates() {
+    git for-each-ref refs/heads --format='%(refname) %(objectname)' \
+        | while read -r ref sha; do
+            remote_sha=$(git rev-parse -q --verify \
+                "refs/remotes/origin/${ref#refs/heads/}" 2>/dev/null || printf '%s' "$zero")
+            [ "$remote_sha" = "$sha" ] && continue
+            printf '%s %s %s %s\n' "$ref" "$sha" "$ref" "$remote_sha"
+        done
+}
+
+synthesize_ref_updates | bash "$(git rev-parse --show-toplevel)/.githooks/pre-push"
 
 exec jj git push "$@"

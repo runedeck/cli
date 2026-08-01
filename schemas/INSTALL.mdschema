@@ -1,0 +1,23 @@
+# INSTALL.md schema: agent-executable install instructions (Mintlify shape)
+
+heading_rules:
+    no_skip_levels: true
+    max_depth: 2
+
+structure:
+    - heading:
+          pattern: "^# .+"
+          regex: true
+      allow_additional: true
+      children:
+          - heading: "## OBJECTIVE"
+            word_count:
+                min: 5
+          - heading: "## DONE WHEN"
+            word_count:
+                min: 5
+          - heading: "## TODO"
+            lists:
+                - min: 1
+          - heading: "## Steps"
+            allow_additional: true

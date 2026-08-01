@@ -1,0 +1,31 @@
+name: Review Cascade
+
+# Thin caller: the funnel walk lives in runedeck/seer. pull_request_target,
+# deliberately: the walk is API-only and checks out nothing, and fork pull
+# requests need the base-context secrets. Never add a head checkout here
+# or in the body.
+on:
+    pull_request_target:
+        types: [labeled]
+
+# The body's reads (check runs, the live head, review threads) ride the
+# workflow token; issues: write lets it also consume labels on that
+# token, whose events trigger nothing and so can never cancel a lane.
+permissions:
+    contents: read
+    checks: read
+    pull-requests: read
+    issues: write
+
+# Only a fresh bare review label may cancel a walk: the walk's own
+# stage labels re-enter this group and must never kill it.
+concurrency:
+    group: review-cascade-${{ github.event.pull_request.number }}
+    cancel-in-progress: ${{ github.event.label.name == 'review' }}
+
+jobs:
+    cascade:
+        uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
+        secrets:
+            RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}
+            RUNEWRIGHT_APP_KEY: ${{ secrets.RUNEWRIGHT_APP_KEY }}

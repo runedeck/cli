@@ -1,7 +1,14 @@
+# One universal config for every scaffolded repository: each hook gates on
+# the file types present in the change, so hooks for absent languages never
+# fire and language templates carry no lint config of their own.
 repos:
     - repo: builtin
       hooks:
+          # Everything under .provenance/ is sealed, digest-bound evidence:
+          # an auto-fixing hook that rewrites it destroys what it touches.
+          # Validators and secret scanning still cover it.
           - id: trailing-whitespace
+            exclude: '(^|/)\.provenance/'
           - id: check-yaml
             exclude: ^templates/
           - id: check-json
@@ -13,6 +20,13 @@ repos:
             entry: shellcheck -S warning
             language: system
             types: [shell]
+
+          - id: ruff
+            name: ruff check
+            entry: ruff check .
+            language: system
+            pass_filenames: false
+            types: [python]
 
           - id: cargo-fmt
             name: cargo fmt
@@ -28,13 +42,6 @@ repos:
             pass_filenames: false
             types: [rust]
 
-          - id: cargo-test
-            name: cargo test
-            entry: cargo test --all-features
-            language: system
-            pass_filenames: false
-            types: [rust]
-
           - id: tsc
             name: tsc --noEmit
             entry: npx tsc --noEmit
@@ -42,24 +49,25 @@ repos:
             pass_filenames: false
             types: [ts]
 
-          - id: ruff
-            name: ruff check
-            entry: ruff check .
-            language: system
-            pass_filenames: false
-            types: [python]
-
           - id: gitleaks
             name: gitleaks (staged)
             entry: gitleaks git --staged --pre-commit --no-banner
             language: system
             pass_filenames: false
+            stages: [pre-commit]
 
-          - id: gitleaks-tree
-            name: gitleaks (push range)
-            entry: gitleaks git --no-banner --log-opts "HEAD --not --remotes" .
+          - id: rune-validate
+            name: rune validate
+            entry: sh -c 'if command -v rune >/dev/null 2>&1 && { [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ]; }; then rune validate; fi'
             language: system
             pass_filenames: false
+
+          - id: cargo-test
+            name: cargo test
+            entry: cargo test --all-features
+            language: system
+            pass_filenames: false
+            types: [rust]
             stages: [pre-push]
 
           - id: semgrep
@@ -69,8 +77,9 @@ repos:
             pass_filenames: false
             stages: [pre-push]
 
-          - id: rune-validate
-            name: rune validate
-            entry: rune validate
+          - id: gitleaks-range
+            name: gitleaks (push range)
+            entry: sh -c 'if [ -n "${PRE_COMMIT_FROM_REF:-}" ]; then gitleaks git --no-banner --log-opts "${PRE_COMMIT_FROM_REF}..${PRE_COMMIT_TO_REF:-HEAD}"; else gitleaks git --no-banner; fi'
             language: system
             pass_filenames: false
+            stages: [pre-push]

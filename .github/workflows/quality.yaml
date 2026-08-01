@@ -1,0 +1,132 @@
+name: Quality
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+concurrency:
+    group: quality-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+    pull-requests: read
+
+env:
+    GITLEAKS_VERSION: "8.30.1"
+
+jobs:
+    quality:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
+            # Third-party actions must be pinned to a full commit SHA;
+            # first-party paths (./) and runedeck/* refs are exempt.
+            - name: Action pinning
+              run: |
+                  # Comments are stripped before the SHA test so trailing
+                  # text cannot fake a pin.
+                  violations=$(grep -RnE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*["'\'']?[^./[:space:]"'\'']' .github/workflows 2>/dev/null \
+                      | sed 's/[[:space:]]#.*$//' \
+                      | grep -vE 'uses:[[:space:]]*["'\'']?(\./|runedeck/)' \
+                      | grep -vE '@[0-9a-f]{40}["'\'']?$' || true)
+                  if [ -n "$violations" ]; then
+                      echo "Unpinned third-party actions:"
+                      printf '%s\n' "$violations"
+                      exit 1
+                  fi
+                  echo "All third-party actions pinned."
+
+            - name: Release notes attestation
+              if: github.event_name == 'pull_request'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""' \
+                      | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}' \
+                      && echo "Release Notes section present." \
+                      || { echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."; exit 1; }
+
+            # The distro package is too old for `gitleaks git`; install the
+            # pinned upstream release and verify it against the release's
+            # published checksums before executing.
+            # ruff and semgrep serve the universal prek config's type-gated
+            # hooks; rust and ts toolchains are the scaffolded repository's
+            # own concern, and their hooks never fire without their files.
+            - name: Install tools
+              run: |
+                  sudo apt-get install -y shellcheck
+                  pipx install ruff semgrep
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+                  sudo install gitleaks /usr/local/bin/gitleaks
+
+            - name: Commit-stage checks
+              uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
+
+            # Ceremony files must match the skeleton baseline; diverge by
+            # removing the file from .ceremony-manifest in a reviewed pull
+            # request, never by silent local edits. The fetch is
+            # authenticated: rate limits stop biting, and a private skeleton
+            # fails with a nameable cause instead of an anonymous 404.
+            - name: Ceremony drift
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  [ -f .ceremony-manifest ] || { echo "no manifest, skipping"; exit 0; }
+                  drifted=""
+                  fetch_failed=""
+                  baseline=$(mktemp)
+                  while IFS= read -r file; do
+                      case "$file" in ''|'#'*) continue ;; esac
+                      if [ ! -f "$file" ]; then
+                          drifted="$drifted $file(missing)"
+                          continue
+                      fi
+                      # A failed fetch is a network or access problem, never
+                      # drift. This token cannot read a private skeleton; if
+                      # the skeleton ever goes private, the baseline needs an
+                      # org token or a published copy.
+                      if ! gh api "repos/runedeck/skeleton/contents/templates/base/$file?ref=main" \
+                          -H "Accept: application/vnd.github.raw" > "$baseline" 2>/dev/null; then
+                          fetch_failed="$fetch_failed $file"
+                          continue
+                      fi
+                      if ! diff -q "$baseline" "$file" >/dev/null; then
+                          drifted="$drifted $file"
+                      fi
+                  done < .ceremony-manifest
+                  if [ -n "$fetch_failed" ]; then
+                      echo "Baseline fetch failed, drift unknown for:$fetch_failed"
+                      exit 1
+                  fi
+                  if [ -n "$drifted" ]; then
+                      echo "Ceremony files drifted from the skeleton baseline:$drifted"
+                      exit 1
+                  fi
+                  echo "Ceremony files match the skeleton baseline."
+
+            # Scan exactly the commits this event introduces. The rangeless
+            # fallback only fires on a repository's first push, where the
+            # full scan and the introduced commits are the same set.
+            - name: Pre-push-stage checks
+              run: |
+                  if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+                      from="${{ github.event.pull_request.base.sha }}"
+                  elif [ -n "${{ github.event.before }}" ] && ! printf '%s' "${{ github.event.before }}" | grep -q '^0*$'; then
+                      from="${{ github.event.before }}"
+                  else
+                      from=""
+                  fi
+                  if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
+                      prek run --stage pre-push --from-ref "$from" --to-ref "${{ github.sha }}"
+                  else
+                      prek run --stage pre-push --all-files
+                  fi
