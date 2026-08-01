@@ -3,6 +3,9 @@
 # claims the diff upholds, in the register a diff summarizer would use. The
 # notes section feeds the release body at tag time; `- N/A` is the legal
 # entry for work with no user-facing effect.
+#
+# Heading patterns are literal matches against the full heading line; the
+# validator treats pattern as a regex only when regex: true accompanies it.
 
 heading_rules:
     no_skip_levels: false
@@ -10,16 +13,16 @@ heading_rules:
 
 structure:
     - heading:
-          pattern: "^## Plan$"
+          pattern: "## Plan"
     - heading:
-          pattern: "^## Changes$"
+          pattern: "## Changes"
       lists:
           - min: 1
     - heading:
-          pattern: "^## Testing$"
+          pattern: "## Testing"
       lists:
           - min: 1
     - heading:
-          pattern: "^## Release Notes$"
+          pattern: "## Release Notes"
       lists:
           - min: 1

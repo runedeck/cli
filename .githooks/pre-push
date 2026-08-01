@@ -44,6 +44,21 @@ check_range() {
     fi
 }
 
+# A repository may add push-time integrations of its own (session capture,
+# notifications) as an executable .githooks/pre-push.local; it runs first
+# with the same arguments. This file stays identical across repositories
+# and the drift check compares it, so per-repository additions live in the
+# .local sibling, never here. Two protections keep extensions honest:
+# they run only under a real push (git passes the remote name and url as
+# arguments; a direct invocation like make validate passes none), and
+# their stdin is redirected away, because the ref-update lines on stdin
+# belong to the range checks below and a .local that read them would
+# silently reduce those checks to the HEAD fallback.
+hook_dir=$(dirname "$0")
+if [ "$#" -gt 0 ] && [ -x "$hook_dir/pre-push.local" ]; then
+    "$hook_dir/pre-push.local" "$@" < /dev/null || true
+fi
+
 saw_ref_updates=0
 # An interactive terminal cannot deliver the ref-update protocol; reading
 # from it would block forever, so only consume stdin when it is not a TTY.

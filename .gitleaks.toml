@@ -5,11 +5,13 @@
 useDefault = true
 
 # The SpecStory allowlist covers only the untracked output directories; the
-# tracked project binding and configuration stay inside the scan.
+# tracked project binding and configuration stay inside the scan. Patterns
+# anchor at the path start: an unanchored regex would exempt any file whose
+# path merely contains the substring.
 [allowlist]
 paths = [
-    "\\.entire/.*",
-    "\\.specstory/history/.*",
-    "\\.specstory/debug/.*",
-    "\\.jj/.*",
+    "^\\.entire/.*",
+    "^\\.specstory/history/.*",
+    "^\\.specstory/debug/.*",
+    "^\\.jj/.*",
 ]
