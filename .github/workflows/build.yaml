@@ -6,6 +6,11 @@ on:
     pull_request:
         branches: [main]
 
+# The prek hooks call `gitleaks git`, which needs a release build; the
+# Ubuntu package predates that subcommand.
+env:
+    GITLEAKS_VERSION: "8.30.1"
+
 jobs:
     build:
         runs-on: ubuntu-latest
@@ -62,13 +67,17 @@ jobs:
             - name: Install tools
               run: |
                   chmod +x /usr/local/bin/rune
-                  sudo apt-get install -y gitleaks
                   pip install semgrep
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+                  sudo install gitleaks /usr/local/bin/gitleaks
 
             - name: Validate
               uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2
 
-    # End-to-end guard: scaffold a fresh module via `rune init` and run
+    # End-to-end guard: scaffold a fresh project via `rune init` and run
     # `make validate` against it. Catches any change that produces a broken
     # init template (CLI-shape drift, stale SHA pins, Makefile typos, etc.).
     scaffold:
@@ -88,12 +97,20 @@ jobs:
               with:
                   tool: prek
 
-            - name: Scaffold and validate generated module
+            - name: Install gitleaks
+              run: |
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+                  sudo install gitleaks /usr/local/bin/gitleaks
+
+            - name: Scaffold and validate generated project
               shell: bash
               run: |
                   set -euo pipefail
                   chmod +x /usr/local/bin/rune
-                  /usr/local/bin/rune init --target /tmp/module
+                  /usr/local/bin/rune init /tmp/module
                   cd /tmp/module
                   git init -q
                   make validate
