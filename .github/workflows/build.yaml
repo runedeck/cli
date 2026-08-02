@@ -110,7 +110,7 @@ jobs:
               run: |
                   set -euo pipefail
                   chmod +x /usr/local/bin/rune
-                  /usr/local/bin/rune init /tmp/module
+                  /usr/local/bin/rune init /tmp/module --brief "scaffold smoke test"
                   cd /tmp/module
                   git init -q
                   make validate
