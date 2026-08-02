@@ -1,5 +1,9 @@
 name: Build
 
+# The jobs need only checkout reads; nothing here writes through the token.
+permissions:
+    contents: read
+
 on:
     push:
         branches: [main]
