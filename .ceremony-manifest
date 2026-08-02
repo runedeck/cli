@@ -17,7 +17,8 @@
 .github/labeler.yml
 .github/PULL_REQUEST_TEMPLATE.md
 .pre-commit-config.yaml
-.gitleaks.toml
+# .gitleaks.toml diverges deliberately: the evals/baselines fixture
+# exemption is repository-specific (see the changelog).
 KEYS
 schemas/INSTALL.mdschema
 schemas/PULL_REQUEST.mdschema
