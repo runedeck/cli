@@ -20,12 +20,13 @@ touched code only; do not demand unrelated repository-wide cleanup.
 
 ## Errors
 
-- Fallible functions return Result with the repository Error struct and
-  its non_exhaustive ErrorKind enum (RUST-0001, RUST-0009); no anyhow,
-  no thiserror, no bare Result<T, String>.
+- A module with multiple failure modes returns the repository Error
+  struct with its non_exhaustive ErrorKind enum; a simple internal
+  function whose caller only prints or propagates may keep
+  Result<T, String> (RUST-0009). No anyhow, no thiserror.
 - Library code never panics: .unwrap() and .expect() are test-only.
-  Only binary entry points (main.rs, CLI dispatch) may panic on
-  unrecoverable errors.
+  Binary entry points (main.rs, CLI dispatch) and build scripts
+  (build.rs) may panic on unrecoverable errors.
 - I/O errors are never silently erased: no .unwrap_or_default() or
   .ok() swallowing on file reads, network calls, or deserialization.
   Propagate the error or log it before falling back.
