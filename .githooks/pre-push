@@ -72,7 +72,9 @@ if [ ! -t 0 ]; then
         else
             from="$remote_sha"
         fi
-        check_range "$from" "$local_sha"
+        # Stdin stays with the loop: a checker that read it would drain
+        # the remaining ref-update lines.
+        check_range "$from" "$local_sha" < /dev/null
     done
 fi
 

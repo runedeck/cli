@@ -7,7 +7,7 @@
 
 heading_rules:
     no_skip_levels: true
-    max_depth: 2
+    max_depth: 3
 
 structure:
     - heading:

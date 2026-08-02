@@ -23,6 +23,9 @@ synthesize_ref_updates() {
         done
 }
 
-synthesize_ref_updates | bash "$(git rev-parse --show-toplevel)/.githooks/pre-push"
+# The hook receives the same arguments git passes (remote name and url):
+# pre-push runs its extension point only for a real push, and this is one.
+synthesize_ref_updates | bash "$(git rev-parse --show-toplevel)/.githooks/pre-push" \
+    origin "$(git remote get-url origin 2>/dev/null || printf 'origin')"
 
 exec jj git push "$@"
