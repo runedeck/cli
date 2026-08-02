@@ -1,0 +1,22 @@
+name: Autofix Suggest
+
+# Thin caller: the untrusted autofix half lives in runedeck/seer. It runs
+# pull request code, so it triggers on pull_request and passes no secrets.
+on:
+    pull_request:
+        types: [labeled]
+    workflow_dispatch:
+        inputs:
+            pr_number:
+                description: pull request number
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+jobs:
+    suggest:
+        uses: runedeck/seer/.github/workflows/autofix-suggest.yaml@main
+        with:
+            pr_number: ${{ inputs.pr_number || '' }}
