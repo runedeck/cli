@@ -16,6 +16,7 @@
 .github/workflows/thread-resolver.yaml
 .github/labeler.yml
 .github/PULL_REQUEST_TEMPLATE.md
+.macroscope/check-run-agents/ceremony-conventions.md
 .pre-commit-config.yaml
 # .gitleaks.toml diverges deliberately: the evals/baselines fixture
 # exemption is repository-specific (see the changelog).
