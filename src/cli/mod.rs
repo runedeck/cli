@@ -146,13 +146,22 @@ enum Command {
         #[arg(long, value_name = "DIR", conflicts_with = "target")]
         module: Option<String>,
 
-        /// Project language archetype.
-        #[arg(long, value_enum, default_value_t = init::Language::Rust, conflicts_with = "module")]
-        lang: init::Language,
+        /// Ordered template names to compose after base. Repeatable or comma-separated.
+        #[arg(
+            long = "with",
+            value_name = "NAME[,NAME...]",
+            value_delimiter = ',',
+            conflicts_with = "module"
+        )]
+        templates: Vec<String>,
 
-        /// Project purpose archetype.
-        #[arg(long, value_enum, default_value_t = init::Purpose::Tool, conflicts_with = "module")]
-        purpose: init::Purpose,
+        /// Compatibility alias selecting a language template.
+        #[arg(long, value_enum, conflicts_with = "module")]
+        lang: Option<init::Language>,
+
+        /// Compatibility alias selecting a purpose template.
+        #[arg(long, value_enum, conflicts_with = "module")]
+        purpose: Option<init::Purpose>,
 
         /// Skeleton repository root.
         #[arg(long, value_name = "DIR", conflicts_with = "module")]
@@ -925,6 +934,7 @@ pub fn run() -> i32 {
         Command::Init {
             target,
             module,
+            templates,
             lang,
             purpose,
             skeleton,
@@ -940,8 +950,11 @@ pub fn run() -> i32 {
                 let target = target.expect("clap requires a project target or --module");
                 return init::run_project(
                     &target,
-                    lang,
-                    purpose,
+                    init::TemplateSelection {
+                        names: &templates,
+                        language: lang,
+                        purpose,
+                    },
                     skeleton.as_deref(),
                     &brief,
                     init::InitOptions {
@@ -1305,7 +1318,7 @@ fn root_help_styled(sheet: &style::Sheet) -> String {
     help.push_str(
         r"
   Quick start:
-    rune init N4M3Z/demo --lang rust --purpose tool
+    rune init N4M3Z/demo --with rust,tool
     rune target N4M3Z/demo
     rune add development
     rune tui --edit
@@ -1339,7 +1352,7 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "init",
-        "<SLUG_OR_DIR> [--lang] [--purpose] | --module <DIR>",
+        "<SLUG_OR_DIR> [--with <NAMES>] | --module <DIR>",
         "Scaffold a project from a skeleton, or a deck module",
     );
     help_command(

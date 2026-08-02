@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Portable project scaffolding: `rune init --with <templates>` composes flat embedded templates offline and writes Copier-compatible update metadata; `--lang` and `--purpose` remain compatibility aliases.
 - Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch claude@sol` applies a named env/args/with preset from `launch.profiles`; env values support `from_env` references so secrets stay out of config; bare `rune launch` lists tools with install state and profiles; `rune launch ollama@<model>` dispatches `ollama run`.
 - `rune provider` lists deploy providers (name, enabled state, target, plugin) and `enable`/`disable` write `providers.<name>.enabled` into the local `config.yaml`.
 - `rune todo`: `TODO.txt` at the repo root in todo.txt syntax, with `add`, `do`, `ls` filters (`+project`, `@context`, priority), `obsidian` output, and `import` from Obsidian Tasks markdown through a shared item model that preserves unknown extensions.

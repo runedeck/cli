@@ -24,6 +24,15 @@ fn init(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert
         .assert()
 }
 
+fn init_embedded(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    rune()
+        .env("HOME", home)
+        .env("RUNE_QUESTS", quests)
+        .arg("init")
+        .args(args)
+        .assert()
+}
+
 #[test]
 fn project_init_composes_layers_and_substitutes_contents_and_names() {
     let home = tempfile::tempdir().unwrap();
@@ -44,9 +53,7 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         ],
     )
     .success()
-    .stdout(predicate::str::contains(
-        "layers: base, lang/shell, purpose/tool",
-    ))
+    .stdout(predicate::str::contains("layers: base, shell, tool"))
     .stdout(predicate::str::contains("destination:"))
     .stdout(predicate::str::contains("rune add <deck>"))
     .stdout(predicate::str::contains("rune tui --edit"));
@@ -60,9 +67,21 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert!(destination.join("signal-lamp.txt").is_file());
     assert!(destination.join("bin/signal-lamp").is_file());
     assert_eq!(
+        fs::read_to_string(destination.join("verbatim.txt")).unwrap(),
+        "Literal ${NAME} and ${{ github.ref }} expressions.\n"
+    );
+    assert_eq!(
         fs::read_to_string(destination.join("README.md")).unwrap(),
         "# Signal Lamp\n\nWarns the crew\n"
     );
+    let copier_answers = fs::read_to_string(destination.join("answers.yaml")).unwrap();
+    assert!(copier_answers.contains("BRIEF: Warns the crew"));
+    assert!(copier_answers.contains("NAME: signal-lamp"));
+    assert!(copier_answers.contains("OWNER: N4M3Z"));
+    assert!(copier_answers.contains("TITLE: Signal Lamp"));
+    assert!(copier_answers.contains("_commit:"));
+    assert!(copier_answers.contains("_src_path:"));
+    assert!(!destination.join("answers.yaml.jinja").exists());
     assert!(destination.join(".git").exists());
     let hooks_path = std::process::Command::new("git")
         .env_remove("GIT_DIR")
@@ -254,6 +273,116 @@ fn existing_directory_is_used_in_place() {
             .join(destination.path().file_name().unwrap())
             .exists()
     );
+}
+
+#[test]
+fn with_templates_compose_flat_layers_in_order() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("ordered");
+
+    init(
+        home.path(),
+        quests.path(),
+        &["ordered", "--with", "shell,tool"],
+    )
+    .success()
+    .stdout(predicate::str::contains("layers: base, shell, tool"));
+
+    assert_eq!(
+        fs::read_to_string(destination.join("selection.txt")).unwrap(),
+        "Tool template.\n"
+    );
+}
+
+#[test]
+fn unknown_template_fails_before_writing() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("unknown");
+
+    init(
+        home.path(),
+        quests.path(),
+        &["unknown", "--with", "missing"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("available templates: shell, tool"));
+
+    assert!(!destination.exists());
+}
+
+#[test]
+fn noninteractive_init_without_templates_applies_base_only() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("base-only");
+
+    init(home.path(), quests.path(), &["base-only"])
+        .success()
+        .stdout(predicate::str::contains("layers: base"));
+
+    assert!(destination.join("Makefile").is_file());
+    assert!(!destination.join("selection.txt").exists());
+    assert!(!destination.join("bin/base-only").exists());
+}
+
+#[test]
+fn retrofit_appends_missing_gitignore_entries_once() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    fs::write(destination.path().join(".gitignore"), "custom/\n").unwrap();
+    let destination_path = destination.path().to_string_lossy();
+
+    init(
+        home.path(),
+        quests.path(),
+        &[&destination_path, "--with", "shell,tool"],
+    )
+    .success();
+    init(
+        home.path(),
+        quests.path(),
+        &[&destination_path, "--with", "shell,tool"],
+    )
+    .success();
+
+    assert_eq!(
+        fs::read_to_string(destination.path().join(".gitignore")).unwrap(),
+        "custom/\ndist/\n# layer: tool\n.cache/\n"
+    );
+}
+
+#[test]
+fn embedded_init_writes_tagged_copier_metadata_offline() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("offline-copy");
+
+    init_embedded(
+        home.path(),
+        quests.path(),
+        &[
+            "offline-copy",
+            "--with",
+            "shell,tool",
+            "--brief",
+            "Works offline",
+        ],
+    )
+    .success();
+
+    let copier_answers = fs::read_to_string(destination.join("answers.yaml")).unwrap();
+    assert!(copier_answers.contains("BRIEF: Works offline"));
+    assert!(copier_answers.contains("NAME: offline-copy"));
+    assert!(copier_answers.contains("_commit: v0.5.0"));
+    assert!(copier_answers.contains("_src_path: https://github.com/runedeck/skeleton.git"));
+    assert!(!destination.join("AGENTS.md.jinja").exists());
+    let agents = fs::read_to_string(destination.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("Offline Copy"));
+    let workflow = fs::read_to_string(destination.join(".github/workflows/quality.yaml")).unwrap();
+    assert!(workflow.contains("${{ github.ref }}"));
 }
 
 #[test]

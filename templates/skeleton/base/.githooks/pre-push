@@ -1,10 +1,93 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Push-time checks: the pre-push prek stage (secret scan over the tree).
+# Push-time checks over exactly the commits being pushed. git feeds ref
+# updates on stdin, one line per pushed ref:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# The jj push alias synthesizes the same lines for diverged bookmarks, so
+# both paths go through one protocol. A caller with no ref lines on stdin
+# (make validate, an interactive terminal) falls back to the range from the
+# default branch's remote tip to HEAD. Checks prefer the prek pre-push
+# stage and fall back to a direct gitleaks scan; a machine with neither
+# fails loudly rather than passing silently.
 
-if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
-    prek run --all-files --stage pre-push
-elif command -v gitleaks >/dev/null 2>&1; then
-    gitleaks git --no-banner --log-opts "HEAD --not --remotes"
+zero=0000000000000000000000000000000000000000
+
+default_base() {
+    local head_ref
+    head_ref=$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)
+    if [ -z "$head_ref" ]; then
+        head_ref=refs/remotes/origin/main
+    fi
+    git merge-base "$1" "$head_ref" 2>/dev/null || true
+}
+
+check_range() {
+    from=$1
+    to=$2
+    if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+        if [ -n "$from" ]; then
+            prek run --stage pre-push --from-ref "$from" --to-ref "$to"
+        else
+            prek run --stage pre-push --all-files
+        fi
+    elif command -v gitleaks >/dev/null 2>&1; then
+        if [ -n "$from" ]; then
+            gitleaks git --no-banner --log-opts "$from..$to"
+        else
+            gitleaks git --no-banner
+        fi
+    else
+        echo "  ⚠  neither prek nor gitleaks found — push checks cannot run" >&2
+        echo "     install: brew install prek gitleaks" >&2
+        return 1
+    fi
+}
+
+if [ "${1:-}" = "--all-files" ]; then
+    check_range "" HEAD
+    exit 0
+fi
+
+# A repository may add push-time integrations of its own (session capture,
+# notifications) as an executable .githooks/pre-push.local; it runs first
+# with the same arguments. This file stays identical across repositories
+# and the drift check compares it, so per-repository additions live in the
+# .local sibling, never here. Two protections keep extensions honest:
+# they run only with git's remote-name and remote-url argument pair, and
+# their stdin is redirected away, because the ref-update lines on stdin
+# belong to the range checks below and a .local that read them would
+# silently reduce those checks to the HEAD fallback.
+hook_dir=$(dirname "$0")
+if [ "$#" -eq 2 ] && [ -x "$hook_dir/pre-push.local" ]; then
+    "$hook_dir/pre-push.local" "$@" < /dev/null || true
+fi
+
+saw_ref_updates=0
+# An interactive terminal cannot deliver the ref-update protocol; reading
+# from it would block forever, so only consume stdin when it is not a TTY.
+if [ ! -t 0 ]; then
+    while IFS=' ' read -r local_ref local_sha _ remote_sha; do
+        [ -z "${local_ref:-}" ] && continue
+        saw_ref_updates=1
+        [ "$local_sha" = "$zero" ] && continue
+        if [ "$remote_sha" = "$zero" ]; then
+            from=$(default_base "$local_sha")
+        else
+            from="$remote_sha"
+        fi
+        # Stdin stays with the loop: a checker that read it would drain
+        # the remaining ref-update lines.
+        check_range "$from" "$local_sha" < /dev/null
+    done
+fi
+
+if [ "$saw_ref_updates" -eq 0 ]; then
+    head_sha=$(git rev-parse HEAD 2>/dev/null || true)
+    [ -z "$head_sha" ] && exit 0
+    from=$(default_base HEAD)
+    if [ -n "$from" ] && [ "$from" = "$head_sha" ]; then
+        exit 0
+    fi
+    check_range "$from" "$head_sha"
 fi

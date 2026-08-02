@@ -3,7 +3,8 @@ name = "${NAME}"
 version = "0.1.0"
 edition = "2024"
 license = "EUPL-1.2"
-description = "${BRIEF}"
+# Literal string: a brief containing double quotes stays valid TOML.
+description = '${BRIEF}'
 
 [lints.rust]
 unsafe_code = "forbid"

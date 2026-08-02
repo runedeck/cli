@@ -3,12 +3,16 @@ use commands::manifest;
 use commands::ontology;
 use commands::result::{ActionResult, DeployedFile, SkipReason, SkippedFile};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
+use std::io::{self, IsTerminal, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use super::validate::templates::InitTemplates;
+
+const EMBEDDED_SKELETON_SOURCE: &str = "https://github.com/runedeck/skeleton.git";
+const EMBEDDED_SKELETON_RELEASE: &str = "v0.5.0";
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,6 +62,22 @@ impl std::fmt::Display for Purpose {
     }
 }
 
+#[derive(Serialize)]
+struct CopierAnswers<'a> {
+    #[serde(rename = "BRIEF")]
+    brief: &'a str,
+    #[serde(rename = "NAME")]
+    name: &'a str,
+    #[serde(rename = "OWNER")]
+    owner: &'a str,
+    #[serde(rename = "TITLE")]
+    title: &'a str,
+    #[serde(rename = "_commit", skip_serializing_if = "Option::is_none")]
+    commit: Option<&'a str>,
+    #[serde(rename = "_src_path")]
+    source: &'a str,
+}
+
 // Independent step outcomes for the JSON report; an enum would force
 // consumers to decode combinations that are genuinely orthogonal.
 #[allow(clippy::struct_excessive_bools)]
@@ -84,10 +104,19 @@ struct ProjectTemplate {
 struct ProjectContext {
     destination: PathBuf,
     skeleton: PathBuf,
+    copier_source: String,
+    copier_commit: Option<String>,
     name: String,
     title: String,
     owner: String,
     under_workshop_root: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct TemplateSelection<'a> {
+    pub names: &'a [String],
+    pub language: Option<Language>,
+    pub purpose: Option<Purpose>,
 }
 
 /// How much scaffolding beyond the file layers this init performs.
@@ -109,14 +138,13 @@ pub struct InitOptions {
 
 pub fn run_project(
     target: &str,
-    language: Language,
-    purpose: Purpose,
+    selection: TemplateSelection<'_>,
     skeleton: Option<&str>,
     brief: &str,
     options: InitOptions,
     json: bool,
 ) -> i32 {
-    match scaffold_project(target, language, purpose, skeleton, brief, options) {
+    match scaffold_project(target, selection, skeleton, brief, options) {
         Ok(result) => {
             print_project(&result, json);
             i32::from(result.action.has_errors())
@@ -130,8 +158,7 @@ pub fn run_project(
 
 fn scaffold_project(
     target: &str,
-    language: Language,
-    purpose: Purpose,
+    selection: TemplateSelection<'_>,
     skeleton_override: Option<&str>,
     brief: &str,
     options: InitOptions,
@@ -140,6 +167,8 @@ fn scaffold_project(
     let ProjectContext {
         destination,
         skeleton,
+        copier_source,
+        copier_commit,
         name,
         title,
         owner,
@@ -152,27 +181,16 @@ fn scaffold_project(
         ("${OWNER}", owner.as_str()),
         ("${BRIEF}", brief),
     ];
-    let layers = vec![
-        ("base".to_string(), skeleton.join("base")),
-        (
-            format!("lang/{}", language.as_str()),
-            skeleton.join("lang").join(language.as_str()),
-        ),
-        (
-            format!("purpose/{}", purpose.as_str()),
-            skeleton.join("purpose").join(purpose.as_str()),
-        ),
-    ];
+    let layers = resolve_template_layers(
+        &skeleton,
+        selection.names,
+        selection.language,
+        selection.purpose,
+    )?;
 
     let mut templates = BTreeMap::new();
     let mut overrides = Vec::new();
     for (layer_name, layer_root) in &layers {
-        if !layer_root.is_dir() {
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!("skeleton layer '{}' is missing", layer_root.display()),
-            ));
-        }
         collect_layer(
             layer_root,
             layer_root,
@@ -182,6 +200,16 @@ fn scaffold_project(
             &mut overrides,
         )?;
     }
+    insert_copier_answers(
+        &skeleton,
+        &copier_source,
+        copier_commit.as_deref(),
+        &name,
+        &title,
+        &owner,
+        brief,
+        &mut templates,
+    )?;
 
     let mut action = ActionResult::new();
     if options.dry_run {
@@ -229,6 +257,161 @@ fn scaffold_project(
         quest_bound,
         action,
     })
+}
+
+fn resolve_template_layers(
+    skeleton: &Path,
+    requested_templates: &[String],
+    language: Option<Language>,
+    purpose: Option<Purpose>,
+) -> Result<Vec<(String, PathBuf)>, Error> {
+    let base = skeleton.join("base");
+    if !base.is_dir() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("skeleton layer '{}' is missing", base.display()),
+        ));
+    }
+
+    let available = available_template_names(skeleton)?;
+    let mut selected = requested_templates.to_vec();
+    if let Some(language) = language {
+        append_unique(&mut selected, language.as_str());
+    }
+    if let Some(purpose) = purpose {
+        append_unique(&mut selected, purpose.as_str());
+    }
+    if selected.is_empty() && io::stdin().is_terminal() && io::stdout().is_terminal() {
+        selected = pick_templates(&available)?;
+    }
+
+    let mut layers = vec![("base".to_string(), base)];
+    for template_name in selected {
+        if template_name == "base" {
+            continue;
+        }
+        if !available.contains(&template_name) {
+            let available_display = if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            };
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "skeleton template '{template_name}' is missing; available templates: {available_display}"
+                ),
+            ));
+        }
+        if !layers.iter().any(|(name, _)| name == &template_name) {
+            layers.push((template_name.clone(), skeleton.join(template_name)));
+        }
+    }
+    Ok(layers)
+}
+
+fn available_template_names(skeleton: &Path) -> Result<Vec<String>, Error> {
+    let entries = fs::read_dir(skeleton)
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", skeleton.display()),
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", skeleton.display()),
+            )
+        })?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let file_type = entry.file_type().map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot inspect {}: {error}", entry.path().display()),
+            )
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if name != "base" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn append_unique(selected: &mut Vec<String>, template_name: &str) {
+    if !selected.iter().any(|name| name == template_name) {
+        selected.push(template_name.to_string());
+    }
+}
+
+fn pick_templates(available: &[String]) -> Result<Vec<String>, Error> {
+    if available.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    println!("available templates: {}", available.join(", "));
+    print!("templates to compose (comma-separated, empty for base only): ");
+    io::stdout()
+        .flush()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write prompt: {error}")))?;
+    let mut selection = String::new();
+    io::stdin()
+        .read_line(&mut selection)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot read selection: {error}")))?;
+    Ok(selection
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_copier_answers(
+    skeleton: &Path,
+    copier_source: &str,
+    copier_commit: Option<&str>,
+    name: &str,
+    title: &str,
+    owner: &str,
+    brief: &str,
+    templates: &mut BTreeMap<PathBuf, ProjectTemplate>,
+) -> Result<(), Error> {
+    let answers = CopierAnswers {
+        brief,
+        name,
+        owner,
+        title,
+        commit: copier_commit,
+        source: copier_source,
+    };
+    let serialized = serde_yaml::to_string(&answers).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!("cannot serialize Copier answers: {error}"),
+        )
+    })?;
+    let contents =
+        format!("# Changes here will be overwritten by Copier; never edit manually.\n{serialized}")
+            .into_bytes();
+    templates.insert(
+        PathBuf::from("answers.yaml"),
+        ProjectTemplate {
+            source: skeleton.join("base/answers.yaml.jinja"),
+            layer: "base".to_string(),
+            contents,
+        },
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -313,7 +496,10 @@ fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
             "cannot resolve the user cache directory; set a skeleton root with `rune config set skeleton <dir>`".to_string(),
         )
     })?;
-    let cache_root = cache_base.join(format!("rune/skeleton-{}", env!("CARGO_PKG_VERSION")));
+    let cache_root = cache_base.join(format!(
+        "rune/skeleton-{}-{EMBEDDED_SKELETON_RELEASE}",
+        env!("CARGO_PKG_VERSION")
+    ));
     if cache_root.join("base").is_dir() {
         return Ok(cache_root);
     }
@@ -445,6 +631,71 @@ fn bind_quest_if_requested(destination: &Path, requested: bool) -> Result<bool, 
     Ok(requested)
 }
 
+fn resolve_external_skeleton(
+    configured_root: &Path,
+) -> Result<(PathBuf, String, Option<String>), Error> {
+    let canonical_root = configured_root.canonicalize().map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot resolve {}: {error}", configured_root.display()),
+        )
+    })?;
+    let templates_root = if canonical_root.join("templates/base").is_dir() {
+        canonical_root.join("templates")
+    } else if canonical_root.join("base").is_dir() {
+        canonical_root.clone()
+    } else {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "skeleton '{}' has neither templates/base nor base",
+                canonical_root.display()
+            ),
+        ));
+    };
+    let copier_root = if canonical_root.join("copier.yaml").is_file() {
+        canonical_root.clone()
+    } else {
+        canonical_root
+            .parent()
+            .filter(|parent| parent.join("copier.yaml").is_file())
+            .unwrap_or(&canonical_root)
+            .to_path_buf()
+    };
+    let copier_commit = git_reference(&copier_root)?;
+    Ok((
+        templates_root,
+        copier_root.to_string_lossy().into_owned(),
+        copier_commit,
+    ))
+}
+
+fn git_reference(repository: &Path) -> Result<Option<String>, Error> {
+    for arguments in [
+        ["describe", "--tags", "--exact-match", "HEAD"].as_slice(),
+        ["rev-parse", "HEAD"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(repository)
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if output.status.success() {
+            let reference = String::from_utf8(output.stdout).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("git returned a non-UTF-8 reference: {error}"),
+                )
+            })?;
+            let reference = reference.trim();
+            if !reference.is_empty() {
+                return Ok(Some(reference.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn resolve_project_context(
     target: &str,
     skeleton_override: Option<&str>,
@@ -456,18 +707,23 @@ fn resolve_project_context(
         .as_ref()
         .map(|value| PathBuf::from(&value.value))
         .ok_or_else(|| Error::new(ErrorKind::Config, "targets root is not configured"))?;
-    let skeleton = skeleton_override.map_or_else(
-        || {
-            config
-                .ontology
-                .skeleton
-                .as_ref()
-                .map(|value| PathBuf::from(&value.value))
-                .filter(|root| root.is_dir())
-                .map_or_else(materialize_embedded_skeleton, Ok)
-        },
-        |path| Ok(ontology::expand_tilde(path)),
-    )?;
+    let configured_skeleton = skeleton_override.map(ontology::expand_tilde).or_else(|| {
+        config
+            .ontology
+            .skeleton
+            .as_ref()
+            .map(|value| PathBuf::from(&value.value))
+            .filter(|root| root.is_dir())
+    });
+    let (skeleton, copier_source, copier_commit) = if let Some(root) = configured_skeleton {
+        resolve_external_skeleton(&root)?
+    } else {
+        (
+            materialize_embedded_skeleton()?,
+            EMBEDDED_SKELETON_SOURCE.to_string(),
+            Some(EMBEDDED_SKELETON_RELEASE.to_string()),
+        )
+    };
     let configured_owner = config
         .ontology
         .owner
@@ -504,6 +760,8 @@ fn resolve_project_context(
     Ok(ProjectContext {
         destination,
         skeleton,
+        copier_source,
+        copier_commit,
         title: title_case(&name),
         name,
         owner,
@@ -569,6 +827,27 @@ fn write_templates(
     for (relative, template) in templates {
         let target_path = destination.join(&relative);
         let target_display = relative.to_string_lossy().into_owned();
+        if relative == Path::new(".gitignore") && target_path.is_file() {
+            if append_missing_gitignore_entries(&target_path, &template.contents)? {
+                action.installed.push(DeployedFile {
+                    source: template
+                        .source
+                        .strip_prefix(skeleton)
+                        .unwrap_or(&template.source)
+                        .to_string_lossy()
+                        .into_owned(),
+                    target: target_display,
+                    provider: template.layer,
+                });
+            } else {
+                action.skipped.push(SkippedFile {
+                    target: target_display,
+                    provider: template.layer,
+                    reason: SkipReason::AlreadyExists,
+                });
+            }
+            continue;
+        }
         if target_path.exists() {
             action.skipped.push(SkippedFile {
                 target: target_display,
@@ -604,6 +883,51 @@ fn write_templates(
         });
     }
     Ok(())
+}
+
+fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bool, Error> {
+    let existing = fs::read(target).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", target.display()),
+        )
+    })?;
+    let existing_text = std::str::from_utf8(&existing).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!("{} is not UTF-8: {error}", target.display()),
+        )
+    })?;
+    let addition_text = std::str::from_utf8(addition).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!("template .gitignore is not UTF-8: {error}"),
+        )
+    })?;
+    let mut known_lines = existing_text.lines().collect::<HashSet<_>>();
+    let missing_lines = addition_text
+        .lines()
+        .filter(|line| !line.is_empty() && known_lines.insert(line))
+        .collect::<Vec<_>>();
+    if missing_lines.is_empty() {
+        return Ok(false);
+    }
+
+    let mut merged = existing;
+    if !merged.ends_with(b"\n") {
+        merged.push(b'\n');
+    }
+    for line in missing_lines {
+        merged.extend_from_slice(line.as_bytes());
+        merged.push(b'\n');
+    }
+    fs::write(target, merged).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write {}: {error}", target.display()),
+        )
+    })?;
+    Ok(true)
 }
 
 fn merge_gitignore(previous: &[u8], addition: &[u8], layer_name: &str) -> Vec<u8> {
@@ -669,14 +993,25 @@ fn collect_layer(
                 format!("cannot resolve {}: {error}", source.display()),
             )
         })?;
-        let relative = substitute_relative_path(source_relative, replacements)?;
+        if source_relative == Path::new("answers.yaml.jinja") {
+            continue;
+        }
+        let jinja_template = source_relative
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("jinja"));
+        let rendered_relative = without_jinja_suffix(source_relative)?;
+        let relative = substitute_relative_path(&rendered_relative, replacements)?;
         let raw = fs::read(&source).map_err(|error| {
             Error::new(
                 ErrorKind::Io,
                 format!("cannot read {}: {error}", source.display()),
             )
         })?;
-        let contents = substitute_bytes(&raw, replacements);
+        let contents = if layer_name == "base" && !jinja_template {
+            raw
+        } else {
+            substitute_bytes(&raw, replacements)
+        };
         if relative == Path::new(".gitignore")
             && let Some(previous) = templates.get_mut(&relative)
         {
@@ -700,6 +1035,21 @@ fn collect_layer(
         }
     }
     Ok(())
+}
+
+fn without_jinja_suffix(path: &Path) -> Result<PathBuf, Error> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("skeleton path '{}' has no UTF-8 file name", path.display()),
+        ));
+    };
+    let Some(rendered_name) = file_name.strip_suffix(".jinja") else {
+        return Ok(path.to_path_buf());
+    };
+    let mut rendered = path.parent().map_or_else(PathBuf::new, Path::to_path_buf);
+    rendered.push(rendered_name);
+    Ok(rendered)
 }
 
 fn substitute_relative_path(path: &Path, replacements: &[(&str, &str)]) -> Result<PathBuf, Error> {

@@ -1,0 +1,27 @@
+# Ceremony-owned files: every scaffolded repository's copies are checked
+# against the skeleton baseline (templates/base/ in runedeck/skeleton) by the
+# quality workflow's drift job. Diverge deliberately in two reviewed pull
+# requests: first remove the line here, then change the file. The removal
+# pull request itself is still checked against the prior manifest, so one
+# change can never unlist its own checks.
+.githooks/pre-commit
+.githooks/pre-push
+.githooks/jj-push
+.github/workflows/quality.yaml
+.github/workflows/template-update.yaml
+.github/workflows/pr-lint.yaml
+.github/workflows/congrats.yaml
+.github/workflows/review-correctness.yaml
+.github/workflows/review-cascade.yaml
+.github/workflows/autofix-suggest.yaml
+.github/workflows/autofix-comment.yaml
+.github/workflows/issue-dedup.yaml
+.github/workflows/thread-resolver.yaml
+.github/labeler.yml
+.github/PULL_REQUEST_TEMPLATE.md
+.macroscope/check-run-agents/ceremony-conventions.md
+.pre-commit-config.yaml
+.gitleaks.toml
+KEYS
+schemas/INSTALL.mdschema
+schemas/PULL_REQUEST.mdschema

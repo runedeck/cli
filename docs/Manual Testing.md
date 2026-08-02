@@ -40,8 +40,8 @@ Expected: `completion install` reports the cleared completion cache and completi
 
 ```sh
 export RUNE_TARGETS="$(mktemp -d)"
-rune init demo --lang shell --purpose tool --dry-run   # plan only, destination untouched
-rune init demo --lang shell --purpose tool --brief "Manual init target"
+rune init demo --with shell,tool --dry-run   # plan only, destination untouched
+rune init demo --with shell,tool --brief "Manual init target"
 cd "$RUNE_TARGETS/demo"
 test -x bin/demo && test -x .githooks/pre-commit && echo hooks-ok
 git config --get core.hooksPath       # .githooks
@@ -55,7 +55,7 @@ rune install
 rune validate                          # consumer checks: .rune parses, per-provider manifests
 ```
 
-Expected: init lists `base`, `lang/shell`, `purpose/tool`. Under the targets root init runs in workshop mode: the private/public/assets layout lands, jj colocates when installed, and the first commit stays yours (`--workshop` forces the mode elsewhere; `--spine` gives a plain project the jj colocation; outside the targets root a plain init still commits the scaffold). The composed `.gitignore` carries both the base entries and the lang fragment; `rune validate` in the scaffolded project runs consumer checks (no module.yaml errors) so the pre-commit hook passes.
+Expected: init lists `base`, `shell`, `tool` and writes `answers.yaml`. Under the targets root init runs in workshop mode: the private/public/assets layout lands, jj colocates when installed, and the first commit stays yours (`--workshop` forces the mode elsewhere; `--spine` gives a plain project the jj colocation; outside the targets root a plain init still commits the scaffold). The composed `.gitignore` carries the base and selected-template entries; `rune validate` in the scaffolded project runs consumer checks (no module.yaml errors) so the pre-commit hook passes.
 
 ## 4. The target-redirect note
 
