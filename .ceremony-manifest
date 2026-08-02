@@ -6,6 +6,7 @@
 .githooks/pre-push
 .githooks/jj-push
 .github/workflows/quality.yaml
+.github/workflows/template-update.yaml
 .github/workflows/pr-lint.yaml
 .github/workflows/congrats.yaml
 .github/workflows/review-correctness.yaml
