@@ -103,7 +103,7 @@ fn prune_respects_provenance_source_uri() {
     assert!(
         target
             .path()
-            .join(".claude/skills/rune/skills/AlphaSkill/SKILL.md")
+            .join(".claude/skills/AlphaSkill/SKILL.md")
             .exists(),
         "module-a's AlphaSkill should deploy"
     );
@@ -115,14 +115,14 @@ fn prune_respects_provenance_source_uri() {
     assert!(
         target
             .path()
-            .join(".claude/skills/rune/skills/AlphaSkill/SKILL.md")
+            .join(".claude/skills/AlphaSkill/SKILL.md")
             .exists(),
         "AlphaSkill from module-a must survive module-b's prune (different repository URL)"
     );
     assert!(
         target
             .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md")
+            .join(".claude/skills/BetaSkill/SKILL.md")
             .exists(),
         "BetaSkill should deploy from module-b"
     );
@@ -154,17 +154,11 @@ fn prune_does_not_match_name_suffix() {
     install(module_b.path(), target.path(), &[]).success();
 
     assert!(
-        target
-            .path()
-            .join(".claude/skills/rune/skills/Foo/SKILL.md")
-            .exists(),
+        target.path().join(".claude/skills/Foo/SKILL.md").exists(),
         "PublishPrompts/Foo must survive Prompts's prune (no substring match)"
     );
     assert!(
-        target
-            .path()
-            .join(".claude/skills/rune/skills/Bar/SKILL.md")
-            .exists(),
+        target.path().join(".claude/skills/Bar/SKILL.md").exists(),
         "Prompts/Bar should deploy"
     );
 }
@@ -263,7 +257,7 @@ fn run_two_pass_prune_for_provider(provider: &str) {
 
 #[test]
 fn two_pass_prune_removes_skill_directory_claude() {
-    run_two_pass_prune_for_provider(".claude/skills/rune");
+    run_two_pass_prune_for_provider(".claude");
 }
 
 #[test]
@@ -297,18 +291,14 @@ fn quarantine_roundtrip_restores_tree() {
     create_skill(module.path(), "BetaSkill");
 
     install(module.path(), target.path(), &[]).success();
-    let pre_prune_skill = fs::read(
-        target
-            .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md"),
-    )
-    .unwrap();
+    let pre_prune_skill =
+        fs::read(target.path().join(".claude/skills/BetaSkill/SKILL.md")).unwrap();
 
     fs::remove_dir_all(module.path().join("skills/BetaSkill")).unwrap();
     install(module.path(), target.path(), &[]).success();
 
     // Locate the quarantined file.
-    let trash_entries = list_trash(target.path(), ".claude/skills/rune");
+    let trash_entries = list_trash(target.path(), ".claude");
     let quarantined = trash_entries[0].join("skills/BetaSkill/SKILL.md");
     let restored_content = fs::read(&quarantined).unwrap();
     assert_eq!(
@@ -317,20 +307,13 @@ fn quarantine_roundtrip_restores_tree() {
     );
 
     // Recovery contract: moving back restores the tree.
-    fs::create_dir_all(target.path().join(".claude/skills/rune/skills/BetaSkill")).unwrap();
+    fs::create_dir_all(target.path().join(".claude/skills/BetaSkill")).unwrap();
     fs::rename(
         &quarantined,
-        target
-            .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md"),
+        target.path().join(".claude/skills/BetaSkill/SKILL.md"),
     )
     .unwrap();
-    let post_restore = fs::read(
-        target
-            .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md"),
-    )
-    .unwrap();
+    let post_restore = fs::read(target.path().join(".claude/skills/BetaSkill/SKILL.md")).unwrap();
     assert_eq!(post_restore, pre_prune_skill);
 }
 
@@ -356,12 +339,12 @@ fn no_prune_keeps_stale() {
     assert!(
         target
             .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md")
+            .join(".claude/skills/BetaSkill/SKILL.md")
             .exists(),
         "BetaSkill must remain when --no-prune is passed"
     );
     assert!(
-        list_trash(target.path(), ".claude/skills/rune").is_empty(),
+        list_trash(target.path(), ".claude").is_empty(),
         "no .trash/ should be created in --no-prune mode"
     );
 }
@@ -395,12 +378,12 @@ fn dry_run_emits_plan_without_moving() {
     assert!(
         target
             .path()
-            .join(".claude/skills/rune/skills/BetaSkill/SKILL.md")
+            .join(".claude/skills/BetaSkill/SKILL.md")
             .exists(),
         "dry-run must not move files"
     );
     assert!(
-        list_trash(target.path(), ".claude/skills/rune").is_empty(),
+        list_trash(target.path(), ".claude").is_empty(),
         "dry-run must not create .trash/"
     );
 }
@@ -423,9 +406,7 @@ fn prune_skips_modified_file_without_force() {
     install(module.path(), target.path(), &[]).success();
 
     // User edits the deployed file in place.
-    let deployed = target
-        .path()
-        .join(".claude/skills/rune/skills/BetaSkill/SKILL.md");
+    let deployed = target.path().join(".claude/skills/BetaSkill/SKILL.md");
     fs::write(&deployed, "user-modified content\n").unwrap();
 
     // Source removes BetaSkill; install with default prune.
@@ -442,7 +423,7 @@ fn prune_skips_modified_file_without_force() {
         "modified content must be preserved verbatim"
     );
     assert!(
-        list_trash(target.path(), ".claude/skills/rune").is_empty(),
+        list_trash(target.path(), ".claude").is_empty(),
         ".trash/ must not be created when only-modified files would be pruned"
     );
 }
@@ -462,9 +443,7 @@ fn prune_overrides_modified_file_with_force() {
 
     install(module.path(), target.path(), &[]).success();
 
-    let deployed = target
-        .path()
-        .join(".claude/skills/rune/skills/BetaSkill/SKILL.md");
+    let deployed = target.path().join(".claude/skills/BetaSkill/SKILL.md");
     fs::write(&deployed, "user-modified content\n").unwrap();
 
     fs::remove_dir_all(module.path().join("skills/BetaSkill")).unwrap();
@@ -474,7 +453,7 @@ fn prune_overrides_modified_file_with_force() {
         !deployed.exists(),
         "--force must let prune override the modification check"
     );
-    let trash = list_trash(target.path(), ".claude/skills/rune");
+    let trash = list_trash(target.path(), ".claude");
     assert_eq!(trash.len(), 1, "exactly one .trash entry expected");
     let quarantined = trash[0].join("skills/BetaSkill/SKILL.md");
     let saved = fs::read_to_string(&quarantined).unwrap();
@@ -507,7 +486,7 @@ fn prune_refuses_traversal_manifest_key() {
     // Poison the deployed manifest with a stale entry whose flattened key
     // climbs out of the target via `..` segments, injected inside the existing
     // `skills:` mapping so the YAML stays valid.
-    let manifest_path = target.path().join(".claude/skills/rune/.manifest");
+    let manifest_path = target.path().join(".claude/.manifest");
     let original = fs::read_to_string(&manifest_path).unwrap();
     let poisoned = original.replace(
         "skills:\n",
@@ -557,7 +536,7 @@ fn prune_ignores_files_not_in_manifest() {
 
     // Drop a hand-authored skill directly into the deployed tree; no
     // rune install was involved, so .manifest has no entry for it.
-    let hand_skill_dir = target.path().join(".claude/skills/rune/skills/HandSkill");
+    let hand_skill_dir = target.path().join(".claude/skills/HandSkill");
     fs::create_dir_all(&hand_skill_dir).unwrap();
     let hand_file = hand_skill_dir.join("SKILL.md");
     fs::write(&hand_file, "---\nname: HandSkill\n---\n\nBody.\n").unwrap();
@@ -576,10 +555,7 @@ fn prune_ignores_files_not_in_manifest() {
     install(module.path(), target.path(), &[]).success();
 
     assert!(
-        !target
-            .path()
-            .join(".claude/skills/rune/skills/AlphaSkill")
-            .exists(),
+        !target.path().join(".claude/skills/AlphaSkill").exists(),
         "AlphaSkill (with manifest entry) must be pruned"
     );
     assert!(
@@ -729,7 +705,7 @@ fn prune_keeps_base_rule_when_active_model_variant_resolves_to_target() {
         "deployed Foo should be refreshed from the active model variant: {content}"
     );
     assert!(
-        list_trash(target.path(), ".claude/skills/rune").is_empty(),
+        list_trash(target.path(), ".claude").is_empty(),
         "active model deployment must not be pruned"
     );
 }
@@ -750,10 +726,7 @@ fn prune_handles_bare_name_modules() {
     install(module.path(), target.path(), &[]).success();
 
     assert!(
-        !target
-            .path()
-            .join(".claude/skills/rune/skills/BetaSkill")
-            .exists(),
+        !target.path().join(".claude/skills/BetaSkill").exists(),
         "BetaSkill must be pruned even when module identity is a bare name"
     );
 }

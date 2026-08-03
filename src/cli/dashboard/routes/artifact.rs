@@ -621,6 +621,9 @@ fn git_show(repo: &std::path::Path, sha: &str, path: &str) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["show", &format!("{sha}:{path}")])
         .current_dir(repo)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .ok()?;
     if !output.status.success() {

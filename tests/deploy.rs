@@ -165,7 +165,7 @@ fn install_deploys_agent_to_all_providers() {
     assert!(
         target_directory
             .path()
-            .join(".claude/skills/rune/agents/TestAgent.md")
+            .join(".claude/agents/TestAgent.md")
             .is_file()
     );
     assert!(
@@ -210,7 +210,7 @@ fn install_preserves_claude_skill_allowed_tools() {
     let claude_skill = fs::read_to_string(
         target_directory
             .path()
-            .join(".claude/skills/rune/skills/DciSkill/SKILL.md"),
+            .join(".claude/skills/DciSkill/SKILL.md"),
     )
     .unwrap();
     assert!(
@@ -266,7 +266,7 @@ fn install_maps_model_tier_for_claude() {
     let deployed = fs::read_to_string(
         target_directory
             .path()
-            .join(".claude/skills/rune/agents/StrongAgent.md"),
+            .join(".claude/agents/StrongAgent.md"),
     )
     .unwrap();
 
@@ -421,13 +421,13 @@ fn install_deploys_skill_with_companion() {
     assert!(
         target_directory
             .path()
-            .join(".claude/skills/rune/skills/TestSkill/SKILL.md")
+            .join(".claude/skills/TestSkill/SKILL.md")
             .is_file()
     );
     assert!(
         target_directory
             .path()
-            .join(".claude/skills/rune/skills/TestSkill/Reference.md")
+            .join(".claude/skills/TestSkill/Reference.md")
             .is_file()
     );
 }
@@ -536,12 +536,8 @@ fn install_creates_nested_manifest() {
         fs::read_to_string(target_directory.path().join(".claude/.manifest")).unwrap();
     assert!(rules_manifest.contains("rules:"));
 
-    let plugin_manifest = fs::read_to_string(
-        target_directory
-            .path()
-            .join(".claude/skills/rune/.manifest"),
-    )
-    .unwrap();
+    let plugin_manifest =
+        fs::read_to_string(target_directory.path().join(".claude/.manifest")).unwrap();
     assert!(plugin_manifest.contains("agents:"));
     assert!(plugin_manifest.contains("  Agent.md:"));
     assert!(plugin_manifest.contains("    fingerprint:"));
@@ -571,7 +567,7 @@ fn install_deploys_provenance_sidecars() {
 
     let provenance_path = target_directory
         .path()
-        .join(".claude/skills/rune/agents/.provenance/TracedAgent.yaml");
+        .join(".claude/agents/.provenance/TracedAgent.yaml");
 
     assert!(provenance_path.is_file());
 

@@ -84,6 +84,9 @@ pub(super) fn register_repo(path: &Path, repos: &mut HashMap<String, PathBuf>) {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(path)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output();
     if let Ok(output) = output
         && output.status.success()
@@ -98,6 +101,9 @@ pub(super) fn git_remote(path: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(path)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .ok()?;
     if !output.status.success() {

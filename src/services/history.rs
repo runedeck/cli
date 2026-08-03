@@ -14,6 +14,19 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+/// A git invocation pinned to the given repository. Ambient `GIT_DIR`,
+/// `GIT_WORK_TREE`, and `GIT_INDEX_FILE` (exported into hook environments)
+/// would otherwise retarget the call at the enclosing repository.
+fn git_in(repo: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .current_dir(repo)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
+    command
+}
+
 /// Number of commits fetched by each background history request.
 pub const DEFAULT_HISTORY_BATCH_SIZE: usize = 200;
 
@@ -222,7 +235,7 @@ fn load_history_batch(
     skip: usize,
     batch_size: usize,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let mut command = Command::new("git");
+    let mut command = git_in(repo);
     command
         .arg("log")
         .arg(format!("--skip={skip}"))
@@ -230,8 +243,7 @@ fn load_history_batch(
         .arg((batch_size + 1).to_string())
         .arg("--decorate=short")
         .arg(HISTORY_GIT_LOG_FORMAT)
-        .arg(revision)
-        .current_dir(repo);
+        .arg(revision);
     if let HistoryScope::Paths(paths) = scope
         && !paths.is_empty()
     {
@@ -252,9 +264,8 @@ fn load_history_batch(
 }
 
 fn history_revision(repo: &Path) -> std::io::Result<String> {
-    let output = Command::new("git")
+    let output = git_in(repo)
         .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(repo)
         .output()?;
     if !output.status.success() {
         return Err(std::io::Error::new(
@@ -390,7 +401,7 @@ pub fn source_at_deploy(
 
 /// Recent commit SHAs touching a file, newest first.
 fn recent_commit_shas(repo: &Path, file_rel: &str, limit: usize) -> Vec<String> {
-    let output = Command::new("git")
+    let output = git_in(repo)
         .args([
             "log",
             "--follow",
@@ -400,7 +411,6 @@ fn recent_commit_shas(repo: &Path, file_rel: &str, limit: usize) -> Vec<String> 
             "--",
             file_rel,
         ])
-        .current_dir(repo)
         .output();
     let Ok(output) = output else {
         return Vec::new();
@@ -417,9 +427,8 @@ fn recent_commit_shas(repo: &Path, file_rel: &str, limit: usize) -> Vec<String> 
 
 /// File content at a specific commit (`git show {sha}:{path}`).
 fn git_show_file(repo: &Path, sha: &str, path: &str) -> Option<String> {
-    let output = Command::new("git")
+    let output = git_in(repo)
         .args(["show", &format!("{sha}:{path}")])
-        .current_dir(repo)
         .output()
         .ok()?;
     if !output.status.success() {
@@ -440,7 +449,7 @@ pub fn git_log_for_artifact(
     let Some(file_path) = source_path else {
         return Vec::new();
     };
-    let output = Command::new("git")
+    let output = git_in(repo_path)
         .args([
             "log",
             "--follow",
@@ -450,7 +459,6 @@ pub fn git_log_for_artifact(
             "--",
             file_path,
         ])
-        .current_dir(repo_path)
         .output();
     let Ok(output) = output else {
         return Vec::new();
@@ -548,11 +556,7 @@ fn truncate_prompt(line: &str) -> String {
 /// Runs `git show <object>` in a repo, returning its stdout or `None` on any
 /// failure (missing branch, missing path, non-utf8).
 fn git_show(repo: &Path, object: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["show", object])
-        .current_dir(repo)
-        .output()
-        .ok()?;
+    let output = git_in(repo).args(["show", object]).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -586,6 +590,11 @@ mod tests {
         let output = Command::new("git")
             .args(args)
             .current_dir(repo)
+            // A pre-push hook exports GIT_DIR and GIT_WORK_TREE; inherited,
+            // they retarget the fixture's git calls at the enclosing repo.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .output()
             .expect("git should run");
         assert!(
@@ -628,6 +637,9 @@ mod tests {
         let mut child = Command::new("git")
             .args(["fast-import", "--quiet"])
             .current_dir(repo.path())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -6992,6 +6992,11 @@ fn diff_lines(
     let output = std::process::Command::new("git")
         .args(["diff", "HEAD", "--", path])
         .current_dir(repo)
+        // Ambient GIT_DIR and GIT_WORK_TREE (exported by git hooks) would
+        // retarget the diff at the enclosing repository.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output();
     let Ok(output) = output else {
         return vec![header, Line::from("git diff failed to run")];

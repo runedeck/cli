@@ -224,6 +224,9 @@ fn clone_target(slug: &str, destination: &Path) -> Result<PathBuf, Error> {
     let status = std::process::Command::new("git")
         .args(["clone", &url])
         .arg(destination)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .status()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git clone: {error}")))?;
     if !status.success() {
