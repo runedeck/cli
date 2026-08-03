@@ -46,17 +46,40 @@ jobs:
                   update=$(printf '%s' "$result" | jq -r '.update_available')
                   latest=$(printf '%s' "$result" | jq -r '.latest_version')
                   target=$latest
+                  recorded_source=$(grep -E '^_src_path:' answers.yaml | sed 's/^_src_path:[[:space:]]*//')
 
                   if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
                       printf '%s' "$DISPATCH_TEMPLATE" \
                           | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
                           || { echo "invalid template repository: $DISPATCH_TEMPLATE"; exit 1; }
+                      # A dispatch for another template must not advance this
+                      # repository. The recorded source's owner/repo tail
+                      # compares across https, ssh, gh:, and .git spellings.
+                      source_repo=$(printf '%s' "$recorded_source" | sed -E 's/\.git$//; s|^.*[:/]([^/:]+/[^/:]+)$|\1|')
+                      [ "$source_repo" = "$DISPATCH_TEMPLATE" ] \
+                          || { echo "dispatch names template $DISPATCH_TEMPLATE, but this repository adopted $recorded_source"; exit 1; }
                       git check-ref-format "refs/tags/$DISPATCH_TAG" \
                           || { echo "invalid template release tag: $DISPATCH_TAG"; exit 1; }
                       dispatch_version=${DISPATCH_TAG#v}
                       [ "$latest" = "$DISPATCH_TAG" ] || [ "$latest" = "$dispatch_version" ] \
                           || { echo "release dispatch $DISPATCH_TAG is superseded by $latest"; exit 1; }
                       target=$DISPATCH_TAG
+                  fi
+
+                  # Copier reports bare versions while release tags may carry a
+                  # v prefix; the template's own tag list settles the form, and
+                  # a target that matches no tag never reaches an update.
+                  if [ "$update" = "true" ]; then
+                      fetch_url=$recorded_source
+                      case "$fetch_url" in gh:*) fetch_url="https://github.com/${fetch_url#gh:}" ;; esac
+                      bare=${target#v}
+                      listing=$(git ls-remote --tags "$fetch_url" "refs/tags/v$bare" "refs/tags/$bare") \
+                          || { echo "could not list release tags on $recorded_source"; exit 1; }
+                      resolved=$(printf '%s\n' "$listing" \
+                          | grep -v '\^{}' | head -n 1 | sed 's|.*refs/tags/||')
+                      [ -n "$resolved" ] \
+                          || { echo "no release tag for $target on $recorded_source"; exit 1; }
+                      target=$resolved
                   fi
 
                   printf '%s\n' "update=$update" "tag=$target" \
@@ -67,9 +90,16 @@ jobs:
               if: steps.detect.outputs.update == 'true'
               env:
                   GH_TOKEN: ${{ github.token }}
+                  # The tag reaches the shell as data, never by expression
+                  # interpolation into the script body.
+                  TARGET_TAG: ${{ steps.detect.outputs.tag }}
               run: |
+                  # Dispatch carries the release tag (v0.2.0) while Copier's
+                  # check reports the bare version (0.2.0); both branch forms
+                  # must count as the same open update.
+                  bare=${TARGET_TAG#v}
                   url=$(gh pr list --state open --limit 1000 --json headRefName,url \
-                      --jq '[.[] | select(.headRefName | startswith("template-update/"))][0].url // ""')
+                      --jq "[.[] | select((.headRefName | startswith(\"template-update/v$bare\")) or (.headRefName | startswith(\"template-update/$bare\")))][0].url // \"\"")
                   printf '%s\n' "url=$url" | tee -a "$GITHUB_OUTPUT" >/dev/null
                   [ -z "$url" ] || echo "an update pull request is already open: $url"
 
@@ -80,18 +110,19 @@ jobs:
               env:
                   TARGET_TAG: ${{ steps.detect.outputs.tag }}
               run: |
-                  if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-                      copier update --answers-file answers.yaml --defaults --vcs-ref "$TARGET_TAG"
-                  else
-                      copier update --answers-file answers.yaml --defaults
-                  fi
+                  # Every path pins the detected release, so the applied tree
+                  # always matches the tag the branch and pull request name.
+                  copier update --answers-file answers.yaml --defaults --vcs-ref "$TARGET_TAG"
 
             - name: Reject unresolved update output
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
               env:
                   APPLY_OUTCOME: ${{ steps.apply.outcome }}
               run: |
-                  conflicts=$(grep -RInE --exclude-dir=.git --exclude-dir=.jj '^(<<<<<<<|=======|>>>>>>>)' . || true)
+                  # A labeled begin or end marker is never legitimate text, so
+                  # each blocks alone and a partially resolved conflict still
+                  # fails; only a bare ======= is setext-ambiguous and passes.
+                  conflicts=$(grep -RIlE --exclude-dir=.git --exclude-dir=.jj '^(<<<<<<< |>>>>>>> )' . || true)
                   rejects=$(find . -path ./.git -prune -o -path ./.jj -prune -o -type f -name '*.rej' -print)
                   if [ -n "$conflicts" ] || [ -n "$rejects" ]; then
                       [ -z "$conflicts" ] || printf '%s\n' "$conflicts"
@@ -101,6 +132,15 @@ jobs:
                   fi
                   [ "$APPLY_OUTCOME" = "success" ] \
                       || { echo "Copier failed before producing reviewable conflicts."; exit 1; }
+
+            - name: Stage template output
+              if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+              run: |
+                  git add -A
+                  if git diff --cached --quiet; then
+                      echo "Copier reported an update but changed no files."
+                      exit 1
+                  fi
 
             - name: Install validation tools
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
@@ -118,14 +158,20 @@ jobs:
 
             - name: Validate updated repository
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+              env:
+                  RUFF_NO_CACHE: "1"
               run: make validate
 
-            - name: Stage update
+            - name: Build update patch
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
               run: |
-                  git add .
-                  git diff --cached --quiet \
-                      && { echo "Copier reported an update but changed no files."; exit 1; }
+                  unstaged=$(git diff --name-only)
+                  untracked=$(git ls-files --others --exclude-standard)
+                  if [ -n "$unstaged" ] || [ -n "$untracked" ]; then
+                      [ -z "$unstaged" ] || printf 'Validation modified:\n%s\n' "$unstaged"
+                      [ -z "$untracked" ] || printf 'Validation created:\n%s\n' "$untracked"
+                      exit 1
+                  fi
                   git diff --cached --binary --output=template-update.patch
 
             - id: publisher
