@@ -19,9 +19,10 @@ dashboard:
 providers:
     claude:
         target: ".claude"
-        # Skills, agents, and hooks deploy as the `rune` skills-directory
-        # plugin, so the harness namespaces skills as rune:<name>.
-        plugin: rune
+        # Skills deploy flat (`.claude/skills/<name>/SKILL.md`), the only
+        # project-local layout the harness discovers. `plugin: <name>` remains
+        # an opt-in for packaging a marketplace-installable plugin tree; the
+        # harness does not load plugin trees from project directories.
         model: claude-opus-4-6
         aliases:
             - claudecode

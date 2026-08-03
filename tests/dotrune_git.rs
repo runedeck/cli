@@ -32,6 +32,9 @@ fn git(args: &[&str], cwd: &Path) -> std::process::Output {
     ];
     full_args.extend_from_slice(args);
     let output = StdCommand::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(&full_args)
         .current_dir(cwd)
         .env_remove("GIT_WORK_TREE")

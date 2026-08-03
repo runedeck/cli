@@ -1412,16 +1412,8 @@ fn wrapped_code_and_comment_rows_cannot_hide_logical_cursor() {
     assert_eq!(app.detail_cursor_for_test(), 10);
 }
 
-#[test]
-fn fullscreen_diff_keeps_cursor_visible_across_resize_and_tab_switches() {
-    let root = tempfile::tempdir().unwrap();
-    let source_path = "skills/BuildSkill/SKILL.md";
-    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
-    let original = (1..=60)
-        .map(|line| format!("old line {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(root.path().join(source_path), &original).unwrap();
+fn committed_fixture_repo(root: &std::path::Path, source_path: &str, content: &str) {
+    std::fs::write(root.join(source_path), content).unwrap();
     for args in [
         &["init", "-q"][..],
         &["config", "user.email", "tui@example.invalid"][..],
@@ -1433,12 +1425,29 @@ fn fullscreen_diff_keeps_cursor_visible_across_resize_and_tab_switches() {
         assert!(
             std::process::Command::new("git")
                 .args(args)
-                .current_dir(root.path())
+                .current_dir(root)
+                // A pre-push hook exports GIT_DIR and GIT_WORK_TREE;
+                // inherited, they retarget the fixture at the real repo.
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
                 .status()
                 .unwrap()
                 .success()
         );
     }
+}
+
+#[test]
+fn fullscreen_diff_keeps_cursor_visible_across_resize_and_tab_switches() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = "skills/BuildSkill/SKILL.md";
+    std::fs::create_dir_all(root.path().join("skills/BuildSkill")).unwrap();
+    let original = (1..=60)
+        .map(|line| format!("old line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    committed_fixture_repo(root.path(), source_path, &original);
     let modified = (1..=60)
         .map(|line| format!("new line {line}"))
         .collect::<Vec<_>>()

@@ -136,9 +136,7 @@ fn cast_subset_drift_is_clean_until_a_deployed_file_changes() {
         "an absent deck config must merge silently: {stderr}"
     );
 
-    let deployed = consumer
-        .path()
-        .join(".claude/skills/rune/skills/OnlyScience/SKILL.md");
+    let deployed = consumer.path().join(".claude/skills/OnlyScience/SKILL.md");
     fs::write(&deployed, "locally edited\n").unwrap();
 
     let drift = rune()

@@ -823,10 +823,21 @@ fn initialize_git(destination: &Path, owner: &str, commit: bool) -> Result<bool,
     Ok(initialized)
 }
 
+/// Ambient `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` (exported into
+/// hook environments) would retarget these calls at the enclosing repository.
+fn shield_git(command: &mut Command) -> &mut Command {
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+}
+
 fn git_has_head(directory: &Path) -> Result<bool, Error> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(directory)
+        .current_dir(directory);
+    let output = shield_git(&mut command)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     Ok(output.status.success())
@@ -838,7 +849,8 @@ fn commit_scaffold(directory: &Path, owner: &str) -> Result<(), Error> {
     } else {
         owner.trim()
     };
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args([
             "-c",
             "commit.gpgsign=false",
@@ -853,7 +865,8 @@ fn commit_scaffold(directory: &Path, owner: &str) -> Result<(), Error> {
             "-m",
             "chore: scaffold from skeleton",
         ])
-        .current_dir(directory)
+        .current_dir(directory);
+    let output = shield_git(&mut command)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     if output.status.success() {
@@ -872,7 +885,7 @@ fn run_git<const N: usize>(args: [&str; N], directory: Option<&Path>) -> Result<
     if let Some(directory) = directory {
         command.current_dir(directory);
     }
-    let output = command
+    let output = shield_git(&mut command)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     if output.status.success() {

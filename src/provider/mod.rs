@@ -68,10 +68,13 @@ pub struct ProviderConfig {
     /// `config/models.yaml`). Selects which `provider/<model>/` variant
     /// directory wins during assembly; `--model` overrides it.
     pub model: Option<String>,
-    /// Deploy skills, agents, and hooks as a skills-directory plugin of
-    /// this name (`<target>/skills/<plugin>/…` with a `.claude-plugin/`
-    /// manifest), so the harness namespaces them as `<plugin>:<skill>`.
-    /// Rules keep their loose path. Absent means the loose layout.
+    /// Deploy skills, agents, and hooks as a plugin tree of this name
+    /// (`<target>/skills/<plugin>/…` with a `.claude-plugin/` manifest) for
+    /// packaging into a marketplace-installable plugin. The harness loads
+    /// project-local skills only at `<target>/skills/<name>/SKILL.md`, never
+    /// from plugin trees inside project directories, so this is an explicit
+    /// packaging opt-in. Rules keep their loose path. Absent means the flat
+    /// layout the harness discovers.
     pub plugin: Option<String>,
     /// Opt-in providers (`enabled: false`) deploy only when named
     /// explicitly with `--provider`; the default set skips them.

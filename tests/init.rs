@@ -65,6 +65,9 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     );
     assert!(destination.join(".git").exists());
     let hooks_path = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(["config", "--get", "core.hooksPath"])
         .current_dir(&destination)
         .output()
@@ -74,6 +77,9 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         ".githooks"
     );
     let branch = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(["branch", "--show-current"])
         .current_dir(&destination)
         .output()
@@ -82,6 +88,9 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     // Under the targets root init runs in workshop mode: layout lands,
     // the first commit stays a human decision.
     let head = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&destination)
         .output()
@@ -115,6 +124,9 @@ fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
     fs::set_permissions(&pre_commit, permissions).unwrap();
     assert!(
         std::process::Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .env("HOME", home.path())
             .args([
                 "config",
@@ -136,6 +148,9 @@ fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
     .success();
 
     let head = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(destination)
         .output()
