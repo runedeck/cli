@@ -5,9 +5,10 @@ name: Review Correctness
 # labels enter the lane, while only a fresh summon may cancel an active
 # run. Round-end label consumption in the lane rides the workflow token,
 # whose removals emit no events, so a clean round never re-enters here.
+# ready_for_review re-evaluates the mirror only; it summons nothing.
 on:
     pull_request:
-        types: [labeled]
+        types: [labeled, ready_for_review]
 
 permissions:
     contents: read
@@ -23,7 +24,7 @@ concurrency:
 
 jobs:
     review:
-        if: github.event.pull_request.draft == false
+        if: github.event.action == 'labeled' && github.event.pull_request.draft == false
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
@@ -33,15 +34,16 @@ jobs:
     # Mirrors the called lane's result under the stable check context the
     # rulesets require. Fail-closed: a head the lane did not judge reports
     # failure rather than skipping, because a skipped check satisfies a
-    # required status check. When the lane does not run, green requires that
-    # Runeseer's LATEST review on this exact head is an approval: an approval
-    # a later review superseded stays red, and no event class can redden or
-    # green a head past that judgment. Drafts skip the mirror because they
-    # cannot merge.
+    # required status check, and it runs for drafts too so a label applied
+    # in draft can never leave a skipped-green check behind. When the lane
+    # does not run, green requires that Runeseer's LATEST review on this
+    # exact head is an approval: an approval a later review superseded
+    # stays red, and no event class can redden or green a head past that
+    # judgment.
     review-context:
         name: review/correctness
         needs: review
-        if: always() && github.event.pull_request.draft == false
+        if: always()
         runs-on: ubuntu-latest
         timeout-minutes: 2
         steps:
