@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Project scaffolding escapes TOML description values and includes `.gitignore` retrofits in dry-run output.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
 
 ## [0.5.0] - 2026-07-17

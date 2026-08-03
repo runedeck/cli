@@ -355,6 +355,85 @@ fn retrofit_appends_missing_gitignore_entries_once() {
 }
 
 #[test]
+fn dry_run_predicts_gitignore_retrofit_performed_by_real_init() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let gitignore = destination.path().join(".gitignore");
+    fs::write(&gitignore, "custom/\n").unwrap();
+    let destination_path = destination.path().to_string_lossy();
+
+    let dry_run_output = init(
+        home.path(),
+        quests.path(),
+        &[
+            &destination_path,
+            "--with",
+            "shell,tool",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let dry_run_result: serde_json::Value = serde_json::from_slice(&dry_run_output).unwrap();
+    let dry_run_gitignore = dry_run_result["installed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"] == ".gitignore")
+        .cloned();
+
+    assert!(dry_run_gitignore.is_some());
+    assert_eq!(fs::read_to_string(&gitignore).unwrap(), "custom/\n");
+
+    let real_run_output = init(
+        home.path(),
+        quests.path(),
+        &[&destination_path, "--with", "shell,tool", "--json"],
+    )
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let real_run_result: serde_json::Value = serde_json::from_slice(&real_run_output).unwrap();
+    let real_run_gitignore = real_run_result["installed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"] == ".gitignore")
+        .cloned();
+
+    assert_eq!(dry_run_gitignore, real_run_gitignore);
+    assert_eq!(
+        fs::read_to_string(gitignore).unwrap(),
+        "custom/\ndist/\n# layer: tool\n.cache/\n"
+    );
+}
+
+#[test]
+fn project_init_escapes_brief_in_generated_toml() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("quoted-brief");
+    let brief = "Everyone's \"toolkit\" uses \\ paths";
+
+    init_embedded(
+        home.path(),
+        quests.path(),
+        &["quoted-brief", "--with", "rust", "--brief", brief],
+    )
+    .success();
+
+    let cargo_toml = fs::read_to_string(destination.join("Cargo.toml")).unwrap();
+    let parsed: toml::Value = toml::from_str(&cargo_toml).unwrap();
+
+    assert_eq!(parsed["package"]["description"].as_str(), Some(brief));
+}
+
+#[test]
 fn embedded_init_writes_tagged_copier_metadata_offline() {
     let home = tempfile::tempdir().unwrap();
     let quests = tempfile::tempdir().unwrap();

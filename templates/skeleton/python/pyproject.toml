@@ -1,8 +1,7 @@
 [project]
 name = "${NAME}"
 version = "0.1.0"
-# Literal string: a brief containing double quotes stays valid TOML.
-description = '${BRIEF}'
+description = "${BRIEF}"
 license = "EUPL-1.2"
 requires-python = ">=3.12"
 

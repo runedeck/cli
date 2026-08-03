@@ -213,7 +213,7 @@ fn scaffold_project(
 
     let mut action = ActionResult::new();
     if options.dry_run {
-        return Ok(dry_run_result(
+        return dry_run_result(
             destination,
             &skeleton,
             layers,
@@ -221,7 +221,7 @@ fn scaffold_project(
             &templates,
             workshop,
             options,
-        ));
+        );
     }
 
     fs::create_dir_all(&destination).map_err(|error| {
@@ -423,15 +423,20 @@ fn dry_run_result(
     templates: &BTreeMap<PathBuf, ProjectTemplate>,
     workshop: bool,
     options: InitOptions,
-) -> ProjectResult {
+) -> Result<ProjectResult, Error> {
     let mut action = ActionResult::new();
     let jj_planned = (workshop || options.spine) && jj_on_path();
     for step in planned_steps(workshop, jj_planned, options.bind) {
         overrides.push(format!("plan: {step}"));
     }
     for (relative, template) in templates {
-        // Model the real run: targets that already exist would be skipped.
-        if destination.join(relative).exists() {
+        let target_path = destination.join(relative);
+        let will_write = if relative == Path::new(".gitignore") && target_path.is_file() {
+            merged_gitignore_contents(&target_path, &template.contents)?.is_some()
+        } else {
+            !target_path.exists()
+        };
+        if !will_write {
             action.skipped.push(SkippedFile {
                 target: relative.to_string_lossy().into_owned(),
                 provider: template.layer.clone(),
@@ -450,7 +455,7 @@ fn dry_run_result(
             provider: template.layer.clone(),
         });
     }
-    ProjectResult {
+    Ok(ProjectResult {
         destination,
         layers: layers.into_iter().map(|(name, _)| name).collect(),
         overrides,
@@ -460,7 +465,7 @@ fn dry_run_result(
         dry_run: true,
         quest_bound: false,
         action,
-    }
+    })
 }
 
 /// Resolve `.` and `..` components without touching the filesystem, so a
@@ -886,6 +891,19 @@ fn write_templates(
 }
 
 fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bool, Error> {
+    let Some(merged) = merged_gitignore_contents(target, addition)? else {
+        return Ok(false);
+    };
+    fs::write(target, merged).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write {}: {error}", target.display()),
+        )
+    })?;
+    Ok(true)
+}
+
+fn merged_gitignore_contents(target: &Path, addition: &[u8]) -> Result<Option<Vec<u8>>, Error> {
     let existing = fs::read(target).map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -910,7 +928,7 @@ fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bo
         .filter(|line| !line.is_empty() && known_lines.insert(line))
         .collect::<Vec<_>>();
     if missing_lines.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let mut merged = existing;
@@ -921,13 +939,7 @@ fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bo
         merged.extend_from_slice(line.as_bytes());
         merged.push(b'\n');
     }
-    fs::write(target, merged).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", target.display()),
-        )
-    })?;
-    Ok(true)
+    Ok(Some(merged))
 }
 
 fn merge_gitignore(previous: &[u8], addition: &[u8], layer_name: &str) -> Vec<u8> {
@@ -1009,6 +1021,11 @@ fn collect_layer(
         })?;
         let contents = if layer_name == "base" && !jinja_template {
             raw
+        } else if rendered_relative
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
+        {
+            substitute_toml_bytes(&raw, replacements)
         } else {
             substitute_bytes(&raw, replacements)
         };
@@ -1092,6 +1109,22 @@ fn substitute_bytes(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
         .fold(source.to_vec(), |value, (from, to)| {
             replace_bytes(&value, from.as_bytes(), to.as_bytes())
         })
+}
+
+fn substitute_toml_bytes(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    replacements
+        .iter()
+        .fold(source.to_vec(), |value, (from, to)| {
+            replace_bytes(
+                &value,
+                from.as_bytes(),
+                escape_toml_basic_string(to).as_bytes(),
+            )
+        })
+}
+
+fn escape_toml_basic_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn replace_bytes(source: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
