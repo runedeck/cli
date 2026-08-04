@@ -51,7 +51,8 @@ fn copier_commit(copier_answers: &str) -> Option<&str> {
 }
 
 fn skeleton_revision(revision: &str) -> Option<String> {
-    let output = scrubbed_git(&skeleton_fixture(), &["rev-parse", revision]);
+    let commit_form = format!("{revision}^{{commit}}");
+    let output = scrubbed_git(&skeleton_fixture(), &["rev-parse", &commit_form]);
     if !output.status.success() {
         return None;
     }
