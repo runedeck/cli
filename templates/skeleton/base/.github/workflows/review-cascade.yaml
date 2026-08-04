@@ -6,7 +6,7 @@ name: Review Cascade
 # or in the body.
 on:
     pull_request_target:
-        types: [opened, ready_for_review, reopened, labeled]
+        types: [labeled, unlabeled, ready_for_review]
 
 # The body's reads (check runs, the live head, review threads) ride the
 # workflow token; issues: write lets it also consume labels on that
@@ -17,49 +17,15 @@ permissions:
     pull-requests: read
     issues: write
 
-# Only a fresh bare review label may cancel a cascade: the cascade's own
-# stage labels re-enter this group and must never kill it.
+# A fresh bare review summon or its removal may cancel a cascade. Every other
+# label re-enters this group without interrupting the active round.
 concurrency:
-    group: review-cascade-${{ github.event.pull_request.number }}-${{ github.event.action == 'reopened' && 'reopen' || 'cascade' }}
-    cancel-in-progress: ${{ github.event.label.name == 'review' }}
+    group: review-cascade-${{ github.event.pull_request.number }}
+    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && github.event.label.name == 'review' }}
 
 jobs:
-    reopen:
-        if: github.event.action == 'reopened' && github.event.pull_request.draft == false
-        runs-on: ubuntu-latest
-        steps:
-            - id: runewright
-              uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-              with:
-                  app-id: ${{ secrets.RUNEWRIGHT_APP_ID }}
-                  private-key: ${{ secrets.RUNEWRIGHT_APP_KEY }}
-
-            - name: Restart the review cascade
-              env:
-                  CALLER_TOKEN: ${{ github.token }}
-                  GH_TOKEN: ${{ steps.runewright.outputs.token }}
-              run: |
-                  active_labels=$(GH_TOKEN=$CALLER_TOKEN gh api \
-                      "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
-                      --jq '.[].name')
-                  if printf '%s\n' "$active_labels" | grep -qx review; then
-                      GH_TOKEN=$CALLER_TOKEN gh api -X DELETE \
-                          "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/review" \
-                          >/dev/null 2>&1 || true
-                      active_labels=$(GH_TOKEN=$CALLER_TOKEN gh api \
-                          "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
-                          --jq '.[].name')
-                      if printf '%s\n' "$active_labels" | grep -qx review; then
-                          echo "Could not clear the existing review label."
-                          exit 1
-                      fi
-                  fi
-                  gh api -X POST \
-                      "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
-                      -f "labels[]=review" >/dev/null
-
     review:
-        if: github.event.pull_request.draft == false && github.event.action != 'reopened'
+        if: github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review')))
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
         secrets:
             RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}

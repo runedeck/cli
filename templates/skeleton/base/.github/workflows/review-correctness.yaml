@@ -1,14 +1,14 @@
 name: Review Correctness
 
 # Thin caller: the lane's body lives in runedeck/seer. The caller owns
-# the triggers, the concurrency, and the permissions; only review-label
-# events and new pushes may cancel an active run, so an unrelated label
-# never kills a billed review mid-flight. Round-end label consumption in
-# the lane rides the workflow token, whose removals emit no events, so a
-# clean round never re-enters here.
+# the triggers, the concurrency, and the permissions. Summon and stage
+# labels enter the lane, while only a fresh summon may cancel an active
+# run. Round-end label consumption in the lane rides the workflow token,
+# whose removals emit no events, so a clean round never re-enters here.
+# ready_for_review re-evaluates the mirror and releases a draft summon.
 on:
     pull_request:
-        types: [opened, ready_for_review, reopened, synchronize, labeled, unlabeled]
+        types: [labeled, unlabeled, ready_for_review]
 
 permissions:
     contents: read
@@ -20,11 +20,11 @@ permissions:
 
 concurrency:
     group: review-correctness-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ github.event.action == 'synchronize' || (contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name)) }}
+    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name) }}
 
 jobs:
     review:
-        if: github.event.pull_request.draft == false
+        if: github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review:runeseer')))
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
@@ -34,15 +34,16 @@ jobs:
     # Mirrors the called lane's result under the stable check context the
     # rulesets require. Fail-closed: a head the lane did not judge reports
     # failure rather than skipping, because a skipped check satisfies a
-    # required status check. When the lane does not run, green requires that
-    # Runeseer's LATEST review on this exact head is an approval: an approval
-    # a later review superseded stays red, and no event class can redden or
-    # green a head past that judgment. Drafts skip the mirror because they
-    # cannot merge.
+    # required status check, and it runs for drafts too so a label applied
+    # in draft can never leave a skipped-green check behind. When the lane
+    # does not run, green requires that Runeseer's LATEST review on this
+    # exact head is an approval: an approval a later review superseded
+    # stays red, and no event class can redden or green a head past that
+    # judgment.
     review-context:
         name: review/correctness
         needs: review
-        if: always() && github.event.pull_request.draft == false
+        if: always()
         runs-on: ubuntu-latest
         timeout-minutes: 2
         steps:
