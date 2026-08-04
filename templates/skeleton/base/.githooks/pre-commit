@@ -14,30 +14,44 @@ for argument in ${1+"$@"}; do
     [ "$argument" = "--all-files" ] && all_files=true
 done
 
-scan_file() {
-    if [ -f .gitleaks.toml ]; then
-        gitleaks dir --config .gitleaks.toml --no-banner "$1"
+scan_snapshot() {
+    local snapshot_directory=$1
+    local config_path="$PWD/.gitleaks.toml"
+
+    if [ -f "$config_path" ]; then
+        (cd "$snapshot_directory" && gitleaks dir --config "$config_path" --no-banner .)
     else
-        gitleaks dir --no-banner "$1"
+        (cd "$snapshot_directory" && gitleaks dir --no-banner .)
+    fi
+}
+
+list_tracked_files() {
+    if [ -d .jj ] && command -v jj >/dev/null 2>&1; then
+        jj file list --ignore-working-copy -r @ -T 'path ++ "\0"'
+    else
+        git ls-files -z
     fi
 }
 
 scan_tracked_files() {
+    local scan_directory
     local scan_failed=false
-    local tracked_files
 
-    tracked_files=$(mktemp)
-    git ls-files -z > "$tracked_files" || {
-        echo "  ⚠  git ls-files failed — the tracked-file scan cannot run" >&2
-        rm -f "$tracked_files"
+    if ! command -v gitleaks >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1; then
+        echo "  ⚠  gitleaks and rsync are required for the tracked-file scan" >&2
         return 1
-    }
+    fi
 
-    while IFS= read -r -d '' file; do
-        [ -f "$file" ] || continue
-        scan_file "$file" || scan_failed=true
-    done < "$tracked_files"
-    rm -f "$tracked_files"
+    scan_directory=$(mktemp -d)
+    list_tracked_files \
+        | rsync --archive --from0 --files-from=- ./ "$scan_directory/" || {
+            echo "  ⚠  tracked files could not be copied for secret scanning" >&2
+            rm -rf "$scan_directory"
+            return 1
+        }
+
+    scan_snapshot "$scan_directory" || scan_failed=true
+    rm -rf "$scan_directory"
 
     [ "$scan_failed" = "false" ]
 }
