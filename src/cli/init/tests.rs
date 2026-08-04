@@ -2,6 +2,34 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn git_reference_does_not_discover_enclosing_repository() {
+    let repository = TempDir::new().unwrap();
+    run_git(["init", "-b", "main"], Some(repository.path())).unwrap();
+    run_git(
+        [
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=",
+            "-c",
+            "user.name=Test Author",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "test fixture",
+        ],
+        Some(repository.path()),
+    )
+    .unwrap();
+    let nested_non_repository = repository.path().join("skeleton");
+    std::fs::create_dir(&nested_non_repository).unwrap();
+
+    assert_eq!(git_reference(&nested_non_repository).unwrap(), None);
+}
+
+#[test]
 fn init_creates_all_files() {
     let temp_directory = TempDir::new().unwrap();
     let result = execute(&temp_directory.path().to_string_lossy()).unwrap();

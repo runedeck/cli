@@ -682,6 +682,9 @@ fn git_reference(repository: &Path) -> Result<Option<String>, Error> {
     ] {
         let mut command = Command::new("git");
         command.args(arguments).current_dir(repository);
+        if let Some(parent) = repository.parent() {
+            command.env("GIT_CEILING_DIRECTORIES", parent);
+        }
         let output = shield_git(&mut command)
             .output()
             .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
@@ -1154,7 +1157,9 @@ fn escape_quoted_string(value: &str) -> String {
                 '\n' => escaped.push_str("\\n"),
                 '\t' => escaped.push_str("\\t"),
                 '\r' => escaped.push_str("\\r"),
-                '\u{0000}'..='\u{001f}' => push_unicode_escape(&mut escaped, character),
+                '\u{0000}'..='\u{001f}' | '\u{007f}' => {
+                    push_unicode_escape(&mut escaped, character);
+                }
                 _ => escaped.push(character),
             }
             escaped

@@ -79,7 +79,7 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert!(copier_answers.contains("NAME: signal-lamp"));
     assert!(copier_answers.contains("OWNER: N4M3Z"));
     assert!(copier_answers.contains("TITLE: Signal Lamp"));
-    assert!(copier_answers.contains("_commit:"));
+    assert!(!copier_answers.contains("_commit:"));
     assert!(copier_answers.contains("_src_path:"));
     assert!(!destination.join("answers.yaml.jinja").exists());
     assert!(destination.join(".git").exists());
@@ -418,7 +418,7 @@ fn project_init_escapes_brief_in_generated_toml() {
     let home = tempfile::tempdir().unwrap();
     let quests = tempfile::tempdir().unwrap();
     let destination = quests.path().join("quoted-brief");
-    let brief = "Everyone's \"toolkit\" uses \\ paths\nwith\ttabs\rand \u{001f}";
+    let brief = "Everyone's \"toolkit\" uses \\ paths\nwith\ttabs\rand \u{001f} plus \u{007f}";
 
     init_embedded(
         home.path(),
