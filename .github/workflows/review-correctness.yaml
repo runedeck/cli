@@ -61,8 +61,9 @@ jobs:
                   # this check rather than falling through to the approval
                   # path, and an unknown conclusion stays red.
                   if [ "${{ needs.review.result }}" = "success" ]; then
-                      inner=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
-                          --jq '[.jobs[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
+                      inner=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                          --jq '.jobs' \
+                          | jq -s -r 'add // [] | [.[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
                           || { echo "could not read this run's jobs; rerun the check"; exit 1; }
                       if [ "$inner" = "success" ]; then
                           echo "the lane judged this head or stood down in scope."
