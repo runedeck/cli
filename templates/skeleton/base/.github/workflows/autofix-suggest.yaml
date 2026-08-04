@@ -14,7 +14,6 @@ on:
 
 permissions:
     contents: read
-    pull-requests: read
 
 concurrency:
     group: review-autofix-${{ github.event.pull_request.number || inputs.pr_number }}
@@ -22,21 +21,29 @@ concurrency:
 
 jobs:
     # A manual dispatch carries no pull request payload, so the draft gate
-    # reads the live pull request before the lane may run.
+    # reads the live pull request before the lane may run. The input reaches
+    # the shell as data and must be a bare number; only this job reads
+    # pull requests.
     gate:
         if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 2
+        permissions:
+            contents: read
+            pull-requests: read
         steps:
             - env:
                   GH_TOKEN: ${{ github.token }}
+                  PR_NUMBER: ${{ inputs.pr_number }}
               run: |
-                  draft=$(gh api "repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}" --jq .draft)
+                  printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$' \
+                      || { echo "pull request number must be numeric"; exit 1; }
+                  draft=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq .draft)
                   [ "$draft" = "false" ] || { echo "draft pull requests take no autofix round"; exit 1; }
 
     suggest:
         needs: gate
-        if: always() && ((github.event_name == 'workflow_dispatch' && needs.gate.result == 'success') || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review:autofix')))))
+        if: '!cancelled() && ((github.event_name == ''workflow_dispatch'' && needs.gate.result == ''success'') || (github.event_name == ''pull_request'' && github.event.pull_request.draft == false && (github.event.action == ''labeled'' || (github.event.action == ''ready_for_review'' && contains(github.event.pull_request.labels.*.name, ''review:autofix'')))))'
         uses: runedeck/seer/.github/workflows/autofix-suggest.yaml@main
         with:
             pr_number: ${{ inputs.pr_number || '' }}
