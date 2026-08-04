@@ -44,7 +44,15 @@ scan_tracked_files() {
 
 if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     prek run ${1+"$@"}
-    [ "$all_files" = "false" ] || scan_tracked_files
+    # The tracked-file sweep needs gitleaks; a prek-only machine warns
+    # loudly instead of failing on the missing binary.
+    if [ "$all_files" = "true" ]; then
+        if command -v gitleaks >/dev/null 2>&1; then
+            scan_tracked_files
+        else
+            echo "  ⚠  gitleaks not found — the tracked-file secret sweep was skipped" >&2
+        fi
+    fi
 elif command -v gitleaks >/dev/null 2>&1; then
     if [ "$all_files" = "true" ]; then
         scan_tracked_files
