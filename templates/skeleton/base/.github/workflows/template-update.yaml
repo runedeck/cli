@@ -98,7 +98,9 @@ jobs:
                   # check reports the bare version (0.2.0); both branch forms
                   # must count as the same open update.
                   # The tag reaches jq as an argument, never by splicing into
-                  # the program text.
+                  # the program text. pipefail keeps a failed pull request
+                  # read from passing as no-open-update.
+                  set -o pipefail
                   bare=${TARGET_TAG#v}
                   url=$(gh pr list --state open --limit 1000 --json headRefName,url \
                       | jq -r --arg bare "$bare" '[.[] | select((.headRefName | startswith("template-update/v" + $bare)) or (.headRefName | startswith("template-update/" + $bare)))][0].url // ""')

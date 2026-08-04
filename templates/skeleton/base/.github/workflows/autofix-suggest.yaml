@@ -14,14 +14,29 @@ on:
 
 permissions:
     contents: read
+    pull-requests: read
 
 concurrency:
     group: review-autofix-${{ github.event.pull_request.number || inputs.pr_number }}
     cancel-in-progress: ${{ github.event_name == 'pull_request' && contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && github.event.label.name == 'review:autofix' }}
 
 jobs:
+    # A manual dispatch carries no pull request payload, so the draft gate
+    # reads the live pull request before the lane may run.
+    gate:
+        if: github.event_name == 'workflow_dispatch'
+        runs-on: ubuntu-latest
+        timeout-minutes: 2
+        steps:
+            - env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  draft=$(gh api "repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}" --jq .draft)
+                  [ "$draft" = "false" ] || { echo "draft pull requests take no autofix round"; exit 1; }
+
     suggest:
-        if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review:autofix'))))
+        needs: gate
+        if: always() && ((github.event_name == 'workflow_dispatch' && needs.gate.result == 'success') || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review:autofix')))))
         uses: runedeck/seer/.github/workflows/autofix-suggest.yaml@main
         with:
             pr_number: ${{ inputs.pr_number || '' }}
