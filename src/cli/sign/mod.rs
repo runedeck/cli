@@ -12,12 +12,17 @@ use std::process::Command;
 
 const SEAL_SUBJECT: &str = "seal: approve";
 
-pub(crate) fn execute(amend: bool, tag: Option<&str>, verify: Option<&str>) -> Result<i32, Error> {
+pub(crate) fn execute(
+    amend: bool,
+    tag: Option<&str>,
+    commit: Option<&str>,
+    verify: Option<&str>,
+) -> Result<i32, Error> {
     if let Some(reference) = verify {
         return verify_reference(reference);
     }
     if let Some(name) = tag {
-        return sign_tag(name);
+        return sign_tag(name, tag_target(commit));
     }
     if amend {
         return amend_head();
@@ -27,11 +32,11 @@ pub(crate) fn execute(amend: bool, tag: Option<&str>, verify: Option<&str>) -> R
 
 fn seal_branch() -> Result<i32, Error> {
     let branch = current_branch()?;
-    require_signing_key()?;
-    run_interactive_git(&["commit", "--allow-empty", "-S", "-m", SEAL_SUBJECT])?;
+    run_signing_git(&["commit", "--allow-empty", "-S", "-m", SEAL_SUBJECT])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
-    let remote = push_remote()?;
-    run_interactive_git(&["push", &remote, "HEAD"])?;
+    let remote = branch_push_remote(&branch)?;
+    let refspec = configured_branch_push_refspec(&branch)?;
+    run_interactive_git(&["push", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("sealed {branch} @ {head}");
     Ok(0)
@@ -42,22 +47,22 @@ fn seal_branch() -> Result<i32, Error> {
 /// signature, and replaces its pushed predecessor under a lease.
 fn amend_head() -> Result<i32, Error> {
     let branch = current_branch()?;
-    require_signing_key()?;
-    run_interactive_git(&["commit", "--amend", "--no-edit", "--allow-empty", "-S"])?;
+    run_signing_git(&["commit", "--amend", "--no-edit", "--allow-empty", "-S"])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
-    let remote = push_remote()?;
-    run_interactive_git(&["push", "--force-with-lease", &remote, "HEAD"])?;
+    let remote = branch_push_remote(&branch)?;
+    let refspec = configured_branch_push_refspec(&branch)?;
+    run_interactive_git(&["push", "--force-with-lease", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("re-signed {branch} @ {head}");
     Ok(0)
 }
 
-fn sign_tag(name: &str) -> Result<i32, Error> {
-    require_signing_key()?;
-    run_interactive_git(&["tag", "--sign", "--message", name, name])?;
+fn sign_tag(name: &str, commit: &str) -> Result<i32, Error> {
+    run_signing_git(&["tag", "--sign", "--message", name, name, commit])?;
     run_interactive_git(&["verify-tag", name])?;
-    let remote = push_remote()?;
-    run_interactive_git(&["push", &remote, &format!("refs/tags/{name}")])?;
+    let remote = tag_push_remote()?;
+    let refspec = tag_push_refspec(name);
+    run_interactive_git(&["push", &remote, &refspec])?;
     println!("signed tag {name} pushed to {remote}");
     Ok(0)
 }
@@ -88,20 +93,6 @@ fn verify_reference(reference: &str) -> Result<i32, Error> {
     Ok(1)
 }
 
-/// The signing key must exist before any commit or tag is created, so a
-/// misconfigured environment fails by naming the gap instead of leaving a
-/// half-made seal behind.
-fn require_signing_key() -> Result<(), Error> {
-    let key = git_stdout(&["config", "--get", "user.signingkey"]).unwrap_or_default();
-    if key.is_empty() {
-        return Err(Error::new(
-            ErrorKind::Config,
-            "no signing key configured: set user.signingkey to the owner's OpenPGP key",
-        ));
-    }
-    Ok(())
-}
-
 fn current_branch() -> Result<String, Error> {
     git_stdout(&["symbolic-ref", "--short", "HEAD"]).map_err(|_| {
         Error::new(
@@ -111,12 +102,84 @@ fn current_branch() -> Result<String, Error> {
     })
 }
 
-fn push_remote() -> Result<String, Error> {
-    let branch = current_branch()?;
-    Ok(
-        git_stdout(&["config", "--get", &format!("branch.{branch}.remote")])
-            .unwrap_or_else(|_| "origin".to_string()),
-    )
+fn branch_push_remote(branch: &str) -> Result<String, Error> {
+    for key in [
+        format!("branch.{branch}.pushRemote"),
+        "remote.pushDefault".to_string(),
+        format!("branch.{branch}.remote"),
+    ] {
+        if let Some(remote) = git_config_value(&key)? {
+            return Ok(remote);
+        }
+    }
+    default_push_remote()
+}
+
+fn tag_push_remote() -> Result<String, Error> {
+    match git_stdout(&["symbolic-ref", "--short", "HEAD"]) {
+        Ok(branch) => branch_push_remote(&branch),
+        Err(_) => default_push_remote(),
+    }
+}
+
+fn default_push_remote() -> Result<String, Error> {
+    let configured = git_config_value("remote.pushDefault")?;
+    let remote_output = git_stdout(&["remote"])?;
+    let remotes: Vec<&str> = remote_output.lines().collect();
+    select_default_remote(configured.as_deref(), &remotes).ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "no default push remote: configure remote.pushDefault or add origin",
+        )
+    })
+}
+
+fn git_config_value(key: &str) -> Result<Option<String>, Error> {
+    let output = Command::new("git")
+        .args(["config", "--get", key])
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
+    }
+    if output.status.code() == Some(1) {
+        return Ok(None);
+    }
+    Err(Error::new(
+        ErrorKind::Io,
+        format!(
+            "git config failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    ))
+}
+
+pub(crate) fn select_default_remote(configured: Option<&str>, remotes: &[&str]) -> Option<String> {
+    configured
+        .map(str::to_string)
+        .or_else(|| remotes.contains(&"origin").then(|| "origin".to_string()))
+        .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_string()))
+}
+
+fn configured_branch_push_refspec(branch: &str) -> Result<String, Error> {
+    let merge_reference = git_config_value(&format!("branch.{branch}.merge"))?;
+    Ok(branch_push_refspec(branch, merge_reference.as_deref()))
+}
+
+pub(crate) fn branch_push_refspec(branch: &str, merge_reference: Option<&str>) -> String {
+    let destination =
+        merge_reference.map_or_else(|| format!("refs/heads/{branch}"), str::to_string);
+    format!("refs/heads/{branch}:{destination}")
+}
+
+pub(crate) fn tag_push_refspec(name: &str) -> String {
+    format!("refs/tags/{name}")
+}
+
+pub(crate) fn tag_target(commit: Option<&str>) -> &str {
+    commit.unwrap_or("HEAD")
 }
 
 fn is_tag(reference: &str) -> bool {
@@ -179,12 +242,21 @@ pub(crate) fn colon_listing_fingerprints(listing: &str) -> Vec<String> {
         .collect()
 }
 
-/// The signing-subkey and primary fingerprints from a `VALIDSIG` status
-/// line, or `None` when the verification produced no valid signature.
+/// The signing-subkey and primary fingerprints from a complete good signature
+/// status, or `None` when gpg reports an invalid, expired, or revoked key.
 pub(crate) fn signature_fingerprints(raw_status: &str) -> Option<Vec<String>> {
-    let valid_signature = raw_status
-        .lines()
-        .find(|line| line.starts_with("[GNUPG:] VALIDSIG "))?;
+    let status_words: Vec<&str> = raw_status.lines().filter_map(status_word).collect();
+    if status_words
+        .iter()
+        .any(|word| matches!(*word, "EXPKEYSIG" | "REVKEYSIG" | "ERRSIG"))
+        || !status_words.contains(&"GOODSIG")
+    {
+        return None;
+    }
+    let valid_signature = raw_status.lines().find(|line| {
+        line.strip_prefix("[GNUPG:] ")
+            .is_some_and(|status| status.starts_with("VALIDSIG "))
+    })?;
     let fields: Vec<&str> = valid_signature.split_whitespace().skip(2).collect();
     let subkey = (*fields.first()?).to_string();
     let primary = (*fields.last()?).to_string();
@@ -195,19 +267,24 @@ pub(crate) fn signature_fingerprints(raw_status: &str) -> Option<Vec<String>> {
     }
 }
 
-/// `git verify-commit --raw` exits nonzero for an unsigned object but
-/// still reports the gpg status lines on stderr; both are the verdict.
+fn status_word(line: &str) -> Option<&str> {
+    line.strip_prefix("[GNUPG:] ")?.split_whitespace().next()
+}
+
 fn git_raw_verification(args: &[&str]) -> Result<Option<String>, Error> {
     let output = Command::new("git")
         .args(args)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     let status_lines = String::from_utf8_lossy(&output.stderr).to_string();
-    if output.status.success() || status_lines.contains("[GNUPG:]") {
-        Ok(Some(status_lines))
-    } else {
-        Ok(None)
-    }
+    Ok(verified_status_output(
+        output.status.success(),
+        &status_lines,
+    ))
+}
+
+pub(crate) fn verified_status_output(success: bool, raw_status: &str) -> Option<String> {
+    success.then(|| raw_status.to_string())
 }
 
 /// Environment identity overrides (agent sessions export them) never apply
@@ -225,14 +302,7 @@ const IDENTITY_OVERRIDES: [&str; 6] = [
 /// Commit, tag, and push run with inherited stdio so pinentry prompts and
 /// hardware-key touch notices reach the owner.
 fn run_interactive_git(args: &[&str]) -> Result<(), Error> {
-    let mut command = Command::new("git");
-    for variable in IDENTITY_OVERRIDES {
-        command.env_remove(variable);
-    }
-    let status = command
-        .args(args)
-        .status()
-        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    let status = interactive_git_status(args)?;
     if status.success() {
         Ok(())
     } else {
@@ -241,6 +311,35 @@ fn run_interactive_git(args: &[&str]) -> Result<(), Error> {
             format!("git {} failed", args.first().unwrap_or(&"")),
         ))
     }
+}
+
+fn run_signing_git(args: &[&str]) -> Result<(), Error> {
+    let status = interactive_git_status(args)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(signing_failure(args.first().unwrap_or(&"")))
+    }
+}
+
+pub(crate) fn signing_failure(operation: &str) -> Error {
+    Error::new(
+        ErrorKind::Config,
+        format!(
+            "git {operation} signing failed: configure user.signingkey or a gpg key matching the committer identity"
+        ),
+    )
+}
+
+fn interactive_git_status(args: &[&str]) -> Result<std::process::ExitStatus, Error> {
+    let mut command = Command::new("git");
+    for variable in IDENTITY_OVERRIDES {
+        command.env_remove(variable);
+    }
+    command
+        .args(args)
+        .status()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))
 }
 
 fn git_stdout(args: &[&str]) -> Result<String, Error> {

@@ -606,6 +606,10 @@ enum Command {
         #[arg(long, value_name = "TAG")]
         tag: Option<String>,
 
+        /// Commit to tag. Defaults to HEAD and is valid only with --tag.
+        #[arg(value_name = "COMMIT", requires = "tag")]
+        commit: Option<String>,
+
         /// Verify a seal or tag signature against the repository's KEYS file.
         #[arg(
             long,
@@ -1183,8 +1187,18 @@ pub fn run() -> i32 {
                 "released",
             )
         }
-        Command::Sign { amend, tag, verify } => {
-            return exit_code(sign::execute(amend, tag.as_deref(), verify.as_deref()));
+        Command::Sign {
+            amend,
+            tag,
+            commit,
+            verify,
+        } => {
+            return exit_code(sign::execute(
+                amend,
+                tag.as_deref(),
+                commit.as_deref(),
+                verify.as_deref(),
+            ));
         }
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
@@ -1485,7 +1499,7 @@ fn deck_help(help: &mut String) {
     help_command(
         help,
         "sign",
-        "[--amend | --tag <TAG> | --verify [REF]]",
+        "[--amend | --tag <TAG> [COMMIT] | --verify [REF]]",
         "Seal the branch, sign tags, verify against KEYS",
     );
     help_command(

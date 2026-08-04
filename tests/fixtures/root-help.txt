@@ -27,7 +27,7 @@
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
-    sign        [--amend | --tag <TAG> | --verify [REF]]              Seal the branch, sign tags, verify against KEYS
+    sign        [--amend | --tag <TAG> [COMMIT] | --verify [REF]]     Seal the branch, sign tags, verify against KEYS
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     provider    [enable|disable <name>]                               List or toggle deploy providers
     todo        [add|do|ls|obsidian|import]                           Repo tasks in TODO.txt with an Obsidian transform
