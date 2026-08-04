@@ -41,9 +41,37 @@ jobs:
                   draft=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq .draft)
                   [ "$draft" = "false" ] || { echo "draft pull requests take no autofix round"; exit 1; }
 
+    # A queued ready event keeps its label payload after another round
+    # consumed the summon, so readiness re-reads the live labels before
+    # the lane may start.
+    release:
+        if: github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'review:autofix')
+        runs-on: ubuntu-latest
+        timeout-minutes: 2
+        permissions:
+            contents: read
+            pull-requests: read
+        outputs:
+            summoned: ${{ steps.live.outputs.summoned }}
+        steps:
+            - id: live
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  # Pages merge through jq -s: the runner's gh predates
+                  # --slurp, and a label set past one page must still count.
+                  labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
+                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]')
+                  if printf '%s\n' "$labels" | grep -qx 'review:autofix'; then
+                      echo "summoned=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "summoned=false" >> "$GITHUB_OUTPUT"
+                      echo "the summon was already consumed; the lane stands down."
+                  fi
+
     suggest:
-        needs: gate
-        if: '!cancelled() && ((github.event_name == ''workflow_dispatch'' && needs.gate.result == ''success'') || (github.event_name == ''pull_request'' && github.event.pull_request.draft == false && (github.event.action == ''labeled'' || (github.event.action == ''ready_for_review'' && contains(github.event.pull_request.labels.*.name, ''review:autofix'')))))'
+        needs: [gate, release]
+        if: '!cancelled() && ((github.event_name == ''workflow_dispatch'' && needs.gate.result == ''success'') || (github.event_name == ''pull_request'' && github.event.pull_request.draft == false && (github.event.action == ''labeled'' || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))))'
         uses: runedeck/seer/.github/workflows/autofix-suggest.yaml@main
         with:
             pr_number: ${{ inputs.pr_number || '' }}
