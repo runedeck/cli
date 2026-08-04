@@ -184,35 +184,9 @@ fn tag_push_refspec_names_only_the_tag() {
 }
 
 #[test]
-fn branch_push_refspec_respects_configured_merge_ref() {
+fn branch_push_refspec_never_uses_upstream_merge_ref_as_destination() {
     assert_eq!(
-        branch_push_refspec(
-            "review",
-            "upstream",
-            Some("upstream"),
-            Some("refs/heads/pull-request"),
-        ),
-        "refs/heads/review:refs/heads/pull-request"
-    );
-}
-
-#[test]
-fn branch_push_refspec_defaults_to_matching_branch() {
-    assert_eq!(
-        branch_push_refspec("review", "upstream", Some("upstream"), None),
-        "refs/heads/review:refs/heads/review"
-    );
-}
-
-#[test]
-fn branch_push_refspec_ignores_upstream_merge_ref_for_a_different_push_remote() {
-    assert_eq!(
-        branch_push_refspec(
-            "review",
-            "fork",
-            Some("upstream"),
-            Some("refs/heads/pull-request"),
-        ),
+        branch_push_refspec("review"),
         "refs/heads/review:refs/heads/review"
     );
 }

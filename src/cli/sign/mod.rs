@@ -36,7 +36,7 @@ fn seal_branch() -> Result<i32, Error> {
     run_signing_git(&["commit", "--allow-empty", "-S", "-m", SEAL_SUBJECT])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
-    let refspec = configured_branch_push_refspec(&branch, &remote)?;
+    let refspec = branch_push_refspec(&branch);
     run_interactive_git(&["push", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("sealed {branch} @ {head}");
@@ -51,7 +51,7 @@ fn amend_head() -> Result<i32, Error> {
     run_signing_git(&["commit", "--amend", "--no-edit", "--allow-empty", "-S"])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
-    let refspec = configured_branch_push_refspec(&branch, &remote)?;
+    let refspec = branch_push_refspec(&branch);
     run_interactive_git(&["push", "--force-with-lease", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("re-signed {branch} @ {head}");
@@ -164,28 +164,8 @@ pub(crate) fn select_default_remote(configured: Option<&str>, remotes: &[&str]) 
         .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_string()))
 }
 
-fn configured_branch_push_refspec(branch: &str, push_remote: &str) -> Result<String, Error> {
-    let upstream_remote = git_config_value(&format!("branch.{branch}.remote"))?;
-    let merge_reference = git_config_value(&format!("branch.{branch}.merge"))?;
-    Ok(branch_push_refspec(
-        branch,
-        push_remote,
-        upstream_remote.as_deref(),
-        merge_reference.as_deref(),
-    ))
-}
-
-pub(crate) fn branch_push_refspec(
-    branch: &str,
-    push_remote: &str,
-    upstream_remote: Option<&str>,
-    merge_reference: Option<&str>,
-) -> String {
-    let destination = match (upstream_remote, merge_reference) {
-        (Some(remote), Some(reference)) if remote == push_remote => reference.to_string(),
-        _ => format!("refs/heads/{branch}"),
-    };
-    format!("refs/heads/{branch}:{destination}")
+pub(crate) fn branch_push_refspec(branch: &str) -> String {
+    format!("refs/heads/{branch}:refs/heads/{branch}")
 }
 
 pub(crate) fn tag_push_refspec(name: &str) -> String {
