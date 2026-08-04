@@ -33,6 +33,32 @@ fn init_embedded(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::asser
         .assert()
 }
 
+fn scrubbed_git(directory: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .args(args)
+        .current_dir(directory)
+        .output()
+        .unwrap()
+}
+
+fn copier_commit(copier_answers: &str) -> Option<&str> {
+    copier_answers
+        .lines()
+        .find_map(|line| line.strip_prefix("_commit: "))
+}
+
+fn skeleton_revision(revision: &str) -> Option<String> {
+    let commit_form = format!("{revision}^{{commit}}");
+    let output = scrubbed_git(&skeleton_fixture(), &["rev-parse", &commit_form]);
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
 #[test]
 fn project_init_composes_layers_and_substitutes_contents_and_names() {
     let home = tempfile::tempdir().unwrap();
@@ -79,41 +105,29 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert!(copier_answers.contains("NAME: signal-lamp"));
     assert!(copier_answers.contains("OWNER: N4M3Z"));
     assert!(copier_answers.contains("TITLE: Signal Lamp"));
-    assert!(copier_answers.contains("_commit:"));
+    let expected_commit = skeleton_revision("HEAD");
+    assert!(
+        expected_commit.is_some(),
+        "skeleton fixture must be in a Git repository with a HEAD revision"
+    );
+    assert_eq!(
+        copier_commit(&copier_answers).and_then(skeleton_revision),
+        expected_commit,
+        "copier metadata must resolve to the skeleton's HEAD revision"
+    );
     assert!(copier_answers.contains("_src_path:"));
     assert!(!destination.join("answers.yaml.jinja").exists());
     assert!(destination.join(".git").exists());
-    let hooks_path = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["config", "--get", "core.hooksPath"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let hooks_path = scrubbed_git(&destination, &["config", "--get", "core.hooksPath"]);
     assert_eq!(
         String::from_utf8(hooks_path.stdout).unwrap().trim(),
         ".githooks"
     );
-    let branch = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["branch", "--show-current"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let branch = scrubbed_git(&destination, &["branch", "--show-current"]);
     assert_eq!(String::from_utf8(branch.stdout).unwrap().trim(), "main");
     // Under the targets root init runs in workshop mode: layout lands,
     // the first commit stays a human decision.
-    let head = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let head = scrubbed_git(&destination, &["rev-parse", "--verify", "HEAD"]);
     assert!(!head.status.success(), "workshop init must not auto-commit");
     for member in ["private", "public", "assets"] {
         assert!(destination.join(member).is_dir(), "missing {member}/");
@@ -352,6 +366,105 @@ fn retrofit_appends_missing_gitignore_entries_once() {
         fs::read_to_string(destination.path().join(".gitignore")).unwrap(),
         "custom/\ndist/\n# layer: tool\n.cache/\n"
     );
+}
+
+#[test]
+fn dry_run_predicts_gitignore_retrofit_performed_by_real_init() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let gitignore = destination.path().join(".gitignore");
+    fs::write(&gitignore, "custom/\n").unwrap();
+    let destination_path = destination.path().to_string_lossy();
+
+    let dry_run_output = init(
+        home.path(),
+        quests.path(),
+        &[
+            &destination_path,
+            "--with",
+            "shell,tool",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let dry_run_result: serde_json::Value = serde_json::from_slice(&dry_run_output).unwrap();
+    let dry_run_gitignore = dry_run_result["installed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"] == ".gitignore")
+        .cloned();
+
+    assert!(dry_run_gitignore.is_some());
+    assert_eq!(fs::read_to_string(&gitignore).unwrap(), "custom/\n");
+
+    let real_run_output = init(
+        home.path(),
+        quests.path(),
+        &[&destination_path, "--with", "shell,tool", "--json"],
+    )
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let real_run_result: serde_json::Value = serde_json::from_slice(&real_run_output).unwrap();
+    let real_run_gitignore = real_run_result["installed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"] == ".gitignore")
+        .cloned();
+
+    assert_eq!(dry_run_gitignore, real_run_gitignore);
+    assert_eq!(
+        fs::read_to_string(gitignore).unwrap(),
+        "custom/\ndist/\n# layer: tool\n.cache/\n"
+    );
+}
+
+#[test]
+fn project_init_escapes_brief_in_generated_toml() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("quoted-brief");
+    let brief = "Everyone's \"toolkit\" uses \\ paths\nwith\ttabs\rand \u{001f} plus \u{007f}";
+
+    init_embedded(
+        home.path(),
+        quests.path(),
+        &["quoted-brief", "--with", "rust", "--brief", brief],
+    )
+    .success();
+
+    let cargo_toml = fs::read_to_string(destination.join("Cargo.toml")).unwrap();
+    let parsed: toml::Value = toml::from_str(&cargo_toml).unwrap();
+
+    assert_eq!(parsed["package"]["description"].as_str(), Some(brief));
+}
+
+#[test]
+fn project_init_escapes_brief_in_generated_json() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("hostile-brief");
+    let brief = "A \"hostile\" \\ brief\nwith\ttabs\rand \u{001f}";
+
+    init_embedded(
+        home.path(),
+        quests.path(),
+        &["hostile-brief", "--with", "node", "--brief", brief],
+    )
+    .success();
+
+    let package_json = fs::read_to_string(destination.join("package.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&package_json).unwrap();
+
+    assert_eq!(parsed["description"].as_str(), Some(brief));
 }
 
 #[test]
