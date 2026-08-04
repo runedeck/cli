@@ -43,17 +43,20 @@ scan_tracked_files() {
 }
 
 if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
-    # The sweep runs before prek so its guard is reachable on a machine
-    # without gitleaks: the warning lands, then prek still fails loudly
-    # on its own configured gitleaks entries.
+    # Both stages run and both report before the hook decides: a secret
+    # in the sweep never hides a lint failure and a lint failure never
+    # hides a secret. The sweep's guard stays reachable on a machine
+    # without gitleaks because prek's failure no longer exits early.
+    hook_failed=false
+    prek run ${1+"$@"} || hook_failed=true
     if [ "$all_files" = "true" ]; then
         if command -v gitleaks >/dev/null 2>&1; then
-            scan_tracked_files
+            scan_tracked_files || hook_failed=true
         else
             echo "  ⚠  gitleaks not found — the tracked-file secret sweep was skipped" >&2
         fi
     fi
-    prek run ${1+"$@"}
+    [ "$hook_failed" = "false" ]
 elif command -v gitleaks >/dev/null 2>&1; then
     if [ "$all_files" = "true" ]; then
         scan_tracked_files

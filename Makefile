@@ -23,6 +23,7 @@ install: build
 
 validate:
 	@bash .githooks/pre-commit --all-files
+	@bash .githooks/pre-push --all-files
 
 test: validate
 	cargo test
