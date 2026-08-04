@@ -44,6 +44,20 @@ fn scrubbed_git(directory: &std::path::Path, args: &[&str]) -> std::process::Out
         .unwrap()
 }
 
+fn copier_commit(copier_answers: &str) -> Option<&str> {
+    copier_answers
+        .lines()
+        .find_map(|line| line.strip_prefix("_commit: "))
+}
+
+fn skeleton_revision(revision: &str) -> Option<String> {
+    let output = scrubbed_git(&skeleton_fixture(), &["rev-parse", revision]);
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
 #[test]
 fn project_init_composes_layers_and_substitutes_contents_and_names() {
     let home = tempfile::tempdir().unwrap();
@@ -90,23 +104,16 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert!(copier_answers.contains("NAME: signal-lamp"));
     assert!(copier_answers.contains("OWNER: N4M3Z"));
     assert!(copier_answers.contains("TITLE: Signal Lamp"));
-    let copier_commit = copier_answers
-        .lines()
-        .find_map(|line| line.strip_prefix("_commit: "))
-        .unwrap();
-    let resolve_revision = |revision: &str| {
-        let output = std::process::Command::new("git")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .args(["rev-parse", revision])
-            .current_dir(skeleton_fixture())
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        String::from_utf8(output.stdout).unwrap()
-    };
-    assert_eq!(resolve_revision(copier_commit), resolve_revision("HEAD"));
+    let expected_commit = skeleton_revision("HEAD");
+    assert!(
+        expected_commit.is_some(),
+        "skeleton fixture must be in a Git repository with a HEAD revision"
+    );
+    assert_eq!(
+        copier_commit(&copier_answers).and_then(skeleton_revision),
+        expected_commit,
+        "copier metadata must resolve to the skeleton's HEAD revision"
+    );
     assert!(copier_answers.contains("_src_path:"));
     assert!(!destination.join("answers.yaml.jinja").exists());
     assert!(destination.join(".git").exists());

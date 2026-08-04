@@ -30,6 +30,26 @@ fn git_reference_discovers_enclosing_repository_only_for_tracked_directory() {
 
     std::fs::write(nested_non_repository.join("template.txt"), "template\n").unwrap();
     run_git(["add", "skeleton/template.txt"], Some(repository.path())).unwrap();
+
+    assert_eq!(git_reference(&nested_non_repository).unwrap(), None);
+
+    run_git(
+        [
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=",
+            "-c",
+            "user.name=Test Author",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "track skeleton",
+        ],
+        Some(repository.path()),
+    )
+    .unwrap();
     let enclosing_revision = git_reference(repository.path()).unwrap();
 
     assert_eq!(

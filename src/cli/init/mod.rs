@@ -678,12 +678,13 @@ fn resolve_external_skeleton(
 fn git_reference(repository: &Path) -> Result<Option<String>, Error> {
     let mut tracking_check = Command::new("git");
     tracking_check
-        .args(["ls-files", "--error-unmatch", "."])
-        .current_dir(repository);
+        .arg("-C")
+        .arg(repository)
+        .args(["ls-tree", "--name-only", "HEAD", "--", "."]);
     let tracking_output = shield_git(&mut tracking_check)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
-    if !tracking_output.status.success() {
+    if !tracking_output.status.success() || tracking_output.stdout.is_empty() {
         return Ok(None);
     }
 
