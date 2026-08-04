@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
 const MODULE_YAML: &str = concat!(
@@ -73,6 +75,130 @@ fn execute_copies_nested_directories() {
     assert!(target.path().join("rules/cz/Tax.md").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn execute_rejects_symlinked_content_directory() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    std::fs::write(external.path().join("Leak.md"), "External content.\n").unwrap();
+    symlink(external.path(), source.path().join("rules")).unwrap();
+
+    let error = execute(
+        &source.path().to_string_lossy(),
+        &target.path().to_string_lossy(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
+    assert!(!target.path().join("rules/Leak.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_rejects_symlinked_markdown_file() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    let rules_directory = source.path().join("rules");
+    std::fs::create_dir_all(&rules_directory).unwrap();
+    let external_file = external.path().join("Outside.md");
+    std::fs::write(&external_file, "External content.\n").unwrap();
+    symlink(&external_file, rules_directory.join("Leak.md")).unwrap();
+
+    let error = execute(
+        &source.path().to_string_lossy(),
+        &target.path().to_string_lossy(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
+    assert!(!target.path().join("rules/Leak.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_rejects_symlinked_nested_directory() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    let rules_directory = source.path().join("rules");
+    std::fs::create_dir_all(&rules_directory).unwrap();
+    std::fs::write(external.path().join("Leak.md"), "External content.\n").unwrap();
+    symlink(external.path(), rules_directory.join("nested")).unwrap();
+
+    let error = execute(
+        &source.path().to_string_lossy(),
+        &target.path().to_string_lossy(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
+    assert!(!target.path().join("rules/nested/Leak.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_rejects_symlinked_destination_file() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    let source_rules = source.path().join("rules");
+    let target_rules = target.path().join("rules");
+    std::fs::create_dir_all(&source_rules).unwrap();
+    std::fs::create_dir_all(&target_rules).unwrap();
+    std::fs::write(source_rules.join("Rule.md"), "Copied content.\n").unwrap();
+    let external_file = external.path().join("Outside.md");
+    std::fs::write(&external_file, "Original external content.\n").unwrap();
+    symlink(&external_file, target_rules.join("Rule.md")).unwrap();
+
+    let error = execute(
+        &source.path().to_string_lossy(),
+        &target.path().to_string_lossy(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("escapes"));
+    assert_eq!(
+        std::fs::read_to_string(external_file).unwrap(),
+        "Original external content.\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_rejects_symlinked_provenance_sidecar() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    write_module_yaml(source.path());
+    let source_rules = source.path().join("rules");
+    let provenance_directory = target.path().join("rules/.provenance");
+    std::fs::create_dir_all(&source_rules).unwrap();
+    std::fs::create_dir_all(&provenance_directory).unwrap();
+    std::fs::write(source_rules.join("Rule.md"), "Copied content.\n").unwrap();
+    let external_file = external.path().join("Outside.yaml");
+    std::fs::write(&external_file, "Original external content.\n").unwrap();
+    symlink(&external_file, provenance_directory.join("Rule.md.yaml")).unwrap();
+
+    let error = execute(
+        &source.path().to_string_lossy(),
+        &target.path().to_string_lossy(),
+        false,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("escapes"));
+    assert_eq!(
+        std::fs::read_to_string(external_file).unwrap(),
+        "Original external content.\n"
+    );
+}
+
 #[test]
 fn execute_empty_module_succeeds() {
     let source = TempDir::new().unwrap();
@@ -105,7 +231,9 @@ fn execute_writes_provenance_sidecar_by_default() {
     )
     .unwrap();
 
-    let sidecar = target.path().join("rules/.provenance/KeepChangelog.yaml");
+    let sidecar = target
+        .path()
+        .join("rules/.provenance/KeepChangelog.md.yaml");
     assert!(
         sidecar.exists(),
         "expected provenance sidecar at {}",
@@ -194,10 +322,10 @@ fn execute_provenance_digest_matches_content() {
     .unwrap();
 
     let statement =
-        std::fs::read_to_string(target.path().join("rules/.provenance/Rule.yaml")).unwrap();
+        std::fs::read_to_string(target.path().join("rules/.provenance/Rule.md.yaml")).unwrap();
     let parsed: serde_yaml::Value = serde_yaml::from_str(&statement).unwrap();
 
-    let expected_digest = commands::manifest::content_sha256(content);
+    let expected_digest = rune::manifest::content_sha256(content);
     assert_eq!(
         parsed["provenance"]["subject"][0]["digest"]["sha256"]
             .as_str()
@@ -225,7 +353,7 @@ fn execute_resists_yaml_injection() {
     )
     .unwrap();
 
-    let sidecar_text = std::fs::read_to_string(target.path().join("rules/.provenance/Foo.yaml"))
+    let sidecar_text = std::fs::read_to_string(target.path().join("rules/.provenance/Foo.md.yaml"))
         .expect("sidecar must exist");
     let mapping: serde_yaml::Mapping = serde_yaml::from_str(&sidecar_text).expect("valid YAML");
 
@@ -239,7 +367,7 @@ fn execute_resists_yaml_injection() {
         "injection inserted top-level keys: {top_level_keys:?}"
     );
 
-    let sidecar = commands::manifest::provenance::parse(&sidecar_text).expect("typed parse");
+    let sidecar = rune::manifest::provenance::parse(&sidecar_text).expect("typed parse");
     assert_eq!(
         sidecar
             .provenance
@@ -270,8 +398,8 @@ fn execute_writes_posix_paths() {
     .unwrap();
 
     let sidecar_text =
-        std::fs::read_to_string(target.path().join("rules/cz/.provenance/Tax.yaml")).unwrap();
-    let sidecar = commands::manifest::provenance::parse(&sidecar_text).unwrap();
+        std::fs::read_to_string(target.path().join("rules/cz/.provenance/Tax.md.yaml")).unwrap();
+    let sidecar = rune::manifest::provenance::parse(&sidecar_text).unwrap();
 
     assert_eq!(sidecar.provenance.subject[0].name, "rules/cz/Tax.md");
     assert_eq!(
@@ -302,8 +430,8 @@ fn execute_sidecar_round_trips_typed() {
     )
     .unwrap();
 
-    let sidecar_path = target.path().join("rules/.provenance/Roundtrip.yaml");
-    let sidecar = commands::manifest::provenance::read(&sidecar_path).expect("typed parse");
+    let sidecar_path = target.path().join("rules/.provenance/Roundtrip.md.yaml");
+    let sidecar = rune::manifest::provenance::read(&sidecar_path).expect("typed parse");
 
     assert_eq!(
         sidecar.provenance.statement_type,

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
-use commands::review::{self, ExportFormat};
+use rune::review::{self, ExportFormat};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Format {
@@ -65,11 +65,14 @@ fn list_to(root: &Path, writer: &mut impl std::io::Write) -> Result<i32, String>
 
 fn export_to(root: &Path, format: Format, writer: &mut impl std::io::Write) -> Result<i32, String> {
     let comments = review::load(root)?;
+    // Same contract as `review list`: an empty comment store is a quiet
+    // success, not an error — scripts probe both without special-casing.
     if comments.is_empty() {
-        return Err(format!(
+        eprintln!(
             "no review comments in {}",
             root.join(".rune-comments.yaml").display()
-        ));
+        );
+        return Ok(0);
     }
     writer
         .write_all(review::export(root, &comments, format.into()).as_bytes())
@@ -80,7 +83,7 @@ fn export_to(root: &Path, format: Format, writer: &mut impl std::io::Write) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commands::review::{CommentKind, ReviewComment};
+    use rune::review::{CommentKind, ReviewComment};
 
     #[test]
     fn list_prints_location_type_module_and_text() {

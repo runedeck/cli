@@ -39,7 +39,7 @@ pub fn validate_frontmatter_against_json_schema(
         }
     };
 
-    let schema: serde_json::Value = match serde_json::from_str(schema_content) {
+    let schema_yaml: serde_yaml::Value = match serde_yaml::from_str(schema_content) {
         Ok(value) => value,
         Err(error) => {
             diagnostics.push(Diagnostic {
@@ -47,6 +47,18 @@ pub fn validate_frontmatter_against_json_schema(
                 line: None,
                 severity: Severity::Warning,
                 message: format!("invalid JSON schema: {error}"),
+            });
+            return diagnostics;
+        }
+    };
+    let schema: serde_json::Value = match serde_json::to_value(schema_yaml) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(Diagnostic {
+                file: file_path.to_string(),
+                line: None,
+                severity: Severity::Warning,
+                message: format!("cannot convert JSON schema: {error}"),
             });
             return diagnostics;
         }

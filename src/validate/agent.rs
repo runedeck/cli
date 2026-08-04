@@ -11,7 +11,7 @@ use regex::Regex;
 /// `PascalCase` (Claude Code agents):
 ///
 /// ```
-/// use commands::validate::validate;
+/// use rune::validate::validate;
 ///
 /// let pascal = r"^[A-Z][a-zA-Z0-9]{2,50}$";
 /// assert!(validate("SecurityArchitect", pascal).is_ok());
@@ -22,7 +22,7 @@ use regex::Regex;
 /// Kebab-case (hypothetical provider):
 ///
 /// ```
-/// use commands::validate::validate;
+/// use rune::validate::validate;
 ///
 /// let kebab = r"^[a-z][a-z0-9-]{1,49}$";
 /// assert!(validate("code-reviewer", kebab).is_ok());

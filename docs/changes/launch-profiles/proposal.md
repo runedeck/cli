@@ -1,22 +1,26 @@
 ---
-adr: "docs/decisions/ADR-XXXX.md"
+adr: "docs/decisions/CLI-0021 Launch Profile Composition.md"
 status: proposed
 ---
 # Launch Profiles
 
 ## Why
 
-See the linked ADR for the decision rationale. This proposal records the change in scope.
+Coding-tool profiles need named endpoint, credential-reference, argument, middleware, and model-route settings without replacing the accepted launch middleware chain.
 
 ## What Changes
 
-- Describe the observable change.
-- Name compatibility or migration effects.
+- `rune launch [profile@]<tool>` resolves named profiles from user configuration.
+- Profiles compose environment, arguments, middleware, and one optional model route.
+- Model routes derive provider model and context settings as one group.
+- Interactive execution keeps inherited terminal input and output plus native argument forwarding.
 
 ## Capabilities
 
-- launch (new or modified)
+- launch (modified)
 
 ## Impact
 
-- List the affected runes, casts, commands, or documentation.
+- Launch configuration and typed ontology
+- Launch resolution, dry-run output, redaction, and interactive execution
+- Automated execution that consumes the shared resolved launch plan

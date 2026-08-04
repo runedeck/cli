@@ -9,6 +9,15 @@ fn rune() -> Command {
     Command::cargo_bin("rune").unwrap()
 }
 
+fn git() -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
+    command
+}
+
 fn skeleton_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/skeleton")
 }
@@ -16,6 +25,7 @@ fn skeleton_fixture() -> PathBuf {
 fn init(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     rune()
         .env("HOME", home)
+        .env_remove("RUNE_TARGETS")
         .env("RUNE_QUESTS", quests)
         .arg("init")
         .args(args)
@@ -64,10 +74,7 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         "# Signal Lamp\n\nWarns the crew\n"
     );
     assert!(destination.join(".git").exists());
-    let hooks_path = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
+    let hooks_path = git()
         .args(["config", "--get", "core.hooksPath"])
         .current_dir(&destination)
         .output()
@@ -76,10 +83,7 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
         String::from_utf8(hooks_path.stdout).unwrap().trim(),
         ".githooks"
     );
-    let branch = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
+    let branch = git()
         .args(["branch", "--show-current"])
         .current_dir(&destination)
         .output()
@@ -87,10 +91,7 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert_eq!(String::from_utf8(branch.stdout).unwrap().trim(), "main");
     // Under the targets root init runs in workshop mode: layout lands,
     // the first commit stays a human decision.
-    let head = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
+    let head = git()
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&destination)
         .output()
@@ -123,10 +124,7 @@ fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
     permissions.set_mode(0o755);
     fs::set_permissions(&pre_commit, permissions).unwrap();
     assert!(
-        std::process::Command::new("git")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
+        git()
             .env("HOME", home.path())
             .args([
                 "config",
@@ -147,15 +145,122 @@ fn project_init_scaffold_commit_ignores_inherited_git_hooks() {
     )
     .success();
 
-    let head = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
+    let head = git()
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(destination)
         .output()
         .unwrap();
     assert!(!head.status.success(), "workshop init must not auto-commit");
+}
+
+#[test]
+fn project_init_commit_excludes_existing_repository_files() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let hooks = destination.path().join("custom-hooks");
+
+    assert!(
+        git()
+            .args(["init", "-b", "main"])
+            .current_dir(destination.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        git()
+            .args(["config", "core.hooksPath"])
+            .arg(&hooks)
+            .current_dir(destination.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        destination.path().join("private-note.txt"),
+        "Not part of the scaffold.\n",
+    )
+    .unwrap();
+
+    init(
+        home.path(),
+        quests.path(),
+        &[
+            &destination.path().to_string_lossy(),
+            "--lang",
+            "shell",
+            "--purpose",
+            "tool",
+        ],
+    )
+    .success();
+
+    let committed_files = git()
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .current_dir(destination.path())
+        .output()
+        .unwrap();
+    let committed_files = String::from_utf8(committed_files.stdout).unwrap();
+    assert!(committed_files.lines().any(|path| path == "Makefile"));
+    assert!(
+        !committed_files
+            .lines()
+            .any(|path| path == "private-note.txt")
+    );
+
+    let private_note_status = git()
+        .args(["status", "--porcelain", "--", "private-note.txt"])
+        .current_dir(destination.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(private_note_status.stdout).unwrap(),
+        "?? private-note.txt\n"
+    );
+
+    let hooks_path = git()
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(destination.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(hooks_path.stdout).unwrap().trim(),
+        hooks.to_string_lossy()
+    );
+}
+
+#[test]
+fn project_init_does_not_commit_when_every_template_exists() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("complete-project");
+
+    init(
+        home.path(),
+        quests.path(),
+        &["complete-project", "--lang", "shell", "--purpose", "tool"],
+    )
+    .success();
+    init(
+        home.path(),
+        quests.path(),
+        &[
+            &destination.to_string_lossy(),
+            "--lang",
+            "shell",
+            "--purpose",
+            "tool",
+        ],
+    )
+    .success();
+
+    let head = git()
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(destination)
+        .output()
+        .unwrap();
+    assert!(!head.status.success());
 }
 
 #[test]

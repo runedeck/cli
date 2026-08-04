@@ -2,7 +2,7 @@
 //! by a single source's `RuneList`. Records which requested names matched
 //! and errors if any requested rune failed to resolve.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
@@ -74,7 +74,7 @@ pub fn filter_deck_to_requested(
     mut all_files: Vec<SourceFile>,
     list: &RuneList,
     source_label: &str,
-    deck: &commands::deck::Deck,
+    deck: &rune::deck::Deck,
 ) -> Result<Vec<SourceFile>, Error> {
     let canonical_ids: BTreeSet<String> = all_files
         .iter()
@@ -98,7 +98,7 @@ pub fn filter_deck_to_requested(
             .iter()
             .filter(|candidate| {
                 if requested.contains(['*', '?']) {
-                    commands::deck::matches_rune_glob(requested, candidate)
+                    rune::deck::matches_rune_glob(requested, candidate)
                 } else {
                     id_matches(requested, candidate)
                 }
@@ -161,7 +161,7 @@ pub fn filter_deck_to_requested(
         !list
             .exclude
             .iter()
-            .any(|pattern| commands::deck::matches_rune_glob(pattern, id))
+            .any(|pattern| rune::deck::matches_rune_glob(pattern, id))
     });
 
     all_files.retain(|file| {
@@ -178,7 +178,7 @@ pub fn filter_deck_to_requested(
 /// that happens to share the deck's name.
 fn whole_deck_selection(
     requested: &str,
-    deck: &commands::deck::Deck,
+    deck: &rune::deck::Deck,
     canonical_ids: &BTreeSet<String>,
 ) -> Option<Vec<String>> {
     if requested.contains('/') || requested.contains(['*', '?']) {

@@ -5,18 +5,20 @@ mod frontmatter;
 pub mod json_schema;
 pub mod mdschema;
 mod plugin;
+pub mod skill;
 
 pub use agent::validate;
 pub use frontmatter::validate_frontmatter;
 pub use json_schema::validate_frontmatter_against_json_schema;
 pub use plugin::{validate_hooks_manifest, validate_json_manifest};
+pub use skill::{check_identity, check_instruction_breadth, check_no_tables};
 
 // --- Types ---
 
 /// A single validation finding with location, severity, and message.
 ///
 /// ```
-/// use commands::validate::{Diagnostic, Severity};
+/// use rune::validate::{Diagnostic, Severity};
 ///
 /// let diag = Diagnostic {
 ///     file: "agents/MyAgent.md".to_string(),
@@ -49,7 +51,7 @@ pub enum Severity {
 /// diagnostic output — it is not read from disk.
 ///
 /// ```
-/// use commands::validate::ContentFile;
+/// use rune::validate::ContentFile;
 ///
 /// let file = ContentFile {
 ///     path: "agents/MyAgent.md",

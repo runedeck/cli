@@ -1,7 +1,7 @@
-use commands::error::{Error, ErrorKind};
-use commands::manifest;
-use commands::manifest::provenance::read as read_sidecar;
 use console::Style;
+use rune::error::{Error, ErrorKind};
+use rune::manifest;
+use rune::manifest::provenance::read as read_sidecar;
 use std::fs;
 use std::path::Path;
 
@@ -16,9 +16,9 @@ pub fn execute(
 ) -> Result<i32, Error> {
     let target = Path::new(path);
 
-    if commands::deck::is_deck(target) {
-        let deck = commands::deck::load(target)
-            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    if rune::deck::is_deck(target) {
+        let deck =
+            rune::deck::load(target).map_err(|message| Error::new(ErrorKind::Config, message))?;
         return Ok(scan::print_deck_source_summary(
             &deck,
             source_filter,
@@ -165,11 +165,7 @@ fn find_module_root(start: &Path) -> Option<std::path::PathBuf> {
 }
 
 pub(crate) fn resolve_sidecar_path(file_path: &Path) -> std::path::PathBuf {
-    let parent = file_path.parent().unwrap_or(Path::new("."));
-    let stem = file_path.file_stem().unwrap_or_default().to_string_lossy();
-    parent
-        .join(manifest::PROVENANCE_DIRECTORY)
-        .join(format!("{stem}.{}", manifest::SIDECAR_EXTENSION))
+    manifest::existing_sidecar_for(file_path).unwrap_or_else(|| manifest::sidecar_for(file_path))
 }
 
 #[cfg(test)]

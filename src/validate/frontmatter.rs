@@ -31,7 +31,7 @@ use super::{Diagnostic, Severity};
 /// Valid agent frontmatter:
 ///
 /// ```
-/// use commands::validate::validate_frontmatter;
+/// use rune::validate::validate_frontmatter;
 ///
 /// let content = "---\nname: SecurityArchitect\ndescription: reviews code\n---\n# Body\n";
 /// let schema = "required: [name, description]\nproperties:\n    name:\n        type: string\n";
@@ -42,7 +42,7 @@ use super::{Diagnostic, Severity};
 /// Missing required field:
 ///
 /// ```
-/// use commands::validate::validate_frontmatter;
+/// use rune::validate::validate_frontmatter;
 ///
 /// let content = "---\nversion: 0.1.0\n---\n# Body\n";
 /// let schema = "required: [name, description]";

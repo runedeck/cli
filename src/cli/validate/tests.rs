@@ -1,5 +1,81 @@
+//! Validation through `rune validate`, in process.
+//!
+//! Two paths run here and the helper chosen decides which.
+//! [`validate_skill_fixture`] plants no schema on disk and therefore always
+//! takes the built-in subset. [`validate_skill_fixture_strictly`] plants the
+//! real schema and therefore reaches the standalone `mdschema` binary.
+//!
+//! Rules with no built-in equivalent, section order chief among them, belong
+//! in `tests/runeshell.rs` or in a strict fixture here. Asserting them through
+//! the built-in helper would pass for the wrong reason.
+
 use super::*;
 use tempfile::TempDir;
+
+macro_rules! fixture {
+    ($name:expr) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/input/",
+            $name
+        ))
+    };
+}
+
+/// Validate a skill through the built-in subset.
+///
+/// No `.mdschema` reaches disk, so the schema resolves to the embedded
+/// template, whose `MdschemaSource.path` is `None`. That forces the built-in
+/// path regardless of whether the standalone binary is installed. Reach for
+/// [`validate_skill_fixture_strictly`] to exercise the standalone checker.
+fn validate_skill_fixture(directory_name: &str, content: &str) -> ValidationReport {
+    let temporary_directory = TempDir::new().unwrap();
+    let skill_directory = temporary_directory.path().join(directory_name);
+    std::fs::create_dir_all(&skill_directory).unwrap();
+    std::fs::write(skill_directory.join("SKILL.md"), content).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_directory, temporary_directory.path(), &mut report).unwrap();
+    report
+}
+
+/// The standalone checker's wording for the marker field the on-disk test
+/// schema requires and the embedded template does not. Seeing this message
+/// proves the checker read the file this test planted: the embedded template
+/// cannot produce it in any wording, and the built-in subset words a missing
+/// field differently ("missing required frontmatter field").
+const ON_DISK_MARKER_FINDING: &str = "Required frontmatter field 'strict-marker' is missing";
+
+/// Validate a skill through the standalone `mdschema` binary.
+///
+/// Planting a schema on disk gives `MdschemaSource.path` a value, which routes
+/// dispatch to the standalone checker directly. The planted schema is the
+/// embedded template plus one extra required field, `strict-marker`, so a
+/// finding about that field discriminates the on-disk route from the
+/// materialized-embedded fallback, which would otherwise behave identically.
+fn validate_skill_fixture_strictly(directory_name: &str, content: &str) -> ValidationReport {
+    let embedded = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/schemas/skill.mdschema"
+    ));
+    let anchor = "frontmatter:\n    fields:\n";
+    assert!(embedded.starts_with(anchor), "template layout changed");
+    let schema = embedded.replacen(
+        anchor,
+        "frontmatter:\n    fields:\n        - name: strict-marker\n          type: string\n",
+        1,
+    );
+
+    let temporary_directory = TempDir::new().unwrap();
+    let skill_directory = temporary_directory.path().join(directory_name);
+    std::fs::create_dir_all(&skill_directory).unwrap();
+    std::fs::write(skill_directory.join("SKILL.md"), content).unwrap();
+    std::fs::write(skill_directory.join(".mdschema"), schema).unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_directory, temporary_directory.path(), &mut report).unwrap();
+    report
+}
 
 #[test]
 fn consumer_root_validates_without_module_structure_errors() {
@@ -168,6 +244,51 @@ fn validate_source_returns_structured_broken_adr_violations_without_printing() {
     }));
 }
 
+#[cfg(feature = "spec")]
+fn specification_schema_warning(
+    root: &std::path::Path,
+) -> Result<Vec<super::super::spec::SpecViolation>, Error> {
+    if !root.is_dir() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("specification root is not a directory: {}", root.display()),
+        ));
+    }
+    Ok(vec![super::super::spec::SpecViolation {
+        code: "spec-schema-invalid".to_string(),
+        severity: super::super::spec::DiagnosticSeverity::Warning,
+        path: "docs/specs/search/spec.md".to_string(),
+        line: Some(4),
+        column: None,
+        message: "schema advisory".to_string(),
+        operation: None,
+        capability: Some("search".to_string()),
+        change: None,
+    }])
+}
+
+#[cfg(feature = "spec")]
+#[test]
+fn top_level_validation_preserves_specification_schema_warnings() {
+    let root = TempDir::new().unwrap();
+    let mut report = ValidationReport::default();
+
+    check_spec_lifecycle_with_validator(root.path(), &mut report, specification_schema_warning)
+        .unwrap();
+
+    assert!(report.result.errors.is_empty());
+    assert_eq!(
+        report.result.warnings,
+        vec!["docs/specs/search/spec.md:4: schema advisory"]
+    );
+    assert!(report.violations.iter().any(|violation| {
+        violation.artifact == "docs/specs/search/spec.md"
+            && violation.line == Some(4)
+            && violation.severity == ViolationSeverity::Warning
+    }));
+}
+
+#[cfg(feature = "spec")]
 #[test]
 fn validate_source_reports_malformed_canonical_spec() {
     let root = TempDir::new().unwrap();
@@ -195,106 +316,294 @@ fn validate_source_reports_malformed_canonical_spec() {
 }
 
 #[test]
-fn skill_directory_accepts_claude_code_optional_fields() {
-    let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("example-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-
-    let skill_md = "---\n\
-name: example-skill\n\
-description: \"Test skill using Claude Code optional frontmatter fields.\"\n\
-version: 0.1.0\n\
-argument-hint: \"[year]\"\n\
-allowed-tools: [Read, Bash]\n\
-model: claude-opus-4-7\n\
-effort: high\n\
-when_to_use: \"When the user asks for X.\"\n\
----\n\
-\n\
-# example-skill\n\
-\n\
-Body content for the test skill.\n";
-    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
-
-    let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+fn skill_directory_accepts_minimal_runeshell() {
+    let report = validate_skill_fixture("minimal-skill", fixture!("runeshell-minimal.md"));
 
     assert!(
         report.result.errors.is_empty(),
-        "Claude Code optional skill fields should validate cleanly: {:?}",
+        "minimal RuneShell must validate: {:?}",
         report.result.errors
+    );
+}
+
+#[test]
+fn skill_directory_accepts_complete_runeshell() {
+    let report = validate_skill_fixture("complete-skill", fixture!("runeshell-complete.md"));
+
+    assert!(
+        report.result.errors.is_empty(),
+        "complete RuneShell must validate: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
+fn skill_directory_rejects_provider_fields_in_canonical_source() {
+    let report =
+        validate_skill_fixture("provider-fields", fixture!("runeshell-provider-fields.md"));
+    let errors = report.result.errors.join("; ");
+
+    assert!(
+        errors.contains("argument-hint"),
+        "unexpected errors: {errors}"
+    );
+    assert!(
+        errors.contains("disallowed-tools"),
+        "unexpected errors: {errors}"
     );
 }
 
 #[test]
 fn skill_directory_validates_user_override() {
     let root = TempDir::new().unwrap();
-    let skill_dir = root.path().join("skills/override-skill");
-    std::fs::create_dir_all(skill_dir.join("user")).unwrap();
-    let valid = "---\nname: override-skill\ndescription: Valid base skill.\nversion: 0.1.0\n---\n\n# override-skill\n";
-    std::fs::write(skill_dir.join("SKILL.md"), valid).unwrap();
-    std::fs::write(skill_dir.join("user/SKILL.md"), "# Missing frontmatter\n").unwrap();
+    let skill_directory = root.path().join("skills/minimal-skill");
+    std::fs::create_dir_all(skill_directory.join("user")).unwrap();
+    std::fs::write(
+        skill_directory.join("SKILL.md"),
+        fixture!("runeshell-minimal.md"),
+    )
+    .unwrap();
+    std::fs::write(
+        skill_directory.join("user/SKILL.md"),
+        "# Missing frontmatter\n",
+    )
+    .unwrap();
 
     let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, root.path(), &mut report).unwrap();
+    check::skill_directory(&skill_directory, root.path(), &mut report).unwrap();
 
     assert!(report.violations.iter().any(|violation| {
-        violation.artifact == "skills/override-skill/user/SKILL.md"
+        violation.artifact == "skills/minimal-skill/user/SKILL.md"
             && violation.severity == ViolationSeverity::Error
     }));
 }
 
 #[test]
-fn skill_lint_warns_on_conformance_smells_without_blocking() {
-    let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("claude-helper");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    let skill_md = "---\nname: wrong-name\ndescription: \"A <helper> for things.\"\nversion: 0.1.0\n---\n\n# wrong-name\n\nShort.\n";
-    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+fn skill_identity_reports_h1_mismatch() {
+    let report = validate_skill_fixture("identity-skill", fixture!("runeshell-h1-mismatch.md"));
+    let errors = report.result.errors.join("; ");
 
-    let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
-
-    let warnings = report.result.warnings.join("; ");
-    assert!(warnings.contains("does not match its directory"));
-    assert!(warnings.contains("angle-bracket pair"));
-    assert!(warnings.contains("no trigger phrasing"));
-    assert!(warnings.contains("too short to instruct"));
-    assert!(
-        report.result.errors.is_empty(),
-        "lint findings must stay warnings: {:?}",
-        report.result.errors
-    );
+    assert!(errors.contains("stable shell identity"));
+    assert!(errors.contains("frontmatter name 'identity-skill'"));
+    assert!(errors.contains("H1 'wrong-heading'"));
+    assert!(errors.contains("directory 'identity-skill'"));
 }
 
 #[test]
-fn skill_lint_stays_quiet_on_a_conforming_skill() {
-    let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("tidy-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    let skill_md = "---\nname: tidy-skill\ndescription: \"Keeps things tidy. USE WHEN cleaning up, organizing files.\"\nversion: 0.1.0\n---\n\n# tidy-skill\n\nA body long enough to actually instruct the model about tidying things up carefully.\n";
-    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+fn skill_identity_reports_frontmatter_name_mismatch() {
+    let report = validate_skill_fixture("identity-skill", fixture!("runeshell-name-mismatch.md"));
+    let errors = report.result.errors.join("; ");
 
-    let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+    assert!(errors.contains("frontmatter name 'wrong-name'"));
+    assert!(errors.contains("H1 'identity-skill'"));
+    assert!(errors.contains("directory 'identity-skill'"));
+}
+
+#[test]
+fn skill_identity_reports_directory_mismatch() {
+    let report = validate_skill_fixture("different-directory", fixture!("runeshell-minimal.md"));
+    let errors = report.result.errors.join("; ");
+
+    assert!(errors.contains("frontmatter name 'minimal-skill'"));
+    assert!(errors.contains("H1 'minimal-skill'"));
+    assert!(errors.contains("directory 'different-directory'"));
+}
+
+#[test]
+fn focused_instructions_do_not_warn() {
+    let report = validate_skill_fixture("complete-skill", fixture!("runeshell-complete.md"));
 
     assert!(
-        report.result.warnings.is_empty(),
-        "a conforming skill must produce no lint warnings: {:?}",
+        !report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("direct H3 headings")),
+        "focused instructions must not warn: {:?}",
         report.result.warnings
     );
 }
 
 #[test]
-fn skill_lint_flags_reserved_names() {
-    let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("claude-tools");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    let skill_md = "---\nname: claude-tools\ndescription: \"Tooling. USE WHEN tooling questions arise.\"\nversion: 0.1.0\n---\n\n# claude-tools\n\nA body long enough to instruct the model about the tools in question here.\n";
-    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
+fn broad_instructions_warn_without_failing() {
+    let report = validate_skill_fixture("broad-skill", fixture!("runeshell-broad-instructions.md"));
 
+    assert!(
+        report.result.warnings.iter().any(|warning| warning
+            .contains("stable shell breadth: Instructions has more than 4 direct H3 headings")),
+        "broad instructions must warn: {:?}",
+        report.result.warnings
+    );
+    assert!(
+        report.result.errors.is_empty(),
+        "breadth warning must not fail validation: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
+fn fenced_headings_do_not_affect_identity_or_breadth() {
+    let report = validate_skill_fixture("fenced-skill", fixture!("runeshell-fenced-headings.md"));
+    let findings = format!(
+        "{}; {}",
+        report.result.errors.join("; "),
+        report.result.warnings.join("; ")
+    );
+
+    assert!(!findings.contains("stable shell identity"), "{findings}");
+    assert!(!findings.contains("direct H3 headings"), "{findings}");
+}
+
+/// A deck validates each module with its own report, and every module that
+/// falls back produces the same machine-level notice. Merging must keep the
+/// first and drop the rest, or a deck of N modules warns N times.
+#[test]
+fn deck_merge_keeps_one_reduced_checking_notice() {
+    let mut aggregate = ValidationReport::default();
+    let mut first_module = ValidationReport::default();
+    first_module.report_missing_standalone_checker();
+    let mut second_module = ValidationReport::default();
+    second_module.report_missing_standalone_checker();
+
+    append_report(&mut aggregate, first_module);
+    append_report(&mut aggregate, second_module);
+
+    let notices = aggregate
+        .result
+        .warnings
+        .iter()
+        .filter(|warning| warning.contains("standalone mdschema is unavailable"))
+        .count();
+    assert_eq!(notices, 1, "warnings: {:?}", aggregate.result.warnings);
+    let violation_notices = aggregate
+        .violations
+        .iter()
+        .filter(|violation| {
+            violation
+                .message
+                .contains("standalone mdschema is unavailable")
+        })
+        .count();
+    assert_eq!(violation_notices, 1);
+}
+
+/// Both reduced-checking reasons share the once-per-run flag, so a deck mixing
+/// a missing-binary module with a write-failed module still states one notice.
+#[test]
+fn deck_merge_deduplicates_across_both_reduced_checking_reasons() {
+    let mut aggregate = ValidationReport::default();
+    let mut first_module = ValidationReport::default();
+    first_module.report_missing_standalone_checker();
+    let mut second_module = ValidationReport::default();
+    second_module.report_unusable_standalone_checker();
+
+    append_report(&mut aggregate, first_module);
+    append_report(&mut aggregate, second_module);
+
+    let notices = aggregate
+        .result
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.contains("standalone mdschema is unavailable")
+                || warning.contains("standalone mdschema is installed but could not")
+        })
+        .count();
+    assert_eq!(notices, 1, "warnings: {:?}", aggregate.result.warnings);
+}
+
+/// Drives the availability flag directly, because the machine running the
+/// suite has the binary installed and would otherwise never take this path.
+#[test]
+fn fallback_reports_partial_validation_and_keeps_basic_checks() {
+    let schema = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/schemas/skill.mdschema"
+    ));
+    let temporary_directory = TempDir::new().unwrap();
+    let skill_file = temporary_directory.path().join("SKILL.md");
+    std::fs::write(&skill_file, fixture!("runeshell-h4.md")).unwrap();
+
+    let source = schema::MdschemaSource {
+        content: schema.to_string(),
+        path: None,
+    };
     let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
+    check::check_mdschema_with_availability(
+        fixture!("runeshell-h4.md"),
+        &skill_file,
+        "skills/deep-skill/SKILL.md",
+        Some(&source),
+        false,
+        &mut report,
+    );
+
+    let warnings = report.result.warnings.join("; ");
+    let errors = report.result.errors.join("; ");
+
+    assert!(
+        warnings.contains("standalone mdschema is unavailable"),
+        "fallback must announce itself: {warnings}"
+    );
+    assert!(
+        warnings.contains("Section order, unexpected sections, permitted H3 placement, and heading uniqueness were NOT checked"),
+        "fallback must name what it skipped: {warnings}"
+    );
+    assert!(
+        warnings.contains("brew install jackchuka/tap/mdschema"),
+        "fallback must say how to fix it: {warnings}"
+    );
+    assert!(
+        errors.contains("exceeds max_depth 3"),
+        "the built-in subset must still run: {errors}"
+    );
+}
+
+/// Guards the dispatch itself, from both directions.
+///
+/// The absence of the fallback warning alone would pass if dispatch silently
+/// did nothing, so this also demands a finding only the standalone checker can
+/// produce: an unexpected H2 has no built-in equivalent.
+#[test]
+fn on_disk_schema_routes_to_the_standalone_checker() {
+    let report = validate_skill_fixture_strictly(
+        "unknown-section-skill",
+        fixture!("runeshell-unknown-section.md"),
+    );
+    let warnings = report.result.warnings.join("; ");
+    let errors = report.result.errors.join("; ");
+
+    assert!(
+        !warnings.contains("standalone mdschema is unavailable"),
+        "an on-disk schema must not fall back: {warnings}"
+    );
+    assert!(
+        errors.contains("Unexpected section"),
+        "only the standalone checker rejects an unexpected H2, so its absence means dispatch did nothing: {errors}"
+    );
+    assert!(
+        errors.contains(ON_DISK_MARKER_FINDING),
+        "the marker finding proves the ON-DISK schema was read; without it this could be the materialized embedded template answering: {errors}"
+    );
+}
+
+/// Ordering has no built-in equivalent, so reaching this error proves the
+/// standalone checker ran rather than the subset.
+#[test]
+fn standalone_checker_rejects_sections_out_of_order_in_process() {
+    let report =
+        validate_skill_fixture_strictly("misordered-skill", fixture!("runeshell-misordered.md"));
+    let errors = report.result.errors.join("; ");
+
+    assert!(
+        errors.contains("should appear after \"Instructions\" but appears before it"),
+        "standalone ordering error must surface in the report: {errors}"
+    );
+}
+
+#[test]
+fn skill_lint_flags_reserved_names() {
+    let report = validate_skill_fixture("claude-tools", fixture!("runeshell-reserved-name.md"));
 
     assert!(
         report
@@ -308,25 +617,39 @@ fn skill_lint_flags_reserved_names() {
 }
 
 #[test]
-fn skill_name_must_be_kebab_case() {
-    let temp_directory = TempDir::new().unwrap();
-    let skill_dir = temp_directory.path().join("PascalSkill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    let skill_md = "---\nname: PascalSkill\ndescription: Rejected by the agentskills name rule.\nversion: 0.1.0\n---\n\n# PascalSkill\n";
-    std::fs::write(skill_dir.join("SKILL.md"), skill_md).unwrap();
-
-    let mut report = ValidationReport::default();
-    check::skill_directory(&skill_dir, temp_directory.path(), &mut report).unwrap();
-
-    assert!(
-        report
+fn skill_name_requires_lowercase_kebab_case() {
+    for (directory_name, fixture_name, content, valid) in [
+        (
+            "minimal-skill",
+            "runeshell-minimal.md",
+            fixture!("runeshell-minimal.md"),
+            true,
+        ),
+        (
+            "PascalSkill",
+            "runeshell-pascal-name.md",
+            fixture!("runeshell-pascal-name.md"),
+            false,
+        ),
+        (
+            "snake_skill",
+            "runeshell-snake-name.md",
+            fixture!("runeshell-snake-name.md"),
+            false,
+        ),
+    ] {
+        let report = validate_skill_fixture(directory_name, content);
+        let pattern_error = report
             .result
             .errors
             .iter()
-            .any(|error| error.contains("does not match pattern")),
-        "a PascalCase skill name must fail the kebab-case pattern: {:?}",
-        report.result.errors
-    );
+            .any(|error| error.contains("does not match"));
+        assert_eq!(
+            pattern_error, !valid,
+            "name in '{fixture_name}' validity mismatch: {:?}",
+            report.result.errors
+        );
+    }
 }
 
 // --- tools.rs native checks ---

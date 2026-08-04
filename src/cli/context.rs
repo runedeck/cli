@@ -1,12 +1,12 @@
 //! Agent-ready brief of the resolved working context: where rune commands
 //! act, what the manifest selects, what is deployed, and what is in flight.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::cli::dotrune::{self, Source};
-use crate::cli::spec::{self, ChangeSummary};
+use crate::cli::spec_root::ChangeSummary;
 
 #[derive(Debug, Serialize)]
 struct SelectionBrief {
@@ -51,7 +51,7 @@ pub fn execute(json: bool, no_color: bool) -> Result<i32, Error> {
     })?;
     let bound = crate::cli::target::bound_target();
     let local_root = dotrune::exists(&current_dir)
-        || commands::deck::is_deck(&current_dir)
+        || rune::deck::is_deck(&current_dir)
         || current_dir.join("module.yaml").is_file();
     let add_target = if dotrune::exists(&current_dir) {
         current_dir.clone()
@@ -68,11 +68,14 @@ pub fn execute(json: bool, no_color: bool) -> Result<i32, Error> {
     let staging_root = (add_target != root).then_some(add_target);
 
     let role = resolve_role(&root);
-    let deck = commands::ontology::load()?.deck.map(|value| value.value);
+    let deck = rune::ontology::load()?.deck.map(|value| value.value);
     let selections = load_selections(&root)?;
     let mut warnings = Vec::new();
     let providers = probe_providers(&root, &mut warnings);
-    let changes = spec::scan_changes(&root)?;
+    #[cfg(feature = "spec")]
+    let changes = crate::cli::spec::scan_changes(&root)?;
+    #[cfg(not(feature = "spec"))]
+    let changes: Vec<ChangeSummary> = Vec::new();
     let next_steps = suggest_next_steps(role, &selections, &providers, &changes);
 
     let brief = ContextBrief {
@@ -101,7 +104,7 @@ pub fn execute(json: bool, no_color: bool) -> Result<i32, Error> {
 fn resolve_role(root: &Path) -> &'static str {
     if dotrune::exists(root) {
         "consumer"
-    } else if commands::deck::is_deck(root) {
+    } else if rune::deck::is_deck(root) {
         "deck"
     } else if root.join("module.yaml").is_file() {
         "module"

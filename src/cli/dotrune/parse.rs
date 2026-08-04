@@ -1,6 +1,6 @@
 //! Schema and parser for `.rune`.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -1,5 +1,5 @@
 use super::*;
-use commands::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
+use rune::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
 
 #[test]
 fn extract_content_kind_detects_agents() {

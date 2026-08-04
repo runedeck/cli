@@ -1,7 +1,7 @@
 use clap::ValueEnum;
-use commands::manifest;
-use commands::parse;
 use regex::Regex;
+use rune::manifest;
+use rune::parse;
 use std::fs;
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
@@ -11,6 +11,8 @@ use std::sync::LazyLock;
 /// misconfigured server cannot exhaust memory.
 const MAX_ADOPT_BYTES: u64 = 10 * 1024 * 1024;
 
+pub(crate) mod review;
+pub(crate) mod segment;
 mod tree;
 
 #[cfg(test)]
@@ -29,13 +31,40 @@ static HTTPS_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static FILE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^file:///.+$").expect("anchored file URL regex compiles"));
+// Deck source names are PascalCase (1-64 chars, name equals the directory);
+// assembly kebabizes for targets that enforce the agentskills.io lowercase
+// convention (claude.ai packaging hard-enforces; opencode and Copilot
+// document it). Claude Code, Gemini CLI, and Codex accept Pascal as-is.
 static PASCAL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Z][A-Za-z0-9]*$").expect("anchored PascalCase regex compiles")
+    Regex::new(r"^[A-Z][A-Za-z0-9]{0,63}$").expect("anchored PascalCase regex compiles")
 });
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(crate) enum Kind {
     Skill,
+    Agent,
+    Rule,
+}
+
+impl Kind {
+    fn directory(self) -> &'static str {
+        match self {
+            Kind::Skill => "skills",
+            Kind::Agent => "agents",
+            Kind::Rule => "rules",
+        }
+    }
+}
+
+/// What an import produced, so `rune adopt start` can open a review session
+/// over it: the artifact root (a skill directory, or a single agent/rule
+/// file) plus the upstream pin.
+#[derive(Debug)]
+pub struct Adopted {
+    pub exit: i32,
+    pub artifact_root: Option<PathBuf>,
+    pub upstream_uri: String,
+    pub upstream_digest: String,
 }
 
 pub fn execute(
@@ -46,7 +75,7 @@ pub fn execute(
     kind: Kind,
     source_url: Option<&str>,
     dry_run: bool,
-) -> Result<i32, String> {
+) -> Result<Adopted, String> {
     if let Some(directory) = local_directory_source(url) {
         if companion.is_some() {
             return Err(
@@ -77,7 +106,7 @@ fn execute_with_fetcher<F>(
     kind: Kind,
     dry_run: bool,
     fetcher: F,
-) -> Result<i32, String>
+) -> Result<Adopted, String>
 where
     F: Fn(&ClassifiedUrl) -> Result<Vec<u8>, String>,
 {
@@ -100,11 +129,21 @@ where
 
     check_existing(&plan.artifact_path, &upstream_digest)?;
 
+    let adopted = Adopted {
+        exit: 0,
+        artifact_root: plan.session_root.clone(),
+        upstream_uri: source.original_url.clone(),
+        upstream_digest: upstream_digest.clone(),
+    };
+
     if dry_run {
         println!("fetch: {}", source.original_url);
         println!("place: {}", plan.artifact_path.display());
         println!("{}", plan.sidecar_yaml);
-        return Ok(0);
+        return Ok(Adopted {
+            artifact_root: None,
+            ..adopted
+        });
     }
 
     if let Some(parent) = plan.artifact_path.parent() {
@@ -122,7 +161,7 @@ where
         .map_err(|error| format!("cannot write {}: {error}", plan.sidecar_path.display()))?;
 
     println!("adopted {}", plan.artifact_relative);
-    Ok(0)
+    Ok(adopted)
 }
 
 #[derive(Debug)]
@@ -132,6 +171,7 @@ struct Plan {
     sidecar_path: PathBuf,
     content: String,
     sidecar_yaml: String,
+    session_root: Option<PathBuf>,
 }
 
 fn build_plan(
@@ -150,6 +190,17 @@ fn build_plan(
         (Kind::Skill, None) => {
             skill_plan(module_root, source, upstream_body, upstream_digest, name)
         }
+        (Kind::Agent | Kind::Rule, Some(_)) => {
+            Err("--companion applies to skills only".to_string())
+        }
+        (Kind::Agent | Kind::Rule, None) => single_file_plan(
+            module_root,
+            source,
+            upstream_body,
+            upstream_digest,
+            name,
+            kind,
+        ),
     }
 }
 
@@ -161,14 +212,18 @@ fn skill_plan(
     name: Option<&str>,
 ) -> Result<Plan, String> {
     let skill_name = match name {
-        Some(value) => validate_skill_name(value)?.to_string(),
-        None => infer_pascal_name(source)?,
+        Some(value) => validate_artifact_name(value)?.to_string(),
+        None => infer_name(source)?,
     };
     let content = align_skill(upstream_body, &skill_name, &source.original_url)?;
     let artifact_relative = format!("skills/{skill_name}/SKILL.md");
     let artifact_path = contained_path(module_root, Path::new(&artifact_relative))?;
+    let session_root = artifact_path.parent().map(Path::to_path_buf);
     let subject_digest = manifest::content_sha256(&content);
-    let sidecar_path = module_root.join(manifest::provenance_path(&artifact_relative));
+    let sidecar_path = contained_path(
+        module_root,
+        Path::new(&manifest::provenance_path(&artifact_relative)),
+    )?;
     let sidecar_yaml = manifest::generate_adopt_statement(
         &artifact_relative,
         &subject_digest,
@@ -181,6 +236,46 @@ fn skill_plan(
         artifact_relative,
         sidecar_path,
         content,
+        sidecar_yaml,
+        session_root,
+    })
+}
+
+/// Agents and rules are single markdown files under their kind directory;
+/// the body lands verbatim so the review sees exactly what upstream wrote.
+fn single_file_plan(
+    module_root: &Path,
+    source: &ClassifiedUrl,
+    upstream_body: &str,
+    upstream_digest: &str,
+    name: Option<&str>,
+    kind: Kind,
+) -> Result<Plan, String> {
+    let artifact_name = match name {
+        Some(value) => validate_artifact_name(value)?.to_string(),
+        None => infer_name(source)?,
+    };
+    let artifact_relative = format!("{}/{artifact_name}.md", kind.directory());
+    let artifact_path = contained_path(module_root, Path::new(&artifact_relative))?;
+    let subject_digest = manifest::content_sha256(upstream_body);
+    let sidecar_path = contained_path(
+        module_root,
+        Path::new(&manifest::provenance_path(&artifact_relative)),
+    )?;
+    let sidecar_yaml = manifest::generate_adopt_statement_with_transforms(
+        &artifact_relative,
+        &subject_digest,
+        &source.original_url,
+        source.commit.as_deref().unwrap_or(""),
+        upstream_digest,
+        &["copy"],
+    );
+    Ok(Plan {
+        session_root: Some(artifact_path.clone()),
+        artifact_path,
+        artifact_relative,
+        sidecar_path,
+        content: upstream_body.to_string(),
         sidecar_yaml,
     })
 }
@@ -197,7 +292,10 @@ fn companion_plan(
     let artifact_relative = path_to_slash(&relative_path);
     let subject_digest = manifest::content_sha256(&content);
     let upstream_digest = manifest::content_sha256(upstream_body);
-    let sidecar_path = module_root.join(manifest::provenance_path(&artifact_relative));
+    let sidecar_path = contained_path(
+        module_root,
+        Path::new(&manifest::provenance_path(&artifact_relative)),
+    )?;
     let sidecar_yaml = manifest::generate_adopt_statement(
         &artifact_relative,
         &subject_digest,
@@ -211,6 +309,7 @@ fn companion_plan(
         sidecar_path,
         content,
         sidecar_yaml,
+        session_root: None,
     })
 }
 
@@ -254,14 +353,22 @@ fn check_existing(artifact_path: &Path, upstream_digest: &str) -> Result<(), Str
             artifact_path.display()
         ));
     }
-    let sidecar_path = source_sidecar_path(artifact_path);
-    if !sidecar_path.is_file() {
+    let Some(sidecar_path) = manifest::existing_sidecar_for(artifact_path) else {
         return Err(format!(
             "{} already exists without an adopt sidecar; refusing to overwrite",
             artifact_path.display()
         ));
-    }
+    };
     let sidecar = manifest::provenance::read(&sidecar_path)?;
+    // A reviewed adoption is settled: its content carries maintainer
+    // verdicts, and a re-import would overwrite them even when the digests
+    // line up. Refreshing from upstream means a new review session.
+    if sidecar.provenance.predicate.run_details.metadata.review == "reviewed" {
+        return Err(format!(
+            "{} is an adopted artifact that already passed review; remove it (or abandon into .trash) before re-adopting",
+            artifact_path.display()
+        ));
+    }
     // Refuse to clobber local edits: the on-disk file must still match the
     // digest the sidecar recorded for it, or a hand-edited skill would be
     // silently overwritten on re-adopt.
@@ -301,17 +408,6 @@ fn check_existing(artifact_path: &Path, upstream_digest: &str) -> Result<(), Str
         ));
     }
     Ok(())
-}
-
-fn source_sidecar_path(artifact_path: &Path) -> PathBuf {
-    let parent = artifact_path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = artifact_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
-    parent
-        .join(manifest::PROVENANCE_DIRECTORY)
-        .join(format!("{stem}.{}", manifest::SIDECAR_EXTENSION))
 }
 
 #[derive(Debug)]
@@ -455,17 +551,42 @@ fn canonical_module_root(module: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+// Containment is validated against the deepest existing ancestor without
+// creating anything: planning must stay side-effect free so `--dry-run`
+// leaves no directories behind. Directories are created at write time.
 fn contained_path(module_root: &Path, relative_path: &Path) -> Result<PathBuf, String> {
     let safe_relative = validate_relative_path(&path_to_slash(relative_path))?;
     let target = module_root.join(&safe_relative);
     let parent = target
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", target.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|error| format!("cannot canonicalize {}: {error}", parent.display()))?;
-    if !canonical_parent.starts_with(module_root) {
+
+    let mut probe = parent.to_path_buf();
+    let existing = loop {
+        match fs::symlink_metadata(&probe) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "{} is a symlink; refusing to write through it",
+                        probe.display()
+                    ));
+                }
+                break probe;
+            }
+            Err(_) => match probe.parent() {
+                Some(ancestor) => probe = ancestor.to_path_buf(),
+                None => {
+                    return Err(format!(
+                        "no existing ancestor for {}; cannot validate containment",
+                        target.display()
+                    ));
+                }
+            },
+        }
+    };
+    let canonical_existing = fs::canonicalize(&existing)
+        .map_err(|error| format!("cannot canonicalize {}: {error}", existing.display()))?;
+    if !canonical_existing.starts_with(module_root) {
         return Err(format!(
             "target escapes rune source root: {}",
             relative_path.display()
@@ -495,16 +616,16 @@ fn validate_relative_path(path: &str) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
-fn validate_skill_name(name: &str) -> Result<&str, String> {
+fn validate_artifact_name(name: &str) -> Result<&str, String> {
     if !PASCAL_RE.is_match(name) {
         return Err(format!(
-            "--name must be a single PascalCase path segment, got '{name}'"
+            "--name must be PascalCase (leading capital, letters and digits, max 64 chars), got '{name}'"
         ));
     }
     Ok(name)
 }
 
-fn infer_pascal_name(source: &ClassifiedUrl) -> Result<String, String> {
+fn infer_name(source: &ClassifiedUrl) -> Result<String, String> {
     let path = Path::new(&source.source_path);
     let file_name = path
         .file_name()
@@ -523,7 +644,7 @@ fn infer_pascal_name(source: &ClassifiedUrl) -> Result<String, String> {
             .unwrap_or_else(|| first_host_label(&source.original_url))
     };
     let pascal = to_pascal_case(raw_name);
-    validate_skill_name(&pascal)?;
+    validate_artifact_name(&pascal)?;
     Ok(pascal)
 }
 
@@ -533,6 +654,27 @@ fn first_host_label(url: &str) -> &str {
         .and_then(|rest| rest.split('/').next())
         .unwrap_or("AdoptedSkill");
     host.split('.').next().unwrap_or("AdoptedSkill")
+}
+
+/// Upstream names arrive kebab or snake; deck sources are `PascalCase`.
+/// `adopt-artifact` and `adopt_artifact` both become `AdoptArtifact`.
+fn to_pascal_case(input: &str) -> String {
+    let mut output = String::new();
+    for segment in input.split(|character: char| !character.is_ascii_alphanumeric()) {
+        if segment.is_empty() {
+            continue;
+        }
+        let mut characters = segment.chars();
+        if let Some(first) = characters.next() {
+            output.push(first.to_ascii_uppercase());
+            output.extend(characters);
+        }
+    }
+    if output.is_empty() {
+        "AdoptedSkill".to_string()
+    } else {
+        output
+    }
 }
 
 fn https_path_or_host(url: &str) -> String {
@@ -545,27 +687,6 @@ fn https_path_or_host(url: &str) -> String {
         }
     } else {
         rest.to_string()
-    }
-}
-
-fn to_pascal_case(input: &str) -> String {
-    let mut output = String::new();
-    for segment in input.split(|character: char| !character.is_ascii_alphanumeric()) {
-        if segment.is_empty() {
-            continue;
-        }
-        let mut chars = segment.chars();
-        if let Some(first) = chars.next() {
-            output.push(first.to_ascii_uppercase());
-            for character in chars {
-                output.push(character.to_ascii_lowercase());
-            }
-        }
-    }
-    if output.is_empty() {
-        "AdoptedSkill".to_string()
-    } else {
-        output
     }
 }
 

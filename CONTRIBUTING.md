@@ -3,13 +3,19 @@
 ## Getting Started
 
 ```sh
-git clone https://github.com/runedeck/rune.git
+git clone https://github.com/runedeck/cli.git
 cd rune-cli
 make build
 make test
 ```
 
 ## Build & Test
+
+The test suite requires the standalone `mdschema` binary. It is the only thing that checks Stable shell section order, unexpected sections, permitted heading placement, and heading uniqueness, so the tests covering those fail rather than skip when it is missing:
+
+```sh
+brew install jackchuka/tap/mdschema
+```
 
 See [README.md](README.md#build) for build targets. Run a single test:
 

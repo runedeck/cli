@@ -46,7 +46,7 @@ Library modules plus CLI handlers:
 
 ```
 src/
-    commands.rs         lib crate root (re-exports all library modules)
+    lib.rs              lib crate root (re-exports all library modules)
     main.rs             binary entry point
 
     parse/              extract frontmatter values from markdown
@@ -61,6 +61,8 @@ src/
     result.rs           ActionResult, DeployedFile, SkippedFile types
     error.rs            ErrorKind + Error types
 
+    services/           read models the dashboard and TUI render from
+
     cli/                CLI command handlers (binary-only, owns I/O)
         mod.rs          clap definitions, dispatch
         install/        assemble + deploy
@@ -73,6 +75,14 @@ src/
         release/        install to staging + package tarballs in dist/
         config/         module config loading and merging
         output/         turbo-style CLI output formatting
+
+    tui/                terminal UI (binary-only, alongside cli/)
+
+Unit tests live in a sibling `tests.rs` next to the module they cover, per
+RUST-0012. Around forty modules still declare `#[cfg(test)] mod tests` inline
+and move as they are touched; two use a differently named inline module
+(`src/cli/dotrune/mod.rs` and `src/provider/mod.rs`) and need their contents
+read before they move, not a mechanical extraction.
 
 tests/
     fixtures/

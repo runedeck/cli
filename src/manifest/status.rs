@@ -1,4 +1,4 @@
-use super::{FileStatus, ManifestEntry, content_sha256};
+use super::{FileStatus, ManifestEntry};
 
 /// Determine deployment status by comparing target file against `.manifest`.
 ///
@@ -12,15 +12,28 @@ pub fn status(
     manifest_entry: Option<&ManifestEntry>,
     build_sha256: &str,
 ) -> FileStatus {
+    status_bytes(
+        target_content.map(str::as_bytes),
+        manifest_entry,
+        build_sha256,
+    )
+}
+
+/// Bytes variant so binary passthrough assets get the same state machine.
+pub fn status_bytes(
+    target_bytes: Option<&[u8]>,
+    manifest_entry: Option<&ManifestEntry>,
+    build_sha256: &str,
+) -> FileStatus {
     let Some(entry) = manifest_entry else {
         return FileStatus::New;
     };
 
-    let Some(content) = target_content else {
+    let Some(bytes) = target_bytes else {
         return FileStatus::New;
     };
 
-    let target_sha256 = content_sha256(content);
+    let target_sha256 = super::content_sha256_bytes(bytes);
 
     if target_sha256 != entry.fingerprint {
         return FileStatus::Modified;

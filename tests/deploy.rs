@@ -1,7 +1,10 @@
 use assert_cmd::Command;
-use commands::services::editing;
+use rune::services::editing;
 use std::fs;
 use std::path::Path;
+
+const SKILL_VARIANT_BASE: &str = include_str!("fixtures/input/skill-variant-base.md");
+const SKILL_VARIANT_CLAUDE: &str = include_str!("fixtures/input/skill-variant-claude.md");
 
 fn rune() -> Command {
     Command::cargo_bin("rune").unwrap()
@@ -78,16 +81,12 @@ fn create_skill_with_companion(root: &Path, name: &str, companion: &str) {
     .unwrap();
 }
 
-fn create_skill_with_claude_fields(root: &Path, name: &str) {
-    let skill_dir = root.join("skills").join(name);
-    fs::create_dir_all(&skill_dir).unwrap();
-    fs::write(
-        skill_dir.join("SKILL.md"),
-        format!(
-            "---\nname: {name}\ndescription: test skill\nversion: 1.0.0\nargument-hint: <path>\nallowed-tools:\n    - Bash(pass *)\n    - Read\nsources: rune-core\n---\n\nSkill instructions.\n"
-        ),
-    )
-    .unwrap();
+fn create_skill_with_claude_variant(root: &Path) {
+    let skill_dir = root.join("skills/dci-skill");
+    let claude_dir = skill_dir.join("claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(skill_dir.join("SKILL.md"), SKILL_VARIANT_BASE).unwrap();
+    fs::write(claude_dir.join("SKILL.md"), SKILL_VARIANT_CLAUDE).unwrap();
 }
 
 // --- Install tests ---
@@ -189,12 +188,12 @@ fn install_deploys_agent_to_all_providers() {
 }
 
 #[test]
-fn install_preserves_claude_skill_allowed_tools() {
+fn install_merges_claude_skill_frontmatter_variant() {
     let module_directory = tempfile::tempdir().unwrap();
     let target_directory = tempfile::tempdir().unwrap();
 
     scaffold_module(module_directory.path());
-    create_skill_with_claude_fields(module_directory.path(), "DciSkill");
+    create_skill_with_claude_variant(module_directory.path());
 
     rune()
         .args([
@@ -210,37 +209,47 @@ fn install_preserves_claude_skill_allowed_tools() {
     let claude_skill = fs::read_to_string(
         target_directory
             .path()
-            .join(".claude/skills/DciSkill/SKILL.md"),
+            .join(".claude/skills/dci-skill/SKILL.md"),
     )
     .unwrap();
     assert!(
-        claude_skill.contains("allowed-tools:"),
-        "claude must keep the allowed-tools key: {claude_skill}"
-    );
-    assert!(
-        claude_skill.contains("- Bash(pass *)") && claude_skill.contains("- Read"),
-        "claude must keep every allowed-tools list item: {claude_skill}"
+        claude_skill.contains("allowed-tools: Read"),
+        "{claude_skill}"
     );
     assert!(
         claude_skill.contains("argument-hint: <path>"),
-        "claude must keep argument-hint: {claude_skill}"
+        "{claude_skill}"
     );
     assert!(
-        !claude_skill.contains("sources:"),
-        "Rune-internal sources field must still be stripped: {claude_skill}"
+        claude_skill.contains("disallowed-tools: WebFetch, WebSearch"),
+        "{claude_skill}"
+    );
+    assert!(!claude_skill.contains("mode:"), "{claude_skill}");
+    assert!(
+        claude_skill.contains("Read the requested path."),
+        "{claude_skill}"
+    );
+    assert!(
+        !target_directory
+            .path()
+            .join(".claude/skills/dci-skill/claude/SKILL.md")
+            .exists()
     );
 
-    // gemini keeps only name/description/version for skills, so the
-    // Claude-native fields must not leak into the gemini deployment.
     let gemini_skill = fs::read_to_string(
         target_directory
             .path()
-            .join(".gemini/skills/DciSkill/SKILL.md"),
+            .join(".gemini/skills/dci-skill/SKILL.md"),
     )
     .unwrap();
+    assert!(!gemini_skill.contains("argument-hint:"), "{gemini_skill}");
     assert!(
-        !gemini_skill.contains("allowed-tools:"),
-        "gemini must not carry Claude-native allowed-tools: {gemini_skill}"
+        !gemini_skill.contains("disallowed-tools:"),
+        "{gemini_skill}"
+    );
+    assert!(
+        gemini_skill.contains("Read the requested path."),
+        "{gemini_skill}"
     );
 }
 
@@ -544,6 +553,99 @@ fn install_creates_nested_manifest() {
     assert!(plugin_manifest.contains("    provenance:"));
 }
 
+#[test]
+fn corrupt_manifest_requires_forced_full_install() {
+    let module_directory = tempfile::tempdir().unwrap();
+    let target_directory = tempfile::tempdir().unwrap();
+    scaffold_module(module_directory.path());
+    create_rule(module_directory.path(), "CorruptManifest");
+
+    let install_args = [
+        "install",
+        "--source",
+        module_directory.path().to_str().unwrap(),
+        "--target",
+        target_directory.path().to_str().unwrap(),
+        "--provider",
+        "claude",
+    ];
+    rune().args(install_args).assert().success();
+
+    let deployed_rule = target_directory
+        .path()
+        .join(".claude/rules/CorruptManifest.md");
+    let manifest_path = target_directory.path().join(".claude/.manifest");
+    fs::write(&deployed_rule, "Local customization.\n").unwrap();
+    fs::write(&manifest_path, "manifest").unwrap();
+
+    rune().args(install_args).assert().failure();
+    assert_eq!(
+        fs::read_to_string(&deployed_rule).unwrap(),
+        "Local customization.\n"
+    );
+
+    rune()
+        .args(install_args)
+        .args(["--force", "--only", "rules/CorruptManifest.md"])
+        .assert()
+        .failure();
+    assert_eq!(
+        fs::read_to_string(&deployed_rule).unwrap(),
+        "Local customization.\n"
+    );
+
+    rune().args(install_args).arg("--force").assert().success();
+    let deployed_content = fs::read_to_string(&deployed_rule).unwrap();
+    assert!(deployed_content.contains("Rule content with a reference"));
+    assert!(!deployed_content.contains("Local customization"));
+
+    let manifest_content = fs::read_to_string(manifest_path).unwrap();
+    let manifest = rune::manifest::read(&manifest_content).unwrap();
+    assert!(manifest.contains_key("rules/CorruptManifest.md"));
+}
+
+#[test]
+fn install_copies_binary_skill_asset_byte_for_byte() {
+    let module_directory = tempfile::tempdir().unwrap();
+    let target_directory = tempfile::tempdir().unwrap();
+
+    scaffold_module(module_directory.path());
+    create_skill(module_directory.path(), "BinaryAsset");
+    let asset_bytes: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x00, 0xff];
+    fs::write(
+        module_directory.path().join("skills/BinaryAsset/logo.png"),
+        asset_bytes,
+    )
+    .unwrap();
+
+    rune()
+        .args([
+            "install",
+            "--source",
+            module_directory.path().to_str().unwrap(),
+            "--target",
+            target_directory.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let deployed = target_directory
+        .path()
+        .join(".claude/skills/BinaryAsset/logo.png");
+    assert_eq!(
+        fs::read(&deployed).expect("binary asset deployed"),
+        asset_bytes,
+        "asset must survive assembly and deploy byte-for-byte"
+    );
+    assert!(
+        target_directory
+            .path()
+            .join(".claude/skills/BinaryAsset/.provenance/logo.png.yaml")
+            .is_file(),
+        "binary asset gets its own provenance sidecar"
+    );
+}
+
 // --- Provenance tests ---
 
 #[test]
@@ -567,7 +669,7 @@ fn install_deploys_provenance_sidecars() {
 
     let provenance_path = target_directory
         .path()
-        .join(".claude/agents/.provenance/TracedAgent.yaml");
+        .join(".claude/agents/.provenance/TracedAgent.md.yaml");
 
     assert!(provenance_path.is_file());
 
@@ -599,7 +701,7 @@ fn install_deploys_nested_provenance() {
     assert!(
         target_directory
             .path()
-            .join(".claude/rules/deep/.provenance/DeepRule.yaml")
+            .join(".claude/rules/deep/.provenance/DeepRule.md.yaml")
             .is_file()
     );
 }
@@ -922,8 +1024,11 @@ fn validate_catches_mdschema_violation() {
         ])
         .assert()
         .failure()
-        .stdout(predicates::str::contains(
-            "missing required frontmatter field 'status'",
-        ))
+        // The wording differs between the standalone mdschema binary
+        // ("Required frontmatter field 'status' is missing") and the
+        // built-in fallback ("missing required frontmatter field
+        // 'status'"); assert the shared core so the test passes with or
+        // without the binary on PATH.
+        .stdout(predicates::str::contains("frontmatter field 'status'"))
         .stdout(predicates::str::contains("BadRule.md"));
 }

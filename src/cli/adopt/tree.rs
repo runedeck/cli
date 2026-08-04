@@ -4,8 +4,8 @@
 //! adopted file gets its own provenance sidecar; the upstream's own
 //! `.provenance/` directories are regenerated, not carried over.
 
-use super::{align_skill, contained_path, validate_skill_name};
-use commands::manifest;
+use super::{Adopted, align_skill, contained_path, validate_artifact_name};
+use rune::manifest;
 use std::path::{Component, Path, PathBuf};
 
 const SKIP_DIRECTORY_NAMES: &[&str] = &[".git", ".jj", manifest::PROVENANCE_DIRECTORY];
@@ -25,18 +25,22 @@ pub(super) fn adopt_tree(
     name: Option<&str>,
     source_url: &str,
     dry_run: bool,
-) -> Result<i32, String> {
+) -> Result<Adopted, String> {
     let skill_root = std::fs::canonicalize(source_dir)
         .map_err(|error| format!("cannot resolve {}: {error}", source_dir.display()))?;
-    if !skill_root.join("SKILL.md").is_file() {
+    let skill_md = skill_root.join("SKILL.md");
+    if !skill_md.is_file() {
         return Err(format!(
             "{} has no SKILL.md; a skill tree must contain one at its root",
             skill_root.display()
         ));
     }
+    let upstream_skill = std::fs::read_to_string(&skill_md)
+        .map_err(|error| format!("cannot read {}: {error}", skill_md.display()))?;
+    let upstream_digest = manifest::content_sha256(&upstream_skill);
 
     let skill_name = match name {
-        Some(value) => validate_skill_name(value)?.to_string(),
+        Some(value) => validate_artifact_name(value)?.to_string(),
         None => pascal_from_directory(&skill_root)?,
     };
 
@@ -59,12 +63,22 @@ pub(super) fn adopt_tree(
         guard_destination(&plan.artifact_path)?;
     }
 
+    let adopted = Adopted {
+        exit: 0,
+        artifact_root: Some(module_root.join("skills").join(&skill_name)),
+        upstream_uri: source_url.to_string(),
+        upstream_digest,
+    };
+
     if dry_run {
         println!("fetch: {}", skill_root.display());
         for plan in &plans {
             println!("place: {}", plan.artifact_path.display());
         }
-        return Ok(0);
+        return Ok(Adopted {
+            artifact_root: None,
+            ..adopted
+        });
     }
 
     for plan in &plans {
@@ -72,7 +86,7 @@ pub(super) fn adopt_tree(
         write_file(&plan.sidecar_path, plan.sidecar_yaml.as_bytes())?;
         println!("adopted {}", plan.artifact_relative);
     }
-    Ok(0)
+    Ok(adopted)
 }
 
 fn plan_file(
@@ -88,7 +102,10 @@ fn plan_file(
     let relative_slash = to_slash(relative);
     let artifact_relative = format!("skills/{skill_name}/{relative_slash}");
     let artifact_path = contained_path(module_root, Path::new(&artifact_relative))?;
-    let sidecar_path = module_root.join(manifest::provenance_path(&artifact_relative));
+    let sidecar_path = contained_path(
+        module_root,
+        Path::new(&manifest::provenance_path(&artifact_relative)),
+    )?;
 
     let raw =
         std::fs::read(file).map_err(|error| format!("cannot read {}: {error}", file.display()))?;
@@ -127,9 +144,10 @@ fn plan_file(
     })
 }
 
-/// Refuse to clobber a destination that exists without an adopt sidecar or
-/// carries local edits. Bytes-based so binary assets survive re-adoption
-/// (the shared string guard would fail to read them).
+/// Refuse to clobber a destination that exists without an adopt sidecar,
+/// already passed review, or carries local edits. Bytes-based so binary
+/// assets survive re-adoption (the shared string guard would fail to read
+/// them).
 fn guard_destination(artifact_path: &Path) -> Result<(), String> {
     let Ok(metadata) = std::fs::symlink_metadata(artifact_path) else {
         return Ok(());
@@ -140,18 +158,36 @@ fn guard_destination(artifact_path: &Path) -> Result<(), String> {
             artifact_path.display()
         ));
     }
-    let stem = artifact_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
-    let sidecar_path = artifact_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(manifest::PROVENANCE_DIRECTORY)
-        .join(format!("{stem}.{}", manifest::SIDECAR_EXTENSION));
-    if !sidecar_path.is_file() {
+    let Some(sidecar_path) = manifest::existing_sidecar_for(artifact_path) else {
         return Err(format!(
             "{} already exists without an adopt sidecar; refusing to overwrite",
+            artifact_path.display()
+        ));
+    };
+    let sidecar = manifest::provenance::read(&sidecar_path)?;
+    // A reviewed adoption is settled: its content carries maintainer
+    // verdicts, and re-adopting the tree would overwrite them.
+    if sidecar.provenance.predicate.run_details.metadata.review == "reviewed" {
+        return Err(format!(
+            "{} is an adopted artifact that already passed review; remove it (or abandon into .trash) before re-adopting",
+            artifact_path.display()
+        ));
+    }
+    // Refuse to clobber local edits: the on-disk bytes must still match the
+    // digest the sidecar recorded, or a hand-edited file would be silently
+    // overwritten on re-adopt.
+    let local_bytes = std::fs::read(artifact_path)
+        .map_err(|error| format!("cannot read {}: {error}", artifact_path.display()))?;
+    let local_digest = manifest::content_sha256_bytes(&local_bytes);
+    let subject_digest = sidecar
+        .provenance
+        .subject
+        .first()
+        .map(|subject| subject.digest.sha256.as_str())
+        .ok_or_else(|| format!("{} has no subject digest", sidecar_path.display()))?;
+    if local_digest != subject_digest {
+        return Err(format!(
+            "{} has local edits (sha256:{local_digest} != recorded sha256:{subject_digest}); refusing to overwrite",
             artifact_path.display()
         ));
     }
@@ -178,6 +214,12 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
             .map_err(|error| format!("cannot stat {}: {error}", path.display()))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
+        if file_type.is_symlink() {
+            return Err(format!(
+                "{} is a symlink; adopt copies real files only — replace it with the file it points at",
+                path.display()
+            ));
+        }
         if file_type.is_dir() {
             if SKIP_DIRECTORY_NAMES.contains(&name.as_ref()) {
                 continue;
@@ -197,7 +239,7 @@ fn pascal_from_directory(skill_root: &Path) -> Result<String, String> {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("cannot infer a skill name from {}", skill_root.display()))?;
     let pascal = super::to_pascal_case(raw);
-    validate_skill_name(&pascal)?;
+    validate_artifact_name(&pascal)?;
     Ok(pascal)
 }
 

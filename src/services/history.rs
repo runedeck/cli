@@ -17,7 +17,7 @@ use std::time::Duration;
 /// A git invocation pinned to the given repository. Ambient `GIT_DIR`,
 /// `GIT_WORK_TREE`, and `GIT_INDEX_FILE` (exported into hook environments)
 /// would otherwise retarget the call at the enclosing repository.
-fn git_in(repo: &Path) -> Command {
+pub(super) fn git_in(repo: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .current_dir(repo)

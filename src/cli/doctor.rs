@@ -1,5 +1,5 @@
-use commands::error::{Error, ErrorKind};
-use commands::manifest;
+use rune::error::{Error, ErrorKind};
+use rune::manifest;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -55,6 +55,13 @@ pub fn execute(target: &str, verify: bool, repair: bool, json: bool) -> Result<i
             format!("cannot determine current directory: {error}"),
         )
     })?;
+    // Repair mutates the target tree; take the same per-target lock deploy
+    // holds so the two cannot interleave.
+    let _target_lock = if repair {
+        Some(crate::cli::config::lock_target(Path::new(target))?)
+    } else {
+        None
+    };
     let report = inspect_and_repair(Path::new(target), &source_root, repair)?;
     if json {
         let json = serde_json::to_string_pretty(&report).map_err(|error| {
@@ -219,6 +226,10 @@ fn load_manifest(target: &Path) -> Result<HashMap<String, manifest::ManifestEntr
 }
 
 fn validate_managed_relative(relative: &str) -> Result<(), Error> {
+    // The rule-wiring key is a virtual manifest entry, not a path.
+    if relative == crate::cli::deploy::wiring::WIRING_MANIFEST_KEY {
+        return Ok(());
+    }
     let path = Path::new(relative);
     let safe = !path.as_os_str().is_empty()
         && path
@@ -252,9 +263,14 @@ fn inspect_target(
 ) -> Result<Vec<Finding>, Error> {
     let mut findings = BTreeMap::new();
     for (relative, entry) in entries {
+        // The rule-wiring key is not a managed file; its own check follows.
+        if relative == crate::cli::deploy::wiring::WIRING_MANIFEST_KEY {
+            continue;
+        }
         let path = target.join(relative);
-        let status = match fs::read_to_string(&path) {
-            Ok(content) if manifest::content_sha256(&content) == entry.fingerprint => {
+        // Bytes-based so binary passthrough assets verify like text.
+        let status = match fs::read(&path) {
+            Ok(bytes) if manifest::content_sha256_bytes(&bytes) == entry.fingerprint => {
                 IntegrityStatus::Ok
             }
             Ok(_) => IntegrityStatus::Modified,
@@ -263,6 +279,22 @@ fn inspect_target(
             Err(_) => IntegrityStatus::Missing,
         };
         findings.insert(relative.clone(), status);
+    }
+
+    // Rule wiring: if the manifest recorded a block, the harness's instruction
+    // file must still carry the generated markers. A deleted block is a
+    // wiring finding, not a missing managed file.
+    if entries.contains_key(crate::cli::deploy::wiring::WIRING_MANIFEST_KEY)
+        && let Some(instruction_file) = wiring_instruction_file(target)
+    {
+        let wired = fs::read_to_string(&instruction_file)
+            .is_ok_and(|content| content.contains(crate::cli::deploy::wiring::BEGIN_MARKER));
+        if !wired {
+            findings.insert(
+                format!("{} (rule wiring)", instruction_file.display()),
+                IntegrityStatus::Missing,
+            );
+        }
     }
 
     let tracked = entries.keys().cloned().collect::<BTreeSet<_>>();
@@ -276,6 +308,16 @@ fn inspect_target(
         .into_iter()
         .map(|(path, status)| Finding { path, status })
         .collect())
+}
+
+/// The instruction file whose generated block a wired harness maintains.
+/// opencode wires a config array rather than an inline block, so it has none.
+fn wiring_instruction_file(target: &Path) -> Option<PathBuf> {
+    match target.file_name().and_then(|name| name.to_str()) {
+        Some(".codex") => Some(target.join("AGENTS.md")),
+        Some(".gemini") => Some(target.join("GEMINI.md")),
+        _ => None,
+    }
 }
 
 fn collect_managed_files(target: &Path) -> Result<Vec<String>, Error> {
@@ -435,19 +477,19 @@ fn matching_build_source(
 ) -> Result<Option<PathBuf>, Error> {
     let build_root = source_root.join("build").join(provider);
     let candidate = build_root.join(relative);
-    let Ok(content) = fs::read_to_string(&candidate) else {
+    let Ok(bytes) = fs::read(&candidate) else {
         return Ok(None);
     };
-    if manifest::content_sha256(&content) != expected_digest {
+    if manifest::content_sha256_bytes(&bytes) != expected_digest {
         return Ok(None);
     }
-    let resolved_candidate = commands::services::confine::confine_existing(&build_root, &candidate)
+    let resolved_candidate = rune::services::confine::confine_existing(&build_root, &candidate)
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
     Ok(Some(resolved_candidate))
 }
 
 fn ensure_destination_within(destination: &Path, target: &Path) -> Result<(), Error> {
-    commands::services::confine::confine_for_write(target, destination)
+    rune::services::confine::confine_for_write(target, destination)
         .map_err(|message| Error::new(ErrorKind::Config, message))
 }
 
@@ -554,7 +596,7 @@ const DOT_MARK: &str = "●";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commands::manifest;
+    use rune::manifest;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;

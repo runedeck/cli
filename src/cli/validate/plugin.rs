@@ -1,4 +1,4 @@
-use commands::validate::{Diagnostic, validate_hooks_manifest, validate_json_manifest};
+use rune::validate::{Diagnostic, validate_hooks_manifest, validate_json_manifest};
 use std::fs;
 use std::path::Path;
 
@@ -123,7 +123,7 @@ fn is_executable(_path: &Path) -> bool {
     true
 }
 
-fn push_diagnostics(diagnostics: Vec<Diagnostic>, result: &mut commands::result::ActionResult) {
+fn push_diagnostics(diagnostics: Vec<Diagnostic>, result: &mut rune::result::ActionResult) {
     for diagnostic in diagnostics {
         result.errors.push(format!(
             "{}: {} ({:?})",

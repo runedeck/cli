@@ -2,7 +2,7 @@
 //! agents how to drive the CLI. `show` prints it; `install` places it in a
 //! harness skills directory.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,7 +18,7 @@ fn rendered() -> String {
 pub fn show() -> i32 {
     let sheet = crate::cli::style::Sheet::detect(false);
     let content = rendered();
-    if let Some((frontmatter, body)) = commands::parse::split_frontmatter(&content) {
+    if let Some((frontmatter, body)) = rune::parse::split_frontmatter(&content) {
         println!("{}", sheet.heading("rune skill"));
         for line in frontmatter.lines() {
             match line.split_once(':') {
@@ -51,7 +51,7 @@ pub fn install(directory: Option<&str>, json: bool) -> Result<i32, Error> {
             format!("cannot create {}: {error}", base.display()),
         )
     })?;
-    commands::services::confine::confine_for_write(&base, &skill_path)
+    rune::services::confine::confine_for_write(&base, &skill_path)
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
     let content = rendered();
     let previous = fs::read_to_string(&skill_path).ok();
@@ -85,23 +85,4 @@ pub fn install(directory: Option<&str>, json: bool) -> Result<i32, Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rendered_skill_substitutes_version_and_stays_kebab() {
-        let content = rendered();
-        assert!(!content.contains("${VERSION}"));
-        assert!(content.contains(concat!("version: ", env!("CARGO_PKG_VERSION"))));
-        assert!(content.starts_with("---\nname: rune\n"));
-    }
-
-    #[test]
-    fn install_writes_skill_under_the_project_claude_tree() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        install(Some(temp.path().to_str().expect("utf-8 path")), true).expect("install");
-        let written = std::fs::read_to_string(temp.path().join(".claude/skills/rune/SKILL.md"))
-            .expect("skill written");
-        assert!(written.contains("# rune"));
-    }
-}
+mod tests;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::parse;
 
 macro_rules! fixture {
     ($name:expr) => {
@@ -28,6 +29,11 @@ const EXPECTED_KEPT: &str = expected!("frontmatter-kept.md");
 const VARIANT_APPEND: &str = fixture!("variant-append.md");
 const VARIANT_PREPEND: &str = fixture!("variant-prepend.md");
 const VARIANT_REPLACE: &str = fixture!("variant-replace.md");
+const VARIANT_FRONTMATTER_ONLY: &str = fixture!("variant-frontmatter-only.md");
+const VARIANT_UNKNOWN_MODE: &str = fixture!("variant-unknown-mode.md");
+const VARIANT_MALFORMED_FRONTMATTER: &str = fixture!("variant-malformed-frontmatter.md");
+const VARIANT_MERGE_BASE: &str = fixture!("variant-merge-base.md");
+const VARIANT_MERGE_FIELDS: &str = fixture!("variant-merge-fields.md");
 const AGENT_BASIC: &str = fixture!("agent-basic.md");
 const FRONTMATTER_SIMPLE: &str = fixture!("frontmatter-simple.md");
 const NO_FRONTMATTER_BODY: &str = fixture!("no-frontmatter-body.md");
@@ -172,8 +178,24 @@ fn map_field_returns_unchanged_when_field_missing() {
 
 #[test]
 fn strip_removes_inline_markers() {
-    let result = references::strip("Text with a ref [1] and another [2].");
-    assert_eq!(result, "Text with a ref and another.");
+    let result = references::strip(
+        "Text with a ref [1] and another [2].\n\n[1]: https://a\n[2]: https://b\n",
+    );
+    assert_eq!(result, "Text with a ref and another.\n");
+}
+
+#[test]
+fn strip_keeps_bracketed_prose_without_definitions() {
+    let content = "Use [optional] flags and read [1] carefully.\n\n[1]: https://a\n";
+    let result = references::strip(content);
+    assert_eq!(result, "Use [optional] flags and read carefully.\n");
+}
+
+#[test]
+fn strip_keeps_callout_after_reference_block() {
+    let content = "Body. [1]\n\n[1]: https://a\n\n[!NOTE] survives\n";
+    let result = references::strip(content);
+    assert_eq!(result, "Body.\n\n[!NOTE] survives\n");
 }
 
 #[test]
@@ -214,8 +236,10 @@ const REFS_MNEMONIC: &str = fixture!("refs-mnemonic.md");
 
 #[test]
 fn strip_removes_mnemonic_inline_markers() {
-    let result = references::strip("Text with a ref [MADR] and another [OWASP].");
-    assert_eq!(result, "Text with a ref and another.");
+    let result = references::strip(
+        "Text with a ref [MADR] and another [OWASP].\n\n[MADR]: https://a\n[OWASP]: https://b\n",
+    );
+    assert_eq!(result, "Text with a ref and another.\n");
 }
 
 #[test]
@@ -236,43 +260,88 @@ fn extract_returns_mnemonic_urls() {
     assert_eq!(urls[2], "https://keepachangelog.com/");
 }
 
-// --- variants::Mode ---
-
-#[test]
-fn mode_parses_append() {
-    assert_eq!(variants::Mode::parse("append"), variants::Mode::Append);
-}
-
-#[test]
-fn mode_parses_prepend() {
-    assert_eq!(variants::Mode::parse("prepend"), variants::Mode::Prepend);
-}
-
-#[test]
-fn mode_defaults_to_replace() {
-    assert_eq!(variants::Mode::parse("unknown"), variants::Mode::Replace);
-    assert_eq!(variants::Mode::parse(""), variants::Mode::Replace);
-}
-
-// --- variants::apply (golden output) ---
+// --- variants::merge_into_base ---
 
 #[test]
 fn apply_append_matches_golden_output() {
-    let result = variants::apply(RULE_BASE, VARIANT_APPEND, variants::Mode::Append);
-    assert_eq!(result.trim(), EXPECTED_APPEND.trim());
+    let result = variants::merge_into_base(RULE_BASE, VARIANT_APPEND).unwrap();
+    assert_eq!(result.mode, variants::BodyMergeMode::Append);
+    assert_eq!(
+        parse::frontmatter_body(&result.content).trim(),
+        EXPECTED_APPEND.trim()
+    );
 }
 
 #[test]
 fn apply_prepend_matches_golden_output() {
-    let result = variants::apply(RULE_BASE, VARIANT_PREPEND, variants::Mode::Prepend);
-    assert_eq!(result.trim(), EXPECTED_PREPEND.trim());
+    let result = variants::merge_into_base(RULE_BASE, VARIANT_PREPEND).unwrap();
+    assert_eq!(result.mode, variants::BodyMergeMode::Prepend);
+    assert_eq!(
+        parse::frontmatter_body(&result.content).trim(),
+        EXPECTED_PREPEND.trim()
+    );
 }
 
 #[test]
 fn apply_replaces_with_variant_body() {
-    let result = variants::apply(RULE_BASE, VARIANT_REPLACE, variants::Mode::Replace);
-    assert!(!result.contains("Base body."));
-    assert!(result.contains("Replacement body."));
+    let result = variants::merge_into_base(RULE_BASE, VARIANT_REPLACE).unwrap();
+    assert_eq!(result.mode, variants::BodyMergeMode::Replace);
+    assert!(!result.content.contains("Base body."));
+    assert!(result.content.contains("Replacement body."));
+}
+
+#[test]
+fn apply_merges_provider_frontmatter_over_base() {
+    let result = variants::merge_into_base(VARIANT_MERGE_BASE, VARIANT_MERGE_FIELDS).unwrap();
+
+    assert_eq!(result.mode, variants::BodyMergeMode::Append);
+    assert_eq!(
+        parse::frontmatter_value(&result.content, "description").as_deref(),
+        Some("Provider description.")
+    );
+    assert_eq!(
+        parse::frontmatter_value(&result.content, "argument-hint").as_deref(),
+        Some("<path>")
+    );
+    assert_eq!(
+        parse::frontmatter_value(&result.content, "metadata.provider").as_deref(),
+        Some("claude")
+    );
+    assert!(parse::frontmatter_value(&result.content, "metadata.version").is_none());
+    assert!(parse::frontmatter_value(&result.content, "mode").is_none());
+    assert_eq!(
+        parse::frontmatter_body(&result.content),
+        "Canonical body.\n"
+    );
+}
+
+#[test]
+fn apply_frontmatter_only_append_preserves_base_body() {
+    let result = variants::merge_into_base(RULE_BASE, VARIANT_FRONTMATTER_ONLY).unwrap();
+
+    assert_eq!(parse::frontmatter_body(&result.content), "Base body.\n");
+    assert_eq!(
+        parse::frontmatter_value(&result.content, "argument-hint").as_deref(),
+        Some("<path>")
+    );
+}
+
+#[test]
+fn apply_rejects_unknown_mode() {
+    let error = variants::merge_into_base(RULE_BASE, VARIANT_UNKNOWN_MODE).unwrap_err();
+    assert_eq!(
+        error,
+        "unknown variant mode 'merge'; expected append, prepend, or replace"
+    );
+}
+
+#[test]
+fn apply_rejects_malformed_variant_frontmatter() {
+    let error = variants::merge_into_base(RULE_BASE, VARIANT_MALFORMED_FRONTMATTER).unwrap_err();
+    assert!(
+        error.starts_with("cannot parse variant frontmatter:"),
+        "unexpected error: {error}"
+    );
 }
 
 // --- strip_frontmatter (golden output) ---
@@ -359,20 +428,20 @@ fn resolve_provider_model_takes_precedence_over_provider() {
 
 #[test]
 fn assemble_strips_frontmatter_and_refs() {
-    let result = assemble(RULE_WITH_REFS, None, &[], true);
+    let result = assemble(RULE_WITH_REFS, None, &[], true).unwrap();
     assert_eq!(result.trim(), EXPECTED_STRIPPED.trim());
 }
 
 #[test]
 fn assemble_with_append_variant() {
-    let result = assemble(RULE_WITH_REFS, Some(VARIANT_APPEND), &[], true);
+    let result = assemble(RULE_WITH_REFS, Some(VARIANT_APPEND), &[], true).unwrap();
     assert!(result.contains("First paragraph with a reference."));
     assert!(result.contains("This content is appended"));
 }
 
 #[test]
 fn assemble_with_prepend_variant() {
-    let result = assemble(RULE_WITH_REFS, Some(VARIANT_PREPEND), &[], true);
+    let result = assemble(RULE_WITH_REFS, Some(VARIANT_PREPEND), &[], true).unwrap();
     assert!(result.contains("First paragraph with a reference."));
     assert!(result.contains("This content is prepended"));
     let prepend_pos = result.find("This content is prepended").unwrap();
@@ -382,15 +451,43 @@ fn assemble_with_prepend_variant() {
 
 #[test]
 fn assemble_keeps_specified_frontmatter_fields() {
-    let result = assemble(AGENT_BASIC, None, &["name"], true);
+    let result = assemble(AGENT_BASIC, None, &["name"], true).unwrap();
     assert!(result.contains("---"));
     assert!(result.contains("name: TestAgent"));
     assert!(!result.contains("version:"));
 }
 
 #[test]
+fn assemble_filters_frontmatter_after_variant_merge() {
+    let result = assemble(
+        VARIANT_MERGE_BASE,
+        Some(VARIANT_MERGE_FIELDS),
+        &["name", "argument-hint", "allowed-tools"],
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        parse::frontmatter_value(&result, "name").as_deref(),
+        Some("test-skill")
+    );
+    assert_eq!(
+        parse::frontmatter_value(&result, "argument-hint").as_deref(),
+        Some("<path>")
+    );
+    assert_eq!(
+        parse::frontmatter_value(&result, "allowed-tools").as_deref(),
+        Some("Read")
+    );
+    assert!(parse::frontmatter_value(&result, "description").is_none());
+    assert!(parse::frontmatter_value(&result, "metadata").is_none());
+    assert!(parse::frontmatter_value(&result, "mode").is_none());
+    assert_eq!(parse::frontmatter_body(&result), "Canonical body.\n");
+}
+
+#[test]
 fn assemble_no_variant_no_keep_strips_everything() {
-    let result = assemble(AGENT_BASIC, None, &[], true);
+    let result = assemble(AGENT_BASIC, None, &[], true).unwrap();
     assert!(!result.contains("---"));
     assert!(!result.contains("# TestAgent"));
     assert!(result.contains("This is a test agent"));

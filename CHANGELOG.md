@@ -8,22 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch claude@sol` applies a named env/args/with preset from `launch.profiles`; env values support `from_env` references so secrets stay out of config; bare `rune launch` lists tools with install state and profiles; `rune launch ollama@<model>` dispatches `ollama run`.
+- `rune run [profile@]<tool>` executes Claude, Codex, agy, Grok, and OpenCode noninteractively through the provider layer shared with native bench (CLI-0024, CLI-0025). It accepts prompts from an argument, file, or standard input; defaults to read-only mode with no timeout; supports explicit repository, workspace-write, timeout, dry-run, and typed JSON output; and rejects tmux and Docker wrappers. Read-only runs restrict Claude and Grok to `Read`, `Glob`, and `Grep`, because their sandbox and permission settings alone still allow writes through the tool set.
+- Route-specific model metadata keeps provider model and context settings together for both `rune launch` and `rune run` (CLI-0026). Claude routes derive model, maximum context, and automatic compaction settings as one group; conflicting profile environment keys fail resolution.
+- Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch sol@claude` applies a named env/args/with preset from `launch.profiles` (profile@tool, like user@host); env values support `from_env` references so secrets stay out of config; bare `rune launch` lists tools with install state and profiles; `rune launch <model>@ollama` dispatches `ollama run`.
+- `from_env` profile references fall back to an env file when the variable is unset in the process environment: default `~/.env`, overridable with `rune config set env <path>` or `RUNE_ENV`. Dry-run output redacts credential-marker values (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`).
+- `cliproxy` launch middleware health-checks a local AI-API proxy (default `127.0.0.1:8317`) before launch, so a cross-harness profile warns up front instead of dying on the first request when the proxy is down. Check-only by default; set `launch.middleware.cliproxy.command` to opt into self-heal, after which the middleware re-probes for up to 5s. Pre-step probing now resolves hostnames, not just IP literals.
 - `rune provider` lists deploy providers (name, enabled state, target, plugin) and `enable`/`disable` write `providers.<name>.enabled` into the local `config.yaml`.
 - `rune todo`: `TODO.txt` at the repo root in todo.txt syntax, with `add`, `do`, `ls` filters (`+project`, `@context`, priority), `obsidian` output, and `import` from Obsidian Tasks markdown through a shared item model that preserves unknown extensions.
 - `rune spec list --sort progress` surfaces least-complete changes first.
 - `rune adr`: decision-record lifecycle under `docs/decisions/` (`new` with per-prefix numbering and a configurable prefix set, `list`, `supersede` with cross-links, `index`).
 - `rune docs check` (broken internal links, unresolved wikilinks, orphan pages; spec-, adr-, and backlog-managed trees exempt) and `rune docs dev` (local `mint dev` shell-out when a `docs.json` exists).
-- OpenSpec interop: `rune spec export --openspec` / `import --openspec` convert between the native docs root and the `openspec/` layout without rewriting artifact bodies; a shared root resolver lets `rune spec` operate directly on an `openspec/` root (`spec.root: openspec` or autodetection).
+- Native Rust compatibility with [OpenSpec v1.6.0](https://github.com/Fission-AI/OpenSpec/releases/tag/v1.6.0) across `docs/`, direct `openspec/`, and custom repository-relative roots: stable validation diagnostics, nested capabilities, deterministic delta application, ownership-preserving import and export, recoverable transactions, and optional upstream validation advice.
 - `.rune` schema v2: a `dirs:` section declares workspace members (path, role, required) with strict relative-path validation; `rune todo --all` aggregates task lists across them.
 - Workshop init: under the targets root (or with `--workshop`) `rune init` scaffolds the private/public/assets layout, colocates jj when installed, and never commits automatically; `--spine` adds colocation to plain projects and `--dry-run` prints the full plan, side-effect steps included.
 - Consumer-root validation: a `.rune` root gets `.rune` parsing and per-provider manifest checks instead of module structure errors; roots carrying both `module.yaml` and `.rune` compose both check sets, and deck roots with `.rune` include the consumer role.
 
-- OpenSpec artifact parity in the spec lifecycle: `spec propose` accepts repeated `--capability` flags (one delta per capability) and `--design` (scaffolds `design.md`, included by `spec context` and `spec show`); the proposal template carries a generated `## Capabilities` section; `spec archive --abandon -y` works scripted. Root parity is intentionally not pursued: rune roots at `docs/`, OpenSpec hardcodes `openspec/`.
+- Spec lifecycle scaffolding accepts repeated `--capability` flags and `--design`; proposals list their capabilities, `spec context` and `spec show` include the optional design, and `spec archive --abandon -y` works in scripts.
 - Warning-severity conformance lint in `rune validate` for every `SKILL.md`: name must equal its directory and stay within 64 characters, description within 1024, no reserved words (`claude`, `anthropic`) in names, no angle brackets in frontmatter, a trigger phrase in the description, and a body long enough to instruct. Warnings inform; only schema errors block.
 
 ### Changed
 
+- Thirteen modules moved their unit tests into the sibling `tests.rs` that RUST-0012 prescribes. The rest keep an inline `#[cfg(test)] mod tests` and move as they are touched; CLI-0002 records the remainder rather than leaving the standard silently unmet.
+- The library crate is `rune` (`src/lib.rs`), not `commands`. The old name described the binary's job while holding the domain model, so every import read `commands::validate` for something that is not a command. The library and the binary now share the name; the package stays `rune-cli`. This supersedes the crate-root line in CLI-0002.
+- Canonical `SKILL.md` frontmatter carries Agent Skills fields only (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), and `schemas/skill.schema.yaml` rejects anything else. This supersedes the 0.3.2 note below about `templates/init/skills/.mdschema` whitelisting twelve Claude Code fields: those fields now reach a target through per-provider overlay files during assembly rather than through canonical source.
+- `rune validate` announces missing strict checking once per run rather than once per file, and attributes it to the run rather than to an artifact. An embedded structure schema is written to a temporary file so the standalone `mdschema` binary checks it too; previously a module without its own on-disk `.mdschema` silently fell back to the reduced built-in checker even where the binary was installed.
+- The built-in structure checker reads shorthand heading declarations (`heading: "## Instructions"`), matching them literally. It previously read only the map form, so every section declared in shorthand went unchecked, including `Instructions` in the skills schema.
 - `rune adopt` is now `rune import`; `adopt` survives as a deprecated alias printing the rename note and is reserved for the harness-driven adoption process.
 - The agentskills provider (`.agents` layout) is opt-in: it deploys only when named with `--provider` or re-enabled via `rune provider enable agentskills`.
 - `rune drift` lists only drifted entries by default; `--all` restores the full listing with a hidden-identical count. Ignored drift (`Expected`) stays visible.
@@ -34,6 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Git subprocesses ignore ambient repository-routing variables exported by hooks, so nested repository operations stay pinned to their intended worktrees.
+- Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
 
 ## [0.5.0] - 2026-07-17

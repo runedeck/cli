@@ -68,7 +68,7 @@ fn model_variant_overrides_base_for_matching_model() {
 }
 
 #[test]
-fn user_overlay_wins_over_model_variant() {
+fn user_variant_wins_over_model_variant() {
     let module = tempfile::tempdir().unwrap();
     scaffold(module.path());
     write_rule(module.path(), "Base.md", "BASE BODY");
@@ -77,14 +77,14 @@ fn user_overlay_wins_over_model_variant() {
         "claude/claude-opus-4-6/Base.md",
         "OPUS VARIANT BODY",
     );
-    write_rule(module.path(), "user/Base.md", "USER OVERLAY BODY");
+    write_rule(module.path(), "user/Base.md", "USER VARIANT BODY");
 
     assemble(module.path());
 
     let claude = fs::read_to_string(module.path().join("build/claude/rules/Base.md")).unwrap();
     assert!(
-        claude.contains("USER OVERLAY BODY"),
-        "user/ overlay must win over the model variant: {claude}"
+        claude.contains("USER VARIANT BODY"),
+        "user/ must win over the model qualifier: {claude}"
     );
 }
 

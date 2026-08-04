@@ -3,7 +3,7 @@
 
 use super::discovery::module_name_from_source;
 use super::history::{
-    GIT_LOG_FORMAT, enrich_commits_with_entire, git_log_for_artifact, parse_git_log,
+    GIT_LOG_FORMAT, enrich_commits_with_entire, git_in, git_log_for_artifact, parse_git_log,
     read_source_adoption, read_source_sidecar, recorded_input_sha,
 };
 use super::source::{
@@ -15,7 +15,6 @@ use crate::view::{ArtifactView, Companion, GitCommit, ModuleView, ProviderStatus
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Returns a warning when the resolved sidecar uses a non-canonical filename.
 /// Canonical is `{file_stem}.yaml` (e.g. `SKILL.yaml` for a skill's `SKILL.md`).
@@ -40,9 +39,8 @@ pub(super) fn sidecar_name_warning(relative_path: &str, sidecar_path: &Path) -> 
 }
 
 pub fn git_log_in_repo(repo: &Path, file_rel: &str) -> Vec<GitCommit> {
-    let output = Command::new("git")
+    let output = git_in(repo)
         .args(["log", "--follow", "-n", "5", GIT_LOG_FORMAT, "--", file_rel])
-        .current_dir(repo)
         .output();
     let Ok(output) = output else {
         return Vec::new();

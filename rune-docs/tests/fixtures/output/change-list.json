@@ -1,0 +1,22 @@
+{
+  "changes": [
+    {
+      "id": "add-widget",
+      "state": "draft",
+      "completed": 0,
+      "total": 4
+    },
+    {
+      "id": "extend-search",
+      "state": "active",
+      "completed": 2,
+      "total": 4
+    },
+    {
+      "id": "retire-legacy-export",
+      "state": "complete",
+      "completed": 4,
+      "total": 4
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+widget · 1 requirement(s) · docs/specs/widget/spec.md
+
+# Widget Specification
+
+## Requirements
+
+### Requirement: Widget rendering
+
+The tool SHALL render widgets.

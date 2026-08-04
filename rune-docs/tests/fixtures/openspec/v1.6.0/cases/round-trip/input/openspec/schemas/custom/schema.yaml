@@ -1,0 +1,8 @@
+name: custom
+version: 1
+description: Inert fixture workflow
+artifacts:
+    - id: proposal
+      generates: proposal.md
+      description: Placeholder proposal artifact
+      template: templates/proposal.md

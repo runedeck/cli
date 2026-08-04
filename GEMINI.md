@@ -48,7 +48,7 @@ The project uses a `Makefile` to orchestrate common development tasks.
 ### Directory Map
 - `src/`: Core logic
     - `main.rs`: Binary entry point, dispatches to `cli/`.
-    - `commands.rs`: Library entry point (`commands` crate).
+    - `lib.rs`: Library entry point (`rune` crate, shares its name with the binary).
     - `error.rs`: Custom `Error` and `ErrorKind` implementation.
     - `cli/`: Subcommand implementations (one folder per command).
     - `assemble/`: Logic for merging variants and stripping frontmatter/links.

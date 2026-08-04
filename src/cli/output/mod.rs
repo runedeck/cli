@@ -1,8 +1,8 @@
-use commands::result::{ActionResult, PrunedFile, SkipReason, SkippedFile};
 use console::Style;
+use rune::result::{ActionResult, PrunedFile, SkipReason, SkippedFile};
 use std::collections::BTreeMap;
 
-pub fn print(result: &ActionResult, json_output: bool, verb: &str) {
+pub fn print(result: &ActionResult, json_output: bool, verb: &str, verbose: bool) {
     if json_output {
         match serde_json::to_string_pretty(result) {
             Ok(json) => println!("{json}"),
@@ -14,7 +14,7 @@ pub fn print(result: &ActionResult, json_output: bool, verb: &str) {
     let grouped = group_by_provider(result);
 
     println!();
-    print_providers(&grouped, result);
+    print_providers(&grouped, result, verbose);
     print_warnings(result);
     print_errors(result);
     print_summary(result, verb);
@@ -81,7 +81,11 @@ fn group_by_provider(result: &ActionResult) -> BTreeMap<&str, ProviderGroup<'_>>
     groups
 }
 
-fn print_providers(groups: &BTreeMap<&str, ProviderGroup<'_>>, result: &ActionResult) {
+fn print_providers(
+    groups: &BTreeMap<&str, ProviderGroup<'_>>,
+    result: &ActionResult,
+    verbose: bool,
+) {
     let green = Style::new().green();
     let red = Style::new().red();
     let yellow = Style::new().yellow();
@@ -111,12 +115,23 @@ fn print_providers(groups: &BTreeMap<&str, ProviderGroup<'_>>, result: &ActionRe
             println!("   {}", parts.join("  "));
         }
 
-        for target in &group.deployed {
-            let relative = extract_relative_path(target);
-            println!("   {} {}", green.apply_to("●"), relative);
+        if verbose {
+            for target in &group.deployed {
+                let relative = extract_relative_path(target);
+                println!("   {} {}", green.apply_to("●"), relative);
+            }
+        } else {
+            for artifact in artifact_labels(&group.deployed) {
+                println!("   {} {}", green.apply_to("●"), artifact);
+            }
         }
 
         for skipped in &group.skips {
+            // Only user-modified skips call for action; the rest stay in the
+            // summary count unless --verbose asks for every file.
+            if !verbose && !matches!(skipped.reason, SkipReason::UserModified) {
+                continue;
+            }
             let relative = extract_relative_path(&skipped.target);
             let reason = match &skipped.reason {
                 SkipReason::UserModified => "user modified",
@@ -138,6 +153,40 @@ fn print_providers(groups: &BTreeMap<&str, ProviderGroup<'_>>, result: &ActionRe
             println!("   {} {}", red.apply_to("✂"), dim.apply_to(relative));
         }
     }
+}
+
+/// One line per artifact instead of one per file: a skill collapses to its
+/// directory name, single-file runes to their stem, hook bundles to their
+/// module directory. Order follows first appearance.
+fn artifact_labels(deployed: &[&str]) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for target in deployed {
+        let label = artifact_label(target);
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
+fn artifact_label(target: &str) -> String {
+    let segments: Vec<&str> = target.split('/').collect();
+    if let Some(position) = segments.iter().rposition(|segment| *segment == "skills")
+        && let Some(name) = segments.get(position + 1)
+        && !name.starts_with('.')
+    {
+        return (*name).to_string();
+    }
+    if let Some(position) = segments.iter().rposition(|segment| *segment == "hooks")
+        && let Some(name) = segments.get(position + 1)
+        && position + 2 <= segments.len().saturating_sub(1)
+    {
+        return format!("hooks/{name}");
+    }
+    let filename = segments.last().copied().unwrap_or(target);
+    filename
+        .rsplit_once('.')
+        .map_or_else(|| filename.to_string(), |(stem, _)| stem.to_string())
 }
 
 fn print_errors(result: &ActionResult) {

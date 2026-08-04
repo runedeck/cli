@@ -64,7 +64,7 @@ fn load_providers_module_config_overrides_target() {
     // claude deploys the flat layout, so the override is the target itself.
     assert_eq!(providers["claude"].default_target(), ".custom-claude");
     assert_eq!(
-        providers["claude"].target_for_kind(commands::provider::ContentKind::Rules),
+        providers["claude"].target_for_kind(rune::provider::ContentKind::Rules),
         ".custom-claude"
     );
 }
@@ -75,7 +75,7 @@ fn load_providers_opt_in_plugin_derives_the_plugin_root() {
     let providers = load_providers(module_config).unwrap();
     assert_eq!(providers["claude"].default_target(), ".claude/skills/rune");
     assert_eq!(
-        providers["claude"].target_for_kind(commands::provider::ContentKind::Rules),
+        providers["claude"].target_for_kind(rune::provider::ContentKind::Rules),
         ".claude"
     );
 }
@@ -132,7 +132,7 @@ fn read_file_errors_on_missing_path() {
     let result = read_file(Path::new("/nonexistent/path.yaml"));
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.kind(), commands::error::ErrorKind::Io);
+    assert_eq!(error.kind(), rune::error::ErrorKind::Io);
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn gemini_targets_the_documented_workspace_directory() {
     let gemini = &providers["gemini"];
     assert_eq!(gemini.default_target(), ".gemini");
     assert_eq!(
-        gemini.target_for_kind(commands::provider::ContentKind::Skills),
+        gemini.target_for_kind(rune::provider::ContentKind::Skills),
         ".gemini"
     );
     assert_eq!(providers["agentskills"].default_target(), ".agents");

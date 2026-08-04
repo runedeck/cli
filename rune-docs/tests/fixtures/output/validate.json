@@ -1,0 +1,24 @@
+[
+  {
+    "code": "delta-missing-target",
+    "severity": "error",
+    "path": "docs/changes/add-widget/specs/widget/spec.md",
+    "line": 7,
+    "column": 5,
+    "message": "MODIFIED requirement 'Widget rendering' does not exist",
+    "operation": "modified",
+    "capability": "widget",
+    "change": "add-widget"
+  },
+  {
+    "code": "scenario-missing",
+    "severity": "warning",
+    "path": "docs/specs/widget/spec.md",
+    "line": null,
+    "column": null,
+    "message": "requirement has no scenarios",
+    "operation": null,
+    "capability": null,
+    "change": null
+  }
+]

@@ -1,4 +1,4 @@
-use commands::ontology;
+use rune::ontology;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

@@ -1,0 +1,6 @@
+rules:
+    Valid.md:
+        fingerprint: abc123
+    Missing.md:
+        provenance: .provenance/Missing.md.yaml
+    unsupported: placeholder

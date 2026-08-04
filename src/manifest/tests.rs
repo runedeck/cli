@@ -3,6 +3,7 @@ use extract::string_field;
 
 const MANIFEST_FIXTURE: &str = include_str!("../../tests/fixtures/input/manifest-basic.yaml");
 const MANIFEST_INVALID: &str = include_str!("../../tests/fixtures/input/manifest-invalid.yaml");
+const MANIFEST_MIXED: &str = include_str!("../../tests/fixtures/input/manifest-mixed.yaml");
 
 fn fixture() -> std::collections::HashMap<String, ManifestEntry> {
     read(MANIFEST_FIXTURE).expect("fixture should parse")
@@ -161,6 +162,21 @@ fn read_parses_all_entries() {
 fn read_ignores_entries_without_fingerprint() {
     let entries = read(MANIFEST_INVALID).unwrap();
     assert!(entries.is_empty());
+}
+
+#[test]
+fn read_rejects_non_mapping_roots() {
+    for content in ["null", "[]", "manifest"] {
+        let error = read(content).expect_err("non-mapping manifest must fail");
+        assert_eq!(error, "manifest root must be a mapping");
+    }
+}
+
+#[test]
+fn read_keeps_valid_entries_beside_unsupported_values() {
+    let entries = read(MANIFEST_MIXED).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries["rules/Valid.md"].fingerprint, "abc123");
 }
 
 // --- write ---
@@ -327,4 +343,51 @@ fn assemble_v1_statement_has_no_adopt_fields() {
     assert!(!yaml.contains("upstream_url"));
     assert!(!yaml.contains("transforms_applied"));
     assert!(yaml.contains("source: https://github.com/example/repo"));
+}
+
+#[test]
+fn provenance_path_encodes_full_filename() {
+    assert_eq!(
+        provenance_path("rules/CurrencyFormatting.md"),
+        "rules/.provenance/CurrencyFormatting.md.yaml"
+    );
+    assert_eq!(
+        provenance_path("skills/SessionPrep/SKILL.md"),
+        "skills/SessionPrep/.provenance/SKILL.md.yaml"
+    );
+}
+
+#[test]
+fn provenance_path_keeps_same_stem_files_distinct() {
+    assert_ne!(
+        provenance_path("skills/Demo/logo.png"),
+        provenance_path("skills/Demo/logo.svg")
+    );
+}
+
+#[test]
+fn legacy_provenance_path_uses_the_stem() {
+    assert_eq!(
+        legacy_provenance_path("rules/CurrencyFormatting.md"),
+        "rules/.provenance/CurrencyFormatting.yaml"
+    );
+}
+
+#[test]
+fn existing_sidecar_prefers_current_then_falls_back_to_legacy() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let rules = root.path().join("rules");
+    std::fs::create_dir_all(rules.join(PROVENANCE_DIRECTORY)).expect("mkdir");
+    let file = rules.join("Foo.md");
+    std::fs::write(&file, "body\n").expect("write");
+
+    assert_eq!(existing_sidecar_for(&file), None);
+
+    let legacy = rules.join(PROVENANCE_DIRECTORY).join("Foo.yaml");
+    std::fs::write(&legacy, "legacy\n").expect("write legacy");
+    assert_eq!(existing_sidecar_for(&file), Some(legacy.clone()));
+
+    let current = rules.join(PROVENANCE_DIRECTORY).join("Foo.md.yaml");
+    std::fs::write(&current, "current\n").expect("write current");
+    assert_eq!(existing_sidecar_for(&file), Some(current));
 }

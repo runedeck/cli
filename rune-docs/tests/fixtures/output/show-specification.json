@@ -1,0 +1,5 @@
+{
+  "capability": "widget",
+  "requirements": 1,
+  "content": "# Widget Specification\n\n## Requirements\n\n### Requirement: Widget rendering\n\nThe tool SHALL render widgets.\n"
+}

@@ -1,0 +1,1 @@
+   ✓ 12 file(s) converted → docs (completed by crash recovery)

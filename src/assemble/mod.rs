@@ -6,7 +6,7 @@ pub mod variants;
 
 pub use frontmatter::{map_field, set_field, strip_frontmatter};
 pub use references::{extract, strip};
-pub use variants::{Mode, apply, resolve};
+pub use variants::{BodyMergeMode, MergedVariant, merge_into_base, resolve};
 
 /// Restore a trailing newline that `.lines()` silently drops.
 ///
@@ -17,12 +17,10 @@ fn restore_trailing_newline(output: &mut String, had_newline: bool) {
     }
 }
 
-use crate::parse;
-
 /// Full assembly pipeline: resolve variant, merge, strip frontmatter, strip refs.
 ///
 /// Steps:
-///   1. If variant content is present, read its `mode` and merge with source
+///   1. If variant content is present, merge its frontmatter and body with source
 ///   2. Strip frontmatter (keeping only `keep_fields`)
 ///   3. Strip reference-style links
 pub fn assemble(
@@ -30,21 +28,17 @@ pub fn assemble(
     variant_content: Option<&str>,
     keep_fields: &[&str],
     strip_links: bool,
-) -> String {
+) -> Result<String, String> {
     let merged = match variant_content {
-        Some(vc) => {
-            let mode_str = parse::frontmatter_value(vc, "mode").unwrap_or_default();
-            let mode = Mode::parse(&mode_str);
-            apply(source_content, vc, mode)
-        }
+        Some(variant_content) => merge_into_base(source_content, variant_content)?.content,
         None => source_content.to_string(),
     };
 
     let stripped = strip_frontmatter(&merged, keep_fields);
     if strip_links {
-        strip(&stripped)
+        Ok(strip(&stripped))
     } else {
-        stripped
+        Ok(stripped)
     }
 }
 

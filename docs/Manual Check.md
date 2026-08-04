@@ -114,6 +114,6 @@ rune add --cast development
 ## Still queued (your "Both, sequenced" pick — not yet built)
 
 - crex visual idioms folded into the pane TUI (adaptive palette, grouped emoji help, digit-jump).
-- `rune shell` — a crex-style REPL surface mirroring the CLI 1:1.
+- `rune shell` — a crex-style REPL surface mirroring the CLI 1:1. Unrelated to the Stable shell heading convention and the `RuneShell` rule that carries it.
 
 Say the word and I hand these to Sol; otherwise they wait until after your manual check.

@@ -79,7 +79,7 @@ pub(super) async fn adrs_page(State(app): State<AppState>) -> impl IntoResponse 
 /// against the targets they cover.
 pub(super) async fn variants_page(State(app): State<AppState>) -> impl IntoResponse {
     let state = app.shared.read().await;
-    let coverage = commands::services::builders::build_variant_coverage(&state.view);
+    let coverage = rune::services::builders::build_variant_coverage(&state.view);
     let template = templates::VariantsTemplate {
         tab: "variants",
         version: &state.version,
@@ -115,7 +115,7 @@ pub(super) async fn adr_detail(
     )
     .unwrap_or_default();
     let dep_links =
-        commands::services::builders::resolve_dep_links(&state.view, artifact.adoption.as_ref());
+        rune::services::builders::resolve_dep_links(&state.view, artifact.adoption.as_ref());
     let template = templates::ArtifactDetailTemplate {
         tab: "adrs",
         version: &state.version,

@@ -2,6 +2,8 @@ mod frontmatter;
 mod heading;
 mod structure;
 
+pub use heading::{Heading, outline};
+
 use super::{Diagnostic, Severity};
 
 /// Check a markdown file against an `.mdschema` definition.
@@ -30,16 +32,35 @@ use super::{Diagnostic, Severity};
 ///                 pattern: "## Context and Problem Statement"
 /// ```
 ///
-/// Checks performed:
+/// This is a deliberate subset of the `.mdschema` vocabulary, not a complete
+/// implementation of it. Checks performed:
 /// - Required frontmatter fields exist (fields without `optional: true`)
 /// - Heading levels don't skip (h1 -> h3 without h2)
 /// - Heading depth doesn't exceed `max_depth`
 /// - Required sections (headings matching patterns) are present
 ///
+/// Declared in schemas and never read here, so a schema can promise these and
+/// this function will not enforce them:
+/// - `optional: true` sections, which are skipped before they are read, so
+///   their ordering, their permitted children, and their presence go
+///   unchecked. Depth and level continuity still apply to the headings inside
+///   them, because those rules walk the file rather than the declared
+///   structure.
+/// - Section order among siblings
+/// - Unexpected sections outside the declared vocabulary
+/// - `unique_per_level`
+/// - `count`
+/// - `allow_additional`
+/// - Frontmatter field types
+///
+/// Standalone `mdschema` enforces the full vocabulary. Callers that need it
+/// must dispatch there and treat this function as the reduced fallback; see
+/// `cli::validate::mdschema_tool`.
+///
 /// # Examples
 ///
 /// ```
-/// use commands::validate::mdschema;
+/// use rune::validate::mdschema;
 ///
 /// let content = "---\nstatus: Draft\n---\n# Title\n\n## Section\n";
 /// let schema = "frontmatter:\n    fields:\n        - name: status\n          type: string\nheading_rules:\n    no_skip_levels: true\n    max_depth: 3\n";
