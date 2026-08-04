@@ -3,7 +3,9 @@ name: Review Correctness
 # Thin caller: the lane's body lives in runedeck/seer. The caller owns
 # the triggers, the concurrency, and the permissions; only review-label
 # events and new pushes may cancel an active run, so an unrelated label
-# never kills a billed review mid-flight.
+# never kills a billed review mid-flight. Round-end label consumption in
+# the lane rides the workflow token, whose removals emit no events, so a
+# clean round never re-enters here.
 on:
     pull_request:
         types: [opened, ready_for_review, reopened, synchronize, labeled, unlabeled]
@@ -18,26 +20,54 @@ permissions:
 
 concurrency:
     group: review-correctness-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ !contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) || github.event.label.name == 'review' || github.event.label.name == 'review:runeseer' }}
+    cancel-in-progress: ${{ github.event.action == 'synchronize' || (contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name)) }}
 
 jobs:
     review:
+        if: github.event.pull_request.draft == false
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
             RUNESEER_APP_KEY: ${{ secrets.RUNESEER_APP_KEY }}
             CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-    # Mirrors the called lane's result under the stable check context the
-    # rulesets and the canon name.
     review-context:
         name: review/correctness
         needs: review
-        if: always() && needs.review.result != 'skipped'
+        if: always() && github.event.pull_request.draft == false
         runs-on: ubuntu-latest
         timeout-minutes: 2
         steps:
-            - run: |
-                  [ "${{ needs.review.result }}" = "success" ] && exit 0
-                  echo "the lane concluded: ${{ needs.review.result }}"
+            - env:
+                  GH_TOKEN: ${{ github.token }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: |
+                  set -o pipefail
+                  if [ "${{ needs.review.result }}" != "success" ] && [ "${{ needs.review.result }}" != "skipped" ]; then
+                      echo "the lane concluded: ${{ needs.review.result }}"
+                      exit 1
+                  fi
+                  if [ "${{ needs.review.result }}" = "success" ]; then
+                      inner=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                          --jq '.jobs' \
+                          | jq -s -r 'add // [] | [.[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
+                          || { echo "could not read this run's jobs; rerun the check"; exit 1; }
+                      if [ "$inner" = "success" ]; then
+                          echo "the lane judged this head or stood down in scope."
+                          exit 0
+                      fi
+                      if [ "$inner" != "skipped" ]; then
+                          echo "the lane concluded: $inner"
+                          exit 1
+                      fi
+                  fi
+                  latest_state=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
+                      --jq '[.[] | select(.user.login == "runeseer[bot]" and .commit_id == env.HEAD_SHA)]' \
+                      | jq -s -r 'add // [] | sort_by(.submitted_at) | last | .state // ""') \
+                      || { echo "could not read the pull request reviews; rerun the check"; exit 1; }
+                  if [ "$latest_state" = "APPROVED" ]; then
+                      echo "Runeseer's latest review approves this head."
+                      exit 0
+                  fi
+                  echo "no standing Runeseer approval for this head; the funnel summons a round, or re-apply the review label"
                   exit 1
