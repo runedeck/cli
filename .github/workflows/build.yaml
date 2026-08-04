@@ -109,8 +109,9 @@ jobs:
               with:
                   tool: prek
 
-            - name: Install gitleaks
+            - name: Install validation tools
               run: |
+                  pip install semgrep
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
                   sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
