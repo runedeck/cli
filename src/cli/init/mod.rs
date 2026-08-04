@@ -680,9 +680,9 @@ fn git_reference(repository: &Path) -> Result<Option<String>, Error> {
         ["describe", "--tags", "--exact-match", "HEAD"].as_slice(),
         ["rev-parse", "HEAD"].as_slice(),
     ] {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(repository)
+        let mut command = Command::new("git");
+        command.args(arguments).current_dir(repository);
+        let output = shield_git(&mut command)
             .output()
             .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
         if output.status.success() {
@@ -1026,6 +1026,11 @@ fn collect_layer(
             .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
         {
             substitute_toml_bytes(&raw, replacements)
+        } else if rendered_relative
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        {
+            substitute_json_bytes(&raw, replacements)
         } else {
             substitute_bytes(&raw, replacements)
         };
@@ -1123,8 +1128,48 @@ fn substitute_toml_bytes(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8
         })
 }
 
+fn substitute_json_bytes(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    replacements
+        .iter()
+        .fold(source.to_vec(), |value, (from, to)| {
+            replace_bytes(&value, from.as_bytes(), escape_json_string(to).as_bytes())
+        })
+}
+
 fn escape_toml_basic_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    escape_quoted_string(value)
+}
+
+fn escape_json_string(value: &str) -> String {
+    escape_quoted_string(value)
+}
+
+fn escape_quoted_string(value: &str) -> String {
+    value.chars().fold(
+        String::with_capacity(value.len()),
+        |mut escaped, character| {
+            match character {
+                '"' => escaped.push_str("\\\""),
+                '\\' => escaped.push_str("\\\\"),
+                '\n' => escaped.push_str("\\n"),
+                '\t' => escaped.push_str("\\t"),
+                '\r' => escaped.push_str("\\r"),
+                '\u{0000}'..='\u{001f}' => push_unicode_escape(&mut escaped, character),
+                _ => escaped.push(character),
+            }
+            escaped
+        },
+    )
+}
+
+fn push_unicode_escape(output: &mut String, character: char) {
+    const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let code_point = character as u32;
+    output.push_str("\\u");
+    for shift in [12, 8, 4, 0] {
+        let digit = ((code_point >> shift) & 0x0f) as usize;
+        output.push(char::from(HEX_DIGITS[digit]));
+    }
 }
 
 fn replace_bytes(source: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {

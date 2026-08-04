@@ -418,7 +418,7 @@ fn project_init_escapes_brief_in_generated_toml() {
     let home = tempfile::tempdir().unwrap();
     let quests = tempfile::tempdir().unwrap();
     let destination = quests.path().join("quoted-brief");
-    let brief = "Everyone's \"toolkit\" uses \\ paths";
+    let brief = "Everyone's \"toolkit\" uses \\ paths\nwith\ttabs\rand \u{001f}";
 
     init_embedded(
         home.path(),
@@ -431,6 +431,26 @@ fn project_init_escapes_brief_in_generated_toml() {
     let parsed: toml::Value = toml::from_str(&cargo_toml).unwrap();
 
     assert_eq!(parsed["package"]["description"].as_str(), Some(brief));
+}
+
+#[test]
+fn project_init_escapes_brief_in_generated_json() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = quests.path().join("hostile-brief");
+    let brief = "A \"hostile\" \\ brief\nwith\ttabs\rand \u{001f}";
+
+    init_embedded(
+        home.path(),
+        quests.path(),
+        &["hostile-brief", "--with", "node", "--brief", brief],
+    )
+    .success();
+
+    let package_json = fs::read_to_string(destination.join("package.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&package_json).unwrap();
+
+    assert_eq!(parsed["description"].as_str(), Some(brief));
 }
 
 #[test]
