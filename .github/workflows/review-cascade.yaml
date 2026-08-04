@@ -6,7 +6,7 @@ name: Review Cascade
 # or in the body.
 on:
     pull_request_target:
-        types: [labeled]
+        types: [labeled, unlabeled, ready_for_review]
 
 # The body's reads (check runs, the live head, review threads) ride the
 # workflow token; issues: write lets it also consume labels on that
@@ -17,15 +17,15 @@ permissions:
     pull-requests: read
     issues: write
 
-# Only a fresh bare review summon may cancel a cascade. Every other label
-# re-enter this group without interrupting the active round.
+# A fresh bare review summon or its removal may cancel a cascade. Every other
+# label re-enters this group without interrupting the active round.
 concurrency:
     group: review-cascade-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ github.event.label.name == 'review' }}
+    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && github.event.label.name == 'review' }}
 
 jobs:
     review:
-        if: github.event.pull_request.draft == false
+        if: github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review')))
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
         secrets:
             RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}

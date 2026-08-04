@@ -2,13 +2,14 @@ name: Review Correctness
 
 # Thin caller: the lane's body lives in runedeck/seer. The caller owns
 # the triggers, the concurrency, and the permissions. Summon and stage
-# labels enter the lane, while only a fresh summon may cancel an active
-# run. Round-end label consumption in the lane rides the workflow token,
-# whose removals emit no events, so a clean round never re-enters here.
-# ready_for_review re-evaluates the mirror only; it summons nothing.
+# labels enter the lane. A fresh summon or removal of this workflow's own
+# summon label may cancel an active run; nothing else does. Round-end label
+# consumption in the lane rides the workflow token, whose removals emit no
+# events, so a clean round never re-enters here.
+# ready_for_review re-evaluates the mirror and releases a draft summon.
 on:
     pull_request:
-        types: [labeled, ready_for_review]
+        types: [labeled, unlabeled, ready_for_review]
 
 permissions:
     contents: read
@@ -20,11 +21,11 @@ permissions:
 
 concurrency:
     group: review-correctness-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name) }}
+    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name) }}
 
 jobs:
     review:
-        if: github.event.action == 'labeled' && github.event.pull_request.draft == false
+        if: github.event.pull_request.draft == false && (github.event.action == 'labeled' || (github.event.action == 'ready_for_review' && contains(github.event.pull_request.labels.*.name, 'review:runeseer')))
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
@@ -62,8 +63,9 @@ jobs:
                   # this check rather than falling through to the approval
                   # path, and an unknown conclusion stays red.
                   if [ "${{ needs.review.result }}" = "success" ]; then
-                      inner=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
-                          --jq '[.jobs[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
+                      inner=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                          --jq '[.jobs[] | select(.name == "review / correctness")]' \
+                          | jq -s -r 'add // [] | first | .conclusion // "missing"') \
                           || { echo "could not read this run's jobs; rerun the check"; exit 1; }
                       if [ "$inner" = "success" ]; then
                           echo "the lane judged this head or stood down in scope."
