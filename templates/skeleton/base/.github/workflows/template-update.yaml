@@ -97,9 +97,11 @@ jobs:
                   # Dispatch carries the release tag (v0.2.0) while Copier's
                   # check reports the bare version (0.2.0); both branch forms
                   # must count as the same open update.
+                  # The tag reaches jq as an argument, never by splicing into
+                  # the program text.
                   bare=${TARGET_TAG#v}
                   url=$(gh pr list --state open --limit 1000 --json headRefName,url \
-                      --jq "[.[] | select((.headRefName | startswith(\"template-update/v$bare\")) or (.headRefName | startswith(\"template-update/$bare\")))][0].url // \"\"")
+                      | jq -r --arg bare "$bare" '[.[] | select((.headRefName | startswith("template-update/v" + $bare)) or (.headRefName | startswith("template-update/" + $bare)))][0].url // ""')
                   printf '%s\n' "url=$url" | tee -a "$GITHUB_OUTPUT" >/dev/null
                   [ -z "$url" ] || echo "an update pull request is already open: $url"
 
