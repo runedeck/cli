@@ -22,7 +22,7 @@ install: build
 	@echo "Installed: rune -> $(CURDIR)/$(BINARY)"
 
 validate:
-	@bash .githooks/pre-commit
+	@bash .githooks/pre-commit --all-files
 
 test: validate
 	cargo test
