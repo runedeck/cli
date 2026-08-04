@@ -51,6 +51,7 @@ jobs:
         permissions:
             contents: read
             pull-requests: read
+            issues: read
         outputs:
             summoned: ${{ steps.live.outputs.summoned }}
         steps:
@@ -58,10 +59,13 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
-                  # Pages merge through jq -s: the runner's gh predates
-                  # --slurp, and a label set past one page must still count.
+                  # Pages merge through jq -s so a label set past one page
+                  # still counts fully. pipefail plus the explicit failure
+                  # exit keep an API error from reading as a consumed summon.
+                  set -o pipefail
                   labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
-                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]')
+                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
+                      || { echo "could not read the live labels; rerun the check"; exit 1; }
                   if printf '%s\n' "$labels" | grep -qx 'review:autofix'; then
                       echo "summoned=true" >> "$GITHUB_OUTPUT"
                   else
