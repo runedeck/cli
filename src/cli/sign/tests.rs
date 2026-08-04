@@ -1,8 +1,11 @@
 use super::{
-    branch_push_refspec, colon_listing_fingerprints, select_default_remote, signature_fingerprints,
-    signing_command_error, signing_failure, tag_push_refspec, tag_target, verified_status_output,
+    branch_push_refspec, colon_listing_fingerprints, run_signing_command, select_default_remote,
+    signature_fingerprints, signing_command_error, signing_failure, tag_push_refspec, tag_target,
+    verified_status_output,
 };
 use commands::error::ErrorKind;
+use std::io::{self, Write};
+use std::process::Command;
 
 const KEYS_COLON_LISTING: &str = include_str!("fixtures/keys-colons.txt");
 const EXPIRED_RAW_STATUS: &str = include_str!("fixtures/verify-raw-expired.txt");
@@ -10,6 +13,32 @@ const ERROR_RAW_STATUS: &str = include_str!("fixtures/verify-raw-error.txt");
 const REVOKED_RAW_STATUS: &str = include_str!("fixtures/verify-raw-revoked.txt");
 const VALID_RAW_STATUS: &str = include_str!("fixtures/verify-raw-valid.txt");
 const UNSIGNED_RAW_STATUS: &str = include_str!("fixtures/verify-raw-unsigned.txt");
+
+struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("terminal closed"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn successful_signing_ignores_progress_writer_failure() {
+    let mut command = Command::new("git");
+    command.args([
+        "-c",
+        "alias.commit-progress=!echo signing-progress >&2",
+        "commit-progress",
+    ]);
+
+    let result = run_signing_command(&mut command, "commit", &mut FailingWriter);
+
+    assert!(result.is_ok());
+}
 
 #[test]
 fn colon_listing_yields_primary_and_subkey_fingerprints() {

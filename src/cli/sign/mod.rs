@@ -327,11 +327,26 @@ fn run_interactive_git(args: &[&str]) -> Result<(), Error> {
 }
 
 fn run_signing_git(args: &[&str]) -> Result<(), Error> {
-    let (status, stderr) = signing_git_status(args)?;
+    let mut command = owner_git_command(args);
+    let terminal_stderr = std::io::stderr();
+    let mut terminal_stderr = terminal_stderr.lock();
+    run_signing_command(
+        &mut command,
+        args.first().unwrap_or(&""),
+        &mut terminal_stderr,
+    )
+}
+
+fn run_signing_command(
+    command: &mut Command,
+    operation: &str,
+    terminal_stderr: &mut impl Write,
+) -> Result<(), Error> {
+    let (status, stderr) = signing_command_status(command, terminal_stderr)?;
     if status.success() {
         Ok(())
     } else {
-        Err(signing_command_error(args.first().unwrap_or(&""), &stderr))
+        Err(signing_command_error(operation, &stderr))
     }
 }
 
@@ -367,8 +382,11 @@ pub(crate) fn signing_failure(operation: &str) -> Error {
 
 /// Signing stderr is relayed while captured so hardware-key notices stay
 /// visible and failures can still be classified after Git exits.
-fn signing_git_status(args: &[&str]) -> Result<(std::process::ExitStatus, String), Error> {
-    let mut child = owner_git_command(args)
+fn signing_command_status(
+    command: &mut Command,
+    terminal_stderr: &mut impl Write,
+) -> Result<(std::process::ExitStatus, String), Error> {
+    let mut child = command
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
@@ -380,9 +398,7 @@ fn signing_git_status(args: &[&str]) -> Result<(std::process::ExitStatus, String
     })?;
     let mut captured_stderr = Vec::new();
     let mut buffer = [0; 1024];
-    let terminal_stderr = std::io::stderr();
-    let mut terminal_stderr = terminal_stderr.lock();
-    let mut relay_error = None;
+    let mut terminal_is_writable = true;
     loop {
         let bytes_read = child_stderr.read(&mut buffer).map_err(|error| {
             Error::new(ErrorKind::Io, format!("cannot read git stderr: {error}"))
@@ -391,22 +407,16 @@ fn signing_git_status(args: &[&str]) -> Result<(std::process::ExitStatus, String
             break;
         }
         captured_stderr.extend_from_slice(&buffer[..bytes_read]);
-        if relay_error.is_none() {
-            relay_error = terminal_stderr
+        if terminal_is_writable {
+            terminal_is_writable = terminal_stderr
                 .write_all(&buffer[..bytes_read])
                 .and_then(|()| terminal_stderr.flush())
-                .err();
+                .is_ok();
         }
     }
     let status = child
         .wait()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot wait for git: {error}")))?;
-    if let Some(error) = relay_error {
-        return Err(Error::new(
-            ErrorKind::Io,
-            format!("cannot relay git stderr: {error}"),
-        ));
-    }
     Ok((
         status,
         String::from_utf8_lossy(&captured_stderr).into_owned(),
