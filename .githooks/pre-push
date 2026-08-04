@@ -5,9 +5,9 @@ set -euo pipefail
 # updates on stdin, one line per pushed ref:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
 # The jj push alias synthesizes the same lines for diverged bookmarks, so
-# both paths go through one protocol. A caller with no ref lines on stdin
-# (make validate, an interactive terminal) falls back to the range from the
-# default branch's remote tip to HEAD. Checks prefer the prek pre-push
+# both paths go through one protocol. An interactive caller with no ref lines
+# on stdin falls back to the range from the default branch's remote tip to
+# HEAD. Checks prefer the prek pre-push
 # stage and fall back to a direct gitleaks scan; a machine with neither
 # fails loudly rather than passing silently.
 
@@ -51,9 +51,8 @@ fi
 
 # A repository may add push-time integrations of its own (session capture,
 # notifications) as an executable .githooks/pre-push.local; it runs first
-# with the same arguments. This file stays identical across repositories
-# and the drift check compares it, so per-repository additions live in the
-# .local sibling, never here. Two protections keep extensions honest:
+# with the same arguments. Per-repository additions live in the .local
+# sibling. Two protections keep extensions honest:
 # they run only with git's remote-name and remote-url argument pair, and
 # their stdin is redirected away, because the ref-update lines on stdin
 # belong to the range checks below and a .local that read them would
