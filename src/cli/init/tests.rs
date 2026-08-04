@@ -2,7 +2,7 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
-fn git_reference_does_not_discover_enclosing_repository() {
+fn git_reference_discovers_enclosing_repository_only_for_tracked_directory() {
     let repository = TempDir::new().unwrap();
     run_git(["init", "-b", "main"], Some(repository.path())).unwrap();
     run_git(
@@ -27,6 +27,15 @@ fn git_reference_does_not_discover_enclosing_repository() {
     std::fs::create_dir(&nested_non_repository).unwrap();
 
     assert_eq!(git_reference(&nested_non_repository).unwrap(), None);
+
+    std::fs::write(nested_non_repository.join("template.txt"), "template\n").unwrap();
+    run_git(["add", "skeleton/template.txt"], Some(repository.path())).unwrap();
+    let enclosing_revision = git_reference(repository.path()).unwrap();
+
+    assert_eq!(
+        git_reference(&nested_non_repository).unwrap(),
+        enclosing_revision
+    );
 }
 
 #[test]

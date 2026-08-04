@@ -676,15 +676,23 @@ fn resolve_external_skeleton(
 }
 
 fn git_reference(repository: &Path) -> Result<Option<String>, Error> {
+    let mut tracking_check = Command::new("git");
+    tracking_check
+        .args(["ls-files", "--error-unmatch", "."])
+        .current_dir(repository);
+    let tracking_output = shield_git(&mut tracking_check)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    if !tracking_output.status.success() {
+        return Ok(None);
+    }
+
     for arguments in [
         ["describe", "--tags", "--exact-match", "HEAD"].as_slice(),
         ["rev-parse", "HEAD"].as_slice(),
     ] {
         let mut command = Command::new("git");
         command.args(arguments).current_dir(repository);
-        if let Some(parent) = repository.parent() {
-            command.env("GIT_CEILING_DIRECTORIES", parent);
-        }
         let output = shield_git(&mut command)
             .output()
             .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;

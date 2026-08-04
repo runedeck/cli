@@ -33,6 +33,17 @@ fn init_embedded(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::asser
         .assert()
 }
 
+fn scrubbed_git(directory: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .args(args)
+        .current_dir(directory)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn project_init_composes_layers_and_substitutes_contents_and_names() {
     let home = tempfile::tempdir().unwrap();
@@ -79,41 +90,36 @@ fn project_init_composes_layers_and_substitutes_contents_and_names() {
     assert!(copier_answers.contains("NAME: signal-lamp"));
     assert!(copier_answers.contains("OWNER: N4M3Z"));
     assert!(copier_answers.contains("TITLE: Signal Lamp"));
-    assert!(!copier_answers.contains("_commit:"));
+    let copier_commit = copier_answers
+        .lines()
+        .find_map(|line| line.strip_prefix("_commit: "))
+        .unwrap();
+    let resolve_revision = |revision: &str| {
+        let output = std::process::Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .args(["rev-parse", revision])
+            .current_dir(skeleton_fixture())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    assert_eq!(resolve_revision(copier_commit), resolve_revision("HEAD"));
     assert!(copier_answers.contains("_src_path:"));
     assert!(!destination.join("answers.yaml.jinja").exists());
     assert!(destination.join(".git").exists());
-    let hooks_path = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["config", "--get", "core.hooksPath"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let hooks_path = scrubbed_git(&destination, &["config", "--get", "core.hooksPath"]);
     assert_eq!(
         String::from_utf8(hooks_path.stdout).unwrap().trim(),
         ".githooks"
     );
-    let branch = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["branch", "--show-current"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let branch = scrubbed_git(&destination, &["branch", "--show-current"]);
     assert_eq!(String::from_utf8(branch.stdout).unwrap().trim(), "main");
     // Under the targets root init runs in workshop mode: layout lands,
     // the first commit stays a human decision.
-    let head = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(&destination)
-        .output()
-        .unwrap();
+    let head = scrubbed_git(&destination, &["rev-parse", "--verify", "HEAD"]);
     assert!(!head.status.success(), "workshop init must not auto-commit");
     for member in ["private", "public", "assets"] {
         assert!(destination.join(member).is_dir(), "missing {member}/");
