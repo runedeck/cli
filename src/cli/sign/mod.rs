@@ -7,8 +7,9 @@
 use super::*;
 
 use commands::error::ErrorKind;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const SEAL_SUBJECT: &str = "seal: approve";
 
@@ -35,7 +36,7 @@ fn seal_branch() -> Result<i32, Error> {
     run_signing_git(&["commit", "--allow-empty", "-S", "-m", SEAL_SUBJECT])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
-    let refspec = configured_branch_push_refspec(&branch)?;
+    let refspec = configured_branch_push_refspec(&branch, &remote)?;
     run_interactive_git(&["push", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("sealed {branch} @ {head}");
@@ -50,7 +51,7 @@ fn amend_head() -> Result<i32, Error> {
     run_signing_git(&["commit", "--amend", "--no-edit", "--allow-empty", "-S"])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
-    let refspec = configured_branch_push_refspec(&branch)?;
+    let refspec = configured_branch_push_refspec(&branch, &remote)?;
     run_interactive_git(&["push", "--force-with-lease", &remote, &refspec])?;
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("re-signed {branch} @ {head}");
@@ -163,14 +164,27 @@ pub(crate) fn select_default_remote(configured: Option<&str>, remotes: &[&str]) 
         .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_string()))
 }
 
-fn configured_branch_push_refspec(branch: &str) -> Result<String, Error> {
+fn configured_branch_push_refspec(branch: &str, push_remote: &str) -> Result<String, Error> {
+    let upstream_remote = git_config_value(&format!("branch.{branch}.remote"))?;
     let merge_reference = git_config_value(&format!("branch.{branch}.merge"))?;
-    Ok(branch_push_refspec(branch, merge_reference.as_deref()))
+    Ok(branch_push_refspec(
+        branch,
+        push_remote,
+        upstream_remote.as_deref(),
+        merge_reference.as_deref(),
+    ))
 }
 
-pub(crate) fn branch_push_refspec(branch: &str, merge_reference: Option<&str>) -> String {
-    let destination =
-        merge_reference.map_or_else(|| format!("refs/heads/{branch}"), str::to_string);
+pub(crate) fn branch_push_refspec(
+    branch: &str,
+    push_remote: &str,
+    upstream_remote: Option<&str>,
+    merge_reference: Option<&str>,
+) -> String {
+    let destination = match (upstream_remote, merge_reference) {
+        (Some(remote), Some(reference)) if remote == push_remote => reference.to_string(),
+        _ => format!("refs/heads/{branch}"),
+    };
     format!("refs/heads/{branch}:{destination}")
 }
 
@@ -299,8 +313,7 @@ const IDENTITY_OVERRIDES: [&str; 6] = [
     "GIT_COMMITTER_DATE",
 ];
 
-/// Commit, tag, and push run with inherited stdio so pinentry prompts and
-/// hardware-key touch notices reach the owner.
+/// Verification and push inherit stdio so interactive prompts reach the owner.
 fn run_interactive_git(args: &[&str]) -> Result<(), Error> {
     let status = interactive_git_status(args)?;
     if status.success() {
@@ -314,12 +327,33 @@ fn run_interactive_git(args: &[&str]) -> Result<(), Error> {
 }
 
 fn run_signing_git(args: &[&str]) -> Result<(), Error> {
-    let status = interactive_git_status(args)?;
+    let (status, stderr) = signing_git_status(args)?;
     if status.success() {
         Ok(())
     } else {
-        Err(signing_failure(args.first().unwrap_or(&"")))
+        Err(signing_command_error(args.first().unwrap_or(&""), &stderr))
     }
+}
+
+pub(crate) fn signing_command_error(operation: &str, stderr: &str) -> Error {
+    if has_gpg_signing_failure(stderr) {
+        signing_failure(operation)
+    } else {
+        git_stderr_failure(operation, stderr)
+    }
+}
+
+fn has_gpg_signing_failure(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        if line.starts_with("error: gpg failed to sign the data") {
+            return true;
+        }
+        let Some(status) = line.strip_prefix("[GNUPG:] ") else {
+            return false;
+        };
+        let mut fields = status.split_whitespace();
+        fields.next() == Some("FAILURE") && fields.next() == Some("sign")
+    })
 }
 
 pub(crate) fn signing_failure(operation: &str) -> Error {
@@ -331,15 +365,67 @@ pub(crate) fn signing_failure(operation: &str) -> Error {
     )
 }
 
+/// Signing stderr is relayed while captured so hardware-key notices stay
+/// visible and failures can still be classified after Git exits.
+fn signing_git_status(args: &[&str]) -> Result<(std::process::ExitStatus, String), Error> {
+    let mut child = owner_git_command(args)
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    let mut child_stderr = child.stderr.take().ok_or_else(|| {
+        Error::new(
+            ErrorKind::Io,
+            "cannot capture git stderr for signing failure attribution",
+        )
+    })?;
+    let mut captured_stderr = Vec::new();
+    let mut buffer = [0; 1024];
+    let terminal_stderr = std::io::stderr();
+    let mut terminal_stderr = terminal_stderr.lock();
+    let mut relay_error = None;
+    loop {
+        let bytes_read = child_stderr.read(&mut buffer).map_err(|error| {
+            Error::new(ErrorKind::Io, format!("cannot read git stderr: {error}"))
+        })?;
+        if bytes_read == 0 {
+            break;
+        }
+        captured_stderr.extend_from_slice(&buffer[..bytes_read]);
+        if relay_error.is_none() {
+            relay_error = terminal_stderr
+                .write_all(&buffer[..bytes_read])
+                .and_then(|()| terminal_stderr.flush())
+                .err();
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot wait for git: {error}")))?;
+    if let Some(error) = relay_error {
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!("cannot relay git stderr: {error}"),
+        ));
+    }
+    Ok((
+        status,
+        String::from_utf8_lossy(&captured_stderr).into_owned(),
+    ))
+}
+
 fn interactive_git_status(args: &[&str]) -> Result<std::process::ExitStatus, Error> {
+    owner_git_command(args)
+        .status()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))
+}
+
+fn owner_git_command(args: &[&str]) -> Command {
     let mut command = Command::new("git");
     for variable in IDENTITY_OVERRIDES {
         command.env_remove(variable);
     }
+    command.args(args);
     command
-        .args(args)
-        .status()
-        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))
 }
 
 fn git_stdout(args: &[&str]) -> Result<String, Error> {
@@ -350,15 +436,21 @@ fn git_stdout(args: &[&str]) -> Result<String, Error> {
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(Error::new(
-            ErrorKind::Io,
-            format!(
-                "git {} failed: {}",
-                args.first().unwrap_or(&""),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
+        Err(git_stderr_failure(
+            args.first().unwrap_or(&""),
+            &String::from_utf8_lossy(&output.stderr),
         ))
     }
+}
+
+fn git_stderr_failure(operation: &str, stderr: &str) -> Error {
+    let cause = stderr.trim();
+    let message = if cause.is_empty() {
+        format!("git {operation} failed")
+    } else {
+        format!("git {operation} failed: {cause}")
+    };
+    Error::new(ErrorKind::Io, message)
 }
 
 #[cfg(test)]

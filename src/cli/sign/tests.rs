@@ -1,6 +1,6 @@
 use super::{
     branch_push_refspec, colon_listing_fingerprints, select_default_remote, signature_fingerprints,
-    signing_failure, tag_push_refspec, tag_target, verified_status_output,
+    signing_command_error, signing_failure, tag_push_refspec, tag_target, verified_status_output,
 };
 use commands::error::ErrorKind;
 
@@ -109,6 +109,37 @@ fn signing_failure_names_explicit_and_identity_selected_keys() {
 }
 
 #[test]
+fn gpg_status_failure_is_attributed_to_the_signing_key() {
+    let error = signing_command_error(
+        "commit",
+        "[GNUPG:] FAILURE sign 17\nfatal: failed to write commit object",
+    );
+
+    assert_eq!(error.kind(), ErrorKind::Config);
+    assert!(error.message().contains("user.signingkey"));
+}
+
+#[test]
+fn gpg_error_text_is_attributed_to_the_signing_key() {
+    let error = signing_command_error(
+        "tag",
+        "error: gpg failed to sign the data:\ngpg: signing failed: No secret key",
+    );
+
+    assert_eq!(error.kind(), ErrorKind::Config);
+    assert!(error.message().contains("user.signingkey"));
+}
+
+#[test]
+fn non_signing_git_failure_preserves_git_stderr() {
+    let error = signing_command_error("tag", "fatal: tag 'v1.2.3' already exists");
+
+    assert_eq!(error.kind(), ErrorKind::Io);
+    assert!(error.message().contains("tag 'v1.2.3' already exists"));
+    assert!(!error.message().contains("signing key"));
+}
+
+#[test]
 fn tag_target_defaults_to_head() {
     assert_eq!(tag_target(None), "HEAD");
 }
@@ -126,7 +157,12 @@ fn tag_push_refspec_names_only_the_tag() {
 #[test]
 fn branch_push_refspec_respects_configured_merge_ref() {
     assert_eq!(
-        branch_push_refspec("review", Some("refs/heads/pull-request")),
+        branch_push_refspec(
+            "review",
+            "upstream",
+            Some("upstream"),
+            Some("refs/heads/pull-request"),
+        ),
         "refs/heads/review:refs/heads/pull-request"
     );
 }
@@ -134,7 +170,20 @@ fn branch_push_refspec_respects_configured_merge_ref() {
 #[test]
 fn branch_push_refspec_defaults_to_matching_branch() {
     assert_eq!(
-        branch_push_refspec("review", None),
+        branch_push_refspec("review", "upstream", Some("upstream"), None),
+        "refs/heads/review:refs/heads/review"
+    );
+}
+
+#[test]
+fn branch_push_refspec_ignores_upstream_merge_ref_for_a_different_push_remote() {
+    assert_eq!(
+        branch_push_refspec(
+            "review",
+            "fork",
+            Some("upstream"),
+            Some("refs/heads/pull-request"),
+        ),
         "refs/heads/review:refs/heads/review"
     );
 }
