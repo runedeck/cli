@@ -75,7 +75,7 @@ jobs:
 
     suggest:
         needs: [gate, release]
-        if: '!cancelled() && ((github.event_name == ''workflow_dispatch'' && needs.gate.result == ''success'') || (github.event_name == ''pull_request'' && github.event.pull_request.draft == false && (github.event.action == ''labeled'' || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))))'
+        if: '!cancelled() && ((github.event_name == ''workflow_dispatch'' && needs.gate.result == ''success'') || (github.event_name == ''pull_request'' && github.event.pull_request.draft == false && ((github.event.action == ''labeled'' && github.event.label.name == ''review:autofix'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))))'
         uses: runedeck/seer/.github/workflows/autofix-suggest.yaml@main
         with:
             pr_number: ${{ inputs.pr_number || '' }}
