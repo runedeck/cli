@@ -8,7 +8,10 @@ use tempfile::TempDir;
 use super::ValidationReport;
 use super::mdschema_tool;
 use super::schema;
-use crate::cli::config::read_file;
+use crate::cli::{
+    assemble::sources,
+    config::{self, read_file},
+};
 
 /// Validate all .md files in a flat content directory (agents/ or rules/).
 ///
@@ -132,32 +135,57 @@ pub fn skill_directory(
     let mdschema_source =
         schema::load_mdschema_or_fallback(&search_directories, "skills").map_err(Error::io)?;
 
-    // Only validate base and user-override SKILL.md files against the schema —
-    // companions are reference docs without skill frontmatter.
-    for skill_file in [dir.join("SKILL.md"), dir.join("user/SKILL.md")]
-        .into_iter()
-        .filter(|path| path.is_file())
-    {
-        let content = read_file(&skill_file)?;
-        let display_path = skill_file
-            .strip_prefix(module_root)
-            .unwrap_or(&skill_file)
-            .to_string_lossy()
-            .to_string();
-
+    let base_skill_file = dir.join("SKILL.md");
+    if base_skill_file.is_file() {
+        let base_content = read_file(&base_skill_file)?;
+        let display_path = relative_display_path(&base_skill_file, module_root);
         let skill_schema = schema::embedded_schema("skills").map(String::from);
-
         let checkpoint = report.checkpoint();
-        collect_diagnostics(&content, &display_path, None, skill_schema.as_ref(), report);
+        collect_diagnostics(
+            &base_content,
+            &display_path,
+            None,
+            skill_schema.as_ref(),
+            report,
+        );
         check_mdschema(
-            &content,
-            &skill_file,
+            &base_content,
+            &base_skill_file,
             &display_path,
             mdschema_source.as_ref(),
             report,
         );
-        lint_skill(&content, dir, &display_path, report);
+        lint_skill(&base_content, dir, &display_path, report);
         report.record_since(display_path, checkpoint);
+
+        for variant_file in skill_variant_files(dir, module_root)? {
+            let variant_content = read_file(&variant_file)?;
+            let display_path = relative_display_path(&variant_file, module_root);
+            let checkpoint = report.checkpoint();
+            match rune::assemble::variants::merge_into_base(&base_content, &variant_content) {
+                Ok(merged) => {
+                    let merged_file = tempfile::NamedTempFile::new().map_err(|error| {
+                        Error::io(format!("cannot create merged skill file: {error}"))
+                    })?;
+                    std::fs::write(merged_file.path(), &merged.content).map_err(|error| {
+                        Error::io(format!("cannot write merged skill file: {error}"))
+                    })?;
+                    check_mdschema(
+                        &merged.content,
+                        merged_file.path(),
+                        &display_path,
+                        mdschema_source.as_ref(),
+                        report,
+                    );
+                    lint_skill(&merged.content, dir, &display_path, report);
+                    report.record_since(display_path, checkpoint);
+                }
+                Err(error) => report.fail(
+                    display_path.clone(),
+                    format!("{display_path}: cannot merge skill variant: {error}"),
+                ),
+            }
+        }
     }
 
     // Companions are prose the deck ships too: their tables obey the same
@@ -175,6 +203,54 @@ pub fn skill_directory(
     }
 
     Ok(())
+}
+
+fn relative_display_path(path: &Path, module_root: &Path) -> String {
+    path.strip_prefix(module_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn skill_variant_files(
+    skill_directory: &Path,
+    module_root: &Path,
+) -> Result<Vec<std::path::PathBuf>, Error> {
+    let merged_config = config::load_merged_config(module_root)?;
+    let providers = config::load_providers(&merged_config)?;
+    let models = config::load_models(module_root);
+    let provider_names = providers.keys().cloned().collect::<Vec<_>>();
+    let mut qualifier_names = sources::build_valid_qualifiers(&provider_names, &models)
+        .into_iter()
+        .collect::<Vec<_>>();
+    qualifier_names.sort();
+
+    let mut variant_files = Vec::new();
+    let user_variant = skill_directory.join("user/SKILL.md");
+    if user_variant.is_file() {
+        variant_files.push(user_variant);
+    }
+
+    for provider_name in &qualifier_names {
+        let provider_directory = skill_directory.join(provider_name);
+        let provider_variant = provider_directory.join("SKILL.md");
+        if provider_variant.is_file() {
+            variant_files.push(provider_variant);
+        }
+        if !provider_directory.is_dir() {
+            continue;
+        }
+        for model_name in &qualifier_names {
+            let model_variant = provider_directory.join(model_name).join("SKILL.md");
+            if model_variant.is_file() {
+                variant_files.push(model_variant);
+            }
+        }
+    }
+
+    variant_files.sort();
+    variant_files.dedup();
+    Ok(variant_files)
 }
 
 /// Validate Stable shell identity, then report advisory Agent Skills and authoring findings.

@@ -379,6 +379,60 @@ fn skill_directory_validates_user_override() {
 }
 
 #[test]
+fn skill_directory_accepts_provider_specific_frontmatter() {
+    let root = TempDir::new().unwrap();
+    let skill_directory = root.path().join("skills/minimal-skill");
+    std::fs::create_dir_all(skill_directory.join("claude")).unwrap();
+    std::fs::write(
+        skill_directory.join("SKILL.md"),
+        fixture!("runeshell-minimal.md"),
+    )
+    .unwrap();
+    std::fs::write(
+        skill_directory.join("claude/SKILL.md"),
+        fixture!("skill-variant-claude.md"),
+    )
+    .unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_directory, root.path(), &mut report).unwrap();
+
+    assert!(
+        report.result.errors.is_empty(),
+        "provider frontmatter must validate after merging: {:?}",
+        report.result.errors
+    );
+}
+
+#[test]
+fn skill_directory_rejects_malformed_provider_variant() {
+    let root = TempDir::new().unwrap();
+    let skill_directory = root.path().join("skills/minimal-skill");
+    std::fs::create_dir_all(skill_directory.join("claude")).unwrap();
+    std::fs::write(
+        skill_directory.join("SKILL.md"),
+        fixture!("runeshell-minimal.md"),
+    )
+    .unwrap();
+    std::fs::write(
+        skill_directory.join("claude/SKILL.md"),
+        fixture!("variant-malformed-frontmatter.md"),
+    )
+    .unwrap();
+
+    let mut report = ValidationReport::default();
+    check::skill_directory(&skill_directory, root.path(), &mut report).unwrap();
+
+    assert!(report.violations.iter().any(|violation| {
+        violation.artifact == "skills/minimal-skill/claude/SKILL.md"
+            && violation.severity == ViolationSeverity::Error
+            && violation
+                .message
+                .contains("cannot parse variant frontmatter")
+    }));
+}
+
+#[test]
 fn skill_identity_reports_h1_mismatch() {
     let report = validate_skill_fixture("identity-skill", fixture!("runeshell-h1-mismatch.md"));
     let errors = report.result.errors.join("; ");
