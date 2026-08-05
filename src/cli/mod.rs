@@ -34,6 +34,7 @@ mod release;
 mod review;
 mod run;
 mod setup;
+mod sign;
 mod skill;
 #[cfg(feature = "spec")]
 mod spec;
@@ -658,6 +659,32 @@ enum Command {
         /// Package the assembled claude plugin tree as a Cowork upload zip.
         #[arg(long, value_parser = ["cowork"], conflicts_with_all = ["deck", "embed"])]
         format: Option<String>,
+    },
+
+    /// Seal the branch with an owner-signed empty commit, or sign and verify tags
+    Sign {
+        /// Rewrite the head commit with the owner's signature instead of
+        /// sealing on top; the SHA changes and the push takes a lease.
+        #[arg(long, conflicts_with_all = ["tag", "verify"])]
+        amend: bool,
+
+        /// Create, verify, and push an owner-signed annotated tag instead of a seal.
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+
+        /// Commit to tag. Defaults to HEAD and is valid only with --tag.
+        #[arg(value_name = "COMMIT", requires = "tag")]
+        commit: Option<String>,
+
+        /// Verify a seal or tag signature against the repository's KEYS file.
+        #[arg(
+            long,
+            value_name = "REF",
+            num_args = 0..=1,
+            default_missing_value = "HEAD",
+            conflicts_with = "tag"
+        )]
+        verify: Option<String>,
     },
 
     /// Manage the watchlist of rune and deployment locations to monitor
@@ -1417,6 +1444,19 @@ pub fn run() -> i32 {
                 "released",
             )
         }
+        Command::Sign {
+            amend,
+            tag,
+            commit,
+            verify,
+        } => {
+            return exit_code(sign::execute(
+                amend,
+                tag.as_deref(),
+                commit.as_deref(),
+                verify.as_deref(),
+            ));
+        }
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
             return exit_code(match action {
@@ -1705,6 +1745,12 @@ fn deck_help(help: &mut String) {
         "release",
         "[DOMAIN] [--source <DIR>]",
         "Package rune release tarballs",
+    );
+    help_command(
+        help,
+        "sign",
+        "[--amend | --tag <TAG> [COMMIT] | --verify [REF]]",
+        "Seal the branch, sign tags, verify against KEYS",
     );
     help_command(
         help,

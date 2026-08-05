@@ -27,6 +27,7 @@
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
+    sign        [--amend | --tag <TAG> [COMMIT] | --verify [REF]]     Seal the branch, sign tags, verify against KEYS
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     adopt       start|status|next|verdict|finalize|abandon            Adopt an upstream rune through block-by-block review
     bench       run|report|list|dashboard|doctor|audit                Run and report SkateBench-compatible benchmark suites

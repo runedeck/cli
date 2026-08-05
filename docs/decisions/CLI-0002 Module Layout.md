@@ -91,6 +91,19 @@ tests/
         schemas/        YAML schema files for validation
 ```
 
+Three modules stay past the line because each is one Rust item that cannot
+be divided without changing what it describes:
+
+- `src/cli/mod.rs` is the `Command` enum. Its variants are the command-line
+  surface; splitting the enum would split the CLI.
+- `src/tui/app.rs` is the `App` struct and the methods that build one. Its
+  fields are the terminal's whole state, and they are read from every
+  facet.
+- `src/tui/cast_editor.rs` is the `CastEditor` and its key handling, which
+  reads as one loop rather than as separable stages.
+
+Everything else in the tree is under the line.
+
 ### What each module does
 
 | Module      | Input                        | Output                          |
