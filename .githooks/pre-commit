@@ -2,8 +2,10 @@
 set -euo pipefail
 
 all_files=false
+scan_only=false
 for argument in ${1+"$@"}; do
     [ "$argument" = "--all-files" ] && all_files=true
+    [ "$argument" = "--scan-only" ] && scan_only=true
 done
 
 scan_snapshot() {
@@ -19,7 +21,7 @@ scan_snapshot() {
 
 list_tracked_files() {
     if [ -d .jj ] && command -v jj >/dev/null 2>&1; then
-        jj file list --ignore-working-copy -r @ -T 'path ++ "\0"'
+        jj file list -r @ -T 'path ++ "\0"'
     else
         git ls-files -z
     fi
@@ -75,7 +77,9 @@ scan_tracked_files() {
     [ "$scan_failed" = "false" ]
 }
 
-if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+if [ "$scan_only" = "true" ]; then
+    scan_tracked_files
+elif command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     hook_failed=false
     prek run ${1+"$@"} || hook_failed=true
     [ "$all_files" = "false" ] || scan_tracked_files || hook_failed=true
