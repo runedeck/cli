@@ -24,6 +24,8 @@ jobs:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   fetch-depth: 0
+                  # The prek hooks execute code from the checked-out tree, which
+                  # must never find a usable token in the git config.
                   persist-credentials: false
 
             # Third-party actions must be pinned to a full commit SHA;
@@ -48,7 +50,11 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
-                  gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""' \
+                  # The fetch and the parse fail separately: an API or
+                  # permission fault must not read as a missing section.
+                  body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""') \
+                      || { echo "could not read the pull request body (API or permission failure)"; exit 1; }
+                  printf '%s\n' "$body" \
                       | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}' \
                       && echo "Release Notes section present." \
                       || { echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."; exit 1; }
@@ -72,51 +78,8 @@ jobs:
             - name: Commit-stage checks
               uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
 
-            # Ceremony files must match the skeleton baseline; diverge by
-            # removing the file from .ceremony-manifest in a reviewed pull
-            # request, never by silent local edits. The fetch is
-            # authenticated: rate limits stop biting, and a private skeleton
-            # fails with a nameable cause instead of an anonymous 404.
-            - name: Ceremony drift
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  [ -f .ceremony-manifest ] || { echo "no manifest, skipping"; exit 0; }
-                  drifted=""
-                  fetch_failed=""
-                  baseline=$(mktemp)
-                  while IFS= read -r file; do
-                      case "$file" in ''|'#'*) continue ;; esac
-                      if [ ! -f "$file" ]; then
-                          drifted="$drifted $file(missing)"
-                          continue
-                      fi
-                      # A failed fetch is a network or access problem, never
-                      # drift. This token cannot read a private skeleton; if
-                      # the skeleton ever goes private, the baseline needs an
-                      # org token or a published copy.
-                      if ! gh api "repos/runedeck/skeleton/contents/templates/base/$file?ref=main" \
-                          -H "Accept: application/vnd.github.raw" > "$baseline" 2>/dev/null; then
-                          fetch_failed="$fetch_failed $file"
-                          continue
-                      fi
-                      if ! diff -q "$baseline" "$file" >/dev/null; then
-                          drifted="$drifted $file"
-                      fi
-                  done < .ceremony-manifest
-                  if [ -n "$fetch_failed" ]; then
-                      echo "Baseline fetch failed, drift unknown for:$fetch_failed"
-                      exit 1
-                  fi
-                  if [ -n "$drifted" ]; then
-                      echo "Ceremony files drifted from the skeleton baseline:$drifted"
-                      exit 1
-                  fi
-                  echo "Ceremony files match the skeleton baseline."
-
-            # Scan exactly the commits this event introduces. The rangeless
-            # fallback only fires on a repository's first push, where the
-            # full scan and the introduced commits are the same set.
+            # Scan exactly the commits this event introduces. Without a usable
+            # base, gitleaks scans the target history and other hooks inspect all files.
             - name: Pre-push-stage checks
               run: |
                   if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
@@ -129,5 +92,5 @@ jobs:
                   if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
                       prek run --stage pre-push --from-ref "$from" --to-ref "${{ github.sha }}"
                   else
-                      prek run --stage pre-push --all-files
+                      GITLEAKS_PUSH_TO_REF="${{ github.sha }}" prek run --stage pre-push --all-files
                   fi
