@@ -59,6 +59,29 @@ fn git_reference_discovers_enclosing_repository_only_for_tracked_directory() {
 }
 
 #[test]
+fn available_template_names_ignores_hidden_directories() {
+    let skeleton = TempDir::new().unwrap();
+    std::fs::create_dir(skeleton.path().join("base")).unwrap();
+    std::fs::create_dir(skeleton.path().join("rust")).unwrap();
+    std::fs::create_dir(skeleton.path().join(".git")).unwrap();
+
+    assert_eq!(
+        available_template_names(skeleton.path()).unwrap(),
+        vec!["rust".to_string()]
+    );
+}
+
+#[test]
+fn template_prompt_contains_available_layers() {
+    let mut output = Vec::new();
+    write_template_prompt(&mut output, &["rust".to_string(), "tool".to_string()]).unwrap();
+    let prompt = String::from_utf8(output).unwrap();
+
+    assert!(prompt.contains("available templates: rust, tool"));
+    assert!(prompt.ends_with("templates to compose (comma-separated, empty for base only): "));
+}
+
+#[test]
 fn init_creates_all_files() {
     let temp_directory = TempDir::new().unwrap();
     let result = execute(&temp_directory.path().to_string_lossy()).unwrap();

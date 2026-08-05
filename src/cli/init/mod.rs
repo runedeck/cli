@@ -339,7 +339,7 @@ fn available_template_names(skeleton: &Path) -> Result<Vec<String>, Error> {
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
-        if name != "base" {
+        if name != "base" && !name.starts_with('.') {
             names.push(name);
         }
     }
@@ -353,16 +353,24 @@ fn append_unique(selected: &mut Vec<String>, template_name: &str) {
     }
 }
 
+fn write_template_prompt(output: &mut impl Write, available: &[String]) -> Result<(), Error> {
+    writeln!(output, "available templates: {}", available.join(", "))
+        .and_then(|()| {
+            write!(
+                output,
+                "templates to compose (comma-separated, empty for base only): "
+            )
+        })
+        .and_then(|()| output.flush())
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write prompt: {error}")))
+}
+
 fn pick_templates(available: &[String]) -> Result<Vec<String>, Error> {
     if available.is_empty() {
         return Ok(Vec::new());
     }
 
-    println!("available templates: {}", available.join(", "));
-    print!("templates to compose (comma-separated, empty for base only): ");
-    io::stdout()
-        .flush()
-        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write prompt: {error}")))?;
+    write_template_prompt(&mut io::stderr(), available)?;
     let mut selection = String::new();
     io::stdin()
         .read_line(&mut selection)
