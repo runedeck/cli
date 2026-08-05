@@ -56,7 +56,7 @@ jobs:
                       echo "the review label was already consumed; the cascade stands down."
                   fi
 
-    review:
+    cascade:
         needs: release
         if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
