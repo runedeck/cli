@@ -19,7 +19,7 @@ synthesize_revision_update() {
     local revision=$1
     local local_sha
 
-    jj --ignore-working-copy log --no-graph -r "$revision" -T 'commit_id ++ "\n"' \
+    jj log --no-graph -r "$revision" -T 'commit_id ++ "\n"' \
         | while read -r local_sha; do
             [ -z "$local_sha" ] && continue
             printf '%s %s %s %s\n' refs/heads/jj-push-check "$local_sha" refs/heads/jj-push-check "$zero"
