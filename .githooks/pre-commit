@@ -26,6 +26,8 @@ list_tracked_files() {
 }
 
 scan_tracked_files() {
+    local candidate_files
+    local existing_files
     local scan_directory
     local scan_failed=false
 
@@ -34,23 +36,50 @@ scan_tracked_files() {
         return 1
     fi
 
+    candidate_files=$(mktemp)
+    existing_files=$(mktemp)
     scan_directory=$(mktemp -d)
-    list_tracked_files \
-        | rsync --archive --from0 --files-from=- ./ "$scan_directory/" || {
-            echo "  ⚠  tracked files could not be copied for secret scanning" >&2
+
+    list_tracked_files > "$candidate_files" || {
+        echo "  ⚠  tracked files could not be listed for secret scanning" >&2
+        rm -f "$candidate_files" "$existing_files"
+        rm -rf "$scan_directory"
+        return 1
+    }
+
+    if [ ! -s "$candidate_files" ] && [ ! -d .jj ]; then
+        git ls-files -z --cached --others --exclude-standard > "$candidate_files" || {
+            echo "  ⚠  scaffold files could not be listed for secret scanning" >&2
+            rm -f "$candidate_files" "$existing_files"
             rm -rf "$scan_directory"
             return 1
         }
+    fi
+
+    while IFS= read -r -d '' candidate_file; do
+        [ -f "$candidate_file" ] || continue
+        printf '%s\0' "$candidate_file"
+    done < "$candidate_files" > "$existing_files"
+
+    rsync --archive --from0 --files-from="$existing_files" ./ "$scan_directory/" || {
+        echo "  ⚠  tracked files could not be copied for secret scanning" >&2
+        rm -f "$candidate_files" "$existing_files"
+        rm -rf "$scan_directory"
+        return 1
+    }
 
     scan_snapshot "$scan_directory" || scan_failed=true
+    rm -f "$candidate_files" "$existing_files"
     rm -rf "$scan_directory"
 
     [ "$scan_failed" = "false" ]
 }
 
 if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
-    prek run ${1+"$@"}
-    [ "$all_files" = "false" ] || scan_tracked_files
+    hook_failed=false
+    prek run ${1+"$@"} || hook_failed=true
+    [ "$all_files" = "false" ] || scan_tracked_files || hook_failed=true
+    [ "$hook_failed" = "false" ]
 elif [ "$all_files" = "true" ]; then
     scan_tracked_files
 elif command -v gitleaks >/dev/null 2>&1; then
