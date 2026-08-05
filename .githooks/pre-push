@@ -17,7 +17,9 @@ check_range() {
     local from_revision=$1
     local to_revision=$2
 
-    if [ -z "$from_revision" ]; then
+    if [ -z "$from_revision" ] && command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+        prek run --stage pre-push --all-files
+    elif [ -z "$from_revision" ]; then
         bash "$hook_directory/pre-commit" --all-files
     elif command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
         prek run --stage pre-push --from-ref "$from_revision" --to-ref "$to_revision"
