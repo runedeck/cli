@@ -29,22 +29,22 @@ list_tracked_files() {
 
 scan_tracked_files() {
     local candidate_files
-    local existing_files
+    local copy_failed=false
+    local destination_file
     local scan_directory
     local scan_failed=false
 
-    if ! command -v gitleaks >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1; then
-        echo "  ⚠  gitleaks and rsync are required for the tracked-file scan" >&2
+    if ! command -v gitleaks >/dev/null 2>&1; then
+        echo "  ⚠  gitleaks is required for the tracked-file scan" >&2
         return 1
     fi
 
     candidate_files=$(mktemp)
-    existing_files=$(mktemp)
     scan_directory=$(mktemp -d)
 
     list_tracked_files > "$candidate_files" || {
         echo "  ⚠  tracked files could not be listed for secret scanning" >&2
-        rm -f "$candidate_files" "$existing_files"
+        rm -f "$candidate_files"
         rm -rf "$scan_directory"
         return 1
     }
@@ -52,7 +52,7 @@ scan_tracked_files() {
     if [ ! -s "$candidate_files" ] && [ ! -d .jj ]; then
         git ls-files -z --cached --others --exclude-standard > "$candidate_files" || {
             echo "  ⚠  scaffold files could not be listed for secret scanning" >&2
-            rm -f "$candidate_files" "$existing_files"
+            rm -f "$candidate_files"
             rm -rf "$scan_directory"
             return 1
         }
@@ -60,18 +60,26 @@ scan_tracked_files() {
 
     while IFS= read -r -d '' candidate_file; do
         [ -f "$candidate_file" ] || continue
-        printf '%s\0' "$candidate_file"
-    done < "$candidate_files" > "$existing_files"
+        destination_file="$scan_directory/$candidate_file"
+        mkdir -p "$(dirname "$destination_file")" || {
+            copy_failed=true
+            break
+        }
+        command cp "./$candidate_file" "$destination_file" || {
+            copy_failed=true
+            break
+        }
+    done < "$candidate_files"
 
-    rsync --archive --from0 --files-from="$existing_files" ./ "$scan_directory/" || {
+    if [ "$copy_failed" = "true" ]; then
         echo "  ⚠  tracked files could not be copied for secret scanning" >&2
-        rm -f "$candidate_files" "$existing_files"
+        rm -f "$candidate_files"
         rm -rf "$scan_directory"
         return 1
-    }
+    fi
 
     scan_snapshot "$scan_directory" || scan_failed=true
-    rm -f "$candidate_files" "$existing_files"
+    rm -f "$candidate_files"
     rm -rf "$scan_directory"
 
     [ "$scan_failed" = "false" ]

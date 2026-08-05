@@ -72,6 +72,7 @@ synthesize_argument_updates() {
     done
 }
 
+jj status >/dev/null
 {
     synthesize_ref_updates
     synthesize_argument_updates "$@"

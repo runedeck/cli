@@ -18,9 +18,9 @@ check_range() {
     local to_revision=$2
 
     if [ -z "$from_revision" ] && command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
-        prek run --stage pre-push --all-files
-    elif [ -z "$from_revision" ]; then
-        bash "$hook_directory/pre-commit" --all-files
+        GITLEAKS_PUSH_TO_REF="$to_revision" prek run --stage pre-push --all-files
+    elif [ -z "$from_revision" ] && command -v gitleaks >/dev/null 2>&1; then
+        gitleaks git --no-banner --log-opts "$to_revision"
     elif command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
         prek run --stage pre-push --from-ref "$from_revision" --to-ref "$to_revision"
     elif command -v gitleaks >/dev/null 2>&1; then
