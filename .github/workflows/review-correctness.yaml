@@ -31,14 +31,6 @@ jobs:
             RUNESEER_APP_KEY: ${{ secrets.RUNESEER_APP_KEY }}
             CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-    # Mirrors the called lane's result under the stable check context the
-    # rulesets require. Fail-closed: a head the lane did not judge reports
-    # failure rather than skipping, because a skipped check satisfies a
-    # required status check. When the lane does not run, green requires that
-    # Runeseer's LATEST review on this exact head is an approval: an approval
-    # a later review superseded stays red, and no event class can redden or
-    # green a head past that judgment. Drafts skip the mirror because they
-    # cannot merge.
     review-context:
         name: review/correctness
         needs: review
@@ -55,14 +47,10 @@ jobs:
                       echo "the lane concluded: ${{ needs.review.result }}"
                       exit 1
                   fi
-                  # A reusable workflow whose inner job skips its guard still
-                  # concludes success, so a successful caller result defers to
-                  # the inner job's own conclusion. A failed jobs read fails
-                  # this check rather than falling through to the approval
-                  # path, and an unknown conclusion stays red.
                   if [ "${{ needs.review.result }}" = "success" ]; then
-                      inner=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
-                          --jq '[.jobs[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
+                      inner=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                          --jq '.jobs' \
+                          | jq -s -r 'add // [] | [.[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
                           || { echo "could not read this run's jobs; rerun the check"; exit 1; }
                       if [ "$inner" = "success" ]; then
                           echo "the lane judged this head or stood down in scope."
@@ -73,9 +61,6 @@ jobs:
                           exit 1
                       fi
                   fi
-                  # Per-page jq output merges through jq -s: the runner's gh
-                  # predates --slurp. pipefail keeps a failed reviews read from
-                  # reading as an absent approval.
                   latest_state=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
                       --jq '[.[] | select(.user.login == "runeseer[bot]" and .commit_id == env.HEAD_SHA)]' \
                       | jq -s -r 'add // [] | sort_by(.submitted_at) | last | .state // ""') \
