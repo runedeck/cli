@@ -78,9 +78,8 @@ jobs:
             - name: Commit-stage checks
               uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
 
-            # Scan exactly the commits this event introduces. The rangeless
-            # fallback fires when no prior ref resolves, a first push or an
-            # unfetchable before, and widens to the full tree, never narrower.
+            # Scan exactly the commits this event introduces. Without a usable
+            # base, gitleaks scans the target history and other hooks inspect all files.
             - name: Pre-push-stage checks
               run: |
                   if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
@@ -93,5 +92,5 @@ jobs:
                   if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
                       prek run --stage pre-push --from-ref "$from" --to-ref "${{ github.sha }}"
                   else
-                      prek run --stage pre-push --all-files
+                      GITLEAKS_PUSH_TO_REF="${{ github.sha }}" prek run --stage pre-push --all-files
                   fi
