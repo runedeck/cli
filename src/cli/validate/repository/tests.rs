@@ -1,5 +1,5 @@
 use super::*;
-use commands::manifest::ManifestEntry;
+use rune::manifest::ManifestEntry;
 use tempfile::TempDir;
 
 fn template_content(filename: &str) -> String {

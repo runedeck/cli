@@ -1,0 +1,1 @@
+Archived change 'add-widget' as abandoned to docs/changes/archive/2026-01-15-add-widget.

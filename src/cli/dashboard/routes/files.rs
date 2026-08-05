@@ -6,7 +6,7 @@ use super::AppState;
 use super::shared::not_found;
 use crate::cli::dashboard::scan;
 use crate::cli::dashboard::templates;
-use commands::services::files as file_services;
+use rune::services::files as file_services;
 
 /// Builds a grid card for a config file, pointing at its detail route.
 fn file_card(file: &templates::ConfigFile, href: String) -> templates::FileCard {

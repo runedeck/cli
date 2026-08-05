@@ -1,0 +1,74 @@
+version: 1
+oracle:
+    project: Fission-AI/OpenSpec
+    revision: v1.6.0
+    release: https://github.com/Fission-AI/OpenSpec/releases/tag/v1.6.0
+cases:
+    - name: all-operations
+      kind: apply
+      sources:
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/src/core/parsers/requirement-blocks.ts
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/src/core/specs-apply.ts
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/test/core/validation.test.ts
+      input:
+          canonical: v1.6.0/cases/all-operations/input/spec.md
+          delta: v1.6.0/cases/all-operations/input/delta.md
+      expected:
+          canonical: v1.6.0/cases/all-operations/expected/spec.md
+          diagnostics: []
+      upstream: accepted
+      rune: accepted
+    - name: new-capability
+      kind: apply
+      sources:
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/src/core/specs-apply.ts
+      input:
+          delta: v1.6.0/cases/new-capability/input/delta.md
+      expected:
+          canonical: v1.6.0/cases/new-capability/expected/spec.md
+          diagnostics:
+              - code: SPEC_REMOVED_IGNORED_FOR_NEW_CAPABILITY
+                severity: warning
+      upstream: accepted
+      rune: accepted
+    - name: scenario-multiplicity
+      kind: reject
+      sources:
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/src/core/specs-apply.ts
+      input:
+          canonical: v1.6.0/cases/scenario-multiplicity/input/spec.md
+          delta: v1.6.0/cases/scenario-multiplicity/input/delta.md
+      expected:
+          canonical: v1.6.0/cases/scenario-multiplicity/expected/spec.md
+          diagnostics:
+              - code: SPEC_SCENARIO_OCCURRENCE_REMOVED
+                severity: error
+      upstream: accepted
+      rune: rejected
+      intentional_difference: scenario-multiplicity
+    - name: fenced-operation
+      kind: apply
+      sources:
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/src/core/parsers/requirement-blocks.ts
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/test/core/validation.test.ts
+      input:
+          canonical: v1.6.0/cases/fenced-operation/input/spec.md
+          delta: v1.6.0/cases/fenced-operation/input/delta.md
+      expected:
+          canonical: v1.6.0/cases/fenced-operation/expected/spec.md
+          diagnostics: []
+      upstream: accepted
+      rune: accepted
+      intentional_difference: fenced-operation-markers
+    - name: round-trip
+      kind: round-trip
+      sources:
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/test/commands/schema.test.ts
+          - https://github.com/Fission-AI/OpenSpec/blob/v1.6.0/test/core/artifact-graph/schema.test.ts
+      input:
+          tree: v1.6.0/cases/round-trip/input/openspec
+      expected:
+          tree: v1.6.0/cases/round-trip/expected/openspec
+          diagnostics: []
+      upstream: accepted
+      rune: accepted

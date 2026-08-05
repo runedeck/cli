@@ -1,42 +1,79 @@
-use std::sync::OnceLock;
-
-use regex::Regex;
-
 use crate::parse;
 
 use super::{Diagnostic, Severity};
 
-pub(crate) struct Heading {
-    pub(crate) body_line: usize,
-    pub(crate) level: usize,
-    pub(crate) text: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heading {
+    pub line: usize,
+    pub level: usize,
+    pub text: String,
 }
 
-fn heading_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)^(#{1,6})\s+(.+)$").expect("valid regex"))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fence {
+    marker: char,
+    length: usize,
 }
 
-pub(crate) fn extract_headings(body: &str) -> Vec<Heading> {
-    let re = heading_regex();
+fn fence(line: &str) -> Option<Fence> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+
+    let length = trimmed
+        .chars()
+        .take_while(|candidate| *candidate == marker)
+        .count();
+    (length >= 3).then_some(Fence { marker, length })
+}
+
+fn heading(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim_start();
+    let level = trimmed
+        .chars()
+        .take_while(|candidate| *candidate == '#')
+        .count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+
+    let text = trimmed.get(level..)?;
+    if !text.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+
+    Some((level, text.trim().to_string()))
+}
+
+pub(super) fn extract_headings(body: &str) -> Vec<Heading> {
     let mut headings = Vec::new();
-    let mut in_code_fence = false;
+    let mut open_fence: Option<Fence> = None;
 
-    for (line_idx, line) in body.lines().enumerate() {
-        if line.starts_with("```") {
-            in_code_fence = !in_code_fence;
+    for (line_index, line) in body.lines().enumerate() {
+        if let Some(candidate) = fence(line) {
+            match open_fence {
+                Some(open)
+                    if candidate.marker == open.marker && candidate.length >= open.length =>
+                {
+                    open_fence = None;
+                }
+                None => open_fence = Some(candidate),
+                Some(_) => {}
+            }
             continue;
         }
 
-        if in_code_fence {
+        if open_fence.is_some() {
             continue;
         }
 
-        if let Some(caps) = re.captures(line) {
+        if let Some((level, text)) = heading(line) {
             headings.push(Heading {
-                body_line: line_idx + 1,
-                level: caps[1].len(),
-                text: caps[2].trim().to_string(),
+                line: line_index + 1,
+                level,
+                text,
             });
         }
     }
@@ -47,12 +84,26 @@ pub(crate) fn extract_headings(body: &str) -> Vec<Heading> {
 fn body_line_offset(file_content: &str) -> usize {
     match parse::split_frontmatter(file_content) {
         Some((yaml_text, _)) => {
-            let prefix_len = 4 + yaml_text.len() + 4;
-            let bounded = prefix_len.min(file_content.len());
+            let prefix_length = 4 + yaml_text.len() + 4;
+            let bounded = prefix_length.min(file_content.len());
             file_content[..bounded].lines().count()
         }
         None => 0,
     }
+}
+
+#[must_use]
+pub fn outline(file_content: &str) -> Vec<Heading> {
+    let body = parse::frontmatter_body(file_content);
+    let offset = body_line_offset(file_content);
+
+    extract_headings(body)
+        .into_iter()
+        .map(|mut heading| {
+            heading.line += offset;
+            heading
+        })
+        .collect()
 }
 
 pub(super) fn check(
@@ -73,46 +124,41 @@ pub(super) fn check(
     let max_depth = heading_rules
         .get("max_depth")
         .and_then(serde_yaml::Value::as_u64)
-        .map(|d| usize::try_from(d).unwrap_or(usize::MAX));
+        .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX));
 
-    let body = parse::frontmatter_body(file_content);
-    let headings = extract_headings(body);
-    let offset = body_line_offset(file_content);
-
-    let mut prev_level: Option<usize> = None;
+    let headings = outline(file_content);
+    let mut previous_level: Option<usize> = None;
 
     for heading in &headings {
-        let file_line = heading.body_line + offset;
-
-        if let Some(max) = max_depth
-            && heading.level > max
+        if let Some(maximum) = max_depth
+            && heading.level > maximum
         {
             diagnostics.push(Diagnostic {
                 file: file_path.to_string(),
-                line: Some(file_line),
+                line: Some(heading.line),
                 severity: Severity::Error,
                 message: format!(
                     "heading '{}' at depth {} exceeds max_depth {}",
-                    heading.text, heading.level, max
+                    heading.text, heading.level, maximum
                 ),
             });
         }
 
         if no_skip_levels
-            && let Some(prev) = prev_level
-            && heading.level > prev + 1
+            && let Some(previous) = previous_level
+            && heading.level > previous + 1
         {
             diagnostics.push(Diagnostic {
                 file: file_path.to_string(),
-                line: Some(file_line),
+                line: Some(heading.line),
                 severity: Severity::Error,
                 message: format!(
                     "heading '{}' skips from h{} to h{}",
-                    heading.text, prev, heading.level
+                    heading.text, previous, heading.level
                 ),
             });
         }
 
-        prev_level = Some(heading.level);
+        previous_level = Some(heading.level);
     }
 }

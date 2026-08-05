@@ -49,17 +49,17 @@ source files → assemble (strip frontmatter, resolve variants, apply transforms
 
 ### Crate Structure
 
-The `[lib]` crate is `commands` (exposed as `src/commands.rs`). The binary is `rune` (`src/main.rs` → `src/cli/`). Feature flags control optional modules: `assemble`, `validate`, `deploy` (all on by default via `full`).
+Two names, one project: the package is `rune-cli`; the library crate and the binary are both `rune`. The library (`src/lib.rs`) holds the domain model; the binary (`src/main.rs`) holds the commands, in `src/cli/` and `src/tui/`, and imports the library as `rune::`. Feature flags control optional modules: `assemble`, `validate`, `deploy` (all on by default via `full`).
 
 ### Provider System
 
 Provider conventions are config-driven via `defaults.yaml`. Each provider has a target directory, optional assembly rules, and optional deploy rules. Assembly rules are applied in order: `kebab-case`, `remap-tools`, `strip-links`, `agents-to-toml`.
 
-Variant resolution uses qualifier directories (`user/`, `claude/`, `claude-opus-4/`) that flatten at assembly time. `user/` has highest precedence.
+A qualifier is a directory (`user/`, `claude/`, `claude-opus-4/`); a variant is the file inside it overriding the base file of the same name. Qualifiers flatten at assembly time and `user/` has highest precedence. `variants::merge_into_base` replaces base frontmatter keys with variant keys and joins the bodies by the variant's `mode`. That is key-level replacement, not the deep merge in `yaml::merge`.
 
 ### Init Templates
 
-`templates/init/` mirrors the deploy target 1:1 — no remapping config. `rune init <path>` iterates the directory and writes each file at the same relative path, substituting `${MODULE_NAME}`, `${VERSION}`, and `${VALIDATE_SH_SHA}` (the latter computed by `build.rs` from `scripts/validate.sh` and exposed as `commands::VALIDATE_SH_SHA`). Content `.mdschema` files live inside `templates/init/` at their deploy path (e.g. `agents/.mdschema`). Document schemas (README, CONTRIBUTING) live in `schemas/` — embedded for validation fallback only, never deployed.
+`templates/init/` mirrors the deploy target 1:1 — no remapping config. `rune init <path>` iterates the directory and writes each file at the same relative path, substituting `${MODULE_NAME}`, `${VERSION}`, and `${VALIDATE_SH_SHA}` (the latter computed by `build.rs` from `scripts/validate.sh` and exposed as `rune::VALIDATE_SH_SHA`). Content `.mdschema` files live inside `templates/init/` at their deploy path (e.g. `agents/.mdschema`). Document schemas (README, CONTRIBUTING) live in `schemas/` — embedded for validation fallback only, never deployed.
 
 ### Consumer Manifest (`.rune`)
 
@@ -81,12 +81,12 @@ Configurable excludes in `defaults.yaml` under `validate.exclude` — glob patte
 
 ### Test Layout
 
-Unit tests live as sibling `tests.rs` files next to `mod.rs` in every module. Integration tests in `tests/` with fixtures in `tests/fixtures/`. Fixtures loaded via `include_str!`.
+Unit tests live in a sibling `tests.rs` next to the module they cover (RUST-0012). Around forty modules still carry an inline `#[cfg(test)] mod tests` and move to the sibling layout as they are touched; CLI-0002 records the remainder. Integration tests in `tests/` with fixtures in `tests/fixtures/`. Fixtures loaded via `include_str!`.
 
 ## Conventions
 
-- `Result<T, String>` for errors — no `anyhow`/`thiserror`
-- `ErrorKind` enum for categorized errors (`Parse`, `Config`, `Io`, `Deploy`, `Validate`)
+- Two error types, one boundary, no `anyhow`/`thiserror`. Library modules (`assemble`, `manifest`, `parse`, `provider`, `transform`, `yaml`, `validate`) return `Result<T, String>`: they describe what went wrong and leave the categorising to the caller. CLI modules under `src/cli/` return `Result<T, Error>` with an `ErrorKind` (`Parse`, `Config`, `Io`, `Deploy`, `Validate`), because the exit code and the printed prefix come from that kind. Convert at the call site with the named constructors, `.map_err(Error::parse)?`, never by rebuilding the closure.
+- That boundary is stated, not yet true everywhere. Files including `src/cli/install/mod.rs`, `src/cli/deploy/mod.rs`, `src/cli/dotrune/parse.rs`, and `src/cli/bench/mod.rs` still return both types from different functions, and `src/services/` is split down the middle. New code follows the boundary; existing code moves when it is touched for another reason.
 - `#[forbid(unsafe_code)]`, clippy pedantic enabled
 - 4-space indentation everywhere
 - All commands support `--json` for machine-readable output

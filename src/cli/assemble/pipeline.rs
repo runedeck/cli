@@ -1,5 +1,5 @@
-use commands::assemble;
-use commands::error::Error;
+use rune::assemble;
+use rune::error::Error;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -59,10 +59,11 @@ pub fn assemble_source(
         variant_content.as_deref(),
         &keep_refs,
         strip_links,
-    );
+    )
+    .map_err(Error::parse)?;
 
     // Map abstract model tiers (strong/fast/light) to provider-specific values
-    if source.kind == commands::provider::ContentKind::Agents && !model_tiers.is_empty() {
+    if source.kind == rune::provider::ContentKind::Agents && !model_tiers.is_empty() {
         output = map_agent_model_settings(&output, model_tiers, effort_tiers);
     }
 
@@ -78,7 +79,7 @@ fn map_agent_model_settings(
     model_tiers: &HashMap<String, Vec<String>>,
     effort_tiers: &HashMap<String, String>,
 ) -> String {
-    let Some(original_model) = commands::parse::frontmatter_value(content, "model") else {
+    let Some(original_model) = rune::parse::frontmatter_value(content, "model") else {
         return content.to_string();
     };
     let model_key = original_model.trim();
@@ -93,7 +94,7 @@ fn map_agent_model_settings(
         content.to_string()
     };
 
-    let explicit_effort = commands::parse::frontmatter_value(&output, "effort");
+    let explicit_effort = rune::parse::frontmatter_value(&output, "effort");
     if explicit_effort.is_none()
         && let Some(effort) = effort_tiers.get(model_key)
     {

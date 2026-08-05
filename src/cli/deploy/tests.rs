@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
 #[test]
@@ -51,6 +53,89 @@ fn load_deployed_manifest_returns_empty_for_missing_file() {
     assert!(manifest.is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn load_deployed_manifest_fails_closed_on_unreadable_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp_directory = TempDir::new().unwrap();
+    let manifest_path = temp_directory.path().join(".manifest");
+    std::fs::write(&manifest_path, "rules/Foo.md:\n    fingerprint: abc\n").unwrap();
+    std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let result = load_deployed_manifest(temp_directory.path());
+    std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let error = result.expect_err("unreadable manifest must not read as empty");
+    assert!(error.message().contains("cannot read"));
+}
+
+#[test]
+fn load_deployed_manifest_rejects_non_mapping_root() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::write(temp_directory.path().join(".manifest"), "manifest").unwrap();
+
+    let error = load_deployed_manifest(temp_directory.path())
+        .expect_err("non-mapping manifest must fail closed");
+    assert!(error.message().contains("manifest root must be a mapping"));
+}
+
+#[test]
+fn manifest_recovery_requires_forced_full_deploy() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::write(temp_directory.path().join(".manifest"), "invalid: [").unwrap();
+
+    let error = load_manifest_or_recover(temp_directory.path(), None, false)
+        .expect_err("unforced full deploy must fail closed");
+    assert!(error.message().contains("--force"));
+
+    for force in [false, true] {
+        let error = load_manifest_or_recover(temp_directory.path(), Some("rules"), force)
+            .expect_err("filtered deploy must never rebuild a corrupt manifest");
+        assert!(error.message().contains("filtered deploy"));
+    }
+
+    let recovered = load_manifest_or_recover(temp_directory.path(), None, true).unwrap();
+    assert!(recovered.is_empty());
+}
+
+#[test]
+fn target_lock_is_exclusive_and_released_on_drop() {
+    let temp_directory = TempDir::new().unwrap();
+    let lock = config::lock_target(temp_directory.path()).expect("first lock");
+    let error = config::lock_target(temp_directory.path())
+        .expect_err("second lock must fail while the first is held");
+    assert!(error.message().contains("another rune process"));
+    drop(lock);
+    let _relock = config::lock_target(temp_directory.path()).expect("lock after release");
+}
+
+#[test]
+fn missing_provenance_means_unknown_ownership_and_no_prune() {
+    let temp_directory = TempDir::new().unwrap();
+    let entry = manifest::ManifestEntry {
+        fingerprint: "abc".to_string(),
+        provenance: None,
+    };
+    assert!(!is_owned_by_module(
+        &entry,
+        temp_directory.path(),
+        Some("https://github.com/example/module")
+    ));
+}
+
+#[test]
+fn unreadable_provenance_means_unknown_ownership_and_no_prune() {
+    let temp_directory = TempDir::new().unwrap();
+    let entry = manifest::ManifestEntry {
+        fingerprint: "abc".to_string(),
+        provenance: Some(".provenance/Foo.md.yaml".to_string()),
+    };
+    assert!(!is_owned_by_module(
+        &entry,
+        temp_directory.path(),
+        Some("https://github.com/example/module")
+    ));
+}
+
 #[test]
 fn write_manifest_creates_file() {
     let temp_directory = TempDir::new().unwrap();
@@ -65,6 +150,24 @@ fn write_manifest_creates_file() {
 
     write_manifest(temp_directory.path(), &entries).unwrap();
     assert!(temp_directory.path().join(".manifest").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn write_manifest_rejects_symlinked_destination() {
+    let target = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    let external_manifest = external.path().join("manifest.yaml");
+    std::fs::write(&external_manifest, "original: content\n").unwrap();
+    symlink(&external_manifest, target.path().join(".manifest")).unwrap();
+
+    let error = write_manifest(target.path(), &HashMap::new())
+        .expect_err("symlinked manifest must not be replaced");
+    assert!(error.message().contains("symlink"));
+    assert_eq!(
+        std::fs::read_to_string(external_manifest).unwrap(),
+        "original: content\n"
+    );
 }
 
 #[test]
@@ -217,7 +320,7 @@ fn deploy_provider_files_only_prefix_filters_deployment() {
     let mut result = ActionResult::new();
     deploy_provider_kind_files(
         &build_dir.join("skills"),
-        commands::provider::ContentKind::Skills,
+        rune::provider::ContentKind::Skills,
         &target,
         &mut manifest_entries,
         &mut deployed_keys,
@@ -258,6 +361,13 @@ fn only_matches_survives_provider_slugging() {
         "agents/security-architect-two.md",
         "agents/SecurityArchitect"
     ));
+}
+
+#[test]
+fn only_matches_keeps_separated_names_distinct() {
+    assert!(!only_matches("skills/a-b/SKILL.md", "skills/ab"));
+    assert!(!only_matches("skills/a_b/SKILL.md", "skills/ab"));
+    assert!(only_matches("skills/a-b/SKILL.md", "skills/a-b"));
 }
 
 #[test]

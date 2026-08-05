@@ -13,7 +13,7 @@ pub(crate) fn substitute(template: &str, module_name: &str) -> String {
     template
         .replace("${MODULE_NAME}", module_name)
         .replace("${VERSION}", "0.1.0")
-        .replace("${VALIDATE_SH_SHA}", commands::VALIDATE_SH_SHA)
+        .replace("${VALIDATE_SH_SHA}", rune::VALIDATE_SH_SHA)
 }
 
 const README_MDSCHEMA: &str = include_str!(concat!(
@@ -24,14 +24,18 @@ const CONTRIBUTING_MDSCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/schemas/CONTRIBUTING.mdschema"
 ));
+const SKILL_MDSCHEMA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/schemas/skill.mdschema"
+));
 
 pub fn embedded_mdschema(kind: &str) -> Option<String> {
     match kind {
         "readme" => Some(README_MDSCHEMA.to_string()),
         "contributing" => Some(CONTRIBUTING_MDSCHEMA.to_string()),
+        "skills" => Some(SKILL_MDSCHEMA.to_string()),
         _ => {
             let embed_path = match kind {
-                "skills" => "skills/.mdschema",
                 "agents" => "agents/.mdschema",
                 "rules" => "rules/.mdschema",
                 "decisions" => "docs/decisions/.mdschema",

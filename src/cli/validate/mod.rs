@@ -1,15 +1,24 @@
 mod check;
+mod mdschema_tool;
 mod plugin;
 mod repository;
 mod schema;
 pub(crate) mod templates;
 mod tools;
 
-use commands::error::{Error, ErrorKind};
-use commands::result::ActionResult;
 use console::Style;
+use rune::error::{Error, ErrorKind};
+use rune::result::ActionResult;
 use std::fs;
 use std::path::Path;
+
+/// Said once when strict structural checking did not run, whatever the reason.
+///
+/// Held as constants so a deck of many modules can recognise the notice a
+/// child report already produced and keep only the first.
+const MISSING_STANDALONE_CHECKER: &str = "standalone mdschema is unavailable, so only required-section presence, heading-level continuity, and maximum depth were checked. Section order, unexpected sections, permitted H3 placement, and heading uniqueness were NOT checked, and optional sections were skipped. Install it to check them: brew install jackchuka/tap/mdschema";
+const UNUSABLE_STANDALONE_CHECKER: &str = "standalone mdschema is installed but could not be given a schema file, so only required-section presence, heading-level continuity, and maximum depth were checked. The temporary directory is the likely cause; the write error is on stderr.";
+const REDUCED_CHECKING_ITEM: &str = "mdschema";
 
 const REQUIRED_FILES: &[&str] = &["module.yaml", "defaults.yaml", "README.md", "LICENSE"];
 const OPTIONAL_FILES: &[&str] = &[
@@ -34,11 +43,13 @@ struct ValidationItem {
     detail: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ViolationSeverity {
-    Error,
-    Warning,
-}
+/// The one severity the CLI reasons in.
+///
+/// `rune::validate::Severity` is the library's finding severity, and this
+/// alias keeps the CLI on it rather than maintaining a parallel copy that has
+/// to be mapped at every boundary. The spec surface converts to
+/// `rune_docs::spec::DiagnosticSeverity` when it prints, and nowhere else.
+pub(crate) use rune::validate::Severity as ViolationSeverity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ValidationViolation {
@@ -59,6 +70,10 @@ struct ValidationReport {
     result: ActionResult,
     items: Vec<ValidationItem>,
     violations: Vec<ValidationViolation>,
+    /// The standalone checker is missing for the whole run, not for one file,
+    /// so its notice is emitted once. Repeating it per artifact buried the
+    /// real findings and turned every passing item into a warning.
+    reported_missing_standalone_checker: bool,
 }
 
 impl ValidationReport {
@@ -158,7 +173,32 @@ impl ValidationReport {
         });
     }
 
-    fn diagnostic(&mut self, diagnostic: &commands::validate::Diagnostic) {
+    /// Announce, once per run, that strict structural checking did not happen.
+    ///
+    /// Reported against the run rather than an artifact: a missing binary is a
+    /// property of the machine, and naming a file invites the reader to think
+    /// that file is at fault.
+    fn report_missing_standalone_checker(&mut self) {
+        self.report_reduced_checking_once(MISSING_STANDALONE_CHECKER);
+    }
+
+    /// The binary is installed but could not be handed a schema file.
+    ///
+    /// Distinct from the missing-binary notice: telling someone to install a
+    /// tool they already have sends them looking in the wrong place.
+    fn report_unusable_standalone_checker(&mut self) {
+        self.report_reduced_checking_once(UNUSABLE_STANDALONE_CHECKER);
+    }
+
+    fn report_reduced_checking_once(&mut self, message: &str) {
+        if self.reported_missing_standalone_checker {
+            return;
+        }
+        self.reported_missing_standalone_checker = true;
+        self.warn(REDUCED_CHECKING_ITEM, message.to_string());
+    }
+
+    fn diagnostic(&mut self, diagnostic: &rune::validate::Diagnostic) {
         let detail = match diagnostic.line {
             Some(line) => format!(
                 "{}:{line}: {} ({:?})",
@@ -169,10 +209,7 @@ impl ValidationReport {
                 diagnostic.file, diagnostic.message, diagnostic.severity
             ),
         };
-        let severity = match diagnostic.severity {
-            commands::validate::Severity::Error => ViolationSeverity::Error,
-            commands::validate::Severity::Warning => ViolationSeverity::Warning,
-        };
+        let severity = diagnostic.severity;
         match severity {
             ViolationSeverity::Error => self.result.errors.push(detail.clone()),
             ViolationSeverity::Warning => self.result.warnings.push(detail.clone()),
@@ -190,7 +227,7 @@ impl ValidationReport {
 ///   - skills/ — recurses into subdirectories, checks `.mdschema`
 pub fn execute(path: &str, json: bool, scan: bool, force: bool) -> Result<i32, Error> {
     let module_root = Path::new(path);
-    let is_source = commands::deck::is_deck(module_root)
+    let is_source = rune::deck::is_deck(module_root)
         || module_root.join("module.yaml").is_file()
         || module_root.join(".rune").is_file();
     if !is_source && !force {
@@ -219,9 +256,8 @@ pub(crate) fn validate_source(path: &Path) -> Result<SourceValidationReport, Err
 
 fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
     let module_root = Path::new(path);
-    if commands::deck::is_deck(module_root) {
-        let deck = commands::deck::load(module_root)
-            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    if rune::deck::is_deck(module_root) {
+        let deck = rune::deck::load(module_root).map_err(Error::config)?;
         let mut aggregate = ValidationReport::default();
         check_spec_lifecycle(module_root, &mut aggregate)?;
         for deck_entry in deck.entries {
@@ -336,7 +372,7 @@ fn validate_module(
     // ADR directory — validate against JSON schema if available
     let decisions_dir = module_root.join("docs").join("decisions");
     if decisions_dir.is_dir() {
-        let json_schema = schema::load_json_schema(&decisions_dir);
+        let json_schema = schema::load_json_schema(&decisions_dir).map_err(Error::io)?;
         check::flat_directory_with_json_schema(
             &decisions_dir,
             module_root,
@@ -349,15 +385,11 @@ fn validate_module(
     // Skills have subdirectories — iterate and validate each
     let skills_dir = module_root.join("skills");
     if skills_dir.is_dir() {
-        let entries = fs::read_dir(&skills_dir).map_err(|e| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot read {}: {e}", skills_dir.display()),
-            )
-        })?;
+        let entries = fs::read_dir(&skills_dir)
+            .map_err(|error| Error::io(format!("cannot read {}: {error}", skills_dir.display())))?;
         let mut entries = entries
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
+            .map_err(|error| Error::io(format!("directory entry error: {error}")))?;
         entries.sort_by_key(std::fs::DirEntry::path);
 
         for entry in entries {
@@ -378,12 +410,36 @@ fn validate_module(
 }
 
 fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Result<(), Error> {
-    let has_lifecycle = super::spec::specs_root(module_root).is_dir()
-        || super::spec::changes_root(module_root).is_dir();
+    let has_lifecycle = super::spec_root::specs_root(module_root)?.is_dir()
+        || super::spec_root::changes_root(module_root)?.is_dir();
     if !has_lifecycle {
         return Ok(());
     }
-    let violations = super::spec::validate_spec_tree(module_root)?;
+    // A build without the spec feature must not silently pass a repo the full
+    // build would fail: the same tree validating clean or dirty depending on
+    // build flavor needs a visible reason.
+    #[cfg(not(feature = "spec"))]
+    {
+        report.warn(
+            "specifications",
+            "spec tree present; lifecycle checks skipped (built without the spec feature)"
+                .to_string(),
+        );
+        Ok(())
+    }
+    #[cfg(feature = "spec")]
+    {
+        check_spec_lifecycle_with_validator(module_root, report, super::spec::validate_spec_tree)
+    }
+}
+
+#[cfg(feature = "spec")]
+fn check_spec_lifecycle_with_validator(
+    module_root: &Path,
+    report: &mut ValidationReport,
+    validator: fn(&Path) -> Result<Vec<super::spec::SpecViolation>, Error>,
+) -> Result<(), Error> {
+    let violations = validator(module_root)?;
     if violations.is_empty() {
         report.pass("specifications");
         return Ok(());
@@ -393,26 +449,43 @@ fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Re
             || violation.message.clone(),
             |line| format!("line {line}: {}", violation.message),
         );
-        report.result.errors.push(format!(
+        let rendered = format!(
             "{}{}: {}",
             violation.path,
             violation
                 .line
                 .map_or_else(String::new, |line| format!(":{line}")),
             violation.message
-        ));
+        );
+        let (severity, status) = match violation.severity {
+            super::spec::DiagnosticSeverity::Error => {
+                report.result.errors.push(rendered);
+                (ViolationSeverity::Error, ValidationStatus::Failed)
+            }
+            super::spec::DiagnosticSeverity::Warning => {
+                report.result.warnings.push(rendered);
+                (ViolationSeverity::Warning, ValidationStatus::Warning)
+            }
+        };
         report.push_violation_if_missing(
             &violation.path,
-            ViolationSeverity::Error,
+            severity,
             violation.message,
             violation.line,
         );
-        report.record(violation.path, ValidationStatus::Failed, Some(detail));
+        report.record(violation.path, status, Some(detail));
     }
     Ok(())
 }
 
 fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport) {
+    // A deck validates each module with its own report, so every module that
+    // falls back would otherwise repeat the same machine-level notice. Keep the
+    // first and drop the rest.
+    if aggregate.reported_missing_standalone_checker {
+        drop_reduced_checking_notice(&mut report);
+    }
+
     aggregate
         .result
         .installed
@@ -426,6 +499,26 @@ fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport)
     aggregate.result.errors.append(&mut report.result.errors);
     aggregate.items.append(&mut report.items);
     aggregate.violations.append(&mut report.violations);
+    aggregate.reported_missing_standalone_checker |= report.reported_missing_standalone_checker;
+}
+
+/// Remove a reduced-checking notice a child report produced.
+///
+/// Matches on the message rather than a flag because the notice has already
+/// been written into three places by the time the report is merged.
+fn drop_reduced_checking_notice(report: &mut ValidationReport) {
+    let is_notice = |message: &str| {
+        message.contains(MISSING_STANDALONE_CHECKER)
+            || message.contains(UNUSABLE_STANDALONE_CHECKER)
+    };
+
+    report.result.warnings.retain(|warning| !is_notice(warning));
+    report
+        .violations
+        .retain(|violation| !is_notice(&violation.message));
+    report
+        .items
+        .retain(|item| !item.name.ends_with(REDUCED_CHECKING_ITEM));
 }
 
 fn check_module_structure(module_root: &Path, report: &mut ValidationReport) {
@@ -522,11 +615,8 @@ fn check_module_yaml(module_root: &Path, report: &mut ValidationReport) {
     };
 
     let yaml_as_frontmatter = format!("---\n{content}---\n");
-    let diagnostics = commands::validate::validate_frontmatter(
-        &yaml_as_frontmatter,
-        module_schema,
-        "module.yaml",
-    );
+    let diagnostics =
+        rune::validate::validate_frontmatter(&yaml_as_frontmatter, module_schema, "module.yaml");
 
     for diagnostic in diagnostics {
         report.diagnostic(&diagnostic);

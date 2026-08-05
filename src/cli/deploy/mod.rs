@@ -1,13 +1,15 @@
-use commands::error::{Error, ErrorKind};
-use commands::manifest;
-use commands::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
 use regex::Regex;
+use rune::error::{Error, ErrorKind};
+use rune::manifest;
+use rune::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::cli::config;
+
+pub mod wiring;
 
 /// Copy assembled files from build/ to provider target directories.
 ///
@@ -69,6 +71,22 @@ pub fn execute(
         None => None,
     };
 
+    // Rule wiring (and its paired skip of codex's redundant on-disk rules)
+    // only applies to a home-scope install; a project's instruction files
+    // belong to the project. Project-scope installs keep the prior behavior
+    // of deploying rules to each provider's rules directory.
+    let wire_rules = !dry_run && effective_target.is_none_or(is_home_target);
+
+    // One writer per target: concurrent deploys interleave manifest and tree
+    // writes with no way to reconcile afterwards.
+    let _target_lock = if dry_run {
+        None
+    } else {
+        Some(config::lock_target(Path::new(
+            effective_target.unwrap_or("."),
+        ))?)
+    };
+
     for (provider_name, provider_config) in &providers {
         let build_provider_dir = module_root.join("build").join(provider_name);
         if !build_provider_dir.is_dir() {
@@ -86,17 +104,27 @@ pub fn execute(
             }
             deployed_by_root.entry(target_base.clone()).or_default();
             if !manifests.contains_key(&target_base) {
-                let entries = load_manifest_or_recover(&target_base, only)?;
+                let entries = load_manifest_or_recover(&target_base, only, force)?;
                 manifests.insert(target_base.clone(), entries);
             }
         }
 
         let kinds = if is_consumer {
-            commands::provider::ContentKind::DECK_ALL
+            rune::provider::ContentKind::DECK_ALL
         } else {
-            commands::provider::ContentKind::ALL
+            rune::provider::ContentKind::ALL
         };
         for kind in kinds {
+            // Codex reserves `~/.codex/rules/` for `.rules` command policies
+            // and never reads deployed markdown; when its rules are wired into
+            // AGENTS.md instead, they are not written to disk. The build tree
+            // still holds them for the wiring step.
+            if wire_rules
+                && *kind == rune::provider::ContentKind::Rules
+                && provider_config.default_target() == ".codex"
+            {
+                continue;
+            }
             let kind_dir = build_provider_dir.join(kind.as_str());
             if !kind_dir.is_dir() {
                 continue;
@@ -109,7 +137,7 @@ pub fn execute(
             }
 
             if !manifests.contains_key(&target_base) {
-                let entries = load_manifest_or_recover(&target_base, only)?;
+                let entries = load_manifest_or_recover(&target_base, only, force)?;
                 manifests.insert(target_base.clone(), entries);
             }
             let Some(existing_manifest) = manifests.get_mut(&target_base) else {
@@ -176,11 +204,124 @@ pub fn execute(
                     dry_run,
                 )?;
             }
+            // Harnesses without a rules directory get their rules inlined
+            // into their own instruction file. Home-scope installs only: a
+            // repo's AGENTS.md belongs to the repo, not to install.
+            if wire_rules {
+                wire_harness_rules(
+                    provider_config,
+                    &build_provider_dir,
+                    &target_base,
+                    &mut existing_manifest,
+                    &mut result,
+                )?;
+            }
             write_manifest(&target_base, &existing_manifest)?;
         }
     }
 
     Ok(result)
+}
+
+/// Whether an install target is the user's home tree (`~` or an absolute path
+/// under it), where wiring another harness's global instruction file is
+/// appropriate. Project-scope installs are left untouched.
+fn is_home_target(target: &str) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    let expanded = if let Some(rest) = target.strip_prefix("~/") {
+        home.join(rest)
+    } else if target == "~" {
+        home.clone()
+    } else {
+        PathBuf::from(target)
+    };
+    // Canonicalize both sides: on macOS the home path may resolve through
+    // /private symlinks, so a raw compare spuriously fails.
+    let canonical_home = fs::canonicalize(&home).unwrap_or(home);
+    fs::canonicalize(&expanded).is_ok_and(|resolved| resolved == canonical_home)
+}
+
+/// The instruction-file (or config) wiring for one harness, keyed off the
+/// provider's `deploy` rules. Codex and Gemini inline the rules into their
+/// instruction file; opencode ensures a glob in its `instructions` array.
+fn wire_harness_rules(
+    provider_config: &rune::provider::ProviderConfig,
+    build_provider_dir: &Path,
+    target_base: &Path,
+    manifest_entries: &mut HashMap<String, manifest::ManifestEntry>,
+    result: &mut ActionResult,
+) -> Result<(), Error> {
+    let deploy_rules = provider_config.deploy.as_deref().unwrap_or_default();
+    if !deploy_rules.iter().any(|rule| rule == "rulesync") {
+        return Ok(());
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Ok(());
+    };
+    // Rule bodies come from the build tree so wiring is independent of whether
+    // rules were also written to a deployed directory.
+    let rules_dir = build_provider_dir.join("rules");
+
+    match provider_config.default_target() {
+        ".codex" => {
+            if let Some(block) = wiring::render_block(&rules_dir) {
+                let file = target_base.join("AGENTS.md");
+                wiring::write_block(&file, &block)?;
+                record_wiring(manifest_entries, result, &file, &block);
+            }
+        }
+        ".gemini" => {
+            if let Some(block) = wiring::render_block(&rules_dir) {
+                let file = target_base.join("GEMINI.md");
+                wiring::write_block(&file, &block)?;
+                record_wiring(manifest_entries, result, &file, &block);
+            }
+        }
+        ".opencode" => {
+            // opencode reads the deployed rules directory through a glob in
+            // its XDG-scoped config (not ~/.opencode), so the glob points at
+            // the deployed dir, and the rules stay deployed to disk.
+            let config_file = home.join(".config/opencode/opencode.json");
+            let glob = target_base.join("rules").join("*.md");
+            wiring::ensure_opencode_instruction(&config_file, &glob.to_string_lossy())?;
+            let entry = format!("instructions:{}", glob.display());
+            manifest_entries.insert(
+                wiring::WIRING_MANIFEST_KEY.to_string(),
+                manifest::ManifestEntry {
+                    fingerprint: manifest::content_sha256(&entry),
+                    provenance: None,
+                },
+            );
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn record_wiring(
+    manifest_entries: &mut HashMap<String, manifest::ManifestEntry>,
+    result: &mut ActionResult,
+    file: &Path,
+    block: &str,
+) {
+    manifest_entries.insert(
+        wiring::WIRING_MANIFEST_KEY.to_string(),
+        manifest::ManifestEntry {
+            fingerprint: manifest::content_sha256(block),
+            provenance: None,
+        },
+    );
+    result.installed.push(DeployedFile {
+        source: "rules (wiring)".to_string(),
+        target: file.to_string_lossy().to_string(),
+        provider: file
+            .parent()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    });
 }
 
 fn resolve_target_base(target_root: &str, effective_target: Option<&str>) -> PathBuf {
@@ -208,19 +349,19 @@ fn only_matches(manifest_key: &str, prefix: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('.'))
 }
 
+// Fold both sides through the same kebab transform providers apply when they
+// rename runes (`SecurityArchitect` matches the renamed
+// `security-architect`), so distinct names stay distinct — deleting
+// separators instead would let `skills/ab` capture `skills/a-b`.
 fn normalize_only(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| *character != '-' && *character != '_')
-        .flat_map(char::to_lowercase)
-        .collect()
+    rune::transform::to_kebab_case(value)
 }
 
 /// Deploy one content kind for a single provider.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn deploy_provider_kind_files(
     kind_dir: &Path,
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     target_base: &Path,
     new_manifest: &mut HashMap<String, manifest::ManifestEntry>,
     deployed_keys: &mut HashSet<String>,
@@ -232,7 +373,7 @@ fn deploy_provider_kind_files(
     let files = collect_files_recursive(kind_dir)?;
 
     for build_path in files {
-        if kind != commands::provider::ContentKind::Hooks
+        if kind != rune::provider::ContentKind::Hooks
             && build_path.extension().unwrap_or_default() == "yaml"
         {
             continue;
@@ -250,17 +391,24 @@ fn deploy_provider_kind_files(
         deployed_keys.insert(manifest_key.clone());
         let target_path = target_base.join(kind.as_str()).join(&relative);
 
-        let build_content = config::read_file(&build_path)?;
-        let build_fingerprint = manifest::content_sha256(&build_content);
+        // Bytes end-to-end: binary passthrough assets deploy with the same
+        // state machine as text, hashed over their raw bytes.
+        let build_bytes = fs::read(&build_path).map_err(|e| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {e}", build_path.display()),
+            )
+        })?;
+        let build_fingerprint = manifest::content_sha256_bytes(&build_bytes);
         let provenance_relative = manifest::provenance_path(&manifest_key);
         let sidecar_source = manifest::sidecar_path(&build_path);
         let has_provenance = sidecar_source.is_file()
             && sidecar_source != build_path
-            && kind != commands::provider::ContentKind::Hooks;
+            && kind != rune::provider::ContentKind::Hooks;
 
-        let target_content = fs::read_to_string(&target_path).ok();
-        let status = manifest::status(
-            target_content.as_deref(),
+        let target_bytes = fs::read(&target_path).ok();
+        let status = manifest::status_bytes(
+            target_bytes.as_deref(),
             new_manifest.get(&manifest_key),
             &build_fingerprint,
         );
@@ -668,6 +816,7 @@ fn prune_stale_files(
     let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%MZ").to_string();
     let trash_root = target_base.join(".trash").join(&stamp);
     let mut skipped_modified = 0;
+    let mut pruned_count = 0;
 
     for stale_key in &stale_keys {
         let stale_path = target_base.join(stale_key);
@@ -675,14 +824,15 @@ fn prune_stale_files(
 
         // Refuse to prune a file whose on-disk content no longer matches the
         // recorded fingerprint: that signals local edits the user might want
-        // to keep. --force overrides both deploy and prune protection.
+        // to keep. Bytes-based so a locally modified (or non-UTF-8) binary is
+        // protected too. --force overrides both deploy and prune protection.
         if !force
             && stale_path.is_file()
             && let Some(expected) = existing_manifest
                 .get(stale_key)
                 .map(|entry| entry.fingerprint.clone())
-            && let Ok(current) = fs::read_to_string(&stale_path)
-            && manifest::content_sha256(&current) != expected
+            && let Ok(current) = fs::read(&stale_path)
+            && manifest::content_sha256_bytes(&current) != expected
         {
             eprintln!(
                 "rune prune: skipping {} (modified locally; pass --force to prune)",
@@ -698,6 +848,7 @@ fn prune_stale_files(
                 stale_path.display(),
                 trash_dest.display()
             );
+            pruned_count += 1;
             continue;
         }
 
@@ -722,18 +873,26 @@ fn prune_stale_files(
             prune_empty_parents(stale_path.parent(), target_base);
         }
 
-        let provenance_rel = manifest::provenance_path(stale_key);
-        let provenance_path = target_base.join(&provenance_rel);
-        if provenance_path.is_file() {
-            let provenance_trash = trash_root.join(&provenance_rel);
-            if let Some(parent) = provenance_trash.parent() {
-                let _ = fs::create_dir_all(parent);
+        // Quarantine the sidecar under either naming scheme: current
+        // full-filename first, then the legacy stem name older deployments
+        // wrote.
+        for provenance_rel in [
+            manifest::provenance_path(stale_key),
+            manifest::legacy_provenance_path(stale_key),
+        ] {
+            let provenance_path = target_base.join(&provenance_rel);
+            if provenance_path.is_file() {
+                let provenance_trash = trash_root.join(&provenance_rel);
+                if let Some(parent) = provenance_trash.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::rename(&provenance_path, &provenance_trash);
+                prune_empty_parents(provenance_path.parent(), target_base);
             }
-            let _ = fs::rename(&provenance_path, &provenance_trash);
-            prune_empty_parents(provenance_path.parent(), target_base);
         }
 
         existing_manifest.remove(stale_key);
+        pruned_count += 1;
         result.pruned.push(PrunedFile {
             target: stale_path.to_string_lossy().to_string(),
             provider: provider_name.to_owned(),
@@ -741,7 +900,6 @@ fn prune_stale_files(
     }
 
     let action = if dry_run { "would move" } else { "moved" };
-    let pruned_count = stale_keys.len() - skipped_modified;
     if pruned_count > 0 {
         let entry_label = if pruned_count == 1 {
             "entry"
@@ -771,10 +929,10 @@ fn prune_stale_files(
 /// rules `ProviderConfig::matches_target` uses elsewhere). Unknown names
 /// produce a single error listing all available choices.
 fn filter_requested_providers(
-    providers: &HashMap<String, commands::provider::ProviderConfig>,
+    providers: &HashMap<String, rune::provider::ProviderConfig>,
     requested: &[String],
-) -> Result<HashMap<String, commands::provider::ProviderConfig>, Error> {
-    let mut matched: HashMap<String, commands::provider::ProviderConfig> = HashMap::new();
+) -> Result<HashMap<String, rune::provider::ProviderConfig>, Error> {
+    let mut matched: HashMap<String, rune::provider::ProviderConfig> = HashMap::new();
     let mut unknown: Vec<String> = Vec::new();
 
     for requested_name in requested {
@@ -871,13 +1029,25 @@ fn validate_target_boundary(target_path: &Path, base_directory: &Path) -> Result
     Ok(())
 }
 
-/// Load the previously deployed `.manifest` from a provider's target directory.
+/// Load the previously deployed `.manifest` from a provider's target
+/// directory. Only a missing file means an empty manifest; any other read
+/// failure fails closed, because an empty manifest reclassifies every
+/// deployed file as New and clears the way to overwrite it.
 pub(crate) fn load_deployed_manifest(
     target_base: &Path,
 ) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
     let manifest_path = target_base.join(".manifest");
-    let Ok(content) = fs::read_to_string(&manifest_path) else {
-        return Ok(HashMap::new());
+    let content = match fs::read_to_string(&manifest_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(HashMap::new());
+        }
+        Err(error) => {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", manifest_path.display()),
+            ));
+        }
     };
     manifest::read(&content).map_err(|error| {
         Error::new(
@@ -887,12 +1057,12 @@ pub(crate) fn load_deployed_manifest(
     })
 }
 
-/// Manifest for a filtered deploy must parse: silently rebuilding it from a
-/// partial deploy would drop every entry outside the filter. A full deploy
-/// may rebuild with a warning.
+/// A corrupt manifest requires a forced full deploy. Filtered recovery remains
+/// forbidden because it would drop every entry outside the selected prefix.
 fn load_manifest_or_recover(
     target_base: &Path,
     only: Option<&str>,
+    force: bool,
 ) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
     match load_deployed_manifest(target_base) {
         Ok(entries) => Ok(entries),
@@ -900,13 +1070,20 @@ fn load_manifest_or_recover(
             ErrorKind::Config,
             format!(
                 "refusing filtered deploy over a corrupt manifest ({error}); \
-                 run a full install to rebuild it"
+                 run a full install with --force to rebuild it"
             ),
         )),
-        Err(error) => {
+        Err(error) if force => {
             eprintln!("warning: {error}; rebuilding manifest from this deploy");
             Ok(HashMap::new())
         }
+        Err(error) => Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "refusing deploy over a corrupt manifest ({error}); \
+                 rerun the full install with --force to rebuild it"
+            ),
+        )),
     }
 }
 
@@ -926,8 +1103,7 @@ fn write_manifest(
     })?;
 
     let manifest_path = target_base.join(".manifest");
-    fs::write(&manifest_path, &yaml)
-        .map_err(|e| Error::new(ErrorKind::Io, format!("cannot write .manifest: {e}")))
+    config::write_atomic(&manifest_path, &yaml)
 }
 
 /// Verify that writing `target_path` cannot escape `base`: the deepest
@@ -1018,8 +1194,8 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>, Error>
 /// Check if a stale manifest entry was installed by the current module.
 ///
 /// Reads the provenance sidecar and compares the recorded source URI to the
-/// current module's identity. If no provenance exists or can't be read,
-/// assumes ownership (prune it).
+/// current module's identity. Missing or unreadable provenance means
+/// ownership is unknown, and unknown ownership is never pruned.
 ///
 /// Matching is structured: both source URIs are parsed into `(host, owner, repo)`
 /// tuples and compared as tuples. Bare-name equality is used only when both
@@ -1035,13 +1211,15 @@ pub(crate) fn is_owned_by_module(
         return true;
     };
 
+    // Unknown ownership fails closed: pruning on a missing or unreadable
+    // sidecar would let one module quarantine another module's files.
     let Some(provenance_relative) = &entry.provenance else {
-        return true;
+        return false;
     };
 
     let provenance_path = target_base.join(provenance_relative);
     let Ok(sidecar) = manifest::provenance::read(&provenance_path) else {
-        return true;
+        return false;
     };
 
     let source_uri = &sidecar

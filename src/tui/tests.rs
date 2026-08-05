@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend, style::Color};
 
-use commands::{
+use rune::{
     manifest::FileStatus,
     services::files::{
         ConfigFile, FileSections, HarnessFiles, HarnessHooks, HookEntry, SchemaGroup,
@@ -676,7 +676,7 @@ fn deleting_from_comment_navigator_requires_two_presses_and_updates_storage() {
 
     event::handle_key(&mut app, key(KeyCode::Char('d')));
 
-    let comments = commands::review::load(root.path()).unwrap();
+    let comments = rune::review::load(root.path()).unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].text, "keep me");
 }
@@ -711,9 +711,9 @@ fn another_key_disarms_comment_delete() {
 #[test]
 fn failed_comment_delete_keeps_comment_in_memory() {
     let root = tempfile::tempdir().unwrap();
-    commands::review::persist(
+    rune::review::persist(
         root.path(),
-        &[commands::review::ReviewComment {
+        &[rune::review::ReviewComment {
             module: "rune-core".to_string(),
             path: "skills/BuildSkill/SKILL.md".to_string(),
             line: 1,
@@ -1781,7 +1781,7 @@ fn simple_comment_editor_submits_with_enter_and_shift_enter_inserts_newline() {
     event::handle_key(&mut app, key(KeyCode::Enter));
 
     assert!(!app.is_comment_prompt_open());
-    let comments = commands::review::load(root.path()).unwrap();
+    let comments = rune::review::load(root.path()).unwrap();
     assert_eq!(comments[0].text, "alpha\nbeta");
 }
 

@@ -1,9 +1,9 @@
-use commands::error::{Error, ErrorKind};
-use commands::manifest;
-use commands::manifest::content_sha256;
-use commands::parse::split_frontmatter;
-use commands::provider::ContentKind;
 use console::Style;
+use rune::error::{Error, ErrorKind};
+use rune::manifest;
+use rune::manifest::content_sha256;
+use rune::parse::split_frontmatter;
+use rune::provider::ContentKind;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -25,6 +25,9 @@ pub enum DriftStatus {
     Expected,
     LocalOnly,
     UpstreamOnly,
+    /// The deployed file exists but cannot be read as text; its content
+    /// cannot be verified against the manifest.
+    Unreadable,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,8 +66,8 @@ pub fn execute(
         return scope::execute_discovered(&current_dir, &targets, show_all, json_output);
     }
 
-    if commands::deck::is_deck(Path::new(module_path)) {
-        let deck = commands::deck::load(Path::new(module_path))
+    if rune::deck::is_deck(Path::new(module_path)) {
+        let deck = rune::deck::load(Path::new(module_path))
             .map_err(|message| Error::new(ErrorKind::Config, message))?;
         return match (upstream_path, target_path) {
             (Some(upstream), None) => {
@@ -130,13 +133,13 @@ fn discover_provider_targets(base: &Path) -> Vec<PathBuf> {
 }
 
 fn execute_deck_upstream(
-    deck: &commands::deck::Deck,
+    deck: &rune::deck::Deck,
     upstream_path: &str,
     ignore_keys: &[String],
     show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
-    let upstream = commands::deck::load(Path::new(upstream_path))
+    let upstream = rune::deck::load(Path::new(upstream_path))
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
     let upstream_entries = upstream
         .entries
@@ -816,6 +819,17 @@ fn print_drift_entry(entry: &DriftEntry) {
                 dim.apply_to(&entry.name),
                 dim.apply_to("—"),
                 dim.apply_to("upstream only"),
+                lineage,
+            );
+        }
+        DriftStatus::Unreadable => {
+            let yellow = Style::new().yellow();
+            println!(
+                "   {} {} {} {}{}",
+                yellow.apply_to("⚡"),
+                entry.name,
+                dim.apply_to("—"),
+                yellow.apply_to("unreadable"),
                 lineage,
             );
         }

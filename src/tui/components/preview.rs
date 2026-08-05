@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use commands::view::ArtifactView;
+use rune::view::ArtifactView;
 
 use super::super::{app::DetailTab, styles};
 

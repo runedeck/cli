@@ -1,6 +1,6 @@
-use commands::error::{Error, ErrorKind};
-use commands::provider;
-use commands::yaml;
+use rune::error::{Error, ErrorKind};
+use rune::provider;
+use rune::yaml;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -14,6 +14,53 @@ const EMBEDDED_REMAP_TOOLS: &str = include_str!(concat!(
 ));
 const EMBEDDED_MODELS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/models.yaml"));
+
+/// Advisory per-target lock held while a process mutates a deploy target
+/// (deploy, prune, doctor --repair). A second rune process fails fast
+/// instead of interleaving manifest and tree writes. The lock file records
+/// the holder's pid and is removed on drop.
+#[derive(Debug)]
+pub struct TargetLock {
+    path: std::path::PathBuf,
+}
+
+impl Drop for TargetLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+pub fn lock_target(base: &Path) -> Result<TargetLock, Error> {
+    fs::create_dir_all(base).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot create {}: {error}", base.display()),
+        )
+    })?;
+    let path = base.join(".rune.lock");
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write as _;
+            let _ = writeln!(file, "{}", std::process::id());
+            Ok(TargetLock { path })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(Error::new(
+            ErrorKind::Io,
+            format!(
+                "another rune process is deploying into this target (lock: {}); wait for it, or remove the file if it is stale",
+                path.display()
+            ),
+        )),
+        Err(error) => Err(Error::new(
+            ErrorKind::Io,
+            format!("cannot create lock {}: {error}", path.display()),
+        )),
+    }
+}
 
 /// Write through an adjacent temporary file plus rename, so interruption
 /// never leaves a truncated file. The temporary carries a per-process
@@ -67,76 +114,6 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<(), Error> {
             format!("cannot replace {}: {error}", path.display()),
         )
     })
-}
-
-/// Multi-file variant: stage every temporary before renaming any of them,
-/// so a write failure aborts with no destination touched. The rename
-/// sequence itself remains the residual non-atomic window.
-pub fn write_atomic_all(writes: &[(&Path, &str)]) -> Result<(), Error> {
-    for (index, (path, _)) in writes.iter().enumerate() {
-        if writes[..index].iter().any(|(earlier, _)| earlier == path) {
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!("{} appears twice in one write set", path.display()),
-            ));
-        }
-    }
-    let mut staged: Vec<(std::path::PathBuf, &Path)> = Vec::new();
-    let cleanup = |staged: &[(std::path::PathBuf, &Path)]| {
-        for (temporary, _) in staged {
-            let _ = fs::remove_file(temporary);
-        }
-    };
-    for (path, content) in writes {
-        if path.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
-            cleanup(&staged);
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!("{} is a symlink; refusing to replace it", path.display()),
-            ));
-        }
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let sequence = WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let base_name = path.file_name().map_or_else(
-            || "rune-write".to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-        let temporary = parent.join(format!(
-            ".{base_name}.{}.{sequence}.tmp",
-            std::process::id()
-        ));
-        let outcome = (|| -> std::io::Result<()> {
-            use std::io::Write as _;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
-            file.write_all(content.as_bytes())?;
-            let _ = file.sync_all();
-            Ok(())
-        })();
-        if let Err(error) = outcome {
-            let _ = fs::remove_file(&temporary);
-            cleanup(&staged);
-            return Err(Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", temporary.display()),
-            ));
-        }
-        staged.push((temporary, path));
-    }
-    for (index, (temporary, path)) in staged.iter().enumerate() {
-        if let Err(error) = fs::rename(temporary, path) {
-            for (remaining, _) in &staged[index..] {
-                let _ = fs::remove_file(remaining);
-            }
-            return Err(Error::new(
-                ErrorKind::Io,
-                format!("cannot replace {}: {error}", path.display()),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Read a file to string with consistent error handling.
@@ -296,7 +273,7 @@ pub fn load_models(module_root: &Path) -> HashMap<String, Vec<String>> {
 /// Checks for a `repository` field first (full URL), then falls back
 /// to the `name` field as a plain identifier.
 pub fn load_source_uri(module_root: &Path) -> String {
-    match commands::module::load(module_root) {
+    match rune::module::load(module_root) {
         Ok(manifest) => manifest.source_uri().to_string(),
         Err(_) => String::new(),
     }

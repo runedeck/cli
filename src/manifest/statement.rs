@@ -50,6 +50,7 @@ pub fn generate_statement(
                     },
                     metadata: Metadata {
                         started_on: chrono::Utc::now().to_rfc3339(),
+                        review: String::new(),
                     },
                 },
             },
@@ -123,6 +124,7 @@ pub fn generate_adopt_statement_with_transforms(
                     },
                     metadata: Metadata {
                         started_on: chrono::Utc::now().to_rfc3339(),
+                        review: "pending".to_string(),
                     },
                 },
             },

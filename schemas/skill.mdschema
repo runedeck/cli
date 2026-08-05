@@ -1,0 +1,50 @@
+frontmatter:
+    fields:
+        - name: name
+          type: string
+        - name: description
+          type: string
+        - name: license
+          type: string
+          optional: true
+        - name: compatibility
+          type: string
+          optional: true
+        - name: metadata
+          type: object
+          optional: true
+        - name: allowed-tools
+          type: string
+          optional: true
+
+heading_rules:
+    no_skip_levels: true
+    unique_per_level: true
+    max_depth: 3
+
+structure:
+    - heading:
+          pattern: "# .+"
+      count:
+          max: 1
+      children:
+          - heading: "## Prerequisites"
+            optional: true
+
+          - heading: "## Constraints"
+            optional: true
+            allow_additional: true
+
+          - heading: "## Instructions"
+            allow_additional: true
+
+          - heading: "## Verification"
+            optional: true
+            allow_additional: true
+
+          - heading: "## Troubleshooting"
+            optional: true
+            allow_additional: true
+
+          - heading: "## References"
+            optional: true

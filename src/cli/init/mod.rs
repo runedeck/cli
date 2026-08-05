@@ -1,7 +1,7 @@
-use commands::error::{Error, ErrorKind};
-use commands::manifest;
-use commands::ontology;
-use commands::result::{ActionResult, DeployedFile, SkipReason, SkippedFile};
+use rune::error::{Error, ErrorKind};
+use rune::manifest;
+use rune::ontology;
+use rune::result::{ActionResult, DeployedFile, SkipReason, SkippedFile};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -230,7 +230,7 @@ fn scaffold_project(
             format!("cannot create {}: {error}", destination.display()),
         )
     })?;
-    write_templates(&destination, &skeleton, templates, &mut action)?;
+    let installed_paths = write_templates(&destination, &skeleton, templates, &mut action)?;
 
     if workshop {
         create_workshop_layout(&destination)?;
@@ -238,7 +238,7 @@ fn scaffold_project(
 
     // Workshop scaffolds never commit automatically: the layout and hooks
     // land, the first commit stays a human decision.
-    let git_initialized = initialize_git(&destination, &owner, !workshop)?;
+    let git_initialized = initialize_git(&destination, &owner, !workshop, &installed_paths)?;
     let jj_colocated = if workshop || options.spine {
         colocate_jj(&destination)?
     } else {
@@ -805,18 +805,22 @@ fn resolve_destination(
         ));
     }
     let expanded = ontology::expand_tilde(requested);
-    if expanded.is_dir() {
-        return expanded
-            .canonicalize()
-            .map(|path| (path, None))
-            .map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("cannot resolve {}: {error}", expanded.display()),
-                )
-            });
-    }
+    // Path syntax (absolute, ./, ../, ~) targets that location; a bare slug
+    // always resolves under the targets root, even when a same-named
+    // directory happens to exist in the current directory — otherwise the
+    // slug's destination silently depends on where the command runs.
     if is_explicit_path(requested, &expanded) {
+        if expanded.is_dir() {
+            return expanded
+                .canonicalize()
+                .map(|path| (path, None))
+                .map_err(|error| {
+                    Error::new(
+                        ErrorKind::Io,
+                        format!("cannot resolve {}: {error}", expanded.display()),
+                    )
+                });
+        }
         return Ok((expanded, None));
     }
 
@@ -848,7 +852,8 @@ fn write_templates(
     skeleton: &Path,
     templates: BTreeMap<PathBuf, ProjectTemplate>,
     action: &mut ActionResult,
-) -> Result<(), Error> {
+) -> Result<Vec<PathBuf>, Error> {
+    let mut installed_paths = Vec::new();
     for (relative, template) in templates {
         let target_path = destination.join(&relative);
         let target_display = relative.to_string_lossy().into_owned();
@@ -896,6 +901,7 @@ fn write_templates(
             )
         })?;
         make_executable_if_needed(&target_path, &relative)?;
+        installed_paths.push(relative.clone());
         action.installed.push(DeployedFile {
             source: template
                 .source
@@ -907,7 +913,7 @@ fn write_templates(
             provider: template.layer,
         });
     }
-    Ok(())
+    Ok(installed_paths)
 }
 
 fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bool, Error> {
@@ -1254,7 +1260,12 @@ fn make_executable_if_needed(_target: &Path, _relative: &Path) -> Result<(), Err
     Ok(())
 }
 
-fn initialize_git(destination: &Path, owner: &str, commit: bool) -> Result<bool, Error> {
+fn initialize_git(
+    destination: &Path,
+    owner: &str,
+    commit: bool,
+    installed_paths: &[PathBuf],
+) -> Result<bool, Error> {
     let has_git = destination.join(".git").exists();
     let has_jj = destination.join(".jj").exists();
     let initialized = if has_git || has_jj {
@@ -1264,11 +1275,13 @@ fn initialize_git(destination: &Path, owner: &str, commit: bool) -> Result<bool,
         true
     };
     if destination.join(".git").exists() {
-        if commit && !git_has_head(destination)? {
-            run_git(["add", "-A"], Some(destination))?;
+        if commit && !installed_paths.is_empty() && !git_has_head(destination)? {
+            stage_scaffold_files(destination, installed_paths)?;
             commit_scaffold(destination, owner)?;
         }
-        run_git(["config", "core.hooksPath", ".githooks"], Some(destination))?;
+        if initialized {
+            run_git(["config", "core.hooksPath", ".githooks"], Some(destination))?;
+        }
     }
     Ok(initialized)
 }
@@ -1280,6 +1293,26 @@ fn shield_git(command: &mut Command) -> &mut Command {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
+}
+
+fn stage_scaffold_files(directory: &Path, installed_paths: &[PathBuf]) -> Result<(), Error> {
+    let mut command = Command::new("git");
+    command
+        .arg("add")
+        .arg("--")
+        .args(installed_paths)
+        .current_dir(directory);
+    let output = shield_git(&mut command)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(Error::new(
+        ErrorKind::Io,
+        format!("git failed: {}", stderr.trim()),
+    ))
 }
 
 fn git_has_head(directory: &Path) -> Result<bool, Error> {
@@ -1373,7 +1406,7 @@ fn print_project(result: &ProjectResult, json: bool) {
     if result.quest_bound {
         println!("quest: bound to destination");
     }
-    super::output::print(&result.action, false, "created");
+    super::output::print(&result.action, false, "created", true);
     println!("next steps:");
     println!("  cd {}", result.destination.display());
     println!("  rune add <deck>");

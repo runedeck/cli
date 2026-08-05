@@ -135,7 +135,8 @@ fn kebab_case_path_preserves_already_lowercase() {
 #[test]
 fn assemble_source_maps_agent_model_and_effort_tiers() {
     let source = sources::SourceFile {
-        kind: commands::provider::ContentKind::Agents,
+        content_bytes: None,
+        kind: rune::provider::ContentKind::Agents,
         relative_path: "agents/TestAgent.md".to_string(),
         full_path: "/tmp/TestAgent.md".to_string(),
         qualifier: None,
@@ -194,7 +195,8 @@ fn assemble_source_maps_all_codex_tiers() {
 
     for (source_model, expected_model, expected_effort) in cases {
         let source = sources::SourceFile {
-            kind: commands::provider::ContentKind::Agents,
+            content_bytes: None,
+            kind: rune::provider::ContentKind::Agents,
             relative_path: "agents/TestAgent.md".to_string(),
             full_path: "/tmp/TestAgent.md".to_string(),
             qualifier: None,
@@ -250,7 +252,8 @@ fn assemble_source_maps_all_codex_tiers() {
 #[test]
 fn assemble_source_keeps_explicit_effort_over_tier_effort() {
     let source = sources::SourceFile {
-        kind: commands::provider::ContentKind::Agents,
+        content_bytes: None,
+        kind: rune::provider::ContentKind::Agents,
         relative_path: "agents/TestAgent.md".to_string(),
         full_path: "/tmp/TestAgent.md".to_string(),
         qualifier: None,

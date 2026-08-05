@@ -7,8 +7,8 @@ repository = "https://github.com/runedeck/rune"
 description = "Rune Deck toolkit — assemble, validate, and deploy runes (skills, agents, rules) from the deck across AI coding harnesses"
 
 [lib]
-name = "commands"
-path = "src/commands.rs"
+name = "rune"
+path = "src/lib.rs"
 
 [[bin]]
 name = "rune"
@@ -16,7 +16,10 @@ path = "src/main.rs"
 
 [features]
 default = ["full"]
-full = ["assemble", "validate", "deploy", "tui", "dashboard"]
+full = ["assemble", "validate", "deploy", "spec", "adr", "docs", "tui", "dashboard"]
+spec = ["dep:rune-docs", "rune-docs/lifecycle"]
+adr = ["dep:rune-docs"]
+docs = ["dep:rune-docs"]
 assemble = []
 validate = ["assemble", "dep:rust-embed"]
 deploy = []
@@ -44,16 +47,26 @@ toml = "0.8"
 
 # crypto
 sha2 = "0.10"
+sha1 = "0.10"
 
 # time
 chrono = "0.4"
+
+# markdown
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # utils
 regex = "1"
 console = "0.15"
 base64 = "0.22"
 dirs = "6"
+tempfile = "3"
+rune-docs = { path = "rune-docs", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+signal-hook = "=0.3.18"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["process", "signal"] }
 
 # git
 gix = { version = "0.66", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }

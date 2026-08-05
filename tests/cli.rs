@@ -135,6 +135,7 @@ fn spec_help_lists_lifecycle_actions() {
         .success()
         .stdout(predicate::str::contains("propose"))
         .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("validate"))
         .stdout(predicate::str::contains("archive"))
         .stdout(predicate::str::contains("context"));
 }
@@ -166,6 +167,42 @@ fn spec_propose_and_list_json_expose_agent_ready_lifecycle_state() {
         .success()
         .stdout(predicate::str::contains("\"id\": \"improve-search\""))
         .stdout(predicate::str::contains("\"state\": \"draft\""));
+}
+
+#[test]
+fn spec_validate_json_reports_target_context_and_explicit_nulls() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().to_str().unwrap();
+    let canonical = root.path().join("docs/specs/payments/card/spec.md");
+    std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+    std::fs::write(
+        canonical,
+        include_str!("../rune-docs/tests/fixtures/spec/archive-original.md"),
+    )
+    .unwrap();
+    let delta = root
+        .path()
+        .join("docs/changes/bad-payment/specs/payments/card/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(delta, "invalid delta\n").unwrap();
+
+    let output = rune()
+        .args(["spec", "validate", "bad-p", "--source", source, "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostic = &diagnostics.as_array().unwrap()[0];
+    assert_eq!(diagnostic["severity"], "error");
+    assert_eq!(diagnostic["capability"], "payments/card");
+    assert_eq!(diagnostic["change"], "bad-payment");
+    assert!(
+        diagnostic
+            .get("column")
+            .is_some_and(serde_json::Value::is_null)
+    );
+    assert!(diagnostic.get("operation").is_some());
 }
 
 #[test]

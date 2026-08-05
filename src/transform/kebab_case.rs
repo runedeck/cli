@@ -10,7 +10,7 @@
 /// Spaces and underscores become `-`. Consecutive hyphens collapse.
 ///
 /// ```
-/// # use commands::transform::to_kebab_case;
+/// # use rune::transform::to_kebab_case;
 /// assert_eq!(to_kebab_case("SecurityArchitect"), "security-architect");
 /// assert_eq!(to_kebab_case("XMLParser"), "xml-parser");
 /// assert_eq!(to_kebab_case("DnDBeyondHomebrew"), "dnd-beyond-homebrew");

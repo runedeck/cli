@@ -7,7 +7,7 @@ use std::collections::HashMap;
 ///
 /// ```
 /// # use std::collections::HashMap;
-/// # use commands::transform::remap_tools;
+/// # use rune::transform::remap_tools;
 /// let mut mappings = HashMap::new();
 /// mappings.insert("Read".to_string(), "read_file".to_string());
 /// let result = remap_tools("Use `Read` to read. Read the docs.", &mappings);

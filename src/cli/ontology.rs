@@ -1,4 +1,4 @@
-use commands::ontology::{self, Source};
+use rune::ontology::{self, Source};
 use std::fs;
 use std::path::Path;
 
@@ -59,18 +59,29 @@ pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
+const SCALAR_KEYS: [&str; 2] = ["deck", "env"];
+
+fn unsupported_key(key: &str) -> String {
+    format!(
+        "unsupported config key '{key}'; expected: {}, bench, {}",
+        SCALAR_KEYS.join(", "),
+        ONTOLOGY_KEYS.join(", ")
+    )
+}
+
 /// Write one configuration value without printing; returns the config path.
+/// `bench` holds a list of workspace checkouts: set appends (first entry is
+/// the primary), unset removes the whole list.
 pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, String> {
     let nested = ONTOLOGY_KEYS.contains(&key);
-    if key != "deck" && !nested {
-        return Err(format!(
-            "unsupported config key '{key}'; expected: deck, {}",
-            ONTOLOGY_KEYS.join(", ")
-        ));
+    if !SCALAR_KEYS.contains(&key) && key != "bench" && !nested {
+        return Err(unsupported_key(key));
     }
     let config_dir = ontology::config_dir().map_err(|error| error.to_string())?;
     let config_path = config_dir.join("config.yaml");
-    if nested {
+    if key == "bench" {
+        append_to_list_in_file(&config_path, "bench", value)?;
+    } else if nested {
         set_nested_in_file(&config_path, "ontology", key, value)?;
     } else {
         set_in_file(&config_path, key, value)?;
@@ -113,11 +124,8 @@ pub fn path(json: bool) -> Result<i32, String> {
 
 pub fn unset(key: &str, json: bool) -> Result<i32, String> {
     let nested = ONTOLOGY_KEYS.contains(&key);
-    if key != "deck" && !nested {
-        return Err(format!(
-            "unsupported config key '{key}'; expected: deck, {}",
-            ONTOLOGY_KEYS.join(", ")
-        ));
+    if !SCALAR_KEYS.contains(&key) && key != "bench" && !nested {
+        return Err(unsupported_key(key));
     }
     let config_path = ontology::config_dir()
         .map_err(|error| error.to_string())?
@@ -183,7 +191,12 @@ fn remove_nested_in_file(path: &Path, section: &str, key: &str) -> Result<bool, 
     Ok(removed)
 }
 
-fn set_nested_in_file(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+pub(crate) fn set_nested_in_file(
+    path: &Path,
+    section: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
     let mut document = read_config_document(path)?;
     let mapping = document
         .as_mapping_mut()
@@ -199,6 +212,25 @@ fn set_nested_in_file(path: &Path, section: &str, key: &str, value: &str) -> Res
         serde_yaml::Value::String(key.to_string()),
         serde_yaml::Value::String(value.to_string()),
     );
+    write_config_document(path, &document)
+}
+
+fn append_to_list_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let mut document = read_config_document(path)?;
+    let mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let list_key = serde_yaml::Value::String(key.to_string());
+    let list_value = mapping
+        .entry(list_key)
+        .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+    let sequence = list_value
+        .as_sequence_mut()
+        .ok_or_else(|| format!("{key} in {} must be a YAML list", path.display()))?;
+    let entry = serde_yaml::Value::String(value.to_string());
+    if !sequence.contains(&entry) {
+        sequence.push(entry);
+    }
     write_config_document(path, &document)
 }
 

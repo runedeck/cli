@@ -1,4 +1,4 @@
-use commands::manifest;
+use rune::manifest;
 use std::path::Path;
 
 use super::ValidationReport;

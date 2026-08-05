@@ -1,0 +1,2 @@
+error[delta-missing-target]: docs/changes/add-widget/specs/widget/spec.md:7: MODIFIED requirement 'Widget rendering' does not exist
+warning[scenario-missing]: docs/specs/widget/spec.md: requirement has no scenarios

@@ -15,7 +15,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use commands::{
+use rune::{
     manifest::FileStatus,
     review::{self, ExportFormat, ReviewComment},
     services::{
@@ -525,7 +525,7 @@ struct CodeWindow {
     comment_cursor: Option<(usize, u16)>,
 }
 
-pub use commands::review::CommentKind;
+pub use rune::review::CommentKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LineComment {
@@ -5508,7 +5508,7 @@ impl App {
             .iter()
             .find(|module| module.name == deck_entry)
             .map(|module| {
-                commands::view::KIND_ORDER
+                rune::view::KIND_ORDER
                     .iter()
                     .filter_map(|kind| {
                         let count = module
@@ -6350,10 +6350,10 @@ fn deck_rune_order_key(id: &str) -> (&str, usize, &str) {
     let deck_entry = parts.next().unwrap_or_default();
     let kind = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default();
-    let kind_index = commands::view::KIND_ORDER
+    let kind_index = rune::view::KIND_ORDER
         .iter()
         .position(|candidate| *candidate == kind)
-        .unwrap_or(commands::view::KIND_ORDER.len());
+        .unwrap_or(rune::view::KIND_ORDER.len());
     (deck_entry, kind_index, name)
 }
 
@@ -7257,7 +7257,7 @@ fn open_in_browser(url: &str) -> bool {
 
 /// The Deployments block of the provenance view: per-target verification
 /// badges with per-harness rows.
-fn deployment_lines(groups: &[commands::view::DeployGroup]) -> Vec<Line<'static>> {
+fn deployment_lines(groups: &[rune::view::DeployGroup]) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(Span::styled(
         "Deployments",
         Style::default().add_modifier(Modifier::BOLD),

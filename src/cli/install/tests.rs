@@ -165,6 +165,9 @@ fn commitless_repository_has_no_freshness_warning() {
     std::process::Command::new("git")
         .args(["init", "-b", "main"])
         .current_dir(module.path())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
 

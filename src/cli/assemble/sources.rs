@@ -1,5 +1,5 @@
-use commands::error::{Error, ErrorKind};
-use commands::parse::frontmatter_list;
+use rune::error::{Error, ErrorKind};
+use rune::parse::frontmatter_list;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -26,9 +26,13 @@ pub struct SourceFile {
     pub relative_path: String,
     /// Full filesystem path.
     pub full_path: String,
-    /// Raw file content.
+    /// Raw file content. Empty when `content_bytes` carries the body.
     pub content: String,
-    pub kind: commands::provider::ContentKind,
+    /// Raw bytes for passthrough assets that are not valid UTF-8 (images,
+    /// archives, compiled artifacts); such files skip every text transform
+    /// and copy byte-for-byte.
+    pub content_bytes: Option<Vec<u8>>,
+    pub kind: rune::provider::ContentKind,
     /// Whether this file is a passthrough (non-SKILL.md file inside a skill dir).
     pub passthrough: bool,
     /// Qualifier directory name (e.g., "sonnet", "codex"), or None for base files.
@@ -65,7 +69,7 @@ pub struct SourceFile {
 /// For rules and agents, subdirectories matching valid qualifier names
 /// are walked for qualifier-only files (files with no base counterpart).
 /// The `user/` directory is skipped here (handled by variant resolution).
-/// Skills do not support qualifier directories.
+/// Skill qualifier directories hold variants, not companions, so they are not emitted.
 pub fn collect(
     module_root: &Path,
     valid_qualifiers: &HashSet<String>,
@@ -73,7 +77,7 @@ pub fn collect(
     collect_kinds(
         module_root,
         valid_qualifiers,
-        commands::provider::ContentKind::ALL,
+        rune::provider::ContentKind::ALL,
     )
 }
 
@@ -85,14 +89,14 @@ pub fn collect_deck(
     collect_kinds(
         module_root,
         valid_qualifiers,
-        commands::provider::ContentKind::DECK_ALL,
+        rune::provider::ContentKind::DECK_ALL,
     )
 }
 
 fn collect_kinds(
     module_root: &Path,
     valid_qualifiers: &HashSet<String>,
-    kinds: &[commands::provider::ContentKind],
+    kinds: &[rune::provider::ContentKind],
 ) -> Result<Vec<SourceFile>, Error> {
     let mut sources = Vec::new();
 
@@ -102,19 +106,143 @@ fn collect_kinds(
             continue;
         }
 
-        let qualifiers = if *kind == commands::provider::ContentKind::Skills {
-            &HashSet::new()
-        } else {
-            valid_qualifiers
-        };
-        if *kind == commands::provider::ContentKind::Hooks {
+        if *kind == rune::provider::ContentKind::Hooks {
             walk_hook_dir(&dir, module_root, &mut sources)?;
             continue;
         }
-        walk_content_dir(&dir, *kind, module_root, &mut sources, qualifiers)?;
+        walk_content_dir(&dir, *kind, module_root, &mut sources, valid_qualifiers)?;
     }
 
+    sources.retain(|source| match effective_review_state(Path::new(&source.full_path), module_root) {
+        AdoptReviewState::Deployable => true,
+        AdoptReviewState::Pending => {
+            warn_skipped(
+                Path::new(&source.full_path),
+                "adoption review pending — run `rune adopt status`",
+            );
+            false
+        }
+        AdoptReviewState::Unreadable(reason) => {
+            warn_skipped(
+                Path::new(&source.full_path),
+                &format!("adopt sidecar unreadable, refusing to deploy: {reason}"),
+            );
+            false
+        }
+        AdoptReviewState::LegacyUnreviewed => {
+            warn_skipped(
+                Path::new(&source.full_path),
+                "adoption without review state — re-adopt through `rune adopt` or finalize a review",
+            );
+            false
+        }
+    });
+
     Ok(sources)
+}
+
+enum AdoptReviewState {
+    /// No adopt sidecar (first-party content), or a reviewed adoption.
+    Deployable,
+    /// Adopted, review still open — never deploys.
+    Pending,
+    /// Adopted with no review state at all — fail closed; a stripped or
+    /// pre-review-era sidecar must not be a deploy pass.
+    LegacyUnreviewed,
+    /// Sidecar exists but cannot be parsed — fail closed.
+    Unreadable(String),
+}
+
+/// The review state governing a file: its own adopt sidecar, and every
+/// ancestor artifact's primary document (a skill's `SKILL.md` governs the
+/// whole tree — companions, scripts, and the `.provenance/` files that deploy
+/// with it).
+fn effective_review_state(full_path: &Path, module_root: &Path) -> AdoptReviewState {
+    let own = adopt_review_state(full_path);
+    if !matches!(own, AdoptReviewState::Deployable) {
+        return own;
+    }
+    let mut directory = full_path.parent();
+    while let Some(current) = directory {
+        let primary = current.join("SKILL.md");
+        if primary.is_file() && primary != full_path {
+            let state = adopt_review_state(&primary);
+            if !matches!(state, AdoptReviewState::Deployable) {
+                return state;
+            }
+        }
+        if current == module_root {
+            break;
+        }
+        directory = current.parent();
+    }
+    AdoptReviewState::Deployable
+}
+
+fn adopt_review_state(full_path: &Path) -> AdoptReviewState {
+    let Some(sidecar_path) = rune::manifest::existing_sidecar_for(full_path) else {
+        return AdoptReviewState::Deployable;
+    };
+    let sidecar = match rune::manifest::provenance::read(&sidecar_path) {
+        Ok(sidecar) => sidecar,
+        Err(error) => return AdoptReviewState::Unreadable(error),
+    };
+    if sidecar.provenance.predicate.build_definition.build_type != "adopt/v1" {
+        return AdoptReviewState::Deployable;
+    }
+    match sidecar
+        .provenance
+        .predicate
+        .run_details
+        .metadata
+        .review
+        .as_str()
+    {
+        "pending" => AdoptReviewState::Pending,
+        "reviewed" => AdoptReviewState::Deployable,
+        "" => AdoptReviewState::LegacyUnreviewed,
+        other => AdoptReviewState::Unreadable(format!("unknown review state '{other}'")),
+    }
+}
+
+/// Module-relative paths of collected-kind artifacts whose adoption review is
+/// still open. Strict install modes fail when this is non-empty.
+pub fn pending_review_paths(module_root: &Path) -> Vec<String> {
+    let mut pending = Vec::new();
+    for kind in rune::provider::ContentKind::ALL {
+        let dir = module_root.join(kind.as_str());
+        if !dir.is_dir() {
+            continue;
+        }
+        collect_pending(&dir, module_root, &mut pending);
+    }
+    pending.sort();
+    pending
+}
+
+fn collect_pending(dir: &Path, module_root: &Path, pending: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if name != rune::manifest::PROVENANCE_DIRECTORY {
+                collect_pending(&path, module_root, pending);
+            }
+        } else if !matches!(
+            effective_review_state(&path, module_root),
+            AdoptReviewState::Deployable
+        ) {
+            pending.push(
+                path.strip_prefix(module_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
 }
 
 /// Walk a content directory (agents/, rules/, or skills/), collecting .md files.
@@ -124,7 +252,7 @@ fn collect_kinds(
 /// qualifier directories are scanned for files that have no base counterpart.
 fn walk_content_dir(
     dir: &Path,
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     module_root: &Path,
     sources: &mut Vec<SourceFile>,
     valid_qualifiers: &HashSet<String>,
@@ -143,9 +271,13 @@ fn walk_content_dir(
     for entry in entries {
         let path = entry.path();
 
-        if path.is_dir() {
-            if kind == commands::provider::ContentKind::Skills {
-                walk_skill_dir(&path, kind, sources)?;
+        if is_hidden(&entry) {
+            continue;
+        }
+
+        if checked_file_type(&entry)?.is_dir() {
+            if kind == rune::provider::ContentKind::Skills {
+                walk_skill_dir(&path, kind, sources, valid_qualifiers)?;
                 continue;
             }
 
@@ -195,6 +327,7 @@ fn walk_content_dir(
             relative_path: relative,
             full_path: path.to_string_lossy().to_string(),
             content,
+            content_bytes: None,
             kind,
             passthrough: false,
             qualifier: None,
@@ -236,11 +369,15 @@ fn walk_hook_dir(
 
     for entry in entries {
         let path = entry.path();
-        if path.is_dir() {
+        if is_hidden(&entry) {
+            continue;
+        }
+        let file_type = checked_file_type(&entry)?;
+        if file_type.is_dir() {
             walk_hook_dir(&path, module_root, sources)?;
             continue;
         }
-        if !path.is_file() {
+        if !file_type.is_file() {
             warn_skipped(&path, "unsupported file type");
             continue;
         }
@@ -256,7 +393,8 @@ fn walk_hook_dir(
             relative_path,
             full_path: path.to_string_lossy().to_string(),
             content,
-            kind: commands::provider::ContentKind::Hooks,
+            content_bytes: None,
+            kind: rune::provider::ContentKind::Hooks,
             passthrough: true,
             qualifier: None,
             targets: None,
@@ -266,6 +404,34 @@ fn walk_hook_dir(
         });
     }
     Ok(())
+}
+
+/// Entry classification that refuses symlinks instead of following them:
+/// assembly reads stay inside the module tree, and a symlinked source could
+/// pull arbitrary external content into the build.
+/// Hidden entries (`.provenance/` review records, `.mdschema`, `.DS_Store`)
+/// are source-side working material and never assemble into build output.
+fn is_hidden(entry: &fs::DirEntry) -> bool {
+    entry.file_name().to_string_lossy().starts_with('.')
+}
+
+fn checked_file_type(entry: &fs::DirEntry) -> Result<std::fs::FileType, Error> {
+    let file_type = entry.file_type().map_err(|e| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot stat {}: {e}", entry.path().display()),
+        )
+    })?;
+    if file_type.is_symlink() {
+        return Err(Error::new(
+            ErrorKind::Validate,
+            format!(
+                "{} is a symlink; assembly reads real files only — replace it with the file it points at",
+                entry.path().display()
+            ),
+        ));
+    }
+    Ok(file_type)
 }
 
 fn read_source_text(path: &Path) -> Result<Option<String>, Error> {
@@ -301,7 +467,7 @@ fn warn_skipped(path: &Path, reason: &str) {
 fn walk_qualifier_dir(
     dir: &Path,
     qualifier_name: &str,
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     module_root: &Path,
     sources: &mut Vec<SourceFile>,
     base_filenames: &HashSet<String>,
@@ -318,7 +484,7 @@ fn walk_qualifier_dir(
     for entry in entries {
         let path = entry.path();
 
-        if path.is_dir() {
+        if checked_file_type(&entry)?.is_dir() {
             let subdir = path
                 .file_name()
                 .unwrap_or_default()
@@ -374,6 +540,7 @@ fn walk_qualifier_dir(
             relative_path: relative,
             full_path: path.to_string_lossy().to_string(),
             content,
+            content_bytes: None,
             kind,
             passthrough: false,
             qualifier: Some(qualifier_name.to_string()),
@@ -389,7 +556,7 @@ fn walk_qualifier_dir(
 
 /// Walk a skill subdirectory. SKILL.md is assembled; every other file is
 /// passthrough regardless of extension. Ordinary subdirectories retain their
-/// relative paths; the special user/ overlay is flattened into the skill root.
+/// relative paths; the user/ qualifier is flattened into the skill root.
 /// user/ files override root files with the same name.
 ///
 /// Given `skills/Explain/`:
@@ -402,8 +569,9 @@ fn walk_qualifier_dir(
 /// ```
 fn walk_skill_dir(
     dir: &Path,
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     sources: &mut Vec<SourceFile>,
+    valid_qualifiers: &HashSet<String>,
 ) -> Result<(), Error> {
     let skill_name = dir
         .file_name()
@@ -414,7 +582,15 @@ fn walk_skill_dir(
     let mut file_map: std::collections::HashMap<String, SourceFile> =
         std::collections::HashMap::new();
 
-    collect_skill_files(dir, &skill_name, kind, &mut file_map, false, Path::new(""))?;
+    collect_skill_files(
+        dir,
+        &skill_name,
+        kind,
+        &mut file_map,
+        false,
+        Path::new(""),
+        valid_qualifiers,
+    )?;
 
     let user_dir = dir.join("user");
     if user_dir.is_dir() {
@@ -425,6 +601,7 @@ fn walk_skill_dir(
             &mut file_map,
             true,
             Path::new(""),
+            valid_qualifiers,
         )?;
     }
 
@@ -435,10 +612,11 @@ fn walk_skill_dir(
 fn collect_skill_files(
     dir: &Path,
     skill_name: &str,
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     file_map: &mut std::collections::HashMap<String, SourceFile>,
-    is_overlay: bool,
+    is_qualifier: bool,
     relative_dir: &Path,
+    valid_qualifiers: &HashSet<String>,
 ) -> Result<(), Error> {
     let mut entries = fs::read_dir(dir)
         .map_err(|e| Error::new(ErrorKind::Io, format!("cannot read {}: {e}", dir.display())))?;
@@ -451,8 +629,17 @@ fn collect_skill_files(
     for entry in entries {
         let path = entry.path();
 
-        if path.is_dir() {
-            if !is_overlay && relative_dir.as_os_str().is_empty() && path.ends_with("user") {
+        if is_hidden(&entry) {
+            continue;
+        }
+
+        let file_type = checked_file_type(&entry)?;
+        if file_type.is_dir() {
+            let directory_name = entry.file_name().to_string_lossy().to_string();
+            let is_reserved_qualifier = !is_qualifier
+                && relative_dir.as_os_str().is_empty()
+                && (directory_name == "user" || valid_qualifiers.contains(&directory_name));
+            if is_reserved_qualifier {
                 continue;
             }
             let child_relative = relative_dir.join(entry.file_name());
@@ -461,12 +648,13 @@ fn collect_skill_files(
                 skill_name,
                 kind,
                 file_map,
-                is_overlay,
+                is_qualifier,
                 &child_relative,
+                valid_qualifiers,
             )?;
             continue;
         }
-        if !path.is_file() {
+        if !file_type.is_file() {
             warn_skipped(&path, "unsupported file type");
             continue;
         }
@@ -481,13 +669,28 @@ fn collect_skill_files(
         let relative_file = relative_file.to_string_lossy().replace('\\', "/");
         let is_skill_file = relative_dir.as_os_str().is_empty() && filename == "SKILL.md";
         let flattened_relative = format!("skills/{skill_name}/{relative_file}");
-        let Some(content) = read_source_text(&path)? else {
-            continue;
+        // Companions may be binary (images, archives); they carry bytes and
+        // copy verbatim. SKILL.md itself is a text document and must parse.
+        let raw = fs::read(&path).map_err(|e| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {e}", path.display()),
+            )
+        })?;
+        let (content, content_bytes) = match String::from_utf8(raw) {
+            Ok(text) => (text, None),
+            Err(error) if is_skill_file => {
+                return Err(Error::new(
+                    ErrorKind::Validate,
+                    format!("{} is not valid UTF-8: {error}", path.display()),
+                ));
+            }
+            Err(error) => (String::new(), Some(error.into_bytes())),
         };
 
-        if is_overlay && file_map.contains_key(&relative_file) {
+        if is_qualifier && file_map.contains_key(&relative_file) {
             eprintln!("  override  skills/{skill_name}/user/{relative_file} → {relative_file}");
-        } else if is_overlay {
+        } else if is_qualifier {
             eprintln!("  flatten   skills/{skill_name}/user/{relative_file} → {relative_file}");
         }
 
@@ -498,6 +701,7 @@ fn collect_skill_files(
                 relative_path: flattened_relative,
                 full_path: path.to_string_lossy().to_string(),
                 content,
+                content_bytes,
                 kind,
                 passthrough: !is_skill_file,
                 qualifier: None,
@@ -736,7 +940,7 @@ mod tests {
             .find(|s| s.relative_path.contains("SKILL"))
             .unwrap();
         assert!(skill.qualifier.is_none());
-        assert_eq!(skill.kind, commands::provider::ContentKind::Skills);
+        assert_eq!(skill.kind, rune::provider::ContentKind::Skills);
     }
 
     #[test]
@@ -756,7 +960,7 @@ mod tests {
             .find(|s| s.relative_path.contains("CodexOnly"))
             .unwrap();
         assert_eq!(codex_only.qualifier, Some("codex".to_string()));
-        assert_eq!(codex_only.kind, commands::provider::ContentKind::Agents);
+        assert_eq!(codex_only.kind, rune::provider::ContentKind::Agents);
     }
 
     #[test]
@@ -778,8 +982,9 @@ mod tests {
         let mut sources = Vec::new();
         walk_skill_dir(
             &skill_dir,
-            commands::provider::ContentKind::Skills,
+            rune::provider::ContentKind::Skills,
             &mut sources,
+            &HashSet::new(),
         )
         .unwrap();
 
@@ -823,6 +1028,40 @@ mod tests {
     }
 
     #[test]
+    fn walk_skill_dir_reserves_provider_qualifier_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = scaffold_kind(dir.path(), "skills").join("test-skill");
+        let provider_dir = skill_dir.join("claude");
+        std::fs::create_dir_all(&provider_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test-skill\n---\n# test-skill\n",
+        )
+        .unwrap();
+        std::fs::write(
+            provider_dir.join("SKILL.md"),
+            "---\nmode: append\nargument-hint: <path>\n---\n",
+        )
+        .unwrap();
+
+        let mut sources = Vec::new();
+        walk_skill_dir(
+            &skill_dir,
+            rune::provider::ContentKind::Skills,
+            &mut sources,
+            &HashSet::from(["claude".to_string()]),
+        )
+        .unwrap();
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].relative_path, "skills/test-skill/SKILL.md");
+        assert_eq!(
+            sources[0].content,
+            "---\nname: test-skill\n---\n# test-skill\n"
+        );
+    }
+
+    #[test]
     fn walk_skill_dir_preserves_non_markdown_bundle_files() {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = scaffold_kind(dir.path(), "skills").join("SystematicDebug");
@@ -843,8 +1082,9 @@ mod tests {
         let mut sources = Vec::new();
         walk_skill_dir(
             &skill_dir,
-            commands::provider::ContentKind::Skills,
+            rune::provider::ContentKind::Skills,
             &mut sources,
+            &HashSet::new(),
         )
         .unwrap();
 

@@ -1,5 +1,9 @@
+use std::collections::HashSet;
+
 /// Remove reference-style link definitions (`[1]: url`, `[MADR]: url`) and
-/// inline reference markers (` [1]`, ` [MADR]`) from content.
+/// the inline markers (` [1]`, ` [MADR]`) that point at them. Only markers
+/// whose label is actually defined are touched, so unrelated bracketed prose
+/// (`Use [optional]`, `> [!NOTE]`) survives.
 pub fn strip(content: &str) -> String {
     static INLINE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static DEF_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -7,23 +11,46 @@ pub fn strip(content: &str) -> String {
     let had_newline = content.ends_with('\n');
 
     let inline_re =
-        INLINE_RE.get_or_init(|| regex::Regex::new(r" \[[\w][\w-]*\]").expect("valid regex"));
+        INLINE_RE.get_or_init(|| regex::Regex::new(r" \[([\w][\w-]*)\]").expect("valid regex"));
     let def_re =
-        DEF_RE.get_or_init(|| regex::Regex::new(r"^\[[\w][\w-]*\]:").expect("valid regex"));
+        DEF_RE.get_or_init(|| regex::Regex::new(r"^\[([\w][\w-]*)\]:").expect("valid regex"));
+
+    let defined: HashSet<&str> = content
+        .lines()
+        .filter_map(|line| def_re.captures(line))
+        .map(|caps| caps.get(1).expect("label group").as_str())
+        .collect();
+    if defined.is_empty() {
+        return content.to_string();
+    }
 
     let mut output_lines: Vec<String> = Vec::new();
-    let mut in_ref_block = false;
+    let mut removed_definition = false;
 
     for line in content.lines() {
         if def_re.is_match(line) {
-            in_ref_block = true;
+            removed_definition = true;
             continue;
         }
-        if in_ref_block && (line.is_empty() || line.starts_with('[')) {
+        // Removing a definition can leave the blank line that separated it
+        // from its neighbours; collapse that one gap, nothing else.
+        if removed_definition
+            && line.is_empty()
+            && output_lines.last().is_some_and(String::is_empty)
+        {
+            removed_definition = false;
             continue;
         }
-        in_ref_block = false;
-        let cleaned = inline_re.replace_all(line, "").to_string();
+        removed_definition = false;
+        let cleaned = inline_re
+            .replace_all(line, |caps: &regex::Captures<'_>| {
+                if defined.contains(caps.get(1).expect("label group").as_str()) {
+                    String::new()
+                } else {
+                    caps.get(0).expect("whole match").as_str().to_string()
+                }
+            })
+            .to_string();
         output_lines.push(cleaned);
     }
 

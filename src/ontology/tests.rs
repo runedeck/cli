@@ -75,12 +75,14 @@ fn skeleton_env_beats_config_and_has_owner_default() {
         "/from-env"
     );
 
-    let default = resolve_config(&Config::default(), &no_env)
-        .ontology
-        .skeleton
-        .expect("skeleton default");
-    assert!(default.value.ends_with("Developer/N4M3Z/skeleton"));
-    assert_eq!(default.source, Source::Default);
+    // No built-in skeleton default: init falls back to the embedded skeleton
+    // when neither config nor environment name a checkout.
+    assert!(
+        resolve_config(&Config::default(), &no_env)
+            .ontology
+            .skeleton
+            .is_none()
+    );
 }
 
 #[test]
@@ -131,9 +133,12 @@ fn config_beats_default() {
 #[test]
 fn missing_config_uses_default() {
     let resolved = resolve_config(&Config::default(), &no_env);
-    let domain = resolved.ontology.domain.expect("domain default");
-    assert_eq!(domain.value, "Technology");
-    assert_eq!(domain.source, Source::Default);
+    let targets = resolved.ontology.targets.expect("targets default");
+    assert!(targets.value.ends_with("Agents"));
+    assert_eq!(targets.source, Source::Default);
+    // Machine-specific keys carry no built-in default.
+    assert!(resolved.ontology.domain.is_none());
+    assert!(resolved.ontology.vault.is_none());
 }
 
 #[test]
@@ -179,6 +184,23 @@ fn lore_and_artifacts_resolve_from_env() {
     assert_eq!(
         resolved.ontology.artifacts.expect("artifacts").value,
         "/artifacts"
+    );
+}
+
+#[test]
+fn launch_model_routes_deserialize_with_profile_references() {
+    let config: Config = serde_yaml::from_str(
+        "launch:\n    models:\n        sol:\n            id: gpt-5.6-sol\n            context: 272000\n            compact: 85\n    profiles:\n        claude:\n            sol:\n                model: sol\n",
+    )
+    .expect("launch model config");
+
+    let model = config.launch.models.get("sol").expect("sol route");
+    assert_eq!(model.id, "gpt-5.6-sol");
+    assert_eq!(model.context, 272_000);
+    assert_eq!(model.compact, Some(85));
+    assert_eq!(
+        config.launch.profiles["claude"]["sol"].model.as_deref(),
+        Some("sol")
     );
 }
 
