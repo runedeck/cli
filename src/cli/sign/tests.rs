@@ -1,11 +1,13 @@
 use super::{
-    branch_push_refspec, colon_listing_fingerprints, run_signing_command, select_default_remote,
-    signature_fingerprints, signing_command_error, signing_failure, tag_push_refspec, tag_target,
-    verified_status_output,
+    branch_push_refspec, colon_listing_fingerprints, index_is_clean, run_signing_command,
+    select_default_remote, signature_fingerprints, signing_command_error, signing_failure,
+    tag_push_refspec, tag_reference, tag_target, verified_status_output,
 };
 use commands::error::ErrorKind;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command;
+use tempfile::TempDir;
 
 const KEYS_COLON_LISTING: &str = include_str!("fixtures/keys-colons.txt");
 const EXPIRED_RAW_STATUS: &str = include_str!("fixtures/verify-raw-expired.txt");
@@ -26,6 +28,20 @@ impl Write for FailingWriter {
     }
 }
 
+fn run_git(repository: &Path, arguments: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn successful_signing_ignores_progress_writer_failure() {
     let mut command = Command::new("git");
@@ -38,6 +54,32 @@ fn successful_signing_ignores_progress_writer_failure() {
     let result = run_signing_command(&mut command, "commit", &mut FailingWriter);
 
     assert!(result.is_ok());
+}
+
+#[test]
+fn staged_content_makes_the_index_unclean() {
+    let repository = TempDir::new().unwrap();
+    run_git(repository.path(), &["init", "--quiet"]);
+    run_git(repository.path(), &["config", "user.name", "Alice Example"]);
+    run_git(
+        repository.path(),
+        &["config", "user.email", "alice@example.com"],
+    );
+    run_git(repository.path(), &["config", "commit.gpgSign", "false"]);
+    let reviewed_file = repository.path().join("reviewed.txt");
+    std::fs::write(&reviewed_file, "reviewed content\n").unwrap();
+    run_git(repository.path(), &["add", "reviewed.txt"]);
+    run_git(
+        repository.path(),
+        &["commit", "--quiet", "-m", "test: baseline"],
+    );
+
+    assert!(index_is_clean(Some(repository.path())).unwrap());
+
+    std::fs::write(&reviewed_file, "staged replacement\n").unwrap();
+    run_git(repository.path(), &["add", "reviewed.txt"]);
+
+    assert!(!index_is_clean(Some(repository.path())).unwrap());
 }
 
 #[test]
@@ -176,6 +218,16 @@ fn tag_target_defaults_to_head() {
 #[test]
 fn tag_target_uses_named_commit() {
     assert_eq!(tag_target(Some("release-commit")), "release-commit");
+}
+
+#[test]
+fn short_tag_name_resolves_to_a_full_reference() {
+    assert_eq!(tag_reference("v1.2.3"), "refs/tags/v1.2.3");
+}
+
+#[test]
+fn full_tag_reference_remains_unchanged() {
+    assert_eq!(tag_reference("refs/tags/v1.2.3"), "refs/tags/v1.2.3");
 }
 
 #[test]

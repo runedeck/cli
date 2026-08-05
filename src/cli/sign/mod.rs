@@ -33,6 +33,7 @@ pub(crate) fn execute(
 
 fn seal_branch() -> Result<i32, Error> {
     let branch = current_branch()?;
+    ensure_index_clean()?;
     run_signing_git(&["commit", "--allow-empty", "-S", "-m", SEAL_SUBJECT])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
@@ -48,6 +49,7 @@ fn seal_branch() -> Result<i32, Error> {
 /// signature, and replaces its pushed predecessor under a lease.
 fn amend_head() -> Result<i32, Error> {
     let branch = current_branch()?;
+    ensure_index_clean()?;
     run_signing_git(&["commit", "--amend", "--no-edit", "--allow-empty", "-S"])?;
     run_interactive_git(&["verify-commit", "HEAD"])?;
     let remote = branch_push_remote(&branch)?;
@@ -56,6 +58,37 @@ fn amend_head() -> Result<i32, Error> {
     let head = git_stdout(&["rev-parse", "HEAD"])?;
     println!("re-signed {branch} @ {head}");
     Ok(0)
+}
+
+fn ensure_index_clean() -> Result<(), Error> {
+    if index_is_clean(None)? {
+        return Ok(());
+    }
+    Err(Error::new(
+        ErrorKind::Config,
+        "staged changes are present: unstage them before signing",
+    ))
+}
+
+pub(crate) fn index_is_clean(repository: Option<&Path>) -> Result<bool, Error> {
+    let mut command = Command::new("git");
+    if let Some(repository) = repository {
+        command.arg("-C").arg(repository);
+    }
+    let status = command
+        .args(["diff", "--cached", "--quiet", "--exit-code"])
+        .status()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+    if status.success() {
+        return Ok(true);
+    }
+    if status.code() == Some(1) {
+        return Ok(false);
+    }
+    Err(Error::new(
+        ErrorKind::Io,
+        "git could not inspect the staged changes",
+    ))
 }
 
 fn sign_tag(name: &str, commit: &str) -> Result<i32, Error> {
@@ -176,14 +209,18 @@ pub(crate) fn tag_target(commit: Option<&str>) -> &str {
     commit.unwrap_or("HEAD")
 }
 
+pub(crate) fn tag_reference(reference: &str) -> String {
+    if reference.starts_with("refs/tags/") {
+        reference.to_string()
+    } else {
+        format!("refs/tags/{reference}")
+    }
+}
+
 fn is_tag(reference: &str) -> bool {
     Command::new("git")
-        .args([
-            "rev-parse",
-            "--quiet",
-            "--verify",
-            &format!("refs/tags/{reference}"),
-        ])
+        .args(["rev-parse", "--quiet", "--verify"])
+        .arg(tag_reference(reference))
         .output()
         .is_ok_and(|output| output.status.success())
 }
