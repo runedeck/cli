@@ -95,7 +95,7 @@ repos:
 
           - id: gitleaks-range
             name: gitleaks (push range)
-            entry: sh -c 'if [ -n "${PRE_COMMIT_FROM_REF:-}" ]; then gitleaks git --no-banner --log-opts "${PRE_COMMIT_FROM_REF}..${PRE_COMMIT_TO_REF:-HEAD}"; else gitleaks git --no-banner; fi'
+            entry: sh -c 'if [ -n "${PRE_COMMIT_FROM_REF:-}" ]; then gitleaks git --no-banner --log-opts "${PRE_COMMIT_FROM_REF}..${PRE_COMMIT_TO_REF:-HEAD}"; else bash .githooks/pre-commit --scan-only; fi'
             language: system
             pass_filenames: false
             stages: [pre-push]
