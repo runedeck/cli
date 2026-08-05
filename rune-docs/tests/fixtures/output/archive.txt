@@ -1,0 +1,2 @@
+Archived change 'add-widget' as merged to docs/changes/archive/2026-01-15-add-widget.
+Merged 1 added, 1 modified, and 0 removed requirement(s) across 1 capability spec(s).

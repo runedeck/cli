@@ -1,0 +1,18 @@
+{
+  "change": "add-widget",
+  "capabilities": [
+    "widget"
+  ],
+  "created": [
+    "docs/changes/add-widget/proposal.md",
+    "docs/changes/add-widget/tasks.md",
+    "docs/changes/add-widget/specs/widget/spec.md"
+  ],
+  "template_overrides": [
+    "templates/spec/proposal.md"
+  ],
+  "next_steps": [
+    "Edit docs/changes/add-widget/proposal.md",
+    "Run rune spec validate add-widget"
+  ]
+}

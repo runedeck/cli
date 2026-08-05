@@ -1,0 +1,16 @@
+{
+  "changes": 2,
+  "specs": 3,
+  "findings": [
+    {
+      "severity": "error",
+      "path": "docs/changes/add-widget/tasks.md",
+      "message": "tasks.md is missing"
+    },
+    {
+      "severity": "warning",
+      "path": "docs/changes/add-widget/design.md",
+      "message": "design.md has no content"
+    }
+  ]
+}

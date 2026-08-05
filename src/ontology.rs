@@ -9,10 +9,17 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub deck: Option<String>,
+    /// Env file consulted when a launch profile's `from_env` reference is
+    /// unset in the process environment. Defaults to `~/.env`.
+    pub env: Option<String>,
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
     pub watch: Watch,
+    /// Bench workspace checkouts, in priority order: the first entry is the
+    /// primary (registry, default results); every entry contributes its
+    /// suites, and a suite's outputs stay in the checkout that owns it.
+    pub bench: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -40,14 +47,24 @@ pub struct Launch {
     pub default_with: Vec<String>,
     pub tools: HashMap<String, LaunchTool>,
     pub middleware: LaunchMiddleware,
+    pub models: HashMap<String, LaunchModel>,
     /// Named launch presets per tool: `launch.profiles.claude.sol` selects
-    /// via `rune launch claude@sol`.
+    /// via `rune launch sol@claude`.
     pub profiles: HashMap<String, HashMap<String, LaunchProfile>>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct LaunchModel {
+    pub id: String,
+    pub context: u64,
+    #[serde(default)]
+    pub compact: Option<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct LaunchProfile {
+    pub model: Option<String>,
     pub env: HashMap<String, ProfileEnvValue>,
     pub args: Vec<String>,
     pub with: Vec<String>,
@@ -81,6 +98,30 @@ pub struct LaunchMiddleware {
     pub presidio: PresidioConfig,
     pub squid: SquidConfig,
     pub docker: DockerConfig,
+    pub cliproxy: CliproxyConfig,
+}
+
+/// Liveness check for a local AI-API proxy (CLIProxyAPI-shaped), the
+/// process a cross-harness profile's `ANTHROPIC_BASE_URL` points at. It
+/// probes the proxy port and warns when it is down. `command` is empty by
+/// default (check-only); set it to a start command (e.g. `brew services
+/// run cliproxyapi`) to opt into self-heal.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CliproxyConfig {
+    pub host: String,
+    pub port: u16,
+    pub command: String,
+}
+
+impl Default for CliproxyConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 8317,
+            command: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -216,10 +257,25 @@ pub struct ResolvedValue {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ResolvedConfig {
     pub deck: Option<ResolvedValue>,
+    pub env: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
     #[serde(skip)]
     pub launch: Launch,
+    #[serde(skip)]
+    pub bench: Vec<String>,
+}
+
+impl ResolvedConfig {
+    /// The env file consulted for `from_env` fallback: the configured
+    /// override, or `~/.env`.
+    #[must_use]
+    pub fn env_file(&self) -> Option<PathBuf> {
+        match &self.env {
+            Some(value) => Some(expand_tilde(&value.value)),
+            None => dirs::home_dir().map(|home| home.join(".env")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -288,16 +344,24 @@ impl Key {
         }
     }
 
+    // Only product-generic defaults ship in the binary: the targets root and
+    // its archive. Machine-specific locations (skeleton checkout, vault,
+    // data layer, mount, domain) come from config or environment; `rune init`
+    // falls back to the embedded skeleton when none is configured.
     fn default(self) -> Option<&'static str> {
         match self {
             Self::Targets => Some("~/Agents"),
-            Self::Skeleton => Some("~/Developer/N4M3Z/skeleton"),
             Self::Archive => Some("~/Agents/archive"),
-            Self::Vault => Some("~/Atlas/Domains"),
-            Self::Lore => Some("~/Data"),
-            Self::Mount => Some("~/Atlas"),
-            Self::Domain => Some("Technology"),
-            Self::Owner | Self::Work | Self::Developer | Self::Artifacts | Self::Githooks => None,
+            Self::Skeleton
+            | Self::Vault
+            | Self::Lore
+            | Self::Mount
+            | Self::Domain
+            | Self::Owner
+            | Self::Work
+            | Self::Developer
+            | Self::Artifacts
+            | Self::Githooks => None,
         }
     }
 
@@ -397,11 +461,26 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
         value: config.deck.as_ref().map(|value| value.value.clone()),
         source: config.deck.as_ref().map(|value| value.source),
     }];
+    fields.push(ResolvedField {
+        key: "env",
+        env: "RUNE_ENV",
+        value: config.env.as_ref().map(|value| value.value.clone()),
+        source: config.env.as_ref().map(|value| value.source),
+    });
+    fields.push(ResolvedField {
+        key: "bench",
+        env: "",
+        value: (!config.bench.is_empty()).then(|| config.bench.join(", ")),
+        source: (!config.bench.is_empty()).then_some(Source::Config),
+    });
     fields.extend(config.ontology.fields());
     fields
 }
 
 pub fn expand_tilde(value: &str) -> PathBuf {
+    if value == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
+    }
     if let Some(rest) = value.strip_prefix("~/") {
         return dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest));
     }
@@ -449,6 +528,17 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
                 source: Source::Config,
             })
         });
+    let env_file = env("RUNE_ENV")
+        .map(|value| ResolvedValue {
+            value,
+            source: Source::Env,
+        })
+        .or_else(|| {
+            config.env.as_ref().map(|value| ResolvedValue {
+                value: value.clone(),
+                source: Source::Config,
+            })
+        });
     let ontology = ResolvedOntology {
         targets: resolve_key(Key::Targets, &config.ontology, env),
         skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
@@ -470,9 +560,11 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         .collect();
     ResolvedConfig {
         deck,
+        env: env_file,
         ontology,
         extensions,
         launch: config.launch.clone(),
+        bench: config.bench.clone(),
     }
 }
 

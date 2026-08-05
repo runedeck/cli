@@ -10,11 +10,13 @@ tags:
     - security
 status: accepted
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-24
 author: "@N4M3Z"
 project: rune-cli
 related:
     - "CLI-0018 Launch Middleware Chain"
+    - "CLI-0024 Interactive and Automated Tool Commands"
+    - "CLI-0026 Route-Specific Model Metadata"
 responsible: ["@N4M3Z"]
 accountable: ["@N4M3Z"]
 consulted: []
@@ -26,7 +28,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-`rune launch` composes environment middleware (CLI-0018): an ordered chain of plan patches with `--with`, `--direct`, `--tmux`, and `--dry-run`. Users also want named presets — "launch Claude Code pointed at a different model or endpoint" — selectable per invocation (`rune launch claude@sol`). A preset mechanism could either replace the middleware chain with a profile-only launcher or layer on top of it.
+`rune launch` composes environment middleware (CLI-0018): an ordered chain of plan patches with `--with`, `--direct`, `--tmux`, and `--dry-run`. Users also want named presets — "launch Claude Code pointed at a different model or endpoint" — selectable per invocation (`rune launch sol@claude`, profile@tool like user@host). A preset mechanism could either replace the middleware chain with a profile-only launcher or layer on top of it.
 
 ## Decision Drivers
 
@@ -44,15 +46,15 @@ upstream: []
 
 Chosen option: **Option 2.**
 
-- `rune launch <tool>[@profile]` resolves `launch.profiles.<tool>.<name>` from the user config. A profile carries `env:` (map), `args:` (prepended to tool args), and `with:` (middleware appended to the chain).
-- Env values are literals or `from_env: KEY` references resolved from the parent environment at launch; an unset reference is a hard error. Secrets are stored as references, never values.
+- `rune launch [profile@]<tool>` resolves `launch.profiles.<tool>.<name>` from the user config. A profile carries `env:` (map), `args:` (prepended to tool args), and `with:` (middleware appended to the chain).
+- Env values are literals or `from_env: KEY` references resolved at launch: the parent environment wins, an unset variable falls back to the env file (config key `env`, default `~/.env`), and a reference absent from both is a hard error naming the file. Secrets are stored as references, never values.
 - Profiles resolve from the user config only. Repo-level profile definitions stay out until a restricted merge exists that forbids credential, endpoint, proxy, certificate, `PATH`, loader, `HOME`, and `XDG_*` keys from repository sources.
 - Bare `rune launch` lists known tools with install state and defined profiles.
-- For `ollama`, a profile name with no matching profile is a model: `rune launch ollama@llama3` dispatches `ollama run llama3`.
+- For `ollama`, a profile name with no matching profile is a model: `rune launch llama3@ollama` dispatches `ollama run llama3`.
 - The pre-exec freshness warning (deployment older than the deck) waits until deploy records the source commit in the manifest; age heuristics were rejected.
 
 ## Consequences
 
 - Existing middleware configuration and flags keep working unchanged; profiles are additive.
-- `SENSITIVE_ENV_KEYS` redaction covers profile-resolved values in dry-run and JSON output.
+- Dry-run output redacts values of credential-marker keys (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`) in both env lines and wrapped argv; `SENSITIVE_ENV_KEYS` separately blocks middleware from setting loader variables.
 - Cross-vendor launches (Sol inside Claude Code) become a profile with `ANTHROPIC_BASE_URL` + model env pointing at infrastructure the user runs; rune ships commented templates, not endpoints.

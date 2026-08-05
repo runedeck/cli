@@ -1,0 +1,8 @@
+Created change 'add-widget' for 'widget':
+  + docs/changes/add-widget/proposal.md
+  + docs/changes/add-widget/tasks.md
+  + docs/changes/add-widget/specs/widget/spec.md
+note: using template override templates/spec/proposal.md
+Next steps:
+  - Edit docs/changes/add-widget/proposal.md
+  - Run rune spec validate add-widget

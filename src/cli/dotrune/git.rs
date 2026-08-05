@@ -15,7 +15,7 @@
 //! worktrees are cheap copies of just the tree at that commit, materialized
 //! on demand.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 
 pub fn ensure_cached(url: &str, commit: &str, source_label: &str) -> Result<PathBuf, Error> {

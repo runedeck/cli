@@ -74,6 +74,8 @@ jobs:
                   sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
                   tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
                   sudo install gitleaks /usr/local/bin/gitleaks
+                  bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
             - name: Commit-stage checks
               uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2

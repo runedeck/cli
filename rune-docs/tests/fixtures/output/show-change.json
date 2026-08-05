@@ -1,0 +1,24 @@
+{
+  "state": "active",
+  "completed": 1,
+  "total": 2,
+  "id": "add-widget",
+  "proposal": "Add a widget to the demo tool.\n",
+  "design": "Widgets render inline.",
+  "deltas": [
+    {
+      "capability": "widget",
+      "body": "## ADDED Requirements\n\n### Requirement: Widget rendering\n\nThe tool SHALL render widgets.\n"
+    }
+  ],
+  "tasks": [
+    {
+      "text": "Scaffold the change",
+      "done": true
+    },
+    {
+      "text": "Implement rendering",
+      "done": false
+    }
+  ]
+}

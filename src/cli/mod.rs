@@ -1,7 +1,9 @@
 mod add;
 mod adopt;
+#[cfg(feature = "adr")]
 mod adr;
 mod assemble;
+mod bench;
 mod completion;
 pub(crate) mod config;
 mod context;
@@ -11,7 +13,10 @@ mod cowork;
 mod dashboard;
 mod deploy;
 mod dispatch;
+#[cfg(feature = "docs")]
 mod docs;
+#[cfg(any(feature = "spec", feature = "adr", feature = "docs"))]
+mod docs_boundary;
 mod doctor;
 pub(crate) mod dotrune;
 mod drift;
@@ -24,12 +29,18 @@ mod ontology;
 mod output;
 mod provenance;
 mod provider_cmd;
+mod providers;
 mod release;
 mod review;
+mod run;
 mod setup;
+mod sign;
 mod skill;
+#[cfg(feature = "spec")]
 mod spec;
+#[cfg(feature = "spec")]
 mod spec_interop;
+mod spec_root;
 mod status;
 pub(crate) mod style;
 pub(crate) mod target;
@@ -41,8 +52,8 @@ pub(crate) mod watchlist;
 mod tests;
 
 use clap::{Parser, Subcommand};
-use commands::error::Error;
-use commands::result::ActionResult;
+use rune::error::Error;
+use rune::result::ActionResult;
 use std::{ffi::OsString, fmt::Write as _};
 
 const BUILD_VERSION: &str = concat!(
@@ -71,6 +82,7 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Spec-driven change lifecycle under docs/
+    #[cfg(feature = "spec")]
     Spec {
         #[command(subcommand)]
         action: SpecAction,
@@ -246,12 +258,20 @@ enum Command {
     },
 
     /// Architecture decision records under docs/decisions
+    #[cfg(feature = "adr")]
     Adr {
         #[command(subcommand)]
         action: adr::AdrAction,
     },
 
+    /// Run and report SkateBench-compatible benchmark suites
+    Bench {
+        #[command(subcommand)]
+        action: bench::BenchAction,
+    },
+
     /// Docs tree checks and a local mint preview
+    #[cfg(feature = "docs")]
     Docs {
         #[command(subcommand)]
         action: docs::DocsAction,
@@ -342,6 +362,11 @@ enum Command {
         #[arg(long)]
         allow_stale: bool,
 
+        /// Fail the install when any artifact is skipped for a pending
+        /// adoption review, instead of deploying the rest with a warning.
+        #[arg(long)]
+        strict: bool,
+
         /// Deploy only files under this source-relative prefix. Implies --no-prune.
         #[arg(long, value_name = "PREFIX")]
         only: Option<String>,
@@ -351,6 +376,10 @@ enum Command {
         /// config/models.yaml; ignored for providers that lack it).
         #[arg(long, value_name = "MODEL_ID")]
         model: Option<String>,
+
+        /// List every deployed file instead of one line per artifact.
+        #[arg(long, short)]
+        verbose: bool,
     },
 
     /// Assemble rune content into build/
@@ -497,8 +526,13 @@ enum Command {
         action: Option<ConfigAction>,
     },
 
+    /// Adopt an upstream rune through the block-by-block review state machine
+    Adopt {
+        #[command(subcommand)]
+        action: AdoptAction,
+    },
+
     /// Import an upstream rune into a single-module source with provenance
-    #[command(alias = "adopt")]
     Import {
         /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree. file:// is allowed for tests.
         url: String,
@@ -553,10 +587,10 @@ enum Command {
 
     /// Launch a coding tool with composable environment middleware
     #[command(
-        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch claude@sol\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:4000   # your endpoint\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: LITELLM_MASTER_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. ollama profiles double as models: rune launch ollama@llama3"
+        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch sol@claude\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:8317   # your Anthropic-compatible proxy\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: CLIPROXY_API_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. Unset references fall back to the env file (config key\n  env, default ~/.env). ollama profiles double as models: rune launch\n  llama3@ollama"
     )]
     Launch {
-        /// Coding tool to launch, such as `claude` or `claude@sol` for a
+        /// Coding tool to launch, such as `claude` or `sol@claude` for a
         /// named profile. Without a tool, lists tools and profiles.
         #[arg(default_value = "")]
         tool: String,
@@ -564,6 +598,39 @@ enum Command {
         /// Launch options and tool args after `--`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         rest: Vec<OsString>,
+    },
+
+    /// Run a coding tool noninteractively with supervised output
+    #[command(
+        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default."
+    )]
+    Run {
+        /// Coding tool to run, such as `codex` or `sol@claude`.
+        tool: String,
+
+        /// Prompt text. Omit to use --prompt-file or noninteractive stdin.
+        #[arg(value_name = "PROMPT", conflicts_with = "prompt_file")]
+        prompt: Option<String>,
+
+        /// Read the prompt from a UTF-8 text file.
+        #[arg(long, value_name = "FILE")]
+        prompt_file: Option<std::path::PathBuf>,
+
+        /// Repository or working directory supplied to the coding tool.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        repo: std::path::PathBuf,
+
+        /// Provider-native safety mode.
+        #[arg(long, value_enum, default_value_t = run::RunMode::ReadOnly)]
+        mode: run::RunMode,
+
+        /// Optional supervisor deadline, such as 30s, 5m, or 1h.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print the resolved launch and supervision plan without spawning.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -603,6 +670,32 @@ enum Command {
         format: Option<String>,
     },
 
+    /// Seal the branch with an owner-signed empty commit, or sign and verify tags
+    Sign {
+        /// Rewrite the head commit with the owner's signature instead of
+        /// sealing on top; the SHA changes and the push takes a lease.
+        #[arg(long, conflicts_with_all = ["tag", "verify"])]
+        amend: bool,
+
+        /// Create, verify, and push an owner-signed annotated tag instead of a seal.
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+
+        /// Commit to tag. Defaults to HEAD and is valid only with --tag.
+        #[arg(value_name = "COMMIT", requires = "tag")]
+        commit: Option<String>,
+
+        /// Verify a seal or tag signature against the repository's KEYS file.
+        #[arg(
+            long,
+            value_name = "REF",
+            num_args = 0..=1,
+            default_missing_value = "HEAD",
+            conflicts_with = "tag"
+        )]
+        verify: Option<String>,
+    },
+
     /// Manage the watchlist of rune and deployment locations to monitor
     Watch {
         #[command(subcommand)]
@@ -634,6 +727,7 @@ enum Command {
     External(Vec<OsString>),
 }
 
+#[cfg(feature = "spec")]
 #[derive(Subcommand)]
 enum SpecAction {
     /// Scaffold a spec-driven change under docs/changes/
@@ -685,6 +779,17 @@ enum SpecAction {
 
     /// Report relationship health across the spec-driven change tree
     Doctor {
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Validate the specification tree or one change or capability
+    Validate {
+        /// Active change or canonical capability. Omit to validate the tree.
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
@@ -870,6 +975,136 @@ enum ConfigAction {
     Path,
 }
 
+#[derive(Subcommand)]
+enum AdoptAction {
+    /// Import an artifact and open its review session
+    Start {
+        /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree.
+        source: String,
+
+        /// Target single-module root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        module: String,
+
+        /// Artifact name (kebab-case).
+        #[arg(long, value_name = "kebab-case")]
+        name: Option<String>,
+
+        /// Rune kind to adopt.
+        #[arg(long, value_enum, default_value_t = adopt::Kind::Skill)]
+        kind: adopt::Kind,
+
+        /// Upstream URL to record in provenance when adopting a local directory (attribution).
+        #[arg(long, value_name = "URL")]
+        source_url: Option<String>,
+    },
+
+    /// Show review sessions and their progress
+    Status {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+    },
+
+    /// Print the next pending blocks awaiting a verdict
+    Next {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Artifact selector when several sessions are open.
+        #[arg(long, value_name = "PATH")]
+        artifact: Option<String>,
+
+        /// How many pending blocks to print.
+        #[arg(long, default_value_t = 1)]
+        count: usize,
+    },
+
+    /// Record a maintainer verdict for one block
+    Verdict {
+        /// Block id from `rune adopt next`, e.g. SKILL.md:4.
+        block_id: String,
+
+        /// keep, adapt, or cut.
+        verdict: String,
+
+        /// Rationale; required for adapt and cut.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Artifact selector when several sessions are open.
+        #[arg(long, value_name = "PATH")]
+        artifact: Option<String>,
+
+        /// Re-decide an already-decided block.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Enforce the verdicts, validate structure, and seal the review record
+    Finalize {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Artifact selector when several sessions are open.
+        #[arg(long, value_name = "PATH")]
+        artifact: Option<String>,
+
+        /// Reviewer identity; defaults to git config user.name/email.
+        #[arg(long, value_name = "TEXT")]
+        reviewer: Option<String>,
+
+        /// Record files created during the review as added content instead of
+        /// refusing them. The additions land in the sealed record.
+        #[arg(long)]
+        allow_new: bool,
+    },
+
+    /// Move an in-flight adoption and its record to the tree trash
+    Abandon {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Artifact selector when several sessions are open.
+        #[arg(long, value_name = "PATH")]
+        artifact: Option<String>,
+
+        /// Confirm the move.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Re-sync a sealed record to pre-commit maintainer touch-ups
+    Reseal {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Artifact selector when several sealed records exist.
+        #[arg(long, value_name = "PATH")]
+        artifact: Option<String>,
+    },
+
+    /// Verify sealed review records, open sessions, and unreviewed imports
+    Doctor {
+        /// Tree to scan. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
+
+        /// Repair sidecars a crashed finalize left pending: flipped only when
+        /// the file on disk matches the sealed record's digest exactly.
+        #[arg(long)]
+        repair: bool,
+    },
+}
+
 /// Parse CLI arguments, dispatch to subcommand, and return an exit code.
 ///
 /// Exit codes: 0 = success, 1 = errors occurred, 2 = fatal error.
@@ -887,11 +1122,18 @@ pub fn run() -> i32 {
         console::set_colors_enabled_stderr(false);
     }
 
+    #[cfg(feature = "spec")]
+    spec::install_hooks();
+
     let Some(command) = args.command else {
         return bare();
     };
 
+    // Install collapses per-file output to per-artifact lines unless
+    // --verbose; every other ActionResult command keeps the full listing.
+    let mut verbose_files = true;
     let (result, verb) = match command {
+        #[cfg(feature = "spec")]
         Command::Spec { action } => return run_spec(action, args.json),
         Command::Status { source } => {
             return exit_code(status::execute(&source, args.no_color, args.json));
@@ -986,9 +1228,14 @@ pub fn run() -> i32 {
         Command::Todo { action, all } => {
             return exit_code(todo::execute(action, all, args.json));
         }
+        #[cfg(feature = "adr")]
         Command::Adr { action } => {
             return exit_code(adr::execute(action, args.json));
         }
+        Command::Bench { action } => {
+            return exit_code(bench::execute(&action, args.json));
+        }
+        #[cfg(feature = "docs")]
         Command::Docs { action } => {
             return exit_code(docs::execute(&action, args.json));
         }
@@ -1013,23 +1260,39 @@ pub fn run() -> i32 {
             no_prune,
             dry_run,
             allow_stale,
+            strict,
             only,
             model,
-        } => (
-            install::execute(
-                &source,
-                target.as_deref(),
-                &provider,
-                force,
-                !no_prune,
-                interactive,
-                dry_run,
-                only.as_deref(),
-                model.as_deref(),
-                allow_stale,
-            ),
-            "deployed",
-        ),
+            verbose,
+        } => {
+            verbose_files = verbose;
+            if strict {
+                let pending =
+                    assemble::sources::pending_review_paths(std::path::Path::new(&source));
+                if !pending.is_empty() {
+                    print_fatal(&format!(
+                        "--strict: adoption review pending for {}",
+                        pending.join(", ")
+                    ));
+                    return 1;
+                }
+            }
+            (
+                install::execute(
+                    &source,
+                    target.as_deref(),
+                    &provider,
+                    force,
+                    !no_prune,
+                    interactive,
+                    dry_run,
+                    only.as_deref(),
+                    model.as_deref(),
+                    allow_stale,
+                ),
+                "deployed",
+            )
+        }
         Command::Assemble { source, model } => (
             assemble::execute_with_model(&source, model.as_deref()),
             "assembled",
@@ -1097,8 +1360,13 @@ pub fn run() -> i32 {
             ));
         }
         Command::Clean { source, target } => {
-            if commands::deck::is_deck(std::path::Path::new(&source)) {
-                return report(clean_deck(&source, target.as_deref()), args.json, "cleaned");
+            if rune::deck::is_deck(std::path::Path::new(&source)) {
+                return report(
+                    clean_deck(&source, target.as_deref()),
+                    args.json,
+                    "cleaned",
+                    true,
+                );
             }
             (
                 deploy::execute(
@@ -1132,30 +1400,46 @@ pub fn run() -> i32 {
             source_url,
             dry_run,
         } => {
-            let subcommand_name = std::env::args()
-                .skip(1)
-                .find(|argument| !argument.starts_with('-'));
-            if subcommand_name.as_deref() == Some("adopt") {
-                eprintln!(
-                    "note: `rune adopt` is now `rune import`; the adopt name will drive the harness adoption process in a future release"
-                );
-            }
-            return exit_code(adopt::execute(
-                &url,
-                &module,
-                name.as_deref(),
-                companion.as_deref(),
-                kind,
-                source_url.as_deref(),
-                dry_run,
-            ));
+            return exit_code(
+                adopt::execute(
+                    &url,
+                    &module,
+                    name.as_deref(),
+                    companion.as_deref(),
+                    kind,
+                    source_url.as_deref(),
+                    dry_run,
+                )
+                .map(|adopted| adopted.exit),
+            );
         }
+        Command::Adopt { action } => return run_adopt(action, args.json),
         Command::Find { query, kind } => return exit_code(find::execute(&query, kind, args.json)),
         Command::Exec { skill, rest } => {
             return exit_code(exec::execute_cli(&skill, args.json, &rest));
         }
         Command::Launch { tool, rest } => {
             return exit_code(launch::execute_cli(&tool, &rest));
+        }
+        Command::Run {
+            tool,
+            prompt,
+            prompt_file,
+            repo,
+            mode,
+            timeout,
+            dry_run,
+        } => {
+            return exit_code(run::execute(&run::RunOptions {
+                tool,
+                prompt,
+                prompt_file,
+                repository: repo,
+                mode,
+                timeout,
+                dry_run,
+                json: args.json,
+            }));
         }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => return exit_code(dashboard::execute(&root, port)),
@@ -1173,6 +1457,19 @@ pub fn run() -> i32 {
                 "released",
             )
         }
+        Command::Sign {
+            amend,
+            tag,
+            commit,
+            verify,
+        } => {
+            return exit_code(sign::execute(
+                amend,
+                tag.as_deref(),
+                commit.as_deref(),
+                verify.as_deref(),
+            ));
+        }
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
             return exit_code(match action {
@@ -1185,7 +1482,7 @@ pub fn run() -> i32 {
         Command::Skill { action } => {
             return match action {
                 None => exit_code(add::list_kind(
-                    commands::provider::ContentKind::Skills,
+                    rune::provider::ContentKind::Skills,
                     None,
                     args.no_color,
                 )),
@@ -1194,7 +1491,7 @@ pub fn run() -> i32 {
                     source,
                     reference,
                 }) => exit_code(add::execute_kind(
-                    commands::provider::ContentKind::Skills,
+                    rune::provider::ContentKind::Skills,
                     &name,
                     source.as_deref(),
                     reference.as_deref(),
@@ -1206,25 +1503,13 @@ pub fn run() -> i32 {
             };
         }
         Command::Agent { action } => {
-            return run_kind_add(
-                commands::provider::ContentKind::Agents,
-                action,
-                args.no_color,
-            );
+            return run_kind_add(rune::provider::ContentKind::Agents, action, args.no_color);
         }
         Command::Rule { action } => {
-            return run_kind_add(
-                commands::provider::ContentKind::Rules,
-                action,
-                args.no_color,
-            );
+            return run_kind_add(rune::provider::ContentKind::Rules, action, args.no_color);
         }
         Command::Hook { action } => {
-            return run_kind_add(
-                commands::provider::ContentKind::Hooks,
-                action,
-                args.no_color,
-            );
+            return run_kind_add(rune::provider::ContentKind::Hooks, action, args.no_color);
         }
         Command::Completion { action } => {
             return match action {
@@ -1237,12 +1522,12 @@ pub fn run() -> i32 {
         Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
     };
 
-    report(result, args.json, verb)
+    report(result, args.json, verb, verbose_files)
 }
 
 fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error> {
-    let deck = commands::deck::load(std::path::Path::new(source))
-        .map_err(|message| Error::new(commands::error::ErrorKind::Config, message))?;
+    let deck = rune::deck::load(std::path::Path::new(source))
+        .map_err(|message| Error::new(rune::error::ErrorKind::Config, message))?;
     let mut aggregate = ActionResult::new();
     for deck_entry in deck.entries {
         println!("== {} ==", deck_entry.name);
@@ -1332,13 +1617,18 @@ fn root_help_styled(sheet: &style::Sheet) -> String {
 }
 
 fn spec_help(help: &mut String) {
-    help.push_str("\n  Spec:\n");
-    help_command(
-        help,
-        "spec",
-        "propose | list | show | doctor | archive | context",
-        "Spec-driven change lifecycle under docs/",
-    );
+    #[cfg(feature = "spec")]
+    {
+        help.push_str("\n  Spec:\n");
+        help_command(
+            help,
+            "spec",
+            "propose | list | show | doctor | archive | context",
+            "Spec-driven change lifecycle under docs/",
+        );
+    }
+    #[cfg(not(feature = "spec"))]
+    let _ = help;
 }
 
 fn flow_help(help: &mut String) {
@@ -1471,9 +1761,27 @@ fn deck_help(help: &mut String) {
     );
     help_command(
         help,
+        "sign",
+        "[--amend | --tag <TAG> [COMMIT] | --verify [REF]]",
+        "Seal the branch, sign tags, verify against KEYS",
+    );
+    help_command(
+        help,
         "import",
         "<URL> [--module <DIR>]",
         "Import an upstream rune with provenance",
+    );
+    help_command(
+        help,
+        "adopt",
+        "start|status|next|verdict|finalize|abandon",
+        "Adopt an upstream rune through block-by-block review",
+    );
+    help_command(
+        help,
+        "bench",
+        "run|report|list|dashboard|doctor|audit",
+        "Run and report SkateBench-compatible benchmark suites",
     );
     help_command(
         help,
@@ -1487,12 +1795,14 @@ fn deck_help(help: &mut String) {
         "[add|do|ls|obsidian|import]",
         "Repo tasks in TODO.txt with an Obsidian transform",
     );
+    #[cfg(feature = "adr")]
     help_command(
         help,
         "adr",
         "new|list|supersede|index",
         "Architecture decision records under docs/decisions",
     );
+    #[cfg(feature = "docs")]
     help_command(
         help,
         "docs",
@@ -1548,6 +1858,12 @@ fn plumbing_help(help: &mut String) {
     );
     help_command(
         help,
+        "run",
+        "<TOOL> [PROMPT|--prompt-file <FILE>]",
+        "Run a coding tool with supervised output",
+    );
+    help_command(
+        help,
         "completion",
         "install [SHELL] | print <SHELL>",
         "Shell completions (bash|zsh|fish|nushell)",
@@ -1577,15 +1893,121 @@ pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
     eprintln!("{} {error}", sheet.red("fatal:"));
 }
 
+/// Dispatch a `rune adopt` subcommand to the review state machine.
+fn run_adopt(action: AdoptAction, json: bool) -> i32 {
+    use std::path::Path;
+    let result = match action {
+        AdoptAction::Start {
+            source,
+            module,
+            name,
+            kind,
+            source_url,
+        } => adopt::execute(
+            &source,
+            &module,
+            name.as_deref(),
+            None,
+            kind,
+            source_url.as_deref(),
+            false,
+        )
+        .and_then(|adopted| {
+            let Some(root) = adopted.artifact_root else {
+                return Err("import produced no artifact to review".to_string());
+            };
+            let record = adopt::review::open_session(
+                &root,
+                &adopted.upstream_uri,
+                &adopted.upstream_digest,
+            )?;
+            println!("review session opened: {}", record.display());
+            println!("next: `rune adopt next` — every block needs a verdict before finalize");
+            Ok(0)
+        }),
+        AdoptAction::Status { root } => adopt::review::status(Path::new(&root), json),
+        AdoptAction::Next {
+            root,
+            artifact,
+            count,
+        } => adopt::review::next(Path::new(&root), artifact.as_deref(), count, json),
+        AdoptAction::Verdict {
+            block_id,
+            verdict,
+            note,
+            root,
+            artifact,
+            force,
+        } => adopt::review::verdict(
+            Path::new(&root),
+            artifact.as_deref(),
+            &block_id,
+            &verdict,
+            note.as_deref(),
+            force,
+        ),
+        AdoptAction::Finalize {
+            root,
+            artifact,
+            reviewer,
+            allow_new,
+        } => adopt::review::finalize(
+            Path::new(&root),
+            artifact.as_deref(),
+            reviewer.as_deref(),
+            allow_new,
+        ),
+        AdoptAction::Abandon {
+            root,
+            artifact,
+            yes,
+        } => adopt::review::abandon(Path::new(&root), artifact.as_deref(), yes),
+        AdoptAction::Reseal { root, artifact } => {
+            adopt::review::reseal(Path::new(&root), artifact.as_deref())
+        }
+        AdoptAction::Doctor { root, repair } => {
+            if repair {
+                adopt::review::doctor_repair(Path::new(&root))
+                    .and_then(|_| adopt::review::doctor(Path::new(&root), json))
+            } else {
+                adopt::review::doctor(Path::new(&root), json)
+            }
+        }
+    };
+    exit_code(result)
+}
+
 /// Dispatch a `rune spec` subcommand to its lifecycle handler.
+#[cfg(feature = "spec")]
 fn run_spec(action: SpecAction, json: bool) -> i32 {
+    // A repo already on OpenSpec gets a one-time root-choice offer before any
+    // lifecycle command runs. The explicit converters are exempt: import IS
+    // the migration, and export is the deliberate reverse move.
+    if !matches!(
+        action,
+        SpecAction::Export { .. } | SpecAction::Import { .. }
+    ) {
+        let source = match &action {
+            SpecAction::Propose { source, .. }
+            | SpecAction::List { source, .. }
+            | SpecAction::Show { source, .. }
+            | SpecAction::Doctor { source, .. }
+            | SpecAction::Validate { source, .. }
+            | SpecAction::Archive { source, .. }
+            | SpecAction::Context { source, .. } => source.clone(),
+            SpecAction::Export { .. } | SpecAction::Import { .. } => unreachable!(),
+        };
+        if let Err(error) = spec::offer_root_choice(&source, json) {
+            return exit_code(Err::<i32, Error>(error));
+        }
+    }
     let result = match action {
         SpecAction::Export { openspec, source } => {
             if openspec {
                 spec_interop::export_openspec(&source, json)
             } else {
                 Err(Error::new(
-                    commands::error::ErrorKind::Config,
+                    rune::error::ErrorKind::Config,
                     "pass --openspec; it is the only export format today".to_string(),
                 ))
             }
@@ -1595,7 +2017,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
                 spec_interop::import_openspec(&source, json)
             } else {
                 Err(Error::new(
-                    commands::error::ErrorKind::Config,
+                    rune::error::ErrorKind::Config,
                     "pass --openspec; it is the only import format today".to_string(),
                 ))
             }
@@ -1613,6 +2035,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         } => spec::list(&source, specs, sort, json),
         SpecAction::Show { name, source } => spec::show(&source, &name, json),
         SpecAction::Doctor { source } => spec::doctor(&source, json),
+        SpecAction::Validate { name, source } => spec::validate(&source, name.as_deref(), json),
         SpecAction::Archive {
             change_id,
             yes,
@@ -1626,7 +2049,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
 
 /// Dispatch a kind namespace: bare lists the kind, `add` stages by name.
 fn run_kind_add(
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     action: Option<KindAction>,
     no_color: bool,
 ) -> i32 {
@@ -1658,10 +2081,10 @@ fn run_watch(action: WatchAction, json: bool) -> i32 {
 }
 
 /// Print a structured `ActionResult` and return the corresponding exit code.
-fn report(result: Result<ActionResult, Error>, json: bool, verb: &str) -> i32 {
+fn report(result: Result<ActionResult, Error>, json: bool, verb: &str, verbose: bool) -> i32 {
     match result {
         Ok(action_result) => {
-            output::print(&action_result, json, verb);
+            output::print(&action_result, json, verb, verbose);
             i32::from(action_result.has_errors())
         }
         Err(error) => {

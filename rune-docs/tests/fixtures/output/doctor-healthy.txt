@@ -1,0 +1,1 @@
+spec tree healthy: 2 active change(s), 3 capability spec(s)

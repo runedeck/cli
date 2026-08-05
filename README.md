@@ -22,7 +22,7 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 
 **Install** — Runs assemble + deploy in one step.
 
-**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available.
+**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available. Strict structural checking needs the standalone `mdschema` binary (`brew install jackchuka/tap/mdschema`); without it, section order, unexpected sections, permitted heading placement, and heading uniqueness go unchecked, and optional sections are skipped entirely.
 
 **Drift** — Compares a rune source against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
 
@@ -78,6 +78,8 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 ```
 
 ### Qualifier Directories
+
+Two words, two jobs. A **qualifier** is the directory (`user/`, `claude/`, `claude-opus-4/`). A **variant** is the file inside it that overrides the base file of the same name. Assembly resolves one qualifier, then merges that variant into the base: its frontmatter keys replace the base keys outright, and its body joins the base body according to its `mode` (`append`, `prepend`, or `replace`, defaulting to `replace`). That key-level replacement is not the deep merge used for configuration files, which is a separate mechanism in `yaml::merge`.
 
 Subdirectories in source are organizational — they flatten at assembly time:
 
@@ -144,14 +146,14 @@ cargo install --path .
 
 ### Start a project
 
-Scaffold a project, bind it as the active quest, select deck content in the
+Scaffold a project, bind it as the active target, select deck content in the
 editor, and install it:
 
 ```sh
 rune init ./signal-lamp --lang shell --purpose tool --brief "Warns the crew"
 cd signal-lamp
-rune quest .
-rune add development --source ~/Developer/runedeck/runedeck
+rune target .
+rune add development --source ~/Developer/runedeck/deck
 rune tui --edit
 rune install
 ```
@@ -162,8 +164,8 @@ skeleton repository. It substitutes `${NAME}`, `${TITLE}`, `${OWNER}`, and
 and never overwrites an existing destination file. The skeleton resolves in
 this order: `--skeleton`, `RUNE_SKELETON`, the `skeleton` config key, then
 `~/Developer/N4M3Z/skeleton`. Bare names and `<owner>/<name>` slugs resolve
-under `RUNE_QUESTS` (or the configured quests root); explicit existing
-directories are scaffolded in place. Add `--quest` to bind the new repository
+under `RUNE_TARGETS` (or the configured targets root); explicit existing
+directories are scaffolded in place. Add `--bind` to bind the new repository
 during initialization.
 
 The specialized deck-authoring scaffold remains available separately:
@@ -175,7 +177,7 @@ rune init --module ./my-rune-module
 Set a default deck once, then add selections without repeating `--source`:
 
 ```sh
-rune config set deck ~/Developer/runedeck/runedeck
+rune config set deck ~/Developer/runedeck/deck
 rune add development
 ```
 
@@ -345,6 +347,31 @@ Scaffold a single-module rune source:
 
 ```sh
 rune init --module path/to/rune
+```
+
+Open an interactive coding-tool session through a named profile:
+
+```sh
+rune launch sol@claude
+```
+
+Run a coding tool noninteractively with read-only access and supervised output:
+
+```sh
+rune run sol@claude --repo . --mode read-only "Review this repository without editing files."
+```
+
+Run a prompt from a file or standard input:
+
+```sh
+rune run codex --prompt-file brief.md
+command cat brief.md | rune run lumo@opencode
+```
+
+Run a helper script bundled with a skill:
+
+```sh
+rune exec <skill> -- --help
 ```
 
 All commands support `--json` for machine-readable output.

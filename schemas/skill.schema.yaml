@@ -1,20 +1,26 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 type: object
+additionalProperties: false
 required:
     - name
     - description
-    - version
 properties:
     name:
         type: string
-        # agentskills.io: skill names are lowercase letters, digits, and hyphens.
-        # The Claude Code loader rejects any other form, so validate it here.
+        minLength: 1
+        maxLength: 64
         pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
     description:
         type: string
-    version:
+        maxLength: 1024
+    license:
         type: string
-    targets:
-        type: array
-        items:
+    compatibility:
+        type: string
+        maxLength: 500
+    metadata:
+        type: object
+        additionalProperties:
             type: string
+    allowed-tools:
+        type: string

@@ -1,0 +1,23 @@
+add-widget · active · 1/2 tasks
+
+# Work order: add-widget
+
+## Proposal
+
+Add a widget to the demo tool.
+
+## Design
+
+Widgets render inline.
+
+## Delta: widget
+
+## ADDED Requirements
+
+### Requirement: Widget rendering
+
+The tool SHALL render widgets.
+
+## Tasks
+- [x] Scaffold the change
+- [ ] **TODO: Implement rendering**

@@ -1,0 +1,2 @@
+error: docs/changes/add-widget/tasks.md: tasks.md is missing
+warning: docs/changes/add-widget/design.md: design.md has no content

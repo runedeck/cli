@@ -4,7 +4,7 @@ use crate::manifest;
 use crate::provider::{AssemblyRule, ProviderConfig};
 use crate::transform;
 
-/// A source file to be assembled, with optional variant overlay.
+/// A source file to be assembled, with its variant if one exists.
 pub struct SourceFile<'a> {
     /// Path relative to the module root (e.g. `rules/MyRule.md`).
     pub relative_path: &'a str,
@@ -55,7 +55,7 @@ pub fn assemble_file(
             source.variant_content,
             keep_fields,
             has_strip_links,
-        )
+        )?
     };
 
     // Step 2: apply provider rules

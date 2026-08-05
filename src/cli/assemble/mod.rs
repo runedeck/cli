@@ -3,8 +3,8 @@ mod pipeline;
 mod provenance;
 pub mod sources;
 
-use commands::error::Error;
-use commands::result::{ActionResult, DeployedFile};
+use rune::error::Error;
+use rune::result::{ActionResult, DeployedFile};
 use std::path::Path;
 
 use crate::cli::config;
@@ -48,14 +48,14 @@ pub fn execute_with_options(
     let module_root = Path::new(path);
     if !module_root.is_dir() {
         return Err(Error::new(
-            commands::error::ErrorKind::Io,
+            rune::error::ErrorKind::Io,
             format!("rune source directory not found: {}", module_root.display()),
         ));
     }
     let module_manifest = module_root.join("module.yaml");
     if !module_manifest.is_file() && !crate::cli::dotrune::exists(module_root) {
         return Err(Error::new(
-            commands::error::ErrorKind::Config,
+            rune::error::ErrorKind::Config,
             format!(
                 "no module.yaml or .rune at {}; --source must point to a rune source or consumer target",
                 module_root.display()
@@ -79,17 +79,89 @@ pub fn execute_with_options(
 
     let build_dir = module_root.join("build");
 
-    // Assembly always starts clean — no stale files from previous runs
-    if build_dir.is_dir() {
-        std::fs::remove_dir_all(&build_dir).map_err(|e| {
-            commands::error::Error::new(
-                commands::error::ErrorKind::Io,
-                format!("cannot clean build directory: {e}"),
+    // Assembly writes into a staging tree and swaps it in only after every
+    // provider succeeds, so a failed run cannot destroy the last good build/
+    // or leave a partial one for deploy to consume.
+    let staging_dir = module_root.join(format!(".build-staging-{}", std::process::id()));
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir).map_err(|e| {
+            rune::error::Error::new(
+                rune::error::ErrorKind::Io,
+                format!("cannot clean staging directory: {e}"),
             )
         })?;
     }
 
-    for (provider_name, provider_config) in &providers {
+    let assembled: Result<(), Error> = assemble_providers(
+        &providers,
+        requested_providers,
+        &staging_dir,
+        module_root,
+        model_override,
+        remap_content.as_ref(),
+        &models,
+        &source_uri,
+        &source_files,
+        &mut result,
+    );
+    if let Err(error) = assembled {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+
+    // Nothing assembled (empty module, or every provider filtered out): keep
+    // the start-clean contract by clearing the previous build and stop.
+    if !staging_dir.exists() {
+        if build_dir.exists() {
+            std::fs::remove_dir_all(&build_dir).map_err(|e| {
+                rune::error::Error::new(
+                    rune::error::ErrorKind::Io,
+                    format!("cannot clean build directory: {e}"),
+                )
+            })?;
+        }
+        return Ok(result);
+    }
+
+    let retired_dir = module_root.join(format!(".build-retired-{}", std::process::id()));
+    if build_dir.exists() {
+        std::fs::rename(&build_dir, &retired_dir).map_err(|e| {
+            rune::error::Error::new(
+                rune::error::ErrorKind::Io,
+                format!("cannot retire previous build directory: {e}"),
+            )
+        })?;
+    }
+    if let Err(e) = std::fs::rename(&staging_dir, &build_dir) {
+        // Put the previous build back so a failed swap never leaves no build.
+        if retired_dir.exists() {
+            let _ = std::fs::rename(&retired_dir, &build_dir);
+        }
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(rune::error::Error::new(
+            rune::error::ErrorKind::Io,
+            format!("cannot activate new build directory: {e}"),
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&retired_dir);
+
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assemble_providers(
+    providers: &std::collections::HashMap<String, rune::provider::ProviderConfig>,
+    requested_providers: &[String],
+    build_dir: &Path,
+    module_root: &Path,
+    model_override: Option<&str>,
+    remap_content: Option<&String>,
+    models: &std::collections::HashMap<String, Vec<String>>,
+    source_uri: &str,
+    source_files: &[sources::SourceFile],
+    result: &mut ActionResult,
+) -> Result<(), Error> {
+    for (provider_name, provider_config) in providers {
         if !requested_providers.is_empty()
             && !requested_providers
                 .iter()
@@ -98,24 +170,32 @@ pub fn execute_with_options(
             continue;
         }
         let provider_build_dir = build_dir.join(provider_name);
-        let tool_mappings = config::load_tool_mappings(remap_content.as_ref(), provider_name)?;
+        let tool_mappings = config::load_tool_mappings(remap_content, provider_name)?;
         let mut deploy_paths = std::collections::HashMap::new();
 
-        // Parse assembly rules for this provider
-        let assembly_rules: Vec<commands::provider::AssemblyRule> = provider_config
+        // Parse assembly rules for this provider. A typo must fail loudly:
+        // silently dropping a rule assembles without the transformation.
+        let assembly_rules: Vec<rune::provider::AssemblyRule> = provider_config
             .assembly
             .as_ref()
             .unwrap_or(&Vec::new())
             .iter()
-            .filter_map(|name| commands::provider::AssemblyRule::from_name(name).ok())
-            .collect();
+            .map(|name| {
+                rune::provider::AssemblyRule::from_name(name).map_err(|error| {
+                    Error::new(
+                        rune::error::ErrorKind::Config,
+                        format!("provider {provider_name}: {error}"),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
         let model_tiers = provider_config.models.clone().unwrap_or_default();
         let effort_tiers = provider_config.effort.clone().unwrap_or_default();
         let active_model =
-            resolve_active_model(model_override, provider_config, &models, provider_name);
+            resolve_active_model(model_override, provider_config, models, provider_name);
 
-        for source in &source_files {
+        for source in source_files {
             if let Some(deployed) = assemble_source_for_provider(
                 source,
                 module_root,
@@ -127,8 +207,8 @@ pub fn execute_with_options(
                 &assembly_rules,
                 &model_tiers,
                 &effort_tiers,
-                &models,
-                &source_uri,
+                models,
+                source_uri,
                 !requested_providers.is_empty(),
                 &mut deploy_paths,
             )? {
@@ -137,7 +217,7 @@ pub fn execute_with_options(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Choose the model ID whose `provider/<model>/` variants win this assembly:
@@ -146,7 +226,7 @@ pub fn execute_with_options(
 /// model is ignored so a single `--model` flag is safe across all providers.
 fn resolve_active_model(
     model_override: Option<&str>,
-    provider_config: &commands::provider::ProviderConfig,
+    provider_config: &rune::provider::ProviderConfig,
     models: &std::collections::HashMap<String, Vec<String>>,
     provider_name: &str,
 ) -> Option<String> {
@@ -166,10 +246,10 @@ fn assemble_source_for_provider(
     module_root: &Path,
     provider_name: &str,
     active_model: Option<&str>,
-    provider_config: &commands::provider::ProviderConfig,
+    provider_config: &rune::provider::ProviderConfig,
     provider_build_dir: &Path,
     tool_mappings: &std::collections::HashMap<String, String>,
-    assembly_rules: &[commands::provider::AssemblyRule],
+    assembly_rules: &[rune::provider::AssemblyRule],
     model_tiers: &std::collections::HashMap<String, Vec<String>>,
     effort_tiers: &std::collections::HashMap<String, String>,
     models: &std::collections::HashMap<String, Vec<String>>,
@@ -197,6 +277,23 @@ fn assemble_source_for_provider(
         return Ok(None);
     }
 
+    // Binary passthrough assets copy byte-for-byte: no variants, no text
+    // transforms, no newline normalization. The filename still goes through
+    // the provider's rename rules so a companion lands beside its (possibly
+    // kebab-renamed) skill directory.
+    if let Some(bytes) = &source.content_bytes {
+        return assemble_binary_passthrough(
+            source,
+            bytes,
+            provider_name,
+            provider_build_dir,
+            tool_mappings,
+            assembly_rules,
+            source_uri,
+            deploy_paths,
+        );
+    }
+
     let kind_keep_fields = provider_config
         .keep_fields
         .as_ref()
@@ -204,7 +301,7 @@ fn assemble_source_for_provider(
         .cloned()
         .unwrap_or_default();
 
-    let is_hook = source.kind == commands::provider::ContentKind::Hooks;
+    let is_hook = source.kind == rune::provider::ContentKind::Hooks;
     let mut assembled = if is_hook {
         source.content.clone()
     } else {
@@ -216,7 +313,7 @@ fn assemble_source_for_provider(
             &kind_keep_fields,
             model_tiers,
             effort_tiers,
-            assembly_rules.contains(&commands::provider::AssemblyRule::StripLinks),
+            assembly_rules.contains(&rune::provider::AssemblyRule::StripLinks),
         )?
     };
     // For skills, preserve the skill directory: skills/SceneReview/SKILL.md
@@ -253,14 +350,14 @@ fn assemble_source_for_provider(
         };
         (content, format!("{deck}/{relative_within_kind}"))
     } else {
-        commands::transform::apply_rules(
+        rune::transform::apply_rules(
             &assembled,
             relative_within_kind,
             assembly_rules,
             tool_mappings,
             source.kind.as_str(),
         )
-        .map_err(|e| commands::error::Error::new(commands::error::ErrorKind::Validate, e))?
+        .map_err(|e| rune::error::Error::new(rune::error::ErrorKind::Validate, e))?
     };
 
     assembled = transformed_content;
@@ -277,8 +374,8 @@ fn assemble_source_for_provider(
     let deploy_relative = format!("{}/{transformed_filename}", source.kind);
     let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
     if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
-        return Err(commands::error::Error::new(
-            commands::error::ErrorKind::Config,
+        return Err(rune::error::Error::new(
+            rune::error::ErrorKind::Config,
             format!(
                 "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {existing_id} and {rune_id}"
             ),
@@ -303,6 +400,60 @@ fn assemble_source_for_provider(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn assemble_binary_passthrough(
+    source: &sources::SourceFile,
+    bytes: &[u8],
+    provider_name: &str,
+    provider_build_dir: &Path,
+    tool_mappings: &std::collections::HashMap<String, String>,
+    assembly_rules: &[rune::provider::AssemblyRule],
+    source_uri: &str,
+    deploy_paths: &mut std::collections::HashMap<String, String>,
+) -> Result<Option<DeployedFile>, Error> {
+    let stripped_kind = source
+        .relative_path
+        .strip_prefix(&format!("{}/", source.kind))
+        .unwrap_or(&source.relative_path);
+    // Only the filename mapping applies to bytes; rules never derive a name
+    // from content, so an empty document yields the same rename.
+    let (_, transformed_filename) = rune::transform::apply_rules(
+        "",
+        stripped_kind,
+        assembly_rules,
+        tool_mappings,
+        source.kind.as_str(),
+    )
+    .map_err(|e| rune::error::Error::new(rune::error::ErrorKind::Validate, e))?;
+
+    let output_path = provider_build_dir
+        .join(source.kind.as_str())
+        .join(&transformed_filename);
+    let deploy_relative = format!("{}/{transformed_filename}", source.kind);
+    let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
+    if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
+        return Err(rune::error::Error::new(
+            rune::error::ErrorKind::Config,
+            format!(
+                "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {existing_id} and {rune_id}"
+            ),
+        ));
+    }
+    let manifest_key = format!("{}/{}/{}", provider_name, source.kind, transformed_filename);
+
+    output::write_file_bytes(&output_path, bytes)?;
+    preserve_executable_bit(source, &output_path)?;
+
+    let statement = provenance::build_statement_bytes(&manifest_key, bytes, source, source_uri);
+    provenance::write_sidecar(&output_path, &statement)?;
+
+    Ok(Some(DeployedFile {
+        source: source.relative_path.clone(),
+        target: output_path.to_string_lossy().to_string(),
+        provider: provider_name.to_string(),
+    }))
+}
+
 fn hook_deck(source: &sources::SourceFile) -> Result<&str, Error> {
     source
         .rune_id
@@ -310,8 +461,8 @@ fn hook_deck(source: &sources::SourceFile) -> Result<&str, Error> {
         .and_then(|id| id.split('/').next())
         .filter(|deck| !deck.is_empty())
         .ok_or_else(|| {
-            commands::error::Error::new(
-                commands::error::ErrorKind::Config,
+            rune::error::Error::new(
+                rune::error::ErrorKind::Config,
                 format!("hook {} has no deck", source.relative_path),
             )
         })
@@ -324,8 +475,8 @@ fn rewrite_hook_commands(
     plugin_mode: bool,
 ) -> Result<String, Error> {
     let mut manifest: serde_json::Value = serde_json::from_str(content).map_err(|error| {
-        commands::error::Error::new(
-            commands::error::ErrorKind::Validate,
+        rune::error::Error::new(
+            rune::error::ErrorKind::Validate,
             format!("invalid hooks/hooks.json: {error}"),
         )
     })?;
@@ -346,8 +497,8 @@ fn rewrite_hook_commands(
             value
         })
         .map_err(|error| {
-            commands::error::Error::new(
-                commands::error::ErrorKind::Validate,
+            rune::error::Error::new(
+                rune::error::ErrorKind::Validate,
                 format!("cannot serialize hooks/hooks.json: {error}"),
             )
         })
@@ -382,8 +533,8 @@ fn preserve_executable_bit(source: &sources::SourceFile, output_path: &Path) -> 
 
         let source_mode = std::fs::metadata(&source.full_path)
             .map_err(|error| {
-                commands::error::Error::new(
-                    commands::error::ErrorKind::Io,
+                rune::error::Error::new(
+                    rune::error::ErrorKind::Io,
                     format!("cannot inspect {}: {error}", source.full_path),
                 )
             })?
@@ -392,16 +543,16 @@ fn preserve_executable_bit(source: &sources::SourceFile, output_path: &Path) -> 
         if source_mode & 0o111 != 0 {
             let mut permissions = std::fs::metadata(output_path)
                 .map_err(|error| {
-                    commands::error::Error::new(
-                        commands::error::ErrorKind::Io,
+                    rune::error::Error::new(
+                        rune::error::ErrorKind::Io,
                         format!("cannot inspect {}: {error}", output_path.display()),
                     )
                 })?
                 .permissions();
             permissions.set_mode(permissions.mode() | (source_mode & 0o111));
             std::fs::set_permissions(output_path, permissions).map_err(|error| {
-                commands::error::Error::new(
-                    commands::error::ErrorKind::Io,
+                rune::error::Error::new(
+                    rune::error::ErrorKind::Io,
                     format!(
                         "cannot set permissions on {}: {error}",
                         output_path.display()
@@ -483,7 +634,7 @@ fn qualifier_matches_provider(
 #[cfg(test)]
 fn apply_kebab_case_to_path(path: &str) -> String {
     path.split('/')
-        .map(commands::transform::to_kebab_case)
+        .map(rune::transform::to_kebab_case)
         .collect::<Vec<String>>()
         .join("/")
 }

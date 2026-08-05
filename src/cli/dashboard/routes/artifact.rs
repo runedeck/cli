@@ -8,8 +8,8 @@ use super::{AppState, DashboardState};
 use crate::cli::dashboard::scan;
 use crate::cli::dashboard::server;
 use crate::cli::dashboard::templates;
-use commands::services::builders::{group_deployments, resolve_dep_links};
-use commands::view::{ArtifactView, DashboardView, ModuleView, ProvenanceArtifact};
+use rune::services::builders::{group_deployments, resolve_dep_links};
+use rune::view::{ArtifactView, DashboardView, ModuleView, ProvenanceArtifact};
 
 /// Artifact detail: `/artifact/{module}/{kind}/{name}`. The module qualifier
 /// disambiguates the same artifact present in more than one module (e.g. an
@@ -196,11 +196,11 @@ pub(super) async fn companion_detail(
     for entry in &provenance_entries {
         providers.insert(
             entry.harness.clone(),
-            commands::view::ProviderStatus {
+            rune::view::ProviderStatus {
                 status: if entry.verified {
-                    commands::manifest::FileStatus::Unchanged
+                    rune::manifest::FileStatus::Unchanged
                 } else {
-                    commands::manifest::FileStatus::Modified
+                    rune::manifest::FileStatus::Modified
                 },
                 fingerprint: Some(entry.deployed_sha.clone()),
             },
@@ -434,15 +434,15 @@ pub(super) struct EffectiveParams {
 
 /// Resolves an artifact's effective content for a `(provider, model)` qualifier
 /// by merging its qualifier-directory variants over the base, mirroring
-/// `commands::assemble::variants`. This shows the *authored* intent of the
-/// PROV-0005 overlay; deploy currently resolves provider-only, so model-level
-/// overlays are not yet what ships.
+/// `rune::assemble::variants`. This shows the *authored* intent of the
+/// PROV-0005 qualifier; deploy currently resolves provider-only, so model-level
+/// variants are not yet what ships.
 pub(super) async fn effective_page(
     State(app): State<AppState>,
     Path((module, kind, name)): Path<(String, String, String)>,
     Query(params): Query<EffectiveParams>,
 ) -> impl IntoResponse {
-    use commands::assemble::variants;
+    use rune::assemble::variants;
 
     let state = app.shared.read().await;
     let Some((module_view, artifact)) = locate_artifact(&state.view, Some(&module), &kind, &name)
@@ -512,7 +512,7 @@ pub(super) async fn effective_page(
     let blurb = format!(
         "Effective content authored for target '{}' (merge mode: {}). \
          Source: {}. Deploy currently resolves provider-only, so model-level \
-         overlays are authored here but not yet what rune ships.",
+         variants are authored here but not yet what rune ships.",
         params.qualifier, mode_label, variant_label
     );
     let files = vec![templates::ConfigFile {
@@ -540,35 +540,42 @@ fn resolve_effective_content(
     repo: &std::path::Path,
     relative_path: &str,
 ) -> (String, String, String) {
-    use commands::assemble::variants::{self, Mode};
+    use rune::assemble::variants;
     match variant_path {
         Some(path) => {
-            let variant_content = match std::fs::read_to_string(path) {
-                Ok(content) => content,
-                Err(error) => {
-                    eprintln!("dashboard: cannot read variant {}: {error}", path.display());
-                    String::new()
-                }
-            };
-            let mode_field = scan::extract_frontmatter_field(&variant_content, "mode");
-            let mode = Mode::parse(&mode_field);
             let label = path
                 .strip_prefix(repo)
                 .unwrap_or(path)
                 .to_string_lossy()
                 .to_string();
-            (
-                variants::apply(base_content, &variant_content, mode),
-                if mode_field.is_empty() {
-                    "replace".to_string()
-                } else {
-                    mode_field
-                },
-                label,
-            )
+            let variant_content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(error) => {
+                    eprintln!("dashboard: cannot read variant {}: {error}", path.display());
+                    return (
+                        format!("(could not read variant {}: {error})\n", path.display()),
+                        "error".to_string(),
+                        label,
+                    );
+                }
+            };
+            match variants::merge_into_base(base_content, &variant_content) {
+                Ok(applied) => (applied.content, applied.mode.as_str().to_string(), label),
+                Err(error) => {
+                    eprintln!(
+                        "dashboard: cannot merge variant {}: {error}",
+                        path.display()
+                    );
+                    (
+                        format!("(could not merge variant: {error})\n"),
+                        "error".to_string(),
+                        label,
+                    )
+                }
+            }
         }
         None => (
-            commands::parse::frontmatter_body(base_content).to_string(),
+            rune::parse::frontmatter_body(base_content).to_string(),
             "base".to_string(),
             format!("{relative_path} (no variant for this target)"),
         ),
@@ -643,87 +650,4 @@ fn strip_frontmatter(content: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_artifact(kind: &str, name: &str, module: &str) -> ArtifactView {
-        ArtifactView {
-            name: name.to_string(),
-            kind: kind.to_string(),
-            module: module.to_string(),
-            relative_path: format!("{kind}/{name}.md"),
-            description: String::new(),
-            content_preview: String::new(),
-            content_body: String::new(),
-            raw_source: String::new(),
-            provenance_raw: String::new(),
-            metadata: Vec::new(),
-            providers: std::collections::BTreeMap::new(),
-            git_log: Vec::new(),
-            adoption: None,
-            sidecar_warning: String::new(),
-            broken_refs: Vec::new(),
-            age_days: None,
-            module_tint: 0,
-            companions: Vec::new(),
-            variants: Vec::new(),
-            source_path: String::new(),
-            vcs: None,
-        }
-    }
-
-    fn make_module(name: &str, artifacts: Vec<ArtifactView>) -> ModuleView {
-        ModuleView {
-            name: name.to_string(),
-            version: String::new(),
-            description: String::new(),
-            source_uri: format!("https://example.com/{name}"),
-            is_target: false,
-            artifacts,
-            local_path: None,
-            vcs: None,
-            git_log: Vec::new(),
-        }
-    }
-
-    fn sample_view() -> DashboardView {
-        DashboardView {
-            modules: vec![
-                make_module(
-                    "rune-core",
-                    vec![make_artifact("skills", "LearnFrom", "rune-core")],
-                ),
-                make_module(
-                    "proton-agents",
-                    vec![make_artifact("skills", "LearnFrom", "proton-agents")],
-                ),
-            ],
-            summary: commands::view::StatusSummary::default(),
-            provenance: Vec::new(),
-            adrs: Vec::new(),
-            deck: None,
-        }
-    }
-
-    #[test]
-    fn locate_artifact_qualified_returns_named_module() {
-        let view = sample_view();
-        let (located_module, located_artifact) =
-            locate_artifact(&view, Some("proton-agents"), "skills", "LearnFrom").unwrap();
-        assert_eq!(located_module.name, "proton-agents");
-        assert_eq!(located_artifact.module, "proton-agents");
-    }
-
-    #[test]
-    fn locate_artifact_unqualified_returns_first_match() {
-        let view = sample_view();
-        let (located_module, _) = locate_artifact(&view, None, "skills", "LearnFrom").unwrap();
-        assert_eq!(located_module.name, "rune-core");
-    }
-
-    #[test]
-    fn locate_artifact_none_for_unknown() {
-        let view = sample_view();
-        assert!(locate_artifact(&view, None, "skills", "Missing").is_none());
-    }
-}
+mod tests;

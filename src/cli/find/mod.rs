@@ -1,6 +1,6 @@
 use clap::ValueEnum;
-use commands::parse;
-use commands::provider::ContentKind;
+use rune::parse;
+use rune::provider::ContentKind;
 use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -65,7 +65,7 @@ fn discover_modules(root: &Path, watched_locations: &[PathBuf]) -> Vec<PathBuf> 
     let mut seen = HashSet::new();
     push_module(root, &mut modules, &mut seen);
 
-    let local_repos = commands::services::discover_local_repos(root, watched_locations);
+    let local_repos = rune::services::discover_local_repos(root, watched_locations);
     for repo in local_repos.values() {
         push_module(repo, &mut modules, &mut seen);
     }
@@ -276,7 +276,7 @@ fn overlap(query: &HashSet<String>, field: &HashSet<String>) -> u32 {
 }
 
 fn module_name(module_root: &Path) -> String {
-    match commands::module::load(module_root) {
+    match rune::module::load(module_root) {
         Ok(manifest) => manifest.name,
         Err(_) => module_root.file_name().map_or_else(
             || "rune".to_string(),

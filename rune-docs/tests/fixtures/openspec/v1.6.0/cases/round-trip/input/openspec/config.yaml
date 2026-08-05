@@ -1,0 +1,8 @@
+schema: custom
+
+context: |
+    This fixture represents a project with custom workflow metadata.
+
+rules:
+    proposal:
+        - Keep fixture descriptions specific to conversion behavior.

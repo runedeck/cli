@@ -5,7 +5,7 @@
 
 use clap::{CommandFactory, Parser};
 
-use super::{Cli, root_help};
+use super::{Cli, Command, root_help};
 
 const TEMPLATE_MAKEFILE: &str = include_str!("../../templates/init/Makefile");
 const TEMPLATE_PRE_COMMIT_CONFIG: &str =
@@ -93,6 +93,7 @@ fn root_help_lists_every_declared_clap_subcommand() {
     }
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn spec_is_the_only_top_level_spec_lifecycle_subcommand() {
     let names = Cli::command()
@@ -104,4 +105,25 @@ fn spec_is_the_only_top_level_spec_lifecycle_subcommand() {
     assert!(!names.iter().any(|name| name == "propose"));
     assert!(!names.iter().any(|name| name == "changes"));
     assert!(!names.iter().any(|name| name == "archive"));
+}
+
+#[test]
+fn sign_tag_accepts_a_named_commit() {
+    let parsed = Cli::try_parse_from(["rune", "sign", "--tag", "v1.2.3", "release-commit"])
+        .expect("tag with commit should parse");
+
+    let Some(Command::Sign { tag, commit, .. }) = parsed.command else {
+        panic!("expected sign command");
+    };
+    assert_eq!(tag.as_deref(), Some("v1.2.3"));
+    assert_eq!(commit.as_deref(), Some("release-commit"));
+}
+
+#[test]
+fn sign_commit_argument_requires_a_tag() {
+    let Err(error) = Cli::try_parse_from(["rune", "sign", "release-commit"]) else {
+        panic!("commit without tag should fail");
+    };
+
+    assert!(error.to_string().contains("--tag"));
 }

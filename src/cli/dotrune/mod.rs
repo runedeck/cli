@@ -22,7 +22,7 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::Path;

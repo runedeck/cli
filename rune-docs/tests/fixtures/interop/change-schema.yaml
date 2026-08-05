@@ -1,0 +1,4 @@
+name: example-change
+fields:
+    - title
+    - summary

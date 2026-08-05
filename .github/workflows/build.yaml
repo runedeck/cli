@@ -47,6 +47,11 @@ jobs:
               with:
                   components: clippy
 
+            - name: Install mdschema
+              run: |
+                  bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
             - name: Build dashboard feature in isolation
               run: cargo build --no-default-features --features dashboard
 
@@ -67,6 +72,11 @@ jobs:
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
                   components: rustfmt, clippy
+
+            - name: Install mdschema
+              run: |
+                  bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
             - name: Download rune
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
