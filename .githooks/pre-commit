@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Commit-time checks: prek hooks when configured, staged secret scan as the
-# floor. A machine with neither tool fails loudly rather than committing
-# unscanned, matching the pre-push hook's stance.
-
-# Arguments pass through: make validate widens the run with --all-files,
-# while a git-invoked hook arrives bare and checks the staged set. The
-# ${1+"$@"} form expands to nothing when the hook arrives bare, which
-# bash 4.0 through 4.3 need under set -u.
 all_files=false
 for argument in ${1+"$@"}; do
     [ "$argument" = "--all-files" ] && all_files=true
@@ -59,12 +51,10 @@ scan_tracked_files() {
 if command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     prek run ${1+"$@"}
     [ "$all_files" = "false" ] || scan_tracked_files
+elif [ "$all_files" = "true" ]; then
+    scan_tracked_files
 elif command -v gitleaks >/dev/null 2>&1; then
-    if [ "$all_files" = "true" ]; then
-        scan_tracked_files
-    else
-        gitleaks git --staged --pre-commit --no-banner
-    fi
+    gitleaks git --staged --pre-commit --no-banner
 else
     echo "  ⚠  neither prek nor gitleaks found — commit checks cannot run" >&2
     echo "     install: brew install prek gitleaks" >&2
