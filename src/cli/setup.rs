@@ -1,7 +1,7 @@
 //! Guided first-run configuration: discover a deck, persist it to the user
 //! config, and point at the follow-up steps (completions, target binding).
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::io::{BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,7 @@ pub fn execute(defaults: bool, json: bool, no_color: bool) -> Result<i32, Error>
     // JSON consumers need a machine-parseable stream, so prompts (which write
     // to stdout) are disabled and every choice falls back to its default.
     let defaults = defaults || json;
-    let config = commands::ontology::load()?;
+    let config = rune::ontology::load()?;
     let mut actions: Vec<String> = Vec::new();
 
     let deck = if let Some(deck) = config.deck {

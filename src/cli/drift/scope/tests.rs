@@ -1,7 +1,7 @@
 use super::super::{DriftResult, DriftStatus};
 use super::*;
-use commands::manifest;
-use commands::provider::{ProviderConfig, ProviderTarget};
+use rune::manifest;
+use rune::provider::{ProviderConfig, ProviderTarget};
 use tempfile::TempDir;
 
 fn write(path: &std::path::Path, content: &str) {

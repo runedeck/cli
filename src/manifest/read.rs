@@ -16,9 +16,9 @@ pub fn read(manifest_content: &str) -> Result<HashMap<String, ManifestEntry>, St
     let parsed: serde_yaml::Value = serde_yaml::from_str(manifest_content)
         .map_err(|error| format!("failed to parse manifest YAML: {error}"))?;
 
-    let Some(root) = parsed.as_mapping() else {
-        return Ok(HashMap::new());
-    };
+    let root = parsed
+        .as_mapping()
+        .ok_or_else(|| "manifest root must be a mapping".to_string())?;
 
     let mut entries = HashMap::new();
     flatten_tree(root, String::new(), &mut entries)?;

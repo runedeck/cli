@@ -1,6 +1,6 @@
-use commands::error::{Error, ErrorKind};
-use commands::module;
-use commands::result::{ActionResult, DeployedFile};
+use rune::error::{Error, ErrorKind};
+use rune::module;
+use rune::result::{ActionResult, DeployedFile};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -20,7 +20,7 @@ pub fn execute_source(
     embed: bool,
 ) -> Result<ActionResult, Error> {
     let root = Path::new(path);
-    if !commands::deck::is_deck(root) {
+    if !rune::deck::is_deck(root) {
         if let Some(deck) = deck_name {
             return Err(Error::new(
                 ErrorKind::Config,
@@ -30,8 +30,7 @@ pub fn execute_source(
         return execute(path, embed);
     }
 
-    let deck =
-        commands::deck::load(root).map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let deck = rune::deck::load(root).map_err(|message| Error::new(ErrorKind::Config, message))?;
     let deck_name = deck_name.ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
@@ -71,6 +70,18 @@ pub fn execute_source(
 #[allow(clippy::too_many_lines)]
 pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
     let module_root = Path::new(path);
+    // A release is publish output: it refuses outright when any adoption
+    // review is open, rather than shipping a silently partial package.
+    let pending = crate::cli::assemble::sources::pending_review_paths(module_root);
+    if !pending.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "adoption review pending for {}; finalize or abandon before releasing",
+                pending.join(", ")
+            ),
+        ));
+    }
     let module_manifest = module::load(module_root).map_err(|error| {
         Error::new(
             ErrorKind::Config,

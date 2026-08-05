@@ -1,6 +1,6 @@
-use commands::manifest;
-use commands::manifest::provenance::read as read_sidecar;
 use console::Style;
+use rune::manifest;
+use rune::manifest::provenance::read as read_sidecar;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -65,7 +65,7 @@ fn collect(directory: &Path) -> (BTreeMap<String, (usize, usize)>, Vec<String>) 
     let mut by_source: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let mut orphans: Vec<String> = Vec::new();
 
-    for kind in commands::provider::ContentKind::ALL {
+    for kind in rune::provider::ContentKind::ALL {
         let kind_directory = directory.join(kind.as_str());
         if kind_directory.is_dir() {
             collect_recursive(&kind_directory, directory, &mut by_source, &mut orphans);
@@ -211,7 +211,7 @@ pub fn print_source_summary(
 /// deck-qualified so sorting remains stable even when two modules use the same
 /// relative deployed-file path.
 pub fn print_deck_source_summary(
-    deck: &commands::deck::Deck,
+    deck: &rune::deck::Deck,
     source_filter: Option<&str>,
     json_output: bool,
 ) -> i32 {
@@ -289,6 +289,12 @@ fn collect_from_provenance_dir(
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // Review records (`review.yaml`, `<stem>.review.yaml`) are adoption
+        // review statements, not SLSA sidecars; the adopt machinery owns them.
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        if file_name == "review.yaml" || file_name.ends_with(".review.yaml") {
+            continue;
+        }
         if path.extension().unwrap_or_default() == manifest::SIDECAR_EXTENSION {
             reports.push(verify_sidecar(module_root, &path));
         }
@@ -344,7 +350,7 @@ fn verify_sidecar(module_root: &Path, sidecar_path: &Path) -> SidecarReport {
 
 fn verify_dependency(
     module_root: &Path,
-    dependency: &commands::manifest::provenance::Dependency,
+    dependency: &rune::manifest::provenance::Dependency,
 ) -> Option<DependencyReport> {
     // Remote upstream dependencies cannot be verified offline; the sidecar's
     // recorded digest is the pin. Only in-repo dependencies are recomputed.

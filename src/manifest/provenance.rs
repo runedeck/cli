@@ -144,11 +144,16 @@ pub struct BuilderVersion {
     pub rune: String,
 }
 
+/// `review` appears on `adopt/v1` sidecars only: `pending` from import until
+/// `rune adopt finalize` flips it to `reviewed`. Generated `assemble/v1`
+/// sidecars leave it empty so their output is unchanged.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
     #[serde(default)]
     pub started_on: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub review: String,
 }
 
 /// Parse a provenance sidecar from YAML content.

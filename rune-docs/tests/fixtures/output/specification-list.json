@@ -1,0 +1,12 @@
+{
+  "specs": [
+    {
+      "capability": "widget",
+      "requirements": 3
+    },
+    {
+      "capability": "search/index",
+      "requirements": 1
+    }
+  ]
+}

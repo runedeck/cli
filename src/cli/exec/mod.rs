@@ -1,6 +1,6 @@
 use crate::cli::dispatch;
-use commands::ontology;
-use commands::parse;
+use rune::ontology;
+use rune::parse;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::ffi::{OsStr, OsString};
@@ -333,14 +333,14 @@ fn resolve_exec(
 
 /// Reject a script that escapes its skill directory (path-boundary validation).
 fn ensure_within(skill_dir: &Path, script_path: &Path) -> Result<(), ExecError> {
-    commands::services::confine::confine_existing(skill_dir, script_path)
+    rune::services::confine::confine_existing(skill_dir, script_path)
         .map(|_| ())
         .map_err(|message| ExecError::new(3, message))
 }
 
 fn resolve_skill_dir(skill: &str, root: &Path, extensions: &[PathBuf]) -> Option<PathBuf> {
     let local = root
-        .join(commands::provider::ContentKind::Skills.as_str())
+        .join(rune::provider::ContentKind::Skills.as_str())
         .join(skill);
     if is_skill_dir(&local) {
         return Some(local);
@@ -349,7 +349,7 @@ fn resolve_skill_dir(skill: &str, root: &Path, extensions: &[PathBuf]) -> Option
         .iter()
         .map(|extension| {
             extension
-                .join(commands::provider::ContentKind::Skills.as_str())
+                .join(rune::provider::ContentKind::Skills.as_str())
                 .join(skill)
         })
         .find(|candidate| is_skill_dir(candidate))

@@ -51,7 +51,7 @@ The assembly and deployment pipeline produces a lot of state that is hard to see
 Ship a read-only web dashboard behind a `dashboard` cargo feature.
 
 - **Stack:** axum 0.8 for routing, htmx (vendored, no CDN) for server-driven interactivity, Askama 0.13 for compile-time HTML templates. Static assets (CSS, vendored JS, highlight.js) are embedded with rust-embed, consistent with [CLI-0005 Embedded Assets via rust-embed](CLI-0005%20Embedded%20Assets%20via%20rust-embed.md).
-- **Shared view model.** The data shapes live in the `commands` lib crate (`commands::view`), populated by the scanner, so a future TUI ([CLI-0007](CLI-0007%20Interactive%20Mode%20and%20TUI.md)) can render the same model instead of re-deriving it. The dashboard is the first consumer, not the owner, of these types.
+- **Shared view model.** The data shapes live in the `rune` lib crate (`rune::view`), populated by the scanner, so a future TUI ([CLI-0007](CLI-0007%20Interactive%20Mode%20and%20TUI.md)) can render the same model instead of re-deriving it. The dashboard is the first consumer, not the owner, of these types.
 - **Async is scoped to the web boundary.** tokio and axum are pulled only by the `dashboard` feature. The synchronous core ([RUST-0006 Synchronous Core](RUST-0006%20Synchronous%20Core.md)) is unchanged: the scanner and all pipeline logic stay synchronous, and async exists only in the request handlers. This is the "async only at explicit I/O boundaries" carve-out that RUST-0006 anticipated.
 - **Feature composition.** The default `full` feature ships the dashboard, while lean builds can omit it. Enabling `dashboard` directly also enables assemble, validate, and deploy because the dashboard reads the same source, provider, and provenance state the toolkit produces. A dedicated CI job compiles, lints, and tests `--features dashboard` so the feature cannot rot. Shared types used only by the dashboard carry `#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]`. This follows [RUST-0007 Feature Flags](RUST-0007%20Feature%20Flags.md).
 
@@ -60,7 +60,7 @@ The dashboard surfaces an overview (artifacts grouped by kind and repository), r
 ## Consequences
 
 - Deployment and provenance state is inspectable in a browser instead of only through CLI output.
-- A future TUI renders `commands::view` rather than re-deriving the scan-to-model mapping.
+- A future TUI renders `rune::view` rather than re-deriving the scan-to-model mapping.
 - Lean builds compile no async or web dependencies unless `dashboard` is enabled.
 - The dashboard pulls an async web stack (axum, tokio), an exception to the synchronous core confined to the feature-gated request handlers.
 - Askama compiles templates at build time, so template edits require a rebuild before they render.

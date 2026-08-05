@@ -1,11 +1,11 @@
-use commands::error::Error;
-use commands::services;
+use rune::error::Error;
+use rune::services;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io::IsTerminal as _;
 use std::path::Path;
 
-use super::spec::{self, ChangeState};
+use super::spec_root::ChangeState;
 
 #[derive(Debug, Serialize)]
 struct ChangeStatus {
@@ -81,7 +81,7 @@ fn collect(root: &Path) -> Result<StatusDashboard, Error> {
     let watched_locations = super::watchlist::watched_locations();
     let view = match services::build_view(root, &provider_targets, &watched_locations) {
         Ok(view) => Some(view),
-        Err(error) if commands::deck::is_deck(root) => return Err(error),
+        Err(error) if rune::deck::is_deck(root) => return Err(error),
         Err(_) => None,
     };
 
@@ -110,21 +110,7 @@ fn collect(root: &Path) -> Result<StatusDashboard, Error> {
         (0, 0, Vec::new())
     };
 
-    let mut changes = spec::scan_changes(root)?
-        .into_iter()
-        .map(|change| ChangeStatus {
-            completion_percent: change.completion_percent(),
-            id: change.id,
-            completed: change.completed,
-            total: change.total,
-            state: change.state,
-        })
-        .collect::<Vec<_>>();
-    changes.sort_by(|left, right| {
-        left.completion_percent
-            .cmp(&right.completion_percent)
-            .then_with(|| left.id.cmp(&right.id))
-    });
+    let changes = collect_changes(root)?;
     let change_counts = changes
         .iter()
         .fold(ChangeCounts::default(), |mut counts, change| {
@@ -147,7 +133,11 @@ fn collect(root: &Path) -> Result<StatusDashboard, Error> {
                 }
                 counts
             });
-    let mut specifications = spec::scan_specifications(root)?
+    #[cfg(feature = "spec")]
+    let scanned_specifications = super::spec::scan_specifications(root)?;
+    #[cfg(not(feature = "spec"))]
+    let scanned_specifications: Vec<super::spec_root::SpecificationSummary> = Vec::new();
+    let mut specifications = scanned_specifications
         .into_iter()
         .map(|specification| SpecificationStatus {
             capability: specification.capability,
@@ -175,6 +165,29 @@ fn collect(root: &Path) -> Result<StatusDashboard, Error> {
     })
 }
 
+fn collect_changes(root: &Path) -> Result<Vec<ChangeStatus>, Error> {
+    #[cfg(feature = "spec")]
+    let scanned_changes = super::spec::scan_changes(root)?;
+    #[cfg(not(feature = "spec"))]
+    let scanned_changes: Vec<super::spec_root::ChangeSummary> = Vec::new();
+    let mut changes = scanned_changes
+        .into_iter()
+        .map(|change| ChangeStatus {
+            completion_percent: change.completion_percent(),
+            id: change.id,
+            completed: change.completed,
+            total: change.total,
+            state: change.state,
+        })
+        .collect::<Vec<_>>();
+    changes.sort_by(|left, right| {
+        left.completion_percent
+            .cmp(&right.completion_percent)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(changes)
+}
+
 fn provider_targets(root: &Path) -> Vec<(String, String)> {
     let merged = super::config::load_merged_config(root).unwrap_or_default();
     let mut targets = super::config::load_providers(&merged).map_or_else(
@@ -191,7 +204,7 @@ fn provider_targets(root: &Path) -> Vec<(String, String)> {
 }
 
 fn empty_rune_counts() -> BTreeMap<String, usize> {
-    commands::view::KIND_ORDER
+    rune::view::KIND_ORDER
         .into_iter()
         .map(|kind| (kind.to_string(), 0))
         .collect()
@@ -211,7 +224,7 @@ fn fallback_inventory(root: &Path) -> BTreeMap<String, usize> {
 fn render(dashboard: &StatusDashboard, color: bool) -> String {
     let styles = crate::cli::style::Sheet::resolved(color);
     let total_runes = dashboard.summary.runes.values().sum::<usize>();
-    let kinds = commands::view::KIND_ORDER
+    let kinds = rune::view::KIND_ORDER
         .into_iter()
         .map(|kind| {
             format!(

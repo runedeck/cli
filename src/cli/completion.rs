@@ -3,7 +3,7 @@
 //! completion directory and reports the path.
 
 use clap::CommandFactory as _;
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -81,9 +81,18 @@ fn script(shell: Shell) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
+/// A closed pipe (`rune completion print zsh | head -3`) is a normal way to
+/// consume a completion script; treat it as success instead of panicking.
 pub fn print(shell: Shell) -> i32 {
-    print!("{}", script(shell));
-    0
+    use std::io::Write;
+    match std::io::stdout().write_all(script(shell).as_bytes()) {
+        Ok(()) => 0,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => 0,
+        Err(error) => {
+            eprintln!("cannot write completion script: {error}");
+            1
+        }
+    }
 }
 
 pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {

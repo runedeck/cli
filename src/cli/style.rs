@@ -186,7 +186,7 @@ pub fn set_global_no_color() {
     let _ = GLOBAL_NO_COLOR.set(true);
 }
 
-fn global_no_color() -> bool {
+pub fn global_no_color() -> bool {
     GLOBAL_NO_COLOR.get().copied().unwrap_or(false)
 }
 

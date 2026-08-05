@@ -8,7 +8,7 @@ mod parse;
 
 pub use parse::{TodoItem, parse_line, render_line};
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::path::Path;
 
 #[derive(Debug, Clone, clap::Subcommand)]

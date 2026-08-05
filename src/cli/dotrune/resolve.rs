@@ -2,7 +2,7 @@
 //! the rune filter. The output flat `Vec<SourceFile>` plugs straight
 //! into the existing per-provider assemble loop.
 
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use crate::cli::dotrune::parse::{DotRune, Source};
 
 enum CanonicalSource {
     Module(PathBuf),
-    Deck(commands::deck::Deck),
+    Deck(rune::deck::Deck),
 }
 
 pub fn resolve_sources(
@@ -130,12 +130,12 @@ pub fn materialize_source(
 }
 
 fn canonical_rune_id(deck: &str, file: &SourceFile) -> Result<String, Error> {
-    let name = if file.kind == commands::provider::ContentKind::Skills {
+    let name = if file.kind == rune::provider::ContentKind::Skills {
         file.relative_path
             .strip_prefix("skills/")
             .and_then(|path| path.split('/').next())
             .map(str::to_string)
-    } else if file.kind == commands::provider::ContentKind::Hooks {
+    } else if file.kind == rune::provider::ContentKind::Hooks {
         file.relative_path
             .strip_prefix("hooks/")
             .map(Path::new)
@@ -173,8 +173,8 @@ fn canonicalize_source(
     if subpath.is_some() {
         return require_module(canonical, source_label);
     }
-    if commands::deck::is_deck(&canonical) {
-        let deck = commands::deck::load(&canonical)
+    if rune::deck::is_deck(&canonical) {
+        let deck = rune::deck::load(&canonical)
             .map_err(|message| Error::new(ErrorKind::Config, format!(".rune: {message}")))?;
         return Ok(CanonicalSource::Deck(deck));
     }

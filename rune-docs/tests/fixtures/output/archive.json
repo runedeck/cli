@@ -1,0 +1,17 @@
+{
+  "change": "add-widget",
+  "status": "merged",
+  "archived_to": "docs/changes/archive/2026-01-15-add-widget",
+  "capabilities": [
+    "widget"
+  ],
+  "merge": {
+    "added": 1,
+    "modified": 1,
+    "removed": 0,
+    "renamed": 1
+  },
+  "warnings": [
+    "2 task(s) remain unchecked"
+  ]
+}

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::history::{GIT_LOG_FORMAT, enrich_commits_with_entire, parse_git_log};
+use super::history::{GIT_LOG_FORMAT, enrich_commits_with_entire, git_in, parse_git_log};
 use crate::view::{GitCommit, VcsState, WorktreeState};
 
 pub(super) struct RepoVcs {
@@ -159,7 +159,11 @@ pub(super) fn repo_log(repo: &Path) -> Vec<GitCommit> {
 }
 
 fn git_stdout(dir: &Path, args: &[&str]) -> Option<String> {
-    command_stdout(dir, "git", args)
+    let output = git_in(dir).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn command_stdout(dir: &Path, program: &str, args: &[&str]) -> Option<String> {

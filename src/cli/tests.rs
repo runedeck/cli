@@ -93,6 +93,7 @@ fn root_help_lists_every_declared_clap_subcommand() {
     }
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn spec_is_the_only_top_level_spec_lifecycle_subcommand() {
     let names = Cli::command()

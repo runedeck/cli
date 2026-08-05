@@ -1,4 +1,4 @@
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -67,17 +67,17 @@ pub fn build_state(root: &Path) -> Result<DashboardState, Error> {
 }
 
 fn configured_deck_root() -> Result<Option<std::path::PathBuf>, Error> {
-    let configured = commands::ontology::load()?.deck;
-    Ok(configured.map(|value| commands::ontology::expand_tilde(&value.value)))
+    let configured = rune::ontology::load()?.deck;
+    Ok(configured.map(|value| rune::ontology::expand_tilde(&value.value)))
 }
 
 pub(crate) fn attach_configured_deck(
-    view: &mut commands::view::DashboardView,
+    view: &mut rune::view::DashboardView,
     deck_root: &Path,
     provider_targets: &[(String, String)],
     watched_locations: &[std::path::PathBuf],
 ) -> Result<(), Error> {
-    if !commands::deck::is_deck(deck_root) {
+    if !rune::deck::is_deck(deck_root) {
         return Err(Error::new(
             ErrorKind::Config,
             format!(

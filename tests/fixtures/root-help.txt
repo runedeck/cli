@@ -28,6 +28,8 @@
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
+    adopt       start|status|next|verdict|finalize|abandon            Adopt an upstream rune through block-by-block review
+    bench       run|report|list|dashboard|doctor|audit                Run and report SkateBench-compatible benchmark suites
     provider    [enable|disable <name>]                               List or toggle deploy providers
     todo        [add|do|ls|obsidian|import]                           Repo tasks in TODO.txt with an Obsidian transform
     adr         new|list|supersede|index                              Architecture decision records under docs/decisions
@@ -42,6 +44,7 @@
     find        <QUERY>                                               Find local runes by relevance
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
+    run         <TOOL> [PROMPT|--prompt-file <FILE>]                  Run a coding tool with supervised output
     completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 
   Quick start:

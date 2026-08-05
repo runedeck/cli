@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # rune-cli module validation script
-# Canonical source: https://github.com/runedeck/rune/blob/main/scripts/validate.sh
+# Canonical source: https://github.com/runedeck/cli/blob/main/scripts/validate.sh
 # Runs the same checks as `rune validate` without requiring the compiled binary.
 
 UPSTREAM_URL="https://raw.githubusercontent.com/runedeck/rune/main/scripts/validate.sh"
@@ -210,7 +210,12 @@ check_typescript() {
 
 check_mdschema() {
     if ! command -v mdschema >/dev/null 2>&1; then
-        echo "  SKIP mdschema (not installed)"
+        echo "  FAIL mdschema is not installed"
+        echo "       It is the only checker for section order, unexpected sections,"
+        echo "       permitted heading placement, and heading uniqueness."
+        echo "       Install: brew install jackchuka/tap/mdschema"
+        echo "       INSTALL.md carries the path for machines without Homebrew."
+        ERRORS=$((ERRORS + 1))
         return
     fi
 

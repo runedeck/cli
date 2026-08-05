@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::templates;
 
@@ -48,10 +48,16 @@ pub fn embedded_schema(kind: &str) -> Option<&'static str> {
 ///         pattern: "^[A-Z][a-zA-Z0-9]{2,50}$"
 /// ```
 ///
-/// Returns `None` when no `.schema.yaml` exists in the directory.
-pub fn load_schema(dir: &Path) -> Option<String> {
+/// Returns `Ok(None)` when no `.schema.yaml` exists in the directory; an
+/// unreadable schema is an error, because validating against the default
+/// contract instead would silently pass the wrong checks.
+pub fn load_schema(dir: &Path) -> Result<Option<String>, String> {
     let schema_path = dir.join(".schema.yaml");
-    fs::read_to_string(&schema_path).ok()
+    match fs::read_to_string(&schema_path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("cannot read {}: {error}", schema_path.display())),
+    }
 }
 
 /// Load `.mdschema` from a directory if present.
@@ -80,21 +86,50 @@ pub fn load_mdschema(dir: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// Load `.mdschema` from a directory, falling back to the embedded template.
-///
-/// Checks for a local `.mdschema` first. If missing, returns the
-/// embedded template for the content kind without writing to disk.
-pub fn load_mdschema_or_fallback(directory: &Path, kind: &str) -> Result<Option<String>, String> {
-    match load_mdschema(directory)? {
-        Some(content) => Ok(Some(content)),
-        None => Ok(templates::embedded_mdschema(kind)),
-    }
+/// An `.mdschema` resolved for a directory: its content plus the on-disk
+/// path when it came from a file. Embedded-template fallbacks have no
+/// path; dispatch writes their content to a private temporary file so the
+/// standalone `mdschema` binary (which reads schemas from disk) still
+/// checks them, and the built-in subset applies only when that write or
+/// the binary itself is unavailable.
+pub struct MdschemaSource {
+    pub content: String,
+    pub path: Option<PathBuf>,
 }
 
-pub fn load_json_schema(directory: &Path) -> String {
-    let schema_path = directory.join(".schema.json");
-    if let Ok(content) = fs::read_to_string(&schema_path) {
-        return content;
+/// Resolve an `.mdschema` for a file, searching `directories` in order
+/// and falling back to the embedded template for the content kind.
+///
+/// Skill directories pass `[skill_dir, skills_kind_dir]` so a per-skill
+/// schema wins over the kind-level one; flat directories pass just
+/// themselves.
+pub fn load_mdschema_or_fallback(
+    directories: &[&Path],
+    kind: &str,
+) -> Result<Option<MdschemaSource>, String> {
+    for directory in directories {
+        if let Some(content) = load_mdschema(directory)? {
+            return Ok(Some(MdschemaSource {
+                content,
+                path: Some(directory.join(".mdschema")),
+            }));
+        }
     }
-    ADR_JSON_SCHEMA.to_string()
+    Ok(
+        templates::embedded_mdschema(kind).map(|content| MdschemaSource {
+            content,
+            path: None,
+        }),
+    )
+}
+
+pub fn load_json_schema(directory: &Path) -> Result<String, String> {
+    let schema_path = directory.join(".schema.json");
+    match fs::read_to_string(&schema_path) {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ADR_JSON_SCHEMA.to_string())
+        }
+        Err(error) => Err(format!("cannot read {}: {error}", schema_path.display())),
+    }
 }

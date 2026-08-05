@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use commands::review::CommentKind;
+use rune::review::CommentKind;
 
 use super::{comment_panel::wrap_segments, styles};
 

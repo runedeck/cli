@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "$id": "https://github.com/runedeck/rune/schemas/rune-adr.schema.json",
+    "$id": "https://github.com/runedeck/cli/schemas/rune-adr.schema.json",
     "title": "Rune ADR Frontmatter",
     "description": "JSON Schema for validating rune ADR YAML frontmatter (structured-madr + x-rune- extensions)",
     "type": "object",

@@ -14,7 +14,7 @@ pub use staleness::check_sources;
 pub use statement::{
     generate_adopt_statement, generate_adopt_statement_with_transforms, generate_statement,
 };
-pub use status::status;
+pub use status::{status, status_bytes};
 pub use write::write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -48,10 +48,27 @@ pub const PROVENANCE_DIRECTORY: &str = ".provenance";
 
 /// Compute the provenance sidecar path relative to the provider target.
 ///
-/// `rules/CurrencyFormatting.md` → `rules/.provenance/CurrencyFormatting.yaml`
-/// `rules/cz/PersonalTaxIncome.md` → `rules/cz/.provenance/PersonalTaxIncome.yaml`
-/// `skills/SessionPrep/SKILL.md` → `skills/SessionPrep/.provenance/SKILL.yaml`
+/// The full filename is encoded so same-stem files cannot collide on one
+/// sidecar (`logo.png` and `logo.svg` get distinct sidecars):
+///
+/// `rules/CurrencyFormatting.md` → `rules/.provenance/CurrencyFormatting.md.yaml`
+/// `skills/SessionPrep/SKILL.md` → `skills/SessionPrep/.provenance/SKILL.md.yaml`
 pub fn provenance_path(manifest_key: &str) -> String {
+    let path = std::path::Path::new(manifest_key);
+    let parent = path.parent().unwrap_or(std::path::Path::new(""));
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+
+    let provenance_dir = parent.join(PROVENANCE_DIRECTORY);
+    provenance_dir
+        .join(format!("{file_name}.{SIDECAR_EXTENSION}"))
+        .to_string_lossy()
+        .to_string()
+}
+
+/// The stem-named sidecar location written by earlier versions
+/// (`CurrencyFormatting.md` → `.provenance/CurrencyFormatting.yaml`).
+/// Read-side fallback only; nothing writes this shape anymore.
+pub fn legacy_provenance_path(manifest_key: &str) -> String {
     let path = std::path::Path::new(manifest_key);
     let parent = path.parent().unwrap_or(std::path::Path::new(""));
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
@@ -63,9 +80,39 @@ pub fn provenance_path(manifest_key: &str) -> String {
         .to_string()
 }
 
-/// Compute the build sidecar path from a content file path.
+/// Sidecar path beside a file on disk, full-filename encoded.
+pub fn sidecar_for(file_path: &std::path::Path) -> std::path::PathBuf {
+    let parent = file_path.parent().unwrap_or(std::path::Path::new("."));
+    let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
+    parent
+        .join(PROVENANCE_DIRECTORY)
+        .join(format!("{file_name}.{SIDECAR_EXTENSION}"))
+}
+
+/// Read-side sidecar resolution: the full-filename sidecar when present,
+/// else the legacy stem-named sidecar. `None` when neither exists.
+pub fn existing_sidecar_for(file_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let current = sidecar_for(file_path);
+    if current.is_file() {
+        return Some(current);
+    }
+    let parent = file_path.parent().unwrap_or(std::path::Path::new("."));
+    let stem = file_path.file_stem().unwrap_or_default().to_string_lossy();
+    let legacy = parent
+        .join(PROVENANCE_DIRECTORY)
+        .join(format!("{stem}.{SIDECAR_EXTENSION}"));
+    legacy.is_file().then_some(legacy)
+}
+
+/// Compute the build sidecar path from a content file path. The full
+/// filename is kept (`logo.png` → `logo.png.yaml`) so same-stem assets get
+/// distinct sidecars, mirroring the deployed `.provenance/` naming.
 pub fn sidecar_path(content_path: &std::path::Path) -> std::path::PathBuf {
-    content_path.with_extension(SIDECAR_EXTENSION)
+    let file_name = content_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    content_path.with_file_name(format!("{file_name}.{SIDECAR_EXTENSION}"))
 }
 
 pub fn content_sha256(content: &str) -> String {

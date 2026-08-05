@@ -42,6 +42,35 @@ fn init_creates_all_files() {
     );
     assert!(temp_directory.path().join("agents/.mdschema").is_file());
     assert!(temp_directory.path().join("rules/.mdschema").is_file());
+    assert!(temp_directory.path().join("skills/.mdschema").is_file());
+}
+
+/// SHA-256 of the canonical Stable shell validation schema.
+///
+/// The deck carries byte-identical copies at `runes/core/skills/.mdschema` and
+/// `runes/meta/skills/.mdschema`, because a deck module is validated without a
+/// CLI checkout present. This pin is what makes an edit here impossible to
+/// forget there.
+const STABLE_SHELL_SCHEMA_SHA256: &str =
+    "c4f8cb5d5b141367be867ff316f3526edb6c54203dd78f86b18fdba97f116004";
+
+#[test]
+fn stable_shell_schema_digest_is_pinned() {
+    let schema = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/schemas/skill.mdschema"
+    ));
+    let digest = rune::manifest::content_sha256(schema);
+
+    assert_eq!(
+        digest, STABLE_SHELL_SCHEMA_SHA256,
+        "schemas/skill.mdschema changed.\n\
+         To accept the change, do all three:\n\
+         1. set STABLE_SHELL_SCHEMA_SHA256 to the digest above\n\
+         2. copy the file over deck runes/core/skills/.mdschema and runes/meta/skills/.mdschema\n\
+         3. run `make validate-schemas` in the deck\n\
+         Background: docs/Schemas.md"
+    );
 }
 
 #[test]

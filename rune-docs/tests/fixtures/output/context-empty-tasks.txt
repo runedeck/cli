@@ -1,0 +1,21 @@
+# Work order: add-widget
+
+## Proposal
+
+Add a widget to the demo tool.
+
+## Design
+
+Widgets render inline.
+
+## Delta: widget
+
+## ADDED Requirements
+
+### Requirement: Widget rendering
+
+The tool SHALL render widgets.
+
+## Tasks
+
+_No checklist tasks found._

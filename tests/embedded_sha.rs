@@ -13,7 +13,7 @@ fn embedded_validate_sh_sha_matches_script() {
     let actual = format!("{:x}", Sha256::digest(VALIDATE_SH));
     assert_eq!(
         actual,
-        commands::VALIDATE_SH_SHA,
+        rune::VALIDATE_SH_SHA,
         "VALIDATE_SH_SHA out of sync with scripts/validate.sh — rebuild rune-cli"
     );
 }

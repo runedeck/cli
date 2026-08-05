@@ -3,8 +3,8 @@ mod routes;
 mod server;
 mod templates;
 
-use commands::error::{Error, ErrorKind};
-use commands::services as scan;
+use rune::error::{Error, ErrorKind};
+use rune::services as scan;
 
 pub fn execute(root: &str, port: Option<u16>) -> Result<i32, Error> {
     let runtime = tokio::runtime::Builder::new_current_thread()

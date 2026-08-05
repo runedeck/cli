@@ -5,8 +5,8 @@ use serde::Deserialize;
 use super::AppState;
 use super::PAGE_SIZE;
 use crate::cli::dashboard::templates;
-use commands::services::builders::{SearchFilters, search_results};
-use commands::view::ArtifactView;
+use rune::services::builders::{SearchFilters, search_results};
+use rune::view::ArtifactView;
 
 #[derive(Deserialize)]
 pub(super) struct SearchParams {
@@ -59,12 +59,11 @@ pub(super) async fn overview(
         "comfortable"
     };
     let nested = if layout == "nested" {
-        commands::services::builders::build_nested(&state.view, primary)
+        rune::services::builders::build_nested(&state.view, primary)
     } else {
         Vec::new()
     };
-    let matrix =
-        (layout == "matrix").then(|| commands::services::builders::build_matrix(&state.view));
+    let matrix = (layout == "matrix").then(|| rune::services::builders::build_matrix(&state.view));
     let template = templates::OverviewTemplate {
         tab: "overview",
         version: &state.version,
@@ -152,7 +151,7 @@ pub(super) async fn search(
         .take(PAGE_SIZE)
         .map(|(artifact, _)| artifact)
         .collect();
-    let groups = commands::view::group_by_kind(&paged);
+    let groups = rune::view::group_by_kind(&paged);
 
     let is_htmx = headers.contains_key("hx-request");
     if is_htmx {

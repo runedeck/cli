@@ -1,7 +1,7 @@
 use askama::Template;
-pub use commands::services::builders::{DepLink, MatrixView, NestedGroup, VariantCoverage};
-pub use commands::services::files::{ConfigFile, HarnessHooks};
-use commands::view::{ArtifactView, DashboardView, DeckView, ModuleView};
+pub use rune::services::builders::{DepLink, MatrixView, NestedGroup, VariantCoverage};
+pub use rune::services::files::{ConfigFile, HarnessHooks};
+use rune::view::{ArtifactView, DashboardView, DeckView, ModuleView};
 
 use crate::cli::dashboard::routes::deck::TargetPanelRow;
 
@@ -93,7 +93,7 @@ pub struct ArtifactDetailTemplate<'a> {
     pub artifact: &'a ArtifactView,
     pub module_name: &'a str,
     pub module_source_uri: &'a str,
-    pub deploy_groups: Vec<commands::view::DeployGroup>,
+    pub deploy_groups: Vec<rune::view::DeployGroup>,
     pub provenance_raw: String,
     pub diff_deployed: String,
     pub diff_source_at_deploy: String,

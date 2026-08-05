@@ -1,4 +1,4 @@
-use commands::error::{Error, ErrorKind};
+use rune::error::{Error, ErrorKind};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +124,7 @@ pub fn execute(
 /// each name against the source deck and failing loudly on unknown or
 /// ambiguous names.
 pub fn execute_kind(
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     names: &str,
     source: Option<&str>,
     reference: Option<&str>,
@@ -159,7 +159,7 @@ pub fn execute_kind(
 /// List the source deck's runes of one kind (`rune skill` bare), marking
 /// ids the manifest already includes.
 pub fn list_kind(
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     source: Option<&str>,
     no_color: bool,
 ) -> Result<i32, Error> {
@@ -231,7 +231,7 @@ pub fn list_kind(
 }
 
 fn resolve_kind_name(
-    kind: commands::provider::ContentKind,
+    kind: rune::provider::ContentKind,
     name: &str,
     ids: &[String],
 ) -> Result<String, Error> {
@@ -382,7 +382,7 @@ fn validate_selection(manifest: &DotRune, repo_root: &Path) -> Result<(), Valida
 }
 
 fn configured_deck_source() -> Result<String, Error> {
-    commands::ontology::load()?
+    rune::ontology::load()?
         .deck
         .map(|value| value.value)
         .ok_or_else(|| {
@@ -504,62 +504,4 @@ fn normalize_rune_id(rune_id: &str) -> Result<String, Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::resolve_kind_name;
-    use commands::provider::ContentKind;
-
-    fn deck_ids() -> Vec<String> {
-        [
-            "development/skills/deslop",
-            "development/rules/Deslop",
-            "development/skills/version-control",
-            "council/skills/convene-council",
-            "research/skills/deslop",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-    }
-
-    #[test]
-    fn unique_name_resolves_to_qualified_id() {
-        let id = resolve_kind_name(ContentKind::Skills, "version-control", &deck_ids()).unwrap();
-        assert_eq!(id, "development/skills/version-control");
-    }
-
-    #[test]
-    fn kind_filter_separates_rule_from_skill() {
-        let id = resolve_kind_name(ContentKind::Rules, "Deslop", &deck_ids()).unwrap();
-        assert_eq!(id, "development/rules/Deslop");
-    }
-
-    #[test]
-    fn ambiguous_name_lists_every_candidate() {
-        let error = resolve_kind_name(ContentKind::Skills, "deslop", &deck_ids()).unwrap_err();
-        assert!(error.message().contains("development/skills/deslop"));
-        assert!(error.message().contains("research/skills/deslop"));
-    }
-
-    #[test]
-    fn domain_qualified_name_disambiguates() {
-        let id = resolve_kind_name(ContentKind::Skills, "research/deslop", &deck_ids()).unwrap();
-        assert_eq!(id, "research/skills/deslop");
-    }
-
-    #[test]
-    fn full_canonical_id_resolves_as_given() {
-        let id = resolve_kind_name(
-            ContentKind::Skills,
-            "development/skills/deslop",
-            &deck_ids(),
-        )
-        .unwrap();
-        assert_eq!(id, "development/skills/deslop");
-    }
-
-    #[test]
-    fn unknown_name_fails_loudly() {
-        let error = resolve_kind_name(ContentKind::Skills, "ghost", &deck_ids()).unwrap_err();
-        assert!(error.message().contains("no skills rune named 'ghost'"));
-    }
-}
+mod tests;

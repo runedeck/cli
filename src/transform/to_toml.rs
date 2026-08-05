@@ -24,7 +24,7 @@ use serde::Serialize;
 /// ```
 ///
 /// ```
-/// # use commands::transform::markdown_to_toml;
+/// # use rune::transform::markdown_to_toml;
 /// let md = "---\ndescription: A helper agent\n---\n\nDo helpful things.";
 /// let toml = markdown_to_toml("Helper.md", md).unwrap();
 /// assert!(toml.contains("description = \"A helper agent\""));
