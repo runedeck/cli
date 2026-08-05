@@ -2,7 +2,7 @@
 
 help:
 	@echo "  make install    activate hooks (git + jj)"
-	@echo "  make validate   run commit and pre-push checks"
+	@echo "  make validate   run commit-stage checks"
 
 install:
 	git config core.hooksPath .githooks
@@ -16,4 +16,3 @@ install:
 
 validate:
 	@bash .githooks/pre-commit --all-files
-	@bash .githooks/pre-push --all-files

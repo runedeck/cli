@@ -1,14 +1,15 @@
 name: Review Correctness
 
 # Thin caller: the lane's body lives in runedeck/seer. The caller owns
-# the triggers, the concurrency, and the permissions; only review-label
-# events and new pushes may cancel an active run, so an unrelated label
-# never kills a billed review mid-flight. Round-end label consumption in
-# the lane rides the workflow token, whose removals emit no events, so a
-# clean round never re-enters here.
+# the triggers, the concurrency, and the permissions. Review labels request
+# rounds, while stage labels record settled work. Applying or removing this
+# workflow's review label may cancel an active run; nothing else does. The
+# lane consumes labels with the workflow token when a round ends, and those
+# removals emit no events, so a clean round never re-enters here.
+# ready_for_review re-evaluates the mirror and releases a pending review label.
 on:
     pull_request:
-        types: [opened, ready_for_review, reopened, synchronize, labeled, unlabeled]
+        types: [labeled, unlabeled, ready_for_review]
 
 permissions:
     contents: read
@@ -20,21 +21,63 @@ permissions:
 
 concurrency:
     group: review-correctness-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ github.event.action == 'synchronize' || (contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name)) }}
+    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name) }}
 
 jobs:
+    # A queued ready event keeps its label payload after another round
+    # consumed the review label, so readiness re-reads the live labels before
+    # the lane may start.
+    release:
+        if: github.event.action == 'ready_for_review' && github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'review:runeseer')
+        runs-on: ubuntu-latest
+        timeout-minutes: 2
+        permissions:
+            contents: read
+            pull-requests: read
+            issues: read
+        outputs:
+            summoned: ${{ steps.live.outputs.summoned }}
+        steps:
+            - id: live
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  # Pages merge through jq -s so a label set past one page
+                  # still counts fully. pipefail plus the explicit failure
+                  # exit keep an API error from reading as a consumed review label.
+                  set -o pipefail
+                  labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
+                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
+                      || { echo "could not read the live labels; rerun the check"; exit 1; }
+                  if printf '%s\n' "$labels" | grep -qx 'review:runeseer'; then
+                      echo "summoned=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "summoned=false" >> "$GITHUB_OUTPUT"
+                      echo "the review label was already consumed; the lane stands down."
+                  fi
+
     review:
-        if: github.event.pull_request.draft == false
+        needs: release
+        if: '!cancelled() && github.event.pull_request.draft == false && (github.event.action == ''labeled'' || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
             RUNESEER_APP_KEY: ${{ secrets.RUNESEER_APP_KEY }}
             CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+    # Mirrors the called lane's result under the stable check context the
+    # rulesets require. Fail-closed: a head the lane did not judge reports
+    # failure rather than skipping, because a skipped check satisfies a
+    # required status check, and it runs for drafts too so a label applied
+    # in draft can never leave a skipped-green check behind. When the lane
+    # does not run, green requires that Runeseer's LATEST review on this
+    # exact head is an approval: an approval a later review superseded
+    # stays red, and no event class can redden or green a head past that
+    # judgment.
     review-context:
         name: review/correctness
         needs: review
-        if: always() && github.event.pull_request.draft == false
+        if: always()
         runs-on: ubuntu-latest
         timeout-minutes: 2
         steps:
@@ -47,10 +90,15 @@ jobs:
                       echo "the lane concluded: ${{ needs.review.result }}"
                       exit 1
                   fi
+                  # A reusable workflow whose inner job skips its guard still
+                  # concludes success, so a successful caller result defers to
+                  # the inner job's own conclusion. A failed jobs read fails
+                  # this check rather than falling through to the approval
+                  # path, and an unknown conclusion stays red.
                   if [ "${{ needs.review.result }}" = "success" ]; then
                       inner=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
-                          --jq '.jobs' \
-                          | jq -s -r 'add // [] | [.[] | select(.name == "review / correctness")] | first | .conclusion // "missing"') \
+                          --jq '[.jobs[] | select(.name == "review / correctness")]' \
+                          | jq -s -r 'add // [] | first | .conclusion // "missing"') \
                           || { echo "could not read this run's jobs; rerun the check"; exit 1; }
                       if [ "$inner" = "success" ]; then
                           echo "the lane judged this head or stood down in scope."
@@ -61,6 +109,9 @@ jobs:
                           exit 1
                       fi
                   fi
+                  # Per-page jq output merges through jq -s: the runner's gh
+                  # predates --slurp. pipefail keeps a failed reviews read from
+                  # reading as an absent approval.
                   latest_state=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
                       --jq '[.[] | select(.user.login == "runeseer[bot]" and .commit_id == env.HEAD_SHA)]' \
                       | jq -s -r 'add // [] | sort_by(.submitted_at) | last | .state // ""') \
@@ -69,5 +120,5 @@ jobs:
                       echo "Runeseer's latest review approves this head."
                       exit 0
                   fi
-                  echo "no standing Runeseer approval for this head; the funnel summons a round, or re-apply the review label"
+                  echo "no standing Runeseer approval for this head; apply the review label to start a round"
                   exit 1
