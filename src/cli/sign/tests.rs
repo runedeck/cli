@@ -3,7 +3,7 @@ use super::{
     select_default_remote, signature_fingerprints, signing_command_error, signing_failure,
     tag_push_refspec, tag_reference, tag_target, verified_status_output,
 };
-use commands::error::ErrorKind;
+use rune::error::ErrorKind;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;

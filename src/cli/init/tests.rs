@@ -2,6 +2,86 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn git_reference_discovers_enclosing_repository_only_for_tracked_directory() {
+    let repository = TempDir::new().unwrap();
+    run_git(["init", "-b", "main"], Some(repository.path())).unwrap();
+    run_git(
+        [
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=",
+            "-c",
+            "user.name=Test Author",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "test fixture",
+        ],
+        Some(repository.path()),
+    )
+    .unwrap();
+    let nested_non_repository = repository.path().join("skeleton");
+    std::fs::create_dir(&nested_non_repository).unwrap();
+
+    assert_eq!(git_reference(&nested_non_repository).unwrap(), None);
+
+    std::fs::write(nested_non_repository.join("template.txt"), "template\n").unwrap();
+    run_git(["add", "skeleton/template.txt"], Some(repository.path())).unwrap();
+
+    assert_eq!(git_reference(&nested_non_repository).unwrap(), None);
+
+    run_git(
+        [
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=",
+            "-c",
+            "user.name=Test Author",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "track skeleton",
+        ],
+        Some(repository.path()),
+    )
+    .unwrap();
+    let enclosing_revision = git_reference(repository.path()).unwrap();
+
+    assert_eq!(
+        git_reference(&nested_non_repository).unwrap(),
+        enclosing_revision
+    );
+}
+
+#[test]
+fn available_template_names_ignores_hidden_directories() {
+    let skeleton = TempDir::new().unwrap();
+    std::fs::create_dir(skeleton.path().join("base")).unwrap();
+    std::fs::create_dir(skeleton.path().join("rust")).unwrap();
+    std::fs::create_dir(skeleton.path().join(".git")).unwrap();
+
+    assert_eq!(
+        available_template_names(skeleton.path()).unwrap(),
+        vec!["rust".to_string()]
+    );
+}
+
+#[test]
+fn template_prompt_contains_available_layers() {
+    let mut output = Vec::new();
+    write_template_prompt(&mut output, &["rust".to_string(), "tool".to_string()]).unwrap();
+    let prompt = String::from_utf8(output).unwrap();
+
+    assert!(prompt.contains("available templates: rust, tool"));
+    assert!(prompt.ends_with("templates to compose (comma-separated, empty for base only): "));
+}
+
+#[test]
 fn init_creates_all_files() {
     let temp_directory = TempDir::new().unwrap();
     let result = execute(&temp_directory.path().to_string_lossy()).unwrap();

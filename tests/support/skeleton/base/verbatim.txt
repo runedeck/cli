@@ -1,0 +1,1 @@
+Literal ${NAME} and ${{ github.ref }} expressions.

@@ -6,7 +6,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
-use commands::error::ErrorKind;
+use rune::error::ErrorKind;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

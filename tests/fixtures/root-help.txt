@@ -3,7 +3,7 @@
 
   Flow:
     setup       [--defaults]                                          Guided first-run configuration
-    init        <SLUG_OR_DIR> [--lang] [--purpose] | --module <DIR>   Scaffold a project from a skeleton, or a deck module
+    init        <SLUG_OR_DIR> [--with <NAMES>] | --module <DIR>       Scaffold a project from a skeleton, or a deck module
     target      [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
     add         <ID[,ID...]>                                          Add runes to the consumer manifest
     skill       add <NAME[,NAME...]> | install | show                 List or stage skills; ship the rune agent skill
@@ -49,7 +49,7 @@
     completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 
   Quick start:
-    rune init N4M3Z/demo --lang rust --purpose tool
+    rune init N4M3Z/demo --with rust,tool
     rune target N4M3Z/demo
     rune add development
     rune tui --edit

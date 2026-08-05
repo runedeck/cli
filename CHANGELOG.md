@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Portable project scaffolding: `rune init --with <templates>` composes flat embedded templates offline and writes Copier-compatible update metadata; `--lang` and `--purpose` remain compatibility aliases.
 - `rune run [profile@]<tool>` executes Claude, Codex, agy, Grok, and OpenCode noninteractively through the provider layer shared with native bench (CLI-0024, CLI-0025). It accepts prompts from an argument, file, or standard input; defaults to read-only mode with no timeout; supports explicit repository, workspace-write, timeout, dry-run, and typed JSON output; and rejects tmux and Docker wrappers. Read-only runs restrict Claude and Grok to `Read`, `Glob`, and `Grep`, because their sandbox and permission settings alone still allow writes through the tool set.
 - Route-specific model metadata keeps provider model and context settings together for both `rune launch` and `rune run` (CLI-0026). Claude routes derive model, maximum context, and automatic compaction settings as one group; conflicting profile environment keys fail resolution.
 - Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch sol@claude` applies a named env/args/with preset from `launch.profiles` (profile@tool, like user@host); env values support `from_env` references so secrets stay out of config; bare `rune launch` lists tools with install state and profiles; `rune launch <model>@ollama` dispatches `ollama run`.
@@ -43,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Project scaffolding escapes TOML description values and includes `.gitignore` retrofits in dry-run output.
 - Git subprocesses ignore ambient repository-routing variables exported by hooks, so nested repository operations stay pinned to their intended worktrees.
 - Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.

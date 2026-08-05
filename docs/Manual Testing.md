@@ -75,8 +75,9 @@ Expected:
 ### rune init
 
 ```sh
-rune init demo --lang shell --purpose tool --dry-run   # plan only, destination untouched
-rune init demo --lang shell --purpose tool --brief "Manual init target"
+export RUNE_TARGETS="$(mktemp -d)"
+rune init demo --with shell,tool --dry-run   # plan only, destination untouched
+rune init demo --with shell,tool --brief "Manual init target"
 cd "$RUNE_TARGETS/demo"
 test -x bin/demo && test -x .githooks/pre-commit && echo hooks-ok
 git config --get core.hooksPath       # .githooks
@@ -87,10 +88,11 @@ git rev-parse --verify HEAD           # "fatal: Needed a single revision" — co
 
 Expected:
 
-- init lists the applied layers: `base`, `lang/shell`, `purpose/tool`
+- init lists the applied layers: `base`, `shell`, `tool` and writes `answers.yaml`
 - under the targets root init runs in workshop mode: the private/public/assets layout lands, jj colocates when installed, and nothing is committed (`--workshop` forces the mode elsewhere; `--spine` gives a plain project the jj colocation; outside the targets root a plain init still commits the scaffold)
 - `--skeleton <DIR>` overrides the skeleton root; `--bind` makes the fresh project the active target in one step; `rune init --module <DIR>` scaffolds a deck module instead
-- the composed `.gitignore` carries both the base entries and the lang fragment
+- the composed `.gitignore` carries the base and selected-template entries
+- `rune validate` in the scaffolded project runs consumer checks, so the pre-commit hook passes
 - with no configured skeleton root, init extracts the built-in layers to a per-version cache, so scaffolding works from a bare brew install
 
 ### rune target

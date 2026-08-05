@@ -1,0 +1,20 @@
+name: Autofix Comment
+
+# Thin caller: the trusted autofix half lives in runedeck/seer.
+on:
+    workflow_run:
+        workflows: [Autofix Suggest]
+        types: [completed]
+
+permissions:
+    contents: read
+    actions: read
+    pull-requests: read
+    issues: write
+
+jobs:
+    comment:
+        uses: runedeck/seer/.github/workflows/autofix-comment.yaml@main
+        secrets:
+            RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}
+            RUNEWRIGHT_APP_KEY: ${{ secrets.RUNEWRIGHT_APP_KEY }}

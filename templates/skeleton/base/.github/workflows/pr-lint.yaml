@@ -1,0 +1,98 @@
+name: PR Lint
+
+on:
+    pull_request_target:
+        types: [opened, edited, synchronize, reopened]
+
+# issues: write lets the labeler create area labels that do not exist
+# yet — a freshly scaffolded repository's first pull request provisions
+# its own label set.
+permissions:
+    contents: read
+    pull-requests: write
+    issues: write
+
+# Overlapping synchronize runs race the label writes: the older run
+# finishing last would restore stale labels.
+concurrency:
+    group: pr-lint-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    title:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  types: |
+                      feat
+                      fix
+                      docs
+                      chore
+                      refactor
+                      test
+                  requireScope: false
+                  subjectPattern: ^(?![A-Z]).+$
+                  subjectPatternError: >
+                      The subject "{subject}" must start lowercase.
+
+    label:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/labeler@b8dd2d9be0f68b860e7dae5dae7d772984eacd6d # v6
+              with:
+                  sync-labels: true
+
+    # A fresh repository provisions the ceremony's fixed label set on its
+    # first pull request, so summons and waivers exist before anyone
+    # reaches for them.
+    labels:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+              with:
+                  script: |
+                      const wanted = [
+                          ["review", "5319e7", "Summons the full review funnel"],
+                          ["review:runeseer", "5319e7", "Summons the adjudicating correctness lane"],
+                          ["review:macroscope", "5319e7", "Summons the macroscope lane"],
+                          ["review:autofix", "5319e7", "Summons a mechanical-fix suggestion patch"],
+                          ["review:skip", "ededed", "Owner waiver: skip hosted review"],
+                          ["spec:none", "ededed", "Owner waiver: no specification change needed, reason in body"],
+                      ];
+                      for (const [name, color, description] of wanted) {
+                          try {
+                              await github.rest.issues.getLabel({ ...context.repo, name });
+                          } catch {
+                              await github.rest.issues.createLabel({ ...context.repo, name, color, description });
+                          }
+                      }
+
+    size:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+              with:
+                  script: |
+                      const pr = context.payload.pull_request;
+                      const changed = pr.additions + pr.deletions;
+                      const size = changed < 50 ? "size:small" : changed < 300 ? "size:med" : changed < 1000 ? "size:large" : "size:xlarge";
+                      const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                          ...context.repo, issue_number: pr.number });
+                      for (const label of labels) {
+                          if (label.name.startsWith("size:") && label.name !== size) {
+                              await github.rest.issues.removeLabel({
+                                  ...context.repo, issue_number: pr.number, name: label.name });
+                          }
+                      }
+                      try {
+                          await github.rest.issues.getLabel({ ...context.repo, name: size });
+                      } catch {
+                          await github.rest.issues.createLabel({
+                              ...context.repo, name: size, color: "ededed",
+                              description: "Changed-lines bucket, applied automatically" });
+                      }
+                      await github.rest.issues.addLabels({
+                          ...context.repo, issue_number: pr.number, labels: [size] });
