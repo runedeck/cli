@@ -630,14 +630,5 @@ fn qualifier_matches_provider(
     active_model_matches(qualifier, active_model, provider_name, models)
 }
 
-/// Apply kebab-case transformation to each segment of a path.
-#[cfg(test)]
-fn apply_kebab_case_to_path(path: &str) -> String {
-    path.split('/')
-        .map(rune::transform::to_kebab_case)
-        .collect::<Vec<String>>()
-        .join("/")
-}
-
 #[cfg(test)]
 mod tests;

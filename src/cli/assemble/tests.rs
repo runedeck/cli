@@ -115,24 +115,6 @@ fn provider_not_in_models_only_matches_by_name() {
 }
 
 #[test]
-fn kebab_case_path_converts_simple_filename() {
-    assert_eq!(apply_kebab_case_to_path("GameMaster.md"), "game-master.md");
-}
-
-#[test]
-fn kebab_case_path_converts_directory_and_filename() {
-    assert_eq!(
-        apply_kebab_case_to_path("SceneReview/SKILL.md"),
-        "scene-review/skill.md"
-    );
-}
-
-#[test]
-fn kebab_case_path_preserves_already_lowercase() {
-    assert_eq!(apply_kebab_case_to_path("readme.md"), "readme.md");
-}
-
-#[test]
 fn assemble_source_maps_agent_model_and_effort_tiers() {
     let source = sources::SourceFile {
         content_bytes: None,
