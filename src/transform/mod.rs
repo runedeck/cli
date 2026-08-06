@@ -1,8 +1,10 @@
 mod kebab_case;
+mod links;
 mod remap_tools;
 mod to_toml;
 
-pub use kebab_case::to_kebab_case;
+pub use kebab_case::{to_kebab_case, to_kebab_path};
+pub use links::rewrite_markdown_links;
 pub use remap_tools::remap_tools;
 pub use to_toml::markdown_to_toml;
 
@@ -32,11 +34,10 @@ pub fn apply_rules(
     for rule in rules {
         match rule {
             AssemblyRule::KebabCase => {
-                let (stem, extension) = split_extension(&current_filename);
-                let kebab = to_kebab_case(&stem);
-                current_filename = format!("{kebab}{extension}");
+                current_filename = to_kebab_path(&current_filename);
                 current_content =
                     crate::assemble::map_field(&current_content, "name", to_kebab_case);
+                current_content = rewrite_markdown_links(&current_content, to_kebab_path);
             }
             AssemblyRule::KebabCaseAgents => {
                 if kind == "agents" {
@@ -78,5 +79,7 @@ fn split_extension(filename: &str) -> (String, String) {
     }
 }
 
+#[cfg(test)]
+mod links_tests;
 #[cfg(test)]
 mod tests;
