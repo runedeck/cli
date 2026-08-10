@@ -36,6 +36,10 @@ jobs:
                   git fetch --quiet origin "pull/$PR_NUMBER/head"
                   base=$(git merge-base HEAD "$HEAD_SHA") \
                       || { echo "could not resolve the merge base; deepen the fetch and rerun"; exit 1; }
+                  # authors.yaml is read from the base ref, deliberately: a pull
+                  # request must not grant itself an identity. An identity lands
+                  # on the default branch first; the commits that use it follow
+                  # in a later pull request.
                   mapfile -t identities < <(grep -E '^    - .+ <.+>$' authors.yaml | sed 's/^    - //')
                   [ "${#identities[@]}" -gt 0 ] || { echo "authors.yaml lists no identities"; exit 1; }
                   listed() {
@@ -44,12 +48,22 @@ jobs:
                       done
                       return 1
                   }
+                  # The range and trailer reads are captured before their loops
+                  # so a failed git invocation fails the check instead of
+                  # feeding an empty loop that passes green.
+                  # Merge commits stay in the range: a merge answers for its
+                  # author like any other commit.
+                  range=$(git log --format='%H%x09%an <%ae>' "$base..$HEAD_SHA") \
+                      || { echo "could not list commits in $base..$HEAD_SHA"; exit 1; }
                   failures=0
                   while IFS=$'\t' read -r commit author; do
+                      [ -n "$commit" ] || continue
                       if ! listed "$author"; then
                           echo "$commit: author '$author' is not in authors.yaml (expected 'Display Name (model-id) <address>')"
                           failures=1
                       fi
+                      trailers=$(git show -s --format='%(trailers:key=Co-Authored-By,valueonly)' "$commit") \
+                          || { echo "$commit: could not read Co-Authored-By trailers"; exit 1; }
                       while read -r trailer; do
                           [ -n "$trailer" ] || continue
                           if [ "$trailer" = "$author" ]; then
@@ -59,8 +73,8 @@ jobs:
                               echo "$commit: Co-Authored-By '$trailer' is not in authors.yaml"
                               failures=1
                           fi
-                      done < <(git show -s --format='%(trailers:key=Co-Authored-By,valueonly)' "$commit")
-                  done < <(git log --no-merges --format='%H%x09%an <%ae>' "$base..$HEAD_SHA")
+                      done <<< "$trailers"
+                  done <<< "$range"
                   [ "$failures" -eq 0 ] && echo "every commit in the range carries a listed identity."
                   exit "$failures"
 

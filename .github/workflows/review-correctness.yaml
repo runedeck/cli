@@ -30,8 +30,11 @@ permissions:
     actions: read
     checks: read
 
+# The event name keys the group so the migration window's twin runs never
+# cancel each other mid-review; the follow-up change drops the suffix with
+# the extra trigger.
 concurrency:
-    group: review-correctness-${{ github.event.pull_request.number }}
+    group: review-correctness-${{ github.event.pull_request.number }}-${{ github.event_name }}
     cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && contains(fromJSON('["review", "review:runeseer"]'), github.event.label.name) }}
 
 jobs:
