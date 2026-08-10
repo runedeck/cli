@@ -11,7 +11,14 @@ name: Review Correctness
 # so a pull request cannot rewrite the reviewer, the mirror, or the secret
 # wiring that judges its own head. The body checks out the judged head
 # explicitly and strips its instruction surfaces before the model reads it.
+# The pull_request trigger exists only for the migration window: the pull
+# request that flips a pull_request-only caller to pull_request_target can
+# run under neither trigger alone (each event resolves the workflow from a
+# ref whose file lacks its trigger), so both stay live until the follow-up
+# change removes pull_request and restores the canonical single trigger.
 on:
+    pull_request:
+        types: [labeled, unlabeled, ready_for_review]
     pull_request_target:
         types: [labeled, unlabeled, ready_for_review]
 
