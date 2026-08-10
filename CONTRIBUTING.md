@@ -58,4 +58,4 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`.
 3. `make test`
 4. Open a PR against `main`
 
-CI runs `prek` (linting, formatting, tests) and `cargo test` on every PR. The `main` branch requires passing CI and one approval before merge.
+CI runs `prek` (linting, formatting, tests) and `cargo test` on every PR. The `main` branch requires passing CI and one approval before merge. Automated review lanes run for same-repository branches; a fork pull request starts no lane, is reviewed by the owner directly, and merges through the owner-veto path.
