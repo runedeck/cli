@@ -58,10 +58,13 @@ jobs:
 
     cascade:
         needs: release
-        # Same-repository branches only, on every arm: a fork pull request
-        # starts nothing, and the owner reviews forks directly. The opened
-        # arm gives an owner branch its first round free.
-        if: '!cancelled() && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action == ''opened'' || (github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
+        # Fork pull requests keep the owner-summoned free lanes: a review
+        # label on a fork head runs the cascade, the correctness lane
+        # refuses fork heads on its own, and the ordered workflow stops
+        # after the free lanes (docs/specs/review-ceremony/spec.md, Fork
+        # pull request scenario). Only the free opened round is held to
+        # same-repository heads, so a fork spends nothing unlabeled.
+        if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''opened'' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
         secrets:
             RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}
