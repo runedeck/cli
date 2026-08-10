@@ -58,9 +58,10 @@ jobs:
 
     cascade:
         needs: release
-        # The free opened round is for same-repository branches only; a fork
-        # pull request starts nothing until the owner applies the label.
-        if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''opened'' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
+        # Same-repository branches only, on every arm: a fork pull request
+        # starts nothing, and the owner reviews forks directly. The opened
+        # arm gives an owner branch its first round free.
+        if: '!cancelled() && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action == ''opened'' || (github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
         secrets:
             RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}
