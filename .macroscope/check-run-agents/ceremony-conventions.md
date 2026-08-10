@@ -10,9 +10,9 @@ include:
     - ".github/workflows/**"
     - ".githooks/*"
     - ".gitleaks.toml"
-    - "templates/base/.github/workflows/**"
-    - "templates/base/.githooks/*"
-    - "templates/base/.gitleaks.toml"
+    - "templates/skeleton/base/.github/workflows/**"
+    - "templates/skeleton/base/.githooks/*"
+    - "templates/skeleton/base/.gitleaks.toml"
     - "**/*.sh"
 conclusion: failure
 showToolCalls: true
@@ -42,7 +42,7 @@ unrelated repository-wide cleanup.
 - Concurrency cancel expressions scope to the exact label namespace: the
   label name equals the entry label or starts with its namespaced prefix,
   never a bare startsWith on the shared prefix.
-- Summon labels are one-round tokens: consumed when the round ends,
+- Review labels request one round and are consumed when the round ends,
   including failed rounds, and deleted with the workflow token so the
   deletion event triggers nothing.
 - Verdict gates validate the full tuple: verdict value, zero count, empty
