@@ -7,8 +7,12 @@ name: Review Correctness
 # lane consumes labels with the workflow token when a round ends, and those
 # removals emit no events, so a clean round never re-enters here.
 # ready_for_review re-evaluates the mirror and releases a pending review label.
+# pull_request_target, deliberately: the caller executes from the base branch,
+# so a pull request cannot rewrite the reviewer, the mirror, or the secret
+# wiring that judges its own head. The body checks out the judged head
+# explicitly and strips its instruction surfaces before the model reads it.
 on:
-    pull_request:
+    pull_request_target:
         types: [labeled, unlabeled, ready_for_review]
 
 permissions:
@@ -86,7 +90,7 @@ jobs:
 
     review:
         needs: [release, overrides]
-        if: '!cancelled() && github.event.pull_request.draft == false && needs.overrides.outputs.skipped == ''false'' && ((github.event.action == ''labeled'' && github.event.label.name == ''review:runeseer'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
+        if: '!cancelled() && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false && needs.overrides.outputs.skipped == ''false'' && ((github.event.action == ''labeled'' && github.event.label.name == ''review:runeseer'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-correctness.yaml@main
         secrets:
             RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
@@ -114,6 +118,26 @@ jobs:
                   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
               run: |
                   set -o pipefail
+                  # A red mirror names what it saw: the lane job, and the verdict
+                  # when one exists for this head. A missing verdict marks a lane
+                  # fault rather than a judgment, and each case states its retry.
+                  explain_lane_failure() {
+                      conclusion="$1"
+                      job_url=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                          --jq '[.jobs[] | select(.name == "review / correctness")]' \
+                          | jq -s -r 'add // [] | first // empty | .html_url // ""') || job_url=""
+                      verdict_line=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?per_page=100" \
+                          --jq '[.[] | select(.user.login == "runeseer[bot]") | select(.body | startswith("review/correctness:")) | select(.body | contains(env.HEAD_SHA))]' \
+                          | jq -s -r 'add // [] | last // empty | "\(.body | split("\n") | first) (\(.html_url))"') || verdict_line=""
+                      echo "the lane concluded: $conclusion"
+                      [ -n "$job_url" ] && echo "lane job: $job_url"
+                      if [ -n "$verdict_line" ]; then
+                          echo "latest verdict for this head: $verdict_line"
+                          echo "push a fix and apply review:runeseer to start a new round"
+                      else
+                          echo "no verdict exists for this head: the lane faulted before judging; rerun this workflow or apply review:runeseer for a fresh round"
+                      fi
+                  }
                   # The overrides are read before any result check, because an
                   # override must hold however the lane concluded. A failed
                   # label read must not read as an applied override.
@@ -147,7 +171,7 @@ jobs:
                       exit 1
                   fi
                   if [ "${{ needs.review.result }}" != "success" ] && [ "${{ needs.review.result }}" != "skipped" ]; then
-                      echo "the lane concluded: ${{ needs.review.result }}"
+                      explain_lane_failure "${{ needs.review.result }}"
                       exit 1
                   fi
                   # A reusable workflow whose inner job skips its guard still
@@ -165,7 +189,7 @@ jobs:
                           exit 0
                       fi
                       if [ "$inner" != "skipped" ]; then
-                          echo "the lane concluded: $inner"
+                          explain_lane_failure "$inner"
                           exit 1
                       fi
                   fi
