@@ -158,6 +158,27 @@ jobs:
                   labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
                       --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
                       || { echo "could not read the live labels; rerun the check"; exit 1; }
+                  # Acceptance approvals record an owner override, not a lane
+                  # judgment: whenever ignore:runeseer is absent, standing
+                  # acceptance approvals are dismissed before any exit path,
+                  # so neither skip:runeseer nor a lane result can leave one
+                  # satisfying the required-approvals rule; the findings
+                  # regain their whole hold when the owner withdraws the
+                  # acceptance.
+                  if ! printf '%s\n' "$labels" | grep -qx 'ignore:runeseer'; then
+                      acceptance_ids=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
+                          --jq '[.[] | select(.user.login == "runeseer[bot]" and .state == "APPROVED") | select((.body // "") | contains("ignore:runeseer acceptance")) | .id]' \
+                          | jq -s -r 'add // [] | .[]') \
+                          || { echo "could not read the pull request reviews; rerun the check"; exit 1; }
+                      for review_id in $acceptance_ids; do
+                          [ -n "$RUNESEER_TOKEN" ] \
+                              || { echo "acceptance approval $review_id stands after the override's withdrawal, but the app token was unavailable to dismiss it; rerun the check"; exit 1; }
+                          GH_TOKEN="$RUNESEER_TOKEN" gh api -X PUT "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/$review_id/dismissals" \
+                              -f message="The owner withdrew ignore:runeseer; the acceptance no longer holds this head." \
+                              >/dev/null && echo "dismissed acceptance approval $review_id after the override's withdrawal." \
+                              || { echo "could not dismiss acceptance approval $review_id; rerun the check"; exit 1; }
+                      done
+                  fi
                   # skip: means the lane is out of scope for this pull request,
                   # so it clears whatever else happened.
                   if printf '%s\n' "$labels" | grep -qx 'skip:runeseer'; then
@@ -224,24 +245,10 @@ jobs:
                   # Per-page jq output merges through jq -s: the runner's gh
                   # predates --slurp. pipefail keeps a failed reviews read from
                   # reading as an absent approval.
-                  # Acceptance approvals record an owner override, not a lane
-                  # judgment: once ignore:runeseer is gone, the acceptance
-                  # approvals are dismissed so they stop satisfying the
-                  # required-approvals rule, and only judgment reviews may
-                  # green this mirror; the findings regain their whole hold
-                  # when the owner withdraws the acceptance.
-                  acceptance_ids=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
-                      --jq '[.[] | select(.user.login == "runeseer[bot]" and .state == "APPROVED") | select((.body // "") | contains("ignore:runeseer acceptance")) | .id]' \
-                      | jq -s -r 'add // [] | .[]') \
-                      || { echo "could not read the pull request reviews; rerun the check"; exit 1; }
-                  for review_id in $acceptance_ids; do
-                      [ -n "$RUNESEER_TOKEN" ] \
-                          || { echo "acceptance approval $review_id stands after the override's withdrawal, but the app token was unavailable to dismiss it; rerun the check"; exit 1; }
-                      GH_TOKEN="$RUNESEER_TOKEN" gh api -X PUT "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/$review_id/dismissals" \
-                          -f message="The owner withdrew ignore:runeseer; the acceptance no longer holds this head." \
-                          >/dev/null && echo "dismissed acceptance approval $review_id after the override's withdrawal." \
-                          || { echo "could not dismiss acceptance approval $review_id; rerun the check"; exit 1; }
-                  done
+                  if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+                      echo "fork pull requests are not judged by this lane: the owner reviews them directly and merges through the veto path"
+                      exit 1
+                  fi
                   latest_state=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
                       --jq '[.[] | select(.user.login == "runeseer[bot]" and .commit_id == env.HEAD_SHA) | select((.body // "") | contains("ignore:runeseer acceptance") | not)]' \
                       | jq -s -r 'add // [] | sort_by(.submitted_at) | last | .state // ""') \
@@ -249,10 +256,6 @@ jobs:
                   if [ "$latest_state" = "APPROVED" ]; then
                       echo "Runeseer's latest review approves this head."
                       exit 0
-                  fi
-                  if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-                      echo "fork pull requests are not judged by this lane: the owner reviews them directly and merges through the veto path"
-                      exit 1
                   fi
                   echo "no standing Runeseer approval for this head; apply the review label to start a round"
                   exit 1
