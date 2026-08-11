@@ -1,0 +1,122 @@
+name: Attestations
+
+# Deterministic attestation checks: every commit answers who wrote it,
+# and machinery changes carry their specification or the owner's
+# explicit waiver. Label events re-evaluate the spec gate, so applying
+# spec:none recomputes the check without a push. pull_request_target
+# keeps both checks base-defined; the head enters only as fetched
+# history and file listings, never as executed code.
+on:
+    pull_request_target:
+        types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+    contents: read
+    pull-requests: read
+
+concurrency:
+    group: attestations-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    authorship:
+        name: ci/authorship
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+            - env:
+                  GH_TOKEN: ${{ github.token }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: |
+                  set -o pipefail
+                  git fetch --quiet origin "pull/$PR_NUMBER/head"
+                  base=$(git merge-base HEAD "$HEAD_SHA") \
+                      || { echo "could not resolve the merge base; deepen the fetch and rerun"; exit 1; }
+                  # authors.yaml is read from the base ref, deliberately: a pull
+                  # request must not grant itself an identity. An identity lands
+                  # on the default branch first; the commits that use it follow
+                  # in a later pull request.
+                  mapfile -t identities < <(grep -E '^    - .+ <.+>$' authors.yaml | sed 's/^    - //')
+                  [ "${#identities[@]}" -gt 0 ] || { echo "authors.yaml lists no identities"; exit 1; }
+                  listed() {
+                      for identity in "${identities[@]}"; do
+                          [ "$1" = "$identity" ] && return 0
+                      done
+                      return 1
+                  }
+                  # The range and trailer reads are captured before their loops
+                  # so a failed git invocation fails the check instead of
+                  # feeding an empty loop that passes green.
+                  # Merge commits stay in the range: a merge answers for its
+                  # author like any other commit.
+                  range=$(git log --format='%H%x09%an <%ae>' "$base..$HEAD_SHA") \
+                      || { echo "could not list commits in $base..$HEAD_SHA"; exit 1; }
+                  failures=0
+                  while IFS=$'\t' read -r commit author; do
+                      [ -n "$commit" ] || continue
+                      if ! listed "$author"; then
+                          echo "$commit: author '$author' is not in authors.yaml (expected 'Display Name (model-id) <address>')"
+                          failures=1
+                      fi
+                      trailers=$(git show -s --format='%(trailers:key=Co-Authored-By,valueonly)' "$commit") \
+                          || { echo "$commit: could not read Co-Authored-By trailers"; exit 1; }
+                      while read -r trailer; do
+                          [ -n "$trailer" ] || continue
+                          if [ "$trailer" = "$author" ]; then
+                              echo "$commit: author repeated as Co-Authored-By"
+                              failures=1
+                          elif ! listed "$trailer"; then
+                              echo "$commit: Co-Authored-By '$trailer' is not in authors.yaml"
+                              failures=1
+                          fi
+                      done <<< "$trailers"
+                  done <<< "$range"
+                  [ "$failures" -eq 0 ] && echo "every commit in the range carries a listed identity."
+                  exit "$failures"
+
+    spec:
+        name: spec/presence
+        runs-on: ubuntu-latest
+        timeout-minutes: 3
+        steps:
+            - env:
+                  GH_TOKEN: ${{ github.token }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+              run: |
+                  set -o pipefail
+                  # A rename lists both names, so moving a protected file out of
+                  # its tree cannot dodge the gate.
+                  files=$(gh api --paginate "repos/${{ github.repository }}/pulls/$PR_NUMBER/files?per_page=100" \
+                      --jq '[.[] | .filename, (.previous_filename // empty)]' | jq -s -r 'add // [] | .[]') \
+                      || { echo "could not read the changed files; rerun the check"; exit 1; }
+                  protected='^(\.github/workflows/|\.githooks/|templates/|schemas/|\.macroscope/)|^(\.pre-commit-config\.yaml|\.gitleaks\.toml)$'
+                  spec_tree='^docs/(specs|openspec)/'
+                  touched=$(printf '%s\n' "$files" | grep -E "$protected" || true)
+                  if [ -z "$touched" ]; then
+                      echo "no protected paths touched; no specification is required."
+                      exit 0
+                  fi
+                  if printf '%s\n' "$files" | grep -qE "$spec_tree"; then
+                      echo "protected paths ship with a specification change."
+                      exit 0
+                  fi
+                  labels=$(gh api --paginate "repos/${{ github.repository }}/issues/$PR_NUMBER/labels?per_page=100" \
+                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
+                      || { echo "could not read the live labels; rerun the check"; exit 1; }
+                  if printf '%s\n' "$labels" | grep -qx 'spec:none'; then
+                      body=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.body // ""') \
+                          || { echo "could not read the pull request body; rerun the check"; exit 1; }
+                      if printf '%s\n' "$body" | grep -qE '^spec:none: .+'; then
+                          echo "spec:none waiver present with its reason."
+                          exit 0
+                      fi
+                      echo "spec:none is applied but the body carries no 'spec:none: <reason>' line."
+                      exit 1
+                  fi
+                  echo "these protected paths change without a specification or a spec:none waiver:"
+                  printf '%s\n' "$touched"
+                  exit 1
