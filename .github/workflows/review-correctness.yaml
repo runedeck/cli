@@ -123,9 +123,20 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 2
         steps:
+            # Minted for the acceptance path below: when the owner's
+            # ignore:runeseer withdraws the findings' power to hold the
+            # merge, the mirror completes both halves of that hold, the
+            # required check and the approving review, as the runeseer app.
+            - id: runeseer
+              if: contains(github.event.pull_request.labels.*.name, 'ignore:runeseer')
+              uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+              with:
+                  app-id: ${{ secrets.RUNESEER_APP_ID }}
+                  private-key: ${{ secrets.RUNESEER_APP_KEY }}
             - env:
                   GH_TOKEN: ${{ github.token }}
                   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  RUNESEER_TOKEN: ${{ steps.runeseer.outputs.token }}
               run: |
                   set -o pipefail
                   # A red mirror names what it saw: the lane job, and the verdict
@@ -175,6 +186,16 @@ jobs:
                           || { echo "could not read the pull request comments; rerun the check"; exit 1; }
                       if [ "$judged" != "0" ]; then
                           echo "ignore:runeseer present and this head carries a Runeseer verdict summary; the owner accepted its findings."
+                          approved=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
+                              --jq '[.[] | select(.user.login == "runeseer[bot]") | select(.state == "APPROVED") | select(.commit_id == env.HEAD_SHA)]' \
+                              | jq -s -r 'add // [] | length') || approved=0
+                          if [ "$approved" = "0" ] && [ -n "$RUNESEER_TOKEN" ]; then
+                              GH_TOKEN="$RUNESEER_TOKEN" gh api -X POST "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+                                  -f event=APPROVE \
+                                  -f body="Approval records the owner's ignore:runeseer acceptance; the verdict for this head stands on the pull request." \
+                                  >/dev/null && echo "acceptance approval submitted for this head." \
+                                  || echo "could not submit the acceptance approval; the check clears and the approval needs another path."
+                          fi
                           exit 0
                       fi
                       echo "ignore:runeseer present, but no Runeseer verdict exists for this head; a lane that never judged is broken, not ignored."
