@@ -1081,7 +1081,7 @@ enum AdoptAction {
         yes: bool,
     },
 
-    /// Re-sync a sealed record to pre-commit maintainer touch-ups
+    /// Re-sync reviewed sidecars to pre-commit maintainer touch-ups
     Reseal {
         /// Tree to scan. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -1774,7 +1774,7 @@ fn deck_help(help: &mut String) {
     help_command(
         help,
         "adopt",
-        "start|status|next|verdict|finalize|abandon",
+        "start|...|finalize|abandon|reseal|doctor",
         "Adopt an upstream rune through block-by-block review",
     );
     help_command(

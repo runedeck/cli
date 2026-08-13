@@ -42,9 +42,13 @@ jobs:
                   # in a later pull request.
                   mapfile -t identities < <(grep -E '^    - .+ <.+>$' authors.yaml | sed 's/^    - //')
                   [ "${#identities[@]}" -gt 0 ] || { echo "authors.yaml lists no identities"; exit 1; }
+                  canonical_identity() {
+                      printf '%s\n' "$1" | sed -E 's/([0-9])1m([)@ ])/\1\2/g'
+                  }
                   listed() {
+                      candidate=$(canonical_identity "$1")
                       for identity in "${identities[@]}"; do
-                          [ "$1" = "$identity" ] && return 0
+                          [ "$candidate" = "$(canonical_identity "$identity")" ] && return 0
                       done
                       return 1
                   }

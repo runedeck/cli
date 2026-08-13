@@ -451,6 +451,15 @@ fn review_module_with_schema() -> tempfile::TempDir {
     dir
 }
 
+fn session_path(root: &std::path::Path) -> std::path::PathBuf {
+    review::record_path_for(root).expect("session path")
+}
+
+fn read_session(root: &std::path::Path) -> serde_yaml::Value {
+    serde_yaml::from_str(&std::fs::read_to_string(session_path(root)).expect("temporary session"))
+        .expect("session parses")
+}
+
 fn adopt_fixture_skill(dir: &tempfile::TempDir) -> std::path::PathBuf {
     let adopted = execute_with_fetcher(
         "https://example.test/RemoteSkill/SKILL.md",
@@ -473,10 +482,7 @@ fn review_session_records_pending_blocks_and_refuses_double_start() {
     let dir = review_module_with_schema();
     let root = adopt_fixture_skill(&dir);
 
-    let record: serde_yaml::Value = serde_yaml::from_str(
-        &std::fs::read_to_string(root.join(".provenance/review.yaml")).expect("record"),
-    )
-    .expect("record parses");
+    let record: serde_yaml::Value = read_session(&root);
     let blocks = record["review"]["predicate"]["blocks"]
         .as_sequence()
         .expect("blocks");
@@ -506,7 +512,7 @@ fn finalize_refuses_pending_and_enforces_cut() {
     .expect_err("pending blocks must block finalize");
     assert!(error.contains("pending"), "got: {error}");
 
-    let record_path = root.join(".provenance/review.yaml");
+    let record_path = session_path(&root);
     let record: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
             .expect("record parses");
@@ -553,30 +559,22 @@ fn finalize_refuses_pending_and_enforces_cut() {
     )
     .expect("finalize succeeds after the cut lands");
 
-    let record: serde_yaml::Value =
-        serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
-            .expect("record parses");
-    assert_eq!(
-        record["review"]["predicate"]["status"].as_str(),
-        Some("reviewed")
-    );
-    assert_eq!(
-        record["review"]["predicate"]["reviewer"].as_str(),
-        Some("Alice Example <alice@example.com>")
+    assert!(
+        !record_path.exists(),
+        "finalize removes temporary block-review state"
     );
     assert!(
-        record["review"]["predicate"]["schema"]
-            .as_str()
-            .expect("schema source recorded")
-            .contains(".mdschema")
+        !root.join(".provenance/review.yaml").exists(),
+        "finalize never publishes a review ledger"
     );
 
     let sidecar = manifest::provenance::read(&root.join(".provenance/SKILL.md.yaml"))
         .expect("sidecar parses");
-    assert_eq!(
-        sidecar.provenance.predicate.run_details.metadata.review,
-        "reviewed"
-    );
+    let metadata = &sidecar.provenance.predicate.run_details.metadata;
+    assert_eq!(metadata.review, "reviewed");
+    assert_eq!(metadata.reviewer, "Alice Example <alice@example.com>");
+    assert!(metadata.completed_on.contains('T'));
+    assert!(metadata.summary.contains("cut"));
     let final_content = std::fs::read_to_string(&skill_path).expect("skill");
     assert_eq!(
         sidecar.provenance.subject[0].digest.sha256,
@@ -589,7 +587,7 @@ fn finalize_refuses_pending_and_enforces_cut() {
 fn kept_content_deleted_blocks_finalize() {
     let dir = review_module_with_schema();
     let root = adopt_fixture_skill(&dir);
-    let record_path = root.join(".provenance/review.yaml");
+    let record_path = session_path(&root);
     let record: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
             .expect("record parses");
@@ -642,11 +640,16 @@ fn adopt_rule_places_single_file_with_session() {
     assert_eq!(root, canonical_module.join("rules/NoTabs.md"));
     review::open_session(&root, &adopted.upstream_uri, &adopted.upstream_digest)
         .expect("session opens");
+    let session = session_path(&root);
     assert!(
-        dir.path()
+        session.is_file(),
+        "single-file kinds get temporary session state"
+    );
+    assert!(
+        !dir.path()
             .join("rules/.provenance/NoTabs.review.yaml")
-            .is_file(),
-        "single-file kinds get a stem-named review record"
+            .exists(),
+        "session state never lands in source provenance"
     );
 }
 
@@ -682,10 +685,7 @@ fn injection_lint_flags_override_phrasing_and_gates_keep() {
     let dir = review_module_with_schema();
     let root = adopt_suspect_skill(&dir);
 
-    let record: serde_yaml::Value = serde_yaml::from_str(
-        &std::fs::read_to_string(root.join(".provenance/review.yaml")).expect("record"),
-    )
-    .expect("record parses");
+    let record: serde_yaml::Value = read_session(&root);
     let blocks = record["review"]["predicate"]["blocks"]
         .as_sequence()
         .expect("blocks");
@@ -726,7 +726,7 @@ fn injection_lint_flags_override_phrasing_and_gates_keep() {
 fn verdicts_carry_timestamp_and_transport() {
     let dir = review_module_with_schema();
     let root = adopt_fixture_skill(&dir);
-    let record_path = root.join(".provenance/review.yaml");
+    let record_path = session_path(&root);
     let record: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
             .expect("record parses");
@@ -746,7 +746,7 @@ fn verdicts_carry_timestamp_and_transport() {
 }
 
 fn finalize_all_keep(dir: &tempfile::TempDir, root: &std::path::Path) {
-    let record_path = root.join(".provenance/review.yaml");
+    let record_path = session_path(root);
     let record: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
             .expect("record parses");
@@ -790,6 +790,94 @@ fn adopt_doctor_detects_post_seal_tampering() {
         1,
         "post-seal edit must be an integrity error"
     );
+}
+
+#[test]
+fn multiple_git_worktrees_use_distinct_session_directories() {
+    use std::process::Command;
+
+    let repository = tempfile::tempdir().expect("repository");
+    let linked_parent = tempfile::tempdir().expect("linked parent");
+    let run_git = |directory: &std::path::Path, args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run_git(repository.path(), &["init", "--quiet"]);
+    run_git(
+        repository.path(),
+        &["config", "user.email", "test@example.com"],
+    );
+    run_git(repository.path(), &["config", "user.name", "Test"]);
+    run_git(repository.path(), &["config", "commit.gpgSign", "false"]);
+    std::fs::write(repository.path().join("module.yaml"), "name: fixture\n").unwrap();
+    run_git(repository.path(), &["add", "."]);
+    run_git(repository.path(), &["commit", "--quiet", "-m", "seed"]);
+    let linked = linked_parent.path().join("linked");
+    run_git(
+        repository.path(),
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            linked.to_str().unwrap(),
+            "-b",
+            "linked",
+        ],
+    );
+
+    let first_artifact = repository.path().join("skills/First");
+    let second_artifact = linked.join("skills/Second");
+    std::fs::create_dir_all(&first_artifact).unwrap();
+    std::fs::create_dir_all(&second_artifact).unwrap();
+    std::fs::write(first_artifact.join("SKILL.md"), "# First\n").unwrap();
+    std::fs::write(second_artifact.join("SKILL.md"), "# Second\n").unwrap();
+
+    let first = review::open_session(&first_artifact, "https://example.test/first", "one")
+        .expect("first session");
+    let second = review::open_session(&second_artifact, "https://example.test/second", "two")
+        .expect("second session");
+    assert_ne!(first, second, "linked worktrees must not collide");
+    assert!(first.is_file() && second.is_file());
+}
+
+#[test]
+fn reseal_updates_reviewed_sidecar_without_ledger() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let skill = root.join("SKILL.md");
+    let mut content = std::fs::read_to_string(&skill).unwrap();
+    content.push_str("\nmaintainer touch-up\n");
+    std::fs::write(&skill, &content).unwrap();
+
+    review::reseal(dir.path(), Some("skills/AdoptedSkill")).expect("reseal succeeds");
+    let sidecar = manifest::provenance::read(&root.join(".provenance/SKILL.md.yaml")).unwrap();
+    assert_eq!(
+        sidecar.provenance.subject[0].digest.sha256,
+        manifest::content_sha256(&content)
+    );
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}
+
+#[test]
+fn doctor_reports_legacy_ledgers_without_deleting_them() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let legacy = root.join(".provenance/review.yaml");
+    std::fs::write(&legacy, "legacy: true\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+    assert!(legacy.exists(), "doctor never silently deletes user files");
 }
 
 #[test]

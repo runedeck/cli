@@ -154,6 +154,12 @@ pub struct Metadata {
     pub started_on: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub review: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reviewer: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub completed_on: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
 }
 
 /// Parse a provenance sidecar from YAML content.

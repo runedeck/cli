@@ -1,6 +1,6 @@
 # Adopt Walkthrough
 
-Manual test for the adoption review state machine (`rune adopt`, change: docs/changes/adopt-review, decision: CLI-0023). The flow: import an upstream artifact, give every block a verdict, let the CLI enforce the verdicts, seal the review record.
+Manual test for the adoption review state machine (`rune adopt`, decisions: CLI-0023 and CLI-0027). The flow: import an upstream artifact, give every block a verdict, let the CLI enforce the verdicts, and seal concise reviewed sidecars.
 
 ## Setup
 
@@ -35,15 +35,15 @@ A skill tree does the same with `--kind skill` (the default) and a directory sou
 
 ## What to verify
 
-- [ ] `start` lands the artifact with adopt/v1 sidecars carrying `review: pending`, and a review record with every block `pending`
+- [ ] `start` lands adopt/v1 sidecars carrying `review: pending`; `status` and `next` find the temporary session across separate CLI invocations
+- [ ] No `review.yaml` or `*.review.yaml` appears in the artifact or its `.provenance` directory
 - [ ] `finalize` refuses while any block is pending, and lists the ids
 - [ ] Cut a block, finalize WITHOUT editing the file: it refuses with "still appears verbatim"
 - [ ] Delete a kept block's text, finalize: it refuses with "kept content missing"
-- [ ] After a clean finalize: the record shows `status: reviewed`, your git identity as reviewer, the schema path + digest, and one entry per block; the sidecar flips to `review: reviewed` with the subject digest matching the file
-- [ ] Text you added during editing shows up as `added` entries in the finalize output
+- [ ] After a clean finalize: the sidecar carries `review: reviewed`, reviewer, completion time, concise summary, and the final subject digest; the temporary session is gone
 - [ ] `rune adopt start` on the same artifact again: refused ("already passed review")
-- [ ] `rune adopt abandon --yes` moves an in-flight adoption to `.trash/`, never deletes
-- [ ] `rune provenance` and `rune validate` stay clean with review records present
+- [ ] `rune adopt abandon --yes` moves an in-flight adoption and its session to `.trash/`, never deletes the artifact in place
+- [ ] `rune provenance`, assembly, and deploy remain unchanged because reviewed sidecars are the authority
 
 ## Hardening checks
 
@@ -51,10 +51,11 @@ A skill tree does the same with `--kind skill` (the default) and a directory sou
 - [ ] `rune release` and `rune copy` refuse outright while a review is open
 - [ ] An adopt sidecar with its `review` field stripped does NOT deploy (fail closed, "adoption without review state")
 - [ ] Blocks carrying injection-shaped content arrive flagged from `rune adopt next` (try a paragraph containing "ignore previous instructions"), and `verdict keep` on a flagged block demands `--note`
-- [ ] The sealed record carries `decidedOn` and `transport: verdict-cli` per verdict, plus the `lint` and `segmenter` versions
-- [ ] `rune adopt doctor` is clean after a good finalize; edit the reviewed file afterwards and it exits 1 naming the tampered subject; it warns on imports that never opened a review
-- [ ] `rune adopt finalize --allow-new` records ceremony-authored files as `added` entries (default finalize refuses new files); such files stay sidecar-less and doctor reports them as authored, not missing
-- [ ] After a finalize interrupted between sealing and sidecar flips, `rune adopt doctor --repair` re-syncs only sidecars whose file matches the sealed record's digest
+- [ ] Pending session entries carry `decidedOn` and `transport: verdict-cli`, plus the `lint` and `segmenter` versions; these fields disappear with the session
+- [ ] `rune adopt doctor` is clean after a good finalize without any ledger; edit the reviewed file afterwards and it exits 1 naming the tampered subject
+- [ ] Doctor reports legacy `review.yaml` / `*.review.yaml` files with an explicit inspect-and-remove/archive message and leaves them untouched
+- [ ] `rune adopt reseal --artifact <path>` updates reviewed sidecar digests after maintainer touch-ups and refuses pending inputs
+- [ ] A finalize interrupted during sidecar writes keeps the temporary session, so rerunning finalize completes safely; `doctor --repair` remains a compatibility alias for verification
 
 ## The deck skill
 

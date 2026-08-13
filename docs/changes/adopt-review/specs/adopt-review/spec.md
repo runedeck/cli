@@ -2,16 +2,16 @@
 
 ### Requirement: Adoption opens a review session
 
-`rune adopt start <source>` SHALL perform the import mechanics (pinned fetch or local copy, adopt/v1 provenance sidecars), segment every adopted markdown file into review blocks, and write a review record in which every block's verdict is `pending`. The adopt sidecar SHALL record the pending-review state.
+`rune adopt start <source>` SHALL perform the import mechanics (pinned fetch or local copy, adopt/v1 provenance sidecars), segment every adopted markdown file into review blocks, and write an external temporary session in which every block's verdict is `pending`. The adopt sidecar SHALL record the pending-review state.
 
 #### Scenario: Start from a commit-pinned URL
 
 - **WHEN** `rune adopt start https://github.com/<owner>/<repo>/blob/<sha>/skills/x/SKILL.md --module runes/meta` runs
-- **THEN** the artifact lands under the module with adopt/v1 sidecars, a review record exists beside them with every block `pending`, and the sidecar carries `review: pending`
+- **THEN** the artifact lands under the module with adopt/v1 sidecars, an external temporary session exists with every block `pending`, and the sidecar carries `review: pending`
 
 #### Scenario: Start refuses a second session for the same artifact
 
-- **WHEN** `rune adopt start` targets an artifact that already has a review record with pending verdicts
+- **WHEN** `rune adopt start` targets an artifact that already has a temporary session with pending verdicts
 - **THEN** the command fails and names the in-flight session
 
 ### Requirement: Segmentation is deterministic
@@ -30,7 +30,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Verdicts are recorded one block at a time
 
-`rune adopt verdict <block-id> <keep|adapt|cut>` SHALL record the verdict in the review record. `adapt` and `cut` SHALL require `--note`. An unknown block id or an already-decided block SHALL be an error unless `--force` re-decides it.
+`rune adopt verdict <block-id> <keep|adapt|cut>` SHALL record the verdict in the temporary session. `adapt` and `cut` SHALL require `--note`. An unknown block id or an already-decided block SHALL be an error unless `--force` re-decides it.
 
 #### Scenario: Cut without a note is rejected
 
@@ -48,7 +48,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Finalize enforces the review
 
-`rune adopt finalize` SHALL fail while any verdict is pending. It SHALL verify verdict consistency against the edited files: a `cut` block's content no longer appears, a `keep` block's content still appears, an `adapt` block's content differs (whitespace-normalized comparisons). It SHALL run `mdschema check` with the kind's schema and fail on schema violations or when `mdschema` is absent. On success it SHALL re-sync the adopt sidecar's subject digest to the reviewed content, flip the sidecar to `review: reviewed`, and complete the review record.
+`rune adopt finalize` SHALL fail while any verdict is pending. It SHALL verify verdict consistency against the edited files: a `cut` block's content no longer appears, a `keep` block's content still appears, an `adapt` block's content differs (whitespace-normalized comparisons). It SHALL run `mdschema check` with the kind's schema and fail on schema violations or when `mdschema` is absent. On success it SHALL re-sync the adopt sidecar's subject digest to the reviewed content, flip the sidecar to `review: reviewed`, add concise final review metadata, and delete the temporary session after all sidecars are safe.
 
 #### Scenario: Pending block blocks finalize
 
@@ -65,14 +65,14 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 - **WHEN** the reviewed artifact violates the kind's `.mdschema`
 - **THEN** finalize fails with the mdschema report
 
-### Requirement: The review record is an in-toto attestation
+### Requirement: Final review authority is the adopt sidecar
 
-The completed review record SHALL be an in-toto Statement v1 with predicate type `https://runedeck.github.io/attestation/adoption-review/v1`, subjects naming the reviewed files with their post-review digests, and a predicate carrying the upstream pin (uri, digest), reviewer identity, started/completed timestamps (UTC RFC 3339), the rune version, and one entry per block: id, kind, content digest, verdict, note.
+The completed review SHALL leave no block ledger in the artifact tree. Adopt/v1 sidecars SHALL carry final subject digests, `review: reviewed`, reviewer identity, completion time, and a concise adaptation summary. Temporary block entries SHALL be deleted only after all sidecars are safely updated.
 
-#### Scenario: Attestation completeness
+#### Scenario: Finalize removes workflow state
 
-- **WHEN** finalize succeeds
-- **THEN** the review record parses as a typed statement and contains exactly one verdict entry per segmented block
+- **WHEN** a fully decided review finalizes successfully
+- **THEN** reviewed sidecars contain final metadata, the external session is gone, and no `review.yaml` or `*.review.yaml` exists in the artifact tree
 
 ### Requirement: Agents and rules are adoptable
 
@@ -94,9 +94,9 @@ Adopted artifact names SHALL match `^[a-z][a-z0-9-]*$`, be at most 64 characters
 
 ### Requirement: Abandon closes a session safely
 
-`rune adopt abandon` SHALL close an in-flight session by moving the imported artifact, its sidecars, and the review record to the trash, never deleting in place.
+`rune adopt abandon` SHALL close an in-flight session by moving the imported artifact, its sidecars, and temporary session to the trash, never deleting the artifact in place.
 
 #### Scenario: Abandon mid-review
 
 - **WHEN** a session has recorded verdicts and `rune adopt abandon` runs with confirmation
-- **THEN** the artifact directory and review record are trashed and `rune adopt status` reports no session
+- **THEN** the artifact directory and temporary session are trashed and `rune adopt status` reports no session
