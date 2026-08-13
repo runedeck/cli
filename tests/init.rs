@@ -453,11 +453,36 @@ fn noninteractive_init_without_templates_applies_base_only() {
 
     init(home.path(), quests.path(), &["base-only"])
         .success()
-        .stdout(predicate::str::contains("layers: base"));
+        .stdout(predicate::str::contains("layers: base"))
+        .stdout(predicate::str::contains(
+            "setup: skipped in noninteractive mode",
+        ))
+        .stdout(predicate::str::contains("  make install"));
 
     assert!(destination.join("Makefile").is_file());
     assert!(!destination.join("selection.txt").exists());
     assert!(!destination.join("bin/base-only").exists());
+}
+
+#[test]
+fn existing_destination_never_executes_an_existing_makefile() {
+    let home = tempfile::tempdir().unwrap();
+    let quests = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let marker = destination.path().join("setup-ran");
+    fs::write(
+        destination.path().join("Makefile"),
+        "install:\n\t@touch setup-ran\n",
+    )
+    .unwrap();
+    let destination_path = destination.path().to_string_lossy();
+
+    init(home.path(), quests.path(), &[&destination_path])
+        .success()
+        .stdout(predicate::str::contains("setup: kept existing Makefile"))
+        .stdout(predicate::str::contains("  make install"));
+
+    assert!(!marker.exists());
 }
 
 #[test]
@@ -532,6 +557,8 @@ fn dry_run_predicts_gitignore_retrofit_performed_by_real_init() {
     .stdout
     .clone();
     let real_run_result: serde_json::Value = serde_json::from_slice(&real_run_output).unwrap();
+    assert_eq!(dry_run_result["setup"]["status"], "dry_run");
+    assert_eq!(real_run_result["setup"]["status"], "non_interactive");
     let real_run_gitignore = real_run_result["installed"]
         .as_array()
         .unwrap()
