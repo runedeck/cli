@@ -31,12 +31,14 @@ static HTTPS_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static FILE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^file:///.+$").expect("anchored file URL regex compiles"));
-// Deck source names are PascalCase (1-64 chars, name equals the directory);
-// assembly kebabizes for targets that enforce the agentskills.io lowercase
-// convention (claude.ai packaging hard-enforces; opencode and Copilot
-// document it). Claude Code, Gemini CLI, and Codex accept Pascal as-is.
-static PASCAL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Z][A-Za-z0-9]{0,63}$").expect("anchored PascalCase regex compiles")
+static SCHEME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*://").expect("anchored URL scheme regex compiles")
+});
+// Source names follow the shared skill schema. Decks may choose casing, while
+// providers that require lowercase names normalize them during assembly.
+static ARTIFACT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$")
+        .expect("anchored artifact name regex compiles")
 });
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -480,8 +482,24 @@ fn classify_url(url: &str) -> Result<ClassifiedUrl, String> {
         });
     }
 
+    if !SCHEME_RE.is_match(url) {
+        let path = fs::canonicalize(url).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!("local source does not exist: {url}")
+            } else {
+                format!("cannot resolve local source '{url}': {error}")
+            }
+        })?;
+        return Ok(ClassifiedUrl {
+            original_url: format!("file://{}", path.display()),
+            source_path: path.to_string_lossy().into_owned(),
+            fetch_url: FetchUrl::File(path),
+            commit: None,
+        });
+    }
+
     Err(format!(
-        "unsupported URL '{url}': use https:// or file:// for tests"
+        "unsupported source '{url}': use an https:// URL, a local path, or a file:// URL"
     ))
 }
 
@@ -617,9 +635,9 @@ fn validate_relative_path(path: &str) -> Result<PathBuf, String> {
 }
 
 fn validate_artifact_name(name: &str) -> Result<&str, String> {
-    if !PASCAL_RE.is_match(name) {
+    if name.chars().count() > 64 || !ARTIFACT_NAME_RE.is_match(name) {
         return Err(format!(
-            "--name must be PascalCase (leading capital, letters and digits, max 64 chars), got '{name}'"
+            "--name must use letters and digits with optional single '-' or '_' separators (max 64 chars), got '{name}'"
         ));
     }
     Ok(name)
