@@ -66,7 +66,9 @@ fn resolve_with_config(
     let profile = resolve_profile(tool_name, profile_name, &config.launch)?.cloned();
     let mut options = parse_cli_tail(rest, &config.launch)?;
     if let Some(profile) = &profile {
-        options.middleware.extend(profile.with.iter().cloned());
+        if !options.direct {
+            options.middleware.extend(profile.with.iter().cloned());
+        }
         let mut args: Vec<OsString> = profile.args.iter().map(OsString::from).collect();
         args.append(&mut options.args);
         options.args = args;
@@ -110,6 +112,7 @@ struct ParsedLaunchTail {
     middleware: Vec<String>,
     tmux: Option<String>,
     dry_run: bool,
+    direct: bool,
     args: Vec<OsString>,
 }
 
@@ -220,6 +223,7 @@ fn parse_cli_tail(rest: &[OsString], launch: &Launch) -> Result<ParsedLaunchTail
         middleware: launch.default_with.clone(),
         tmux: None,
         dry_run: false,
+        direct: false,
         args: Vec::new(),
     };
     let mut saw_explicit_chain = false;
@@ -238,6 +242,7 @@ fn parse_cli_tail(rest: &[OsString], launch: &Launch) -> Result<ParsedLaunchTail
             }
             "--direct" => {
                 parsed.middleware.clear();
+                parsed.direct = true;
                 saw_explicit_chain = true;
             }
             "--with" => {
@@ -402,13 +407,18 @@ fn resolve_model(alias: &str, launch: &Launch) -> Result<(LaunchModel, ModelSour
             context: 1_050_000,
             compact: None,
         },
+        "grok" => LaunchModel {
+            id: "grok-4.6".to_string(),
+            context: 500_000,
+            compact: None,
+        },
         "lumo" => LaunchModel {
             id: "lumo-max".to_string(),
             context: 131_072,
             compact: None,
         },
         _ => {
-            let mut known = vec!["lumo", "sol", "sol-api"];
+            let mut known = vec!["grok", "lumo", "sol", "sol-api"];
             known.extend(launch.models.keys().map(String::as_str));
             known.sort_unstable();
             known.dedup();
@@ -544,7 +554,12 @@ fn list_tools(launch: &Launch) -> i32 {
         let suffix = if profiles.is_empty() {
             String::new()
         } else {
-            sheet.dim(&format!("  {}@", profiles.join("@ ")))
+            let invocations = profiles
+                .iter()
+                .map(|profile| format!("{profile}@{tool}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            sheet.dim(&format!("  {invocations}"))
         };
         println!("   {:<10} {state}{suffix}", sheet.bold(tool));
     }

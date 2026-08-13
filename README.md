@@ -44,6 +44,17 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 
 **Status** — Renders a one-shot summary of deck content, specifications, changes, validation findings, and deploy targets.
 
+**Launch and run** — Resolves named coding-tool profiles for interactive sessions or supervised noninteractive prompts. Fresh installs include `sol@claude` and `grok@claude`, routed through a local CLIProxyAPI at `http://127.0.0.1:8317`. Export `CLIPROXY_API_KEY`, then use either form:
+
+```sh
+rune launch sol@claude
+rune launch grok@claude
+rune run sol@claude "Review this repository"
+rune run grok@claude "Summarize the current architecture"
+```
+
+Copy [`config.example.yaml`](config.example.yaml) to `~/.config/rune/config.yaml` when you need to replace the built-in profiles, change the proxy endpoint, or override model metadata. Credential values stay outside YAML through `from_env` references.
+
 ## How Content Flows
 
 ```ascii
