@@ -13,6 +13,70 @@ const AGENT_FIXTURE: &str = include_str!(concat!(
     "/tests/fixtures/input/agent-basic.md",
 ));
 
+// --- to_kebab_path ---
+
+#[test]
+fn kebab_path_preserves_the_skill_entrypoint() {
+    assert_eq!(to_kebab_path("BuildSkill/SKILL.md"), "build-skill/SKILL.md");
+}
+
+#[test]
+fn kebab_path_converts_markdown_companions() {
+    assert_eq!(
+        to_kebab_path("BuildSkill/EvalLoop.md"),
+        "build-skill/eval-loop.md"
+    );
+}
+
+#[test]
+fn kebab_path_leaves_python_module_names_importable() {
+    assert_eq!(
+        to_kebab_path("BuildSkill/scripts/aggregate_benchmark.py"),
+        "build-skill/scripts/aggregate_benchmark.py"
+    );
+}
+
+#[test]
+fn kebab_path_leaves_asset_filenames_alone() {
+    assert_eq!(
+        to_kebab_path("BuildSkill/assets/eval_review.html"),
+        "build-skill/assets/eval_review.html"
+    );
+}
+
+#[test]
+fn kebab_path_converts_nested_markdown() {
+    assert_eq!(
+        to_kebab_path("BuildSkill/agents/Grader.md"),
+        "build-skill/agents/grader.md"
+    );
+}
+
+#[test]
+fn kebab_path_converts_a_bare_filename() {
+    assert_eq!(to_kebab_path("GameMaster.md"), "game-master.md");
+}
+
+#[test]
+fn kebab_path_is_idempotent_on_kebab_input() {
+    assert_eq!(
+        to_kebab_path("build-skill/eval-loop.md"),
+        "build-skill/eval-loop.md"
+    );
+    assert_eq!(
+        to_kebab_path("build-skill/references/schemas.md"),
+        "build-skill/references/schemas.md"
+    );
+}
+
+#[test]
+fn kebab_path_preserves_parent_directory_segments() {
+    assert_eq!(
+        to_kebab_path("../../rules/ArtifactLength.md"),
+        "../../rules/artifact-length.md"
+    );
+}
+
 // --- to_kebab_case ---
 
 #[test]
@@ -289,6 +353,44 @@ fn apply_rules_kebab_case_transforms_filename_for_rules() {
 }
 
 #[test]
+fn apply_rules_kebab_case_skills_transforms_a_skill_tree() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+    let content = "---\nname: BuildSkill\ndescription: Author skills.\n---\n\nRead [EvalLoop.md](EvalLoop.md).\n";
+
+    let (out, filename) =
+        apply_rules(content, "BuildSkill/SKILL.md", &rules, &mappings, "skills").unwrap();
+
+    assert_eq!(filename, "build-skill/SKILL.md");
+    assert!(out.contains("name: build-skill"), "got: {out}");
+    assert!(out.contains("[eval-loop.md](eval-loop.md)"), "got: {out}");
+}
+
+#[test]
+fn apply_rules_kebab_case_skills_skips_agents() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+    let content = "---\nname: SecurityArchitect\n---";
+
+    let (out, filename) =
+        apply_rules(content, "SecurityArchitect.md", &rules, &mappings, "agents").unwrap();
+
+    assert_eq!(filename, "SecurityArchitect.md");
+    assert_eq!(out, content);
+}
+
+#[test]
+fn apply_rules_kebab_case_skills_skips_rules() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+
+    let (_content, filename) =
+        apply_rules("body", "NoEmDash.md", &rules, &mappings, "rules").unwrap();
+
+    assert_eq!(filename, "NoEmDash.md");
+}
+
+#[test]
 fn apply_rules_kebab_case_agents_transforms_filename_for_agents() {
     let rules = vec![AssemblyRule::KebabCaseAgents];
     let mappings = HashMap::new();
@@ -319,6 +421,100 @@ fn apply_rules_kebab_case_agents_skips_filename_for_rules() {
         apply_rules("body", "SecurityArchitect.md", &rules, &mappings, "rules").unwrap();
 
     assert_eq!(filename, "SecurityArchitect.md");
+}
+
+#[test]
+fn apply_rules_kebab_case_renames_a_skill_directory_but_not_its_entrypoint() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "---\nname: BuildSkill\ndescription: Author skills.\n---\n\n# BuildSkill\n";
+
+    let (out, filename) =
+        apply_rules(content, "BuildSkill/SKILL.md", &rules, &mappings, "skills").unwrap();
+
+    assert_eq!(filename, "build-skill/SKILL.md");
+    assert!(
+        out.contains("name: build-skill"),
+        "frontmatter name should normalize: {out}"
+    );
+}
+
+#[test]
+fn apply_rules_kebab_case_renames_companions_and_retargets_their_links() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "Read [EvalLoop.md](EvalLoop.md) and run scripts/run_eval.py.\n";
+
+    let (out, filename) = apply_rules(
+        content,
+        "BuildSkill/SkillStructure.md",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/skill-structure.md");
+    assert_eq!(
+        out,
+        "Read [eval-loop.md](eval-loop.md) and run scripts/run_eval.py.\n"
+    );
+}
+
+#[test]
+fn apply_rules_kebab_case_leaves_bundled_scripts_importable() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "import sys\n";
+
+    let (_, filename) = apply_rules(
+        content,
+        "BuildSkill/scripts/aggregate_benchmark.py",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/scripts/aggregate_benchmark.py");
+}
+
+#[test]
+fn apply_rules_kebab_case_never_rewrites_non_markdown_content() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "callbacks[0](arg_one)\nresults = handlers[index](payload_two)\n";
+
+    let (out, filename) = apply_rules(
+        content,
+        "BuildSkill/scripts/dispatch_table.py",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/scripts/dispatch_table.py");
+    assert_eq!(out, content, "script bytes must survive assembly untouched");
+}
+
+#[test]
+fn apply_rules_kebab_case_is_a_no_op_on_a_kebab_authored_skill() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "Read [eval-loop.md](eval-loop.md).\n";
+
+    let (out, filename) = apply_rules(
+        content,
+        "build-skill/skill-structure.md",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/skill-structure.md");
+    assert_eq!(out, content);
 }
 
 #[test]

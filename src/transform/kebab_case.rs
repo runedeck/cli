@@ -1,3 +1,50 @@
+/// The one filename every harness resolves by exact spelling.
+const SKILL_ENTRYPOINT: &str = "SKILL.md";
+
+/// Convert each segment of a relative path to kebab-case.
+///
+/// Directory segments always convert. A final segment converts only when it
+/// names a Markdown file, so `scripts/aggregate_benchmark.py` stays importable
+/// as `scripts.aggregate_benchmark` and `assets/eval_review.html` keeps the
+/// name its references use. `SKILL.md` passes through untouched.
+///
+/// Already-kebab input is unchanged, so a deck that authors lowercase deploys
+/// byte-identical content whether or not the rule is enabled.
+///
+/// ```
+/// # use rune::transform::to_kebab_path;
+/// assert_eq!(to_kebab_path("BuildSkill/SKILL.md"), "build-skill/SKILL.md");
+/// assert_eq!(to_kebab_path("BuildSkill/EvalLoop.md"), "build-skill/eval-loop.md");
+/// assert_eq!(
+///     to_kebab_path("BuildSkill/scripts/run_eval.py"),
+///     "build-skill/scripts/run_eval.py"
+/// );
+/// ```
+#[must_use]
+pub fn to_kebab_path(path: &str) -> String {
+    let segments: Vec<&str> = path.split('/').collect();
+    let final_index = segments.len().saturating_sub(1);
+
+    segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            if index < final_index {
+                return to_kebab_case(segment);
+            }
+            if *segment == SKILL_ENTRYPOINT {
+                return (*segment).to_string();
+            }
+            match segment.rsplit_once('.') {
+                Some((stem, "md")) => format!("{}.md", to_kebab_case(stem)),
+                Some(_) => (*segment).to_string(),
+                None => to_kebab_case(segment),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("/")
+}
+
 /// Convert a `PascalCase` name to kebab-case.
 ///
 /// Inserts `-` at two boundary types:

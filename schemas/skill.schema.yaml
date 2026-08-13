@@ -9,7 +9,12 @@ properties:
         type: string
         minLength: 1
         maxLength: 64
-        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        # Source is authored in whatever casing a deck prefers, and providers
+        # deploy that casing verbatim. A provider whose specification demands
+        # lowercase names (agentskills) enables the kebab-case-skills assembly
+        # rule to normalize on the way out. What must hold in source is that
+        # the directory, this field, and the H1 agree, which lint_skill checks.
+        pattern: "^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$"
     description:
         type: string
         maxLength: 1024

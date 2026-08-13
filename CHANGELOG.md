@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Spec lifecycle scaffolding accepts repeated `--capability` flags and `--design`; proposals list their capabilities, `spec context` and `spec show` include the optional design, and `spec archive --abandon -y` works in scripts.
 - Warning-severity conformance lint in `rune validate` for every `SKILL.md`: name must equal its directory and stay within 64 characters, description within 1024, no reserved words (`claude`, `anthropic`) in names, no angle brackets in frontmatter, a trigger phrase in the description, and a body long enough to instruct. Warnings inform; only schema errors block.
+- `kebab-case-skills` assembly rule: the full skill-tree normalization (path, frontmatter name, link retargeting), applied to skills only. The agentskills provider enables it because the AgentSkills specification requires lowercase names matching the skill directory; every other provider deploys authored casing verbatim.
 
 ### Changed
 
@@ -48,6 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Git subprocesses ignore ambient repository-routing variables exported by hooks, so nested repository operations stay pinned to their intended worktrees.
 - Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
+- Link retargeting follows a renamed directory into non-Markdown targets (`Scripts/run_eval.py` tracks its tree to `scripts/run_eval.py`) and the reference-definition pass preserves CRLF line endings instead of rewriting them to LF.
 
 ## [0.5.0] - 2026-07-17
 

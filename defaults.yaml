@@ -80,7 +80,11 @@ providers:
         target: ".agents"
         aliases:
             - agents
+        # The AgentSkills specification requires a lowercase-hyphen name that
+        # matches the skill directory; every other provider deploys the
+        # authored PascalCase verbatim.
         assembly:
+            - kebab-case-skills
             - strip-links
         keep_fields:
             agents: [name, description]

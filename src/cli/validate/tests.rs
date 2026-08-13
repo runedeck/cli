@@ -671,7 +671,7 @@ fn skill_lint_flags_reserved_names() {
 }
 
 #[test]
-fn skill_name_requires_lowercase_kebab_case() {
+fn skill_name_accepts_any_casing_the_kebab_rule_can_normalize() {
     for (directory_name, fixture_name, content, valid) in [
         (
             "minimal-skill",
@@ -683,12 +683,18 @@ fn skill_name_requires_lowercase_kebab_case() {
             "PascalSkill",
             "runeshell-pascal-name.md",
             fixture!("runeshell-pascal-name.md"),
-            false,
+            true,
         ),
         (
             "snake_skill",
             "runeshell-snake-name.md",
             fixture!("runeshell-snake-name.md"),
+            true,
+        ),
+        (
+            "-Broken--Name-",
+            "runeshell-malformed-name.md",
+            fixture!("runeshell-malformed-name.md"),
             false,
         ),
     ] {
