@@ -36,17 +36,13 @@ pub fn apply_rules(
     for rule in rules {
         match rule {
             AssemblyRule::KebabCase => {
-                current_filename = to_kebab_path(&current_filename);
-                current_content =
-                    crate::assemble::map_field(&current_content, "name", to_kebab_case);
-                current_content = rewrite_markdown_links(&current_content, to_kebab_path);
+                (current_content, current_filename) =
+                    kebab_case_tree(current_content, &current_filename);
             }
             AssemblyRule::KebabCaseSkills => {
                 if kind == "skills" {
-                    current_filename = to_kebab_path(&current_filename);
-                    current_content =
-                        crate::assemble::map_field(&current_content, "name", to_kebab_case);
-                    current_content = rewrite_markdown_links(&current_content, to_kebab_path);
+                    (current_content, current_filename) =
+                        kebab_case_tree(current_content, &current_filename);
                 }
             }
             AssemblyRule::KebabCaseAgents => {
@@ -73,6 +69,23 @@ pub fn apply_rules(
     }
 
     Ok((current_content, current_filename))
+}
+
+/// Kebab-case a file's path and, for Markdown documents only, its frontmatter
+/// name and link targets. Passthrough assets (scripts, templates, images)
+/// follow their renamed directories but keep their bytes untouched: link
+/// rewriting on non-Markdown content would mangle code like
+/// `callbacks[0](arg_one)`.
+fn kebab_case_tree(content: String, filename: &str) -> (String, String) {
+    let renamed = to_kebab_path(filename);
+    if !std::path::Path::new(&renamed)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        return (content, renamed);
+    }
+    let content = crate::assemble::map_field(&content, "name", to_kebab_case);
+    (rewrite_markdown_links(&content, to_kebab_path), renamed)
 }
 
 /// Split a filename into stem and extension (including the dot).

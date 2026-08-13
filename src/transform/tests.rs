@@ -480,6 +480,25 @@ fn apply_rules_kebab_case_leaves_bundled_scripts_importable() {
 }
 
 #[test]
+fn apply_rules_kebab_case_never_rewrites_non_markdown_content() {
+    let rules = vec![AssemblyRule::KebabCase];
+    let mappings = HashMap::new();
+    let content = "callbacks[0](arg_one)\nresults = handlers[index](payload_two)\n";
+
+    let (out, filename) = apply_rules(
+        content,
+        "BuildSkill/scripts/dispatch_table.py",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/scripts/dispatch_table.py");
+    assert_eq!(out, content, "script bytes must survive assembly untouched");
+}
+
+#[test]
 fn apply_rules_kebab_case_is_a_no_op_on_a_kebab_authored_skill() {
     let rules = vec![AssemblyRule::KebabCase];
     let mappings = HashMap::new();
