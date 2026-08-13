@@ -2,8 +2,11 @@
 ///
 /// Covers inline links (`[text](target)`) and reference definitions
 /// (`[label]: target "title"`). Absolute URLs, root-absolute paths, and bare
-/// anchors are left alone, as is any target that does not name a Markdown
-/// file. A fragment survives the rewrite: `Guide.md#setup` follows its file.
+/// anchors are left alone. Every other relative target passes through
+/// `rename`, which owns the extension policy: `to_kebab_path` keeps a non-
+/// Markdown filename but still converts its directory segments, so
+/// `Scripts/run_eval.py` follows its tree to `scripts/run_eval.py`. A
+/// fragment survives the rewrite: `Guide.md#setup` follows its file.
 ///
 /// Link text that repeats the target verbatim is renamed with it, so a
 /// deployed document never names a file that is not there.
@@ -90,18 +93,22 @@ fn parse_inline_link(content: &str, open: usize) -> Option<InlineLink<'_>> {
 }
 
 fn rewrite_reference_definitions(content: &str, rename: &impl Fn(&str) -> String) -> String {
-    let mut output = Vec::new();
+    let mut output = String::with_capacity(content.len());
 
-    for line in content.lines() {
-        output.push(rewrite_reference_definition(line, rename));
+    // split_inclusive keeps each line's own terminator, so a CRLF document
+    // comes back CRLF and the trailing-newline state is untouched.
+    for line in content.split_inclusive('\n') {
+        let ending_length = if line.ends_with("\r\n") {
+            2
+        } else {
+            usize::from(line.ends_with('\n'))
+        };
+        let (body, ending) = line.split_at(line.len() - ending_length);
+        output.push_str(&rewrite_reference_definition(body, rename));
+        output.push_str(ending);
     }
 
-    let joined = output.join("\n");
-    if content.ends_with('\n') {
-        format!("{joined}\n")
-    } else {
-        joined
-    }
+    output
 }
 
 fn rewrite_reference_definition(line: &str, rename: &impl Fn(&str) -> String) -> String {
@@ -139,12 +146,6 @@ fn rename_target(target: &str, rename: &impl Fn(&str) -> String) -> Option<Strin
         Some((path, fragment)) => (path, Some(fragment)),
         None => (target, None),
     };
-    if !std::path::Path::new(path)
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-    {
-        return None;
-    }
 
     let renamed = rename(path);
     if renamed == path {

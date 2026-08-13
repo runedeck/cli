@@ -464,7 +464,7 @@ fn install_deploys_skill_to_agentskills_provider() {
 
     let deployed = target_directory
         .path()
-        .join(".agents/skills/AgentSkill/SKILL.md");
+        .join(".agents/skills/agent-skill/SKILL.md");
     assert!(deployed.is_file(), "expected {}", deployed.display());
 }
 

@@ -9,10 +9,11 @@ properties:
         type: string
         minLength: 1
         maxLength: 64
-        # Source is authored in whatever casing a deck prefers; the kebab-case
-        # assembly rule normalizes it on the way out. What must hold in source
-        # is that the directory, this field, and the H1 agree, which lint_skill
-        # checks. A deck that deploys without that rule keeps its own casing.
+        # Source is authored in whatever casing a deck prefers, and providers
+        # deploy that casing verbatim. A provider whose specification demands
+        # lowercase names (agentskills) enables the kebab-case-skills assembly
+        # rule to normalize on the way out. What must hold in source is that
+        # the directory, this field, and the H1 agree, which lint_skill checks.
         pattern: "^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$"
     description:
         type: string

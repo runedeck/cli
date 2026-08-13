@@ -18,6 +18,8 @@ use crate::provider::AssemblyRule;
 ///
 /// Rules are applied sequentially:
 ///   - `KebabCase` — transforms filename from `PascalCase` to kebab-case
+///   - `KebabCaseSkills` — the same transform, skills only, so a provider can
+///     normalize skill trees while agents and rules keep their authored casing
 ///   - `RemapTools` — replaces tool names in backtick spans
 ///   - `AgentsToToml` — converts an agent's markdown to TOML and `.md` to `.toml`;
 ///     agents only, so skills (Codex reads `SKILL.md`) and rules stay markdown
@@ -38,6 +40,14 @@ pub fn apply_rules(
                 current_content =
                     crate::assemble::map_field(&current_content, "name", to_kebab_case);
                 current_content = rewrite_markdown_links(&current_content, to_kebab_path);
+            }
+            AssemblyRule::KebabCaseSkills => {
+                if kind == "skills" {
+                    current_filename = to_kebab_path(&current_filename);
+                    current_content =
+                        crate::assemble::map_field(&current_content, "name", to_kebab_case);
+                    current_content = rewrite_markdown_links(&current_content, to_kebab_path);
+                }
             }
             AssemblyRule::KebabCaseAgents => {
                 if kind == "agents" {

@@ -55,6 +55,14 @@ fn non_markdown_targets_are_untouched() {
 }
 
 #[test]
+fn non_markdown_target_follows_its_renamed_directory() {
+    assert_eq!(
+        rewrite_markdown_links("[eval](Scripts/run_eval.py)", to_kebab_path),
+        "[eval](scripts/run_eval.py)"
+    );
+}
+
+#[test]
 fn absolute_urls_and_anchors_are_untouched() {
     let source = "[spec](https://agentskills.io/Specification.md) [top](#Overview)";
     assert_eq!(rewrite_markdown_links(source, to_kebab_path), source);
@@ -88,6 +96,17 @@ fn trailing_newline_is_preserved() {
     assert_eq!(
         rewrite_markdown_links("[EvalLoop.md](EvalLoop.md)\n", to_kebab_path),
         "[eval-loop.md](eval-loop.md)\n"
+    );
+}
+
+#[test]
+fn crlf_line_endings_survive_the_reference_pass() {
+    assert_eq!(
+        rewrite_markdown_links(
+            "Intro line.\r\n[LOOP]: EvalLoop.md\r\nNo trailing newline.",
+            to_kebab_path
+        ),
+        "Intro line.\r\n[LOOP]: eval-loop.md\r\nNo trailing newline."
     );
 }
 

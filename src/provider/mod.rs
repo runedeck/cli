@@ -36,6 +36,7 @@ impl std::fmt::Display for ContentKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssemblyRule {
     KebabCase,
+    KebabCaseSkills,
     KebabCaseAgents,
     RemapTools,
     AgentsToToml,
@@ -46,6 +47,7 @@ impl AssemblyRule {
     pub fn from_name(name: &str) -> Result<Self, String> {
         match name {
             "kebab-case" => Ok(Self::KebabCase),
+            "kebab-case-skills" => Ok(Self::KebabCaseSkills),
             "kebab-case-agents" => Ok(Self::KebabCaseAgents),
             "remap-tools" => Ok(Self::RemapTools),
             "agents-to-toml" => Ok(Self::AgentsToToml),

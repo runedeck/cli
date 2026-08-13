@@ -353,6 +353,44 @@ fn apply_rules_kebab_case_transforms_filename_for_rules() {
 }
 
 #[test]
+fn apply_rules_kebab_case_skills_transforms_a_skill_tree() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+    let content = "---\nname: BuildSkill\ndescription: Author skills.\n---\n\nRead [EvalLoop.md](EvalLoop.md).\n";
+
+    let (out, filename) =
+        apply_rules(content, "BuildSkill/SKILL.md", &rules, &mappings, "skills").unwrap();
+
+    assert_eq!(filename, "build-skill/SKILL.md");
+    assert!(out.contains("name: build-skill"), "got: {out}");
+    assert!(out.contains("[eval-loop.md](eval-loop.md)"), "got: {out}");
+}
+
+#[test]
+fn apply_rules_kebab_case_skills_skips_agents() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+    let content = "---\nname: SecurityArchitect\n---";
+
+    let (out, filename) =
+        apply_rules(content, "SecurityArchitect.md", &rules, &mappings, "agents").unwrap();
+
+    assert_eq!(filename, "SecurityArchitect.md");
+    assert_eq!(out, content);
+}
+
+#[test]
+fn apply_rules_kebab_case_skills_skips_rules() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+
+    let (_content, filename) =
+        apply_rules("body", "NoEmDash.md", &rules, &mappings, "rules").unwrap();
+
+    assert_eq!(filename, "NoEmDash.md");
+}
+
+#[test]
 fn apply_rules_kebab_case_agents_transforms_filename_for_agents() {
     let rules = vec![AssemblyRule::KebabCaseAgents];
     let mappings = HashMap::new();

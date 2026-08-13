@@ -118,6 +118,10 @@ fn assembly_rule_from_name_accepts_known_rules() {
         AssemblyRule::KebabCase,
     );
     assert_eq!(
+        AssemblyRule::from_name("kebab-case-skills").unwrap(),
+        AssemblyRule::KebabCaseSkills,
+    );
+    assert_eq!(
         AssemblyRule::from_name("kebab-case-agents").unwrap(),
         AssemblyRule::KebabCaseAgents,
     );
