@@ -688,7 +688,7 @@ fn manual_only_skill_needs_no_trigger_phrasing() {
     let report = validate_skill_fixture("manual-only-skill", manual_only);
     assert!(
         report.result.errors.is_empty(),
-        "the schema must accept the invocation-control fields the claude provider already keeps: {:?}",
+        "the schema must accept provider targeting and invocation-control fields: {:?}",
         report.result.errors
     );
     assert!(

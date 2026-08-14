@@ -29,6 +29,10 @@ properties:
             type: string
     allowed-tools:
         type: string
+    targets:
+        type: array
+        items:
+            type: string
     # Who may invoke the skill. The claude provider already carries both
     # fields through assembly, so rejecting them here refused a skill the
     # deployed harness reads. `disable-model-invocation` keeps a skill out

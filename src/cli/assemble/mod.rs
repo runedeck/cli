@@ -240,6 +240,18 @@ fn resolve_active_model(
     provider_config.model.clone()
 }
 
+fn source_matches_provider_target(
+    source: &sources::SourceFile,
+    provider_name: &str,
+    provider_config: &rune::provider::ProviderConfig,
+) -> bool {
+    source.targets.as_ref().is_none_or(|file_targets| {
+        file_targets
+            .iter()
+            .any(|target| provider_config.matches_target(target, provider_name))
+    })
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn assemble_source_for_provider(
     source: &sources::SourceFile,
@@ -269,11 +281,7 @@ fn assemble_source_for_provider(
         return Ok(None);
     }
 
-    if source.targets.as_ref().is_some_and(|file_targets| {
-        !file_targets
-            .iter()
-            .any(|target| provider_config.matches_target(target, provider_name))
-    }) {
+    if !source_matches_provider_target(source, provider_name, provider_config) {
         return Ok(None);
     }
 

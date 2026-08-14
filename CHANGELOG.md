@@ -50,7 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
 - Link retargeting follows a renamed directory into non-Markdown targets (`Scripts/run_eval.py` tracks its tree to `scripts/run_eval.py`) and the reference-definition pass preserves CRLF line endings instead of rewriting them to LF.
-- The skill schema accepts `disable-model-invocation` and `user-invocable`, the two fields the claude provider already carries through assembly, so a deck can author a skill only a person may invoke. A skill carrying `disable-model-invocation: true` no longer draws the trigger-phrasing warning, which describes a listing that skill never enters.
+- The skill schema accepts `targets`, `disable-model-invocation`, and `user-invocable`, which assembly already supports. A deck can restrict a skill to named providers or person-only invocation. `disable-model-invocation: true` suppresses the trigger-phrasing warning because the model cannot list that skill.
 
 ## [0.5.0] - 2026-07-17
 

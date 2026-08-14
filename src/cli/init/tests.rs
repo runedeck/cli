@@ -132,7 +132,7 @@ fn init_creates_all_files() {
 /// CLI checkout present. This pin is what makes an edit here impossible to
 /// forget there.
 const STABLE_SHELL_SCHEMA_SHA256: &str =
-    "c9ef63b1482dbb383c300367c57bfb275fb33980b5ceb7fa1962ee897abb4741";
+    "07b32cacbaa15d9dedb7e59f242565837e4bc971587a3254c472a3c30f12ce53";
 
 #[test]
 fn stable_shell_schema_digest_is_pinned() {

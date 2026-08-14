@@ -1,6 +1,7 @@
 ---
 name: manual-only-skill
 description: Short name for the LongerNamedSkill skill.
+targets: [claude]
 disable-model-invocation: true
 ---
 

@@ -16,6 +16,9 @@ frontmatter:
         - name: allowed-tools
           type: string
           optional: true
+        - name: targets
+          type: array
+          optional: true
         - name: disable-model-invocation
           type: boolean
           optional: true
