@@ -303,8 +303,14 @@ fn lint_skill(content: &str, dir: &Path, display_path: &str, report: &mut Valida
     if looks_tagged(&name) || looks_tagged(&description) {
         warn("frontmatter name or description contains an angle-bracket pair; XML-like text breaks harness prompt assembly".to_string());
     }
+    // A skill the model never loads on its own has no trigger to phrase: the
+    // harness keeps its description out of the skill listing, so the text only
+    // names the skill for whoever types its slash command.
+    let model_invocable = rune::parse::frontmatter_value(content, "disable-model-invocation")
+        .is_none_or(|value| !value.trim().eq_ignore_ascii_case("true"));
     let description_lower = description.to_lowercase();
-    if !description.is_empty()
+    if model_invocable
+        && !description.is_empty()
         && !["use when", " when ", "invoke", "use for", "use this"]
             .iter()
             .any(|phrase| description_lower.contains(phrase))

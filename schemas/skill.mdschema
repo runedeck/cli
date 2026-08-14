@@ -16,6 +16,12 @@ frontmatter:
         - name: allowed-tools
           type: string
           optional: true
+        - name: disable-model-invocation
+          type: boolean
+          optional: true
+        - name: user-invocable
+          type: boolean
+          optional: true
 
 heading_rules:
     no_skip_levels: true

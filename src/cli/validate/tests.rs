@@ -670,6 +670,41 @@ fn skill_lint_flags_reserved_names() {
     );
 }
 
+/// The same description warns or not depending on one field, which is the
+/// whole claim: trigger phrasing is advice for a listing the model reads, and
+/// `disable-model-invocation` removes the skill from that listing.
+#[test]
+fn manual_only_skill_needs_no_trigger_phrasing() {
+    let manual_only = fixture!("runeshell-manual-only.md");
+    let model_invocable = manual_only.replace("disable-model-invocation: true\n", "");
+    let warns_about_triggers = |report: &ValidationReport| {
+        report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("trigger phrasing"))
+    };
+
+    let report = validate_skill_fixture("manual-only-skill", manual_only);
+    assert!(
+        report.result.errors.is_empty(),
+        "the schema must accept the invocation-control fields the claude provider already keeps: {:?}",
+        report.result.errors
+    );
+    assert!(
+        !warns_about_triggers(&report),
+        "a skill the model never loads needs no trigger phrasing: {:?}",
+        report.result.warnings
+    );
+
+    let report = validate_skill_fixture("manual-only-skill", &model_invocable);
+    assert!(
+        warns_about_triggers(&report),
+        "dropping the field alone must restore the warning, or this proves nothing: {:?}",
+        report.result.warnings
+    );
+}
+
 #[test]
 fn skill_name_accepts_any_casing_the_kebab_rule_can_normalize() {
     for (directory_name, fixture_name, content, valid) in [
