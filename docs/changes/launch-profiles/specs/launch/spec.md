@@ -2,7 +2,14 @@
 
 ### Requirement: Named launch profiles
 
-The Launch capability SHALL resolve `[profile@]<tool>` from user launch configuration and SHALL compose the selected profile with the ordered middleware plan.
+The Launch capability SHALL resolve `[profile@]<tool>` from the built-in profile catalog and user launch configuration and SHALL compose the selected profile with the ordered middleware plan. The built-in catalog SHALL provide `sol@claude` and `grok@claude` through CLIProxyAPI on localhost, with authentication read from `CLIPROXY_API_KEY`.
+
+#### Scenario: Built-in proxy profile
+
+- **WHEN** a fresh installation launches `sol@claude` or `grok@claude`
+- **THEN** Rune selects the corresponding built-in model route
+- **AND** sends Claude Code through CLIProxyAPI at `http://127.0.0.1:8317`
+- **AND** resolves authentication from `CLIPROXY_API_KEY`
 
 #### Scenario: Profile environment and arguments
 

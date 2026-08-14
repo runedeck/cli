@@ -188,6 +188,95 @@ fn lore_and_artifacts_resolve_from_env() {
 }
 
 #[test]
+fn missing_config_includes_default_proxy_profiles() {
+    let resolved = resolve_config(&Config::default(), &no_env);
+    let claude_profiles = resolved
+        .launch
+        .profiles
+        .get("claude")
+        .expect("default Claude profiles");
+
+    assert_eq!(claude_profiles["sol"].model.as_deref(), Some("sol"));
+    assert_eq!(claude_profiles["grok"].model.as_deref(), Some("grok"));
+    assert!(resolved.launch.models.is_empty());
+    assert_eq!(
+        claude_profiles["grok"].env["ANTHROPIC_BASE_URL"],
+        ProfileEnvValue::Literal("http://127.0.0.1:8317".to_string())
+    );
+}
+
+#[test]
+fn configured_proxy_endpoint_updates_default_profiles() {
+    let config = Config {
+        launch: Launch {
+            middleware: LaunchMiddleware {
+                cliproxy: CliproxyConfig {
+                    host: "cliproxy.internal".to_string(),
+                    port: 9443,
+                    command: String::new(),
+                },
+                ..LaunchMiddleware::default()
+            },
+            ..Launch::default()
+        },
+        ..Config::default()
+    };
+
+    let resolved = resolve_config(&config, &no_env);
+    assert_eq!(
+        resolved.launch.profiles["claude"]["sol"].env["ANTHROPIC_BASE_URL"],
+        ProfileEnvValue::Literal("http://cliproxy.internal:9443".to_string())
+    );
+}
+
+#[test]
+fn configured_launch_profiles_replace_matching_defaults() {
+    let configured_profile = LaunchProfile {
+        model: Some("grok".to_string()),
+        env: [(
+            "ANTHROPIC_BASE_URL".to_string(),
+            ProfileEnvValue::Literal("https://proxy.example.com".to_string()),
+        )]
+        .into_iter()
+        .collect(),
+        ..LaunchProfile::default()
+    };
+    let config = Config {
+        launch: Launch {
+            models: [(
+                "grok".to_string(),
+                LaunchModel {
+                    id: "configured-grok".to_string(),
+                    context: 300_000,
+                    compact: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            profiles: [(
+                "claude".to_string(),
+                [("grok".to_string(), configured_profile)]
+                    .into_iter()
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
+            ..Launch::default()
+        },
+        ..Config::default()
+    };
+
+    let resolved = resolve_config(&config, &no_env);
+    assert_eq!(resolved.launch.models["grok"].id, "configured-grok");
+    assert_eq!(resolved.launch.models["grok"].context, 300_000);
+    assert_eq!(
+        resolved.launch.profiles["claude"]["grok"].env["ANTHROPIC_BASE_URL"],
+        ProfileEnvValue::Literal("https://proxy.example.com".to_string())
+    );
+    assert!(resolved.launch.profiles["claude"].contains_key("sol"));
+}
+
+#[test]
 fn launch_model_routes_deserialize_with_profile_references() {
     let config: Config = serde_yaml::from_str(
         "launch:\n    models:\n        sol:\n            id: gpt-5.6-sol\n            context: 272000\n            compact: 85\n    profiles:\n        claude:\n            sol:\n                model: sol\n",

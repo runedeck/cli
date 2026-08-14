@@ -516,6 +516,77 @@ fn parse_config(content: &str, path: &Path) -> Result<Config, Error> {
     })
 }
 
+fn default_launch(cliproxy: &CliproxyConfig) -> Launch {
+    let proxy_url = format!("http://{}:{}", cliproxy.host, cliproxy.port);
+    let proxy_environment = |small_model: &str| {
+        [
+            (
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                ProfileEnvValue::FromEnv {
+                    from_env: "CLIPROXY_API_KEY".to_string(),
+                },
+            ),
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                ProfileEnvValue::Literal(proxy_url.clone()),
+            ),
+            (
+                "ANTHROPIC_SMALL_FAST_MODEL".to_string(),
+                ProfileEnvValue::Literal(small_model.to_string()),
+            ),
+        ]
+        .into_iter()
+        .collect()
+    };
+    let claude_profiles = [
+        (
+            "grok".to_string(),
+            LaunchProfile {
+                model: Some("grok".to_string()),
+                env: proxy_environment("grok-composer-2.5-fast"),
+                with: vec!["cliproxy".to_string()],
+                ..LaunchProfile::default()
+            },
+        ),
+        (
+            "sol".to_string(),
+            LaunchProfile {
+                model: Some("sol".to_string()),
+                env: proxy_environment("gpt-5.6-luna"),
+                with: vec!["cliproxy".to_string()],
+                ..LaunchProfile::default()
+            },
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    Launch {
+        profiles: [("claude".to_string(), claude_profiles)]
+            .into_iter()
+            .collect(),
+        ..Launch::default()
+    }
+}
+
+/// Overlay user launch configuration on Rune's built-in profiles and routes.
+#[must_use]
+pub fn resolve_launch(configured: &Launch) -> Launch {
+    let mut resolved = default_launch(&configured.middleware.cliproxy);
+    resolved.default_with.clone_from(&configured.default_with);
+    resolved.tools.clone_from(&configured.tools);
+    resolved.middleware.clone_from(&configured.middleware);
+    resolved.models.extend(configured.models.clone());
+    for (tool, configured_profiles) in &configured.profiles {
+        resolved
+            .profiles
+            .entry(tool.clone())
+            .or_default()
+            .extend(configured_profiles.clone());
+    }
+    resolved
+}
+
 fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> ResolvedConfig {
     let deck = env("RUNE_DECK")
         .map(|value| ResolvedValue {
@@ -563,7 +634,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         env: env_file,
         ontology,
         extensions,
-        launch: config.launch.clone(),
+        launch: resolve_launch(&config.launch),
         bench: config.bench.clone(),
     }
 }
