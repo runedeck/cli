@@ -534,15 +534,15 @@ enum Command {
 
     /// Import an upstream rune into a single-module source with provenance
     Import {
-        /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree. file:// is allowed for tests.
+        /// HTTPS URL, local file path, file:// URL, or local skill directory.
         url: String,
 
         /// Target single-module root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         module: String,
 
-        /// Skill name to place under skills/<Name>/SKILL.md.
-        #[arg(long, value_name = "PascalCase")]
+        /// Artifact name using the deck's chosen casing.
+        #[arg(long, value_name = "NAME")]
         name: Option<String>,
 
         /// Place the fetched body as this companion file instead of a skill.
@@ -979,15 +979,15 @@ enum ConfigAction {
 enum AdoptAction {
     /// Import an artifact and open its review session
     Start {
-        /// HTTPS URL of a single upstream file, or a local directory to adopt as a whole skill tree.
+        /// HTTPS URL, local file path, file:// URL, or local skill directory.
         source: String,
 
         /// Target single-module root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         module: String,
 
-        /// Artifact name (kebab-case).
-        #[arg(long, value_name = "kebab-case")]
+        /// Artifact name using the deck's chosen casing.
+        #[arg(long, value_name = "NAME")]
         name: Option<String>,
 
         /// Rune kind to adopt.

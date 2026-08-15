@@ -16,8 +16,8 @@ printf 'heading_rules:\n    max_depth: 3\n' > /tmp/claude/adopt-demo/rules/.mdsc
 
 ```sh
 # 1. Import + open the session (a local path or a commit-pinned GitHub URL)
-rune adopt start file:///path/to/forge-core/rules/AvoidDuplication.md \
-    --module /tmp/claude/adopt-demo --kind rule --name avoid-duplication
+rune adopt start /path/to/forge-core/rules/AvoidDuplication.md \
+    --module /tmp/claude/adopt-demo --kind rule --name AvoidDuplication
 
 # 2. See where you stand; both support --json for the skill's context injection
 rune adopt status
