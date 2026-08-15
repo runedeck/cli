@@ -3,7 +3,7 @@ name = "rune-cli"
 version = "0.5.0"
 edition = "2024"
 license = "EUPL-1.2"
-repository = "https://github.com/runedeck/rune"
+repository = "https://github.com/runedeck/cli"
 description = "Rune Deck toolkit — assemble, validate, and deploy runes (skills, agents, rules) from the deck across AI coding harnesses"
 
 [lib]

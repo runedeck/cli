@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}
+tag_name=${1:?usage: compile-release-notes <tag>}
+current_commit=$(git rev-list -n 1 "$tag_name")
+
+previous_tag=""
+while read -r commit; do
+    candidate=$(git tag --points-at "$commit" \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+        | grep -Fxv "$tag_name" \
+        | sort -V \
+        | tail -n 1 || true)
+    if [ -n "$candidate" ]; then
+        previous_tag=$candidate
+        break
+    fi
+done < <(git rev-list --first-parent "$current_commit")
+
+if [ -n "$previous_tag" ]; then
+    merge_range="$previous_tag..$current_commit"
+else
+    merge_range="$current_commit"
+fi
+
+mapfile -t merge_commits < <(git log --first-parent --merges --format='%H' "$merge_range")
+
+printf '# %s\n\n' "$tag_name"
+found_release_note=false
+
+for merge_commit in "${merge_commits[@]}"; do
+    pull_request=$(gh api "repos/$repository/commits/$merge_commit/pulls" \
+        --jq ".[0].number // empty") \
+        || { printf 'fatal: could not identify pull request for merge %s\n' "$merge_commit" >&2; exit 1; }
+    [ -n "$pull_request" ] \
+        || { printf 'fatal: first-parent merge %s has no matching pull request\n' "$merge_commit" >&2; exit 1; }
+
+    # GraphQL variable names are literal.
+    # shellcheck disable=SC2016
+    pull_request_json=$(gh api graphql \
+        -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){body mergedAt userContentEdits(first:100){pageInfo{hasNextPage} nodes{editedAt diff}}}}}' \
+        -f owner="${repository%%/*}" \
+        -f name="${repository#*/}" \
+        -F number="$pull_request") \
+        || { printf 'fatal: could not read pull request %s\n' "$pull_request" >&2; exit 1; }
+    merged_at=$(printf '%s\n' "$pull_request_json" | jq -r '.data.repository.pullRequest.mergedAt // empty')
+    [ -n "$merged_at" ] \
+        || { printf 'fatal: pull request %s is not merged\n' "$pull_request" >&2; exit 1; }
+    printf '%s\n' "$pull_request_json" \
+        | jq -e '.data.repository.pullRequest.userContentEdits.pageInfo.hasNextPage == false' >/dev/null \
+        || { printf 'fatal: pull request %s has too many body edits to attest\n' "$pull_request" >&2; exit 1; }
+    pull_request_body=$(printf '%s\n' "$pull_request_json" | jq -r --arg merged "$merged_at" '
+        .data.repository.pullRequest as $pull |
+        [$pull.userContentEdits.nodes[] | select(.editedAt > $merged)] as $later |
+        if ($later | length) == 0 then $pull.body
+        else [$pull.userContentEdits.nodes[] | select(.editedAt <= $merged)]
+            | sort_by(.editedAt) | last | .diff // empty
+        end
+    ')
+    [ -n "$pull_request_body" ] \
+        || { printf 'fatal: pull request %s changed after merge and its merge-time body is unavailable\n' "$pull_request" >&2; exit 1; }
+    mapfile -t release_note_entries < <(
+        printf '%s\n' "$pull_request_body" \
+            | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{print}'
+    )
+
+    for release_note_entry in "${release_note_entries[@]}"; do
+        note_text=$(printf '%s\n' "$release_note_entry" \
+            | sed -E 's/^([-*+]|[0-9]+[.)])[[:space:]]+//')
+        [ "$note_text" = "N/A" ] && continue
+        printf '%s (https://github.com/%s/pull/%s)\n' \
+            "$release_note_entry" "$repository" "$pull_request"
+        found_release_note=true
+    done
+done
+
+[ "$found_release_note" = true ] || printf -- '- No user-facing changes.\n'
