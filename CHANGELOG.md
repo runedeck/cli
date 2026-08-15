@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- The authorship check reads separate author and trailer lists from `authors.yaml`. A trailer attribution can no longer validate an author field.
 - Thirteen modules moved their unit tests into the sibling `tests.rs` that RUST-0012 prescribes. The rest keep an inline `#[cfg(test)] mod tests` and move as they are touched; CLI-0002 records the remainder rather than leaving the standard silently unmet.
 - The library crate is `rune` (`src/lib.rs`), not `commands`. The old name described the binary's job while holding the domain model, so every import read `commands::validate` for something that is not a command. The library and the binary now share the name; the package stays `rune-cli`. This supersedes the crate-root line in CLI-0002.
 - Canonical `SKILL.md` frontmatter carries Agent Skills fields only (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), and `schemas/skill.schema.yaml` rejects anything else. This supersedes the 0.3.2 note below about `templates/init/skills/.mdschema` whitelisting twelve Claude Code fields: those fields now reach a target through per-provider overlay files during assembly rather than through canonical source.

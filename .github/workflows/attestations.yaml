@@ -40,10 +40,20 @@ jobs:
                   # request must not grant itself an identity. An identity lands
                   # on the default branch first; the commits that use it follow
                   # in a later pull request.
-                  mapfile -t identities < <(grep -E '^    - .+ <.+>$' authors.yaml | sed 's/^    - //')
+                  # Section-aware reads: an entry under trailers: is valid only
+                  # as a Co-Authored-By line. Reading both lists with one grep
+                  # would let a trailer alias validate a wrong author field.
+                  mapfile -t identities < <(awk '/^[^ #]/ { s = /^authors:/ } s && /^    - / { sub(/^    - /, ""); print }' authors.yaml)
+                  mapfile -t trailer_identities < <(awk '/^[^ #]/ { s = /^trailers:/ } s && /^    - / { sub(/^    - /, ""); print }' authors.yaml)
                   [ "${#identities[@]}" -gt 0 ] || { echo "authors.yaml lists no identities"; exit 1; }
                   listed() {
                       for identity in "${identities[@]}"; do
+                          [ "$1" = "$identity" ] && return 0
+                      done
+                      return 1
+                  }
+                  trailer_listed() {
+                      for identity in "${trailer_identities[@]}"; do
                           [ "$1" = "$identity" ] && return 0
                       done
                       return 1
@@ -69,8 +79,8 @@ jobs:
                           if [ "$trailer" = "$author" ]; then
                               echo "$commit: author repeated as Co-Authored-By"
                               failures=1
-                          elif ! listed "$trailer"; then
-                              echo "$commit: Co-Authored-By '$trailer' is not in authors.yaml"
+                          elif ! listed "$trailer" && ! trailer_listed "$trailer"; then
+                              echo "$commit: Co-Authored-By '$trailer' is neither a listed identity nor a listed trailer attribution"
                               failures=1
                           fi
                       done <<< "$trailers"
