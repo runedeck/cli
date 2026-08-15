@@ -14,12 +14,6 @@ permissions:
     contents: read
     pull-requests: read
 
-env:
-    GITLEAKS_VERSION: "8.30.1"
-    # Digest of gitleaks_8.30.1_linux_x64.tar.gz, pinned in reviewed
-    # source so verification attests provenance, not just transport.
-    GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
-
 jobs:
     quality:
         runs-on: ubuntu-latest
@@ -57,30 +51,21 @@ jobs:
                   # permission fault must not read as a missing section.
                   body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""') \
                       || { echo "could not read the pull request body (API or permission failure)"; exit 1; }
-                  printf '%s\n' "$body" \
-                      | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}' \
-                      && echo "Release Notes section present." \
-                      || { echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."; exit 1; }
+                  if printf '%s\n' "$body" \
+                      | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}'; then
+                      echo "Release Notes section present."
+                  else
+                      echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."
+                      exit 1
+                  fi
 
-            # The distro package is too old for `gitleaks git`; install the
-            # pinned upstream release and verify it against the release's
-            # digest pinned above before executing.
-            # ruff and semgrep serve the universal prek config's type-gated
-            # hooks; rust and ts toolchains are the scaffolded repository's
-            # own concern, and their hooks never fire without their files.
+            # Local hooks, generated CI, and template updates all consume the
+            # same reviewed tool versions and archive digests.
             - name: Install tools
-              run: |
-                  sudo apt-get install -y shellcheck
-                  pipx install ruff semgrep
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  echo "${GITLEAKS_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum --check
-                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-                  sudo install gitleaks /usr/local/bin/gitleaks
-                  bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
-                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+              run: bash scripts/install-tools
 
             - name: Commit-stage checks
-              uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
+              run: prek run --stage pre-commit --all-files
 
             # Scan exactly the commits this event introduces. Without a usable
             # base, gitleaks scans the target history and other hooks inspect all files.

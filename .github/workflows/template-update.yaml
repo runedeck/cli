@@ -16,12 +16,6 @@ concurrency:
     group: template-update
     cancel-in-progress: false
 
-env:
-    COPIER_VERSION: "9.17.0"
-    GITLEAKS_VERSION: "8.30.1"
-    TEMPLATE_APP_ID: ${{ secrets.TEMPLATE_APP_ID || secrets.RUNEWRIGHT_APP_ID }}
-    TEMPLATE_APP_KEY: ${{ secrets.TEMPLATE_APP_KEY || secrets.RUNEWRIGHT_APP_KEY }}
-
 jobs:
     update:
         runs-on: ubuntu-latest
@@ -34,7 +28,9 @@ jobs:
                   ref: main
 
             - name: Install Copier
-              run: pipx install "copier==$COPIER_VERSION"
+              run: |
+                  . scripts/tool-versions
+                  pipx install "copier==$COPIER_VERSION"
 
             - id: detect
               name: Detect template release
@@ -148,17 +144,7 @@ jobs:
 
             - name: Install validation tools
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
-              run: |
-                  sudo apt-get install -y shellcheck
-                  pipx install prek ruff semgrep
-                  scratch=$(mktemp -d)
-                  archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  checksums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive" -o "$scratch/$archive"
-                  curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$checksums" -o "$scratch/$checksums"
-                  (cd "$scratch" && sha256sum --check --ignore-missing "$checksums")
-                  tar -xzf "$scratch/$archive" -C "$scratch" gitleaks
-                  sudo install "$scratch/gitleaks" /usr/local/bin/gitleaks
+              run: bash scripts/install-tools
 
             - name: Validate updated repository
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
@@ -178,13 +164,26 @@ jobs:
                   fi
                   git diff --cached --binary --output=template-update.patch
 
+            - id: credentials
+              name: Detect publication credentials
+              if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+              env:
+                  TEMPLATE_APP_ID: ${{ secrets.TEMPLATE_APP_ID || secrets.RUNEWRIGHT_APP_ID }}
+                  TEMPLATE_APP_KEY: ${{ secrets.TEMPLATE_APP_KEY || secrets.RUNEWRIGHT_APP_KEY }}
+              run: |
+                  configured=false
+                  if [ -n "$TEMPLATE_APP_ID" ] && [ -n "$TEMPLATE_APP_KEY" ]; then
+                      configured=true
+                  fi
+                  printf 'configured=%s\n' "$configured" >> "$GITHUB_OUTPUT"
+
             - id: publisher
               name: Mint publication token
-              if: env.TEMPLATE_APP_ID != '' && env.TEMPLATE_APP_KEY != '' && steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+              if: steps.credentials.outputs.configured == 'true'
               uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
               with:
-                  app-id: ${{ env.TEMPLATE_APP_ID }}
-                  private-key: ${{ env.TEMPLATE_APP_KEY }}
+                  app-id: ${{ secrets.TEMPLATE_APP_ID || secrets.RUNEWRIGHT_APP_ID }}
+                  private-key: ${{ secrets.TEMPLATE_APP_KEY || secrets.RUNEWRIGHT_APP_KEY }}
 
             - name: Upload update artifact
               if: steps.publisher.outputs.token == '' && steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
