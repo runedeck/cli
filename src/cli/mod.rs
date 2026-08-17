@@ -27,9 +27,9 @@ pub(crate) mod install;
 mod launch;
 mod ontology;
 mod output;
+mod process;
 mod provenance;
 mod provider_cmd;
-mod providers;
 mod release;
 mod review;
 mod run;
@@ -43,6 +43,7 @@ mod spec_interop;
 mod spec_root;
 mod status;
 pub(crate) mod style;
+mod surface;
 pub(crate) mod target;
 mod todo;
 pub(crate) mod validate;
@@ -620,9 +621,9 @@ enum Command {
         #[arg(long, value_name = "DIR", default_value = ".")]
         repo: std::path::PathBuf,
 
-        /// Provider-native safety mode.
-        #[arg(long, value_enum, default_value_t = run::RunMode::ReadOnly)]
-        mode: run::RunMode,
+        /// What the coding surface may access: read-only or workspace-write.
+        #[arg(long, value_enum, default_value_t = run::AccessMode::ReadOnly)]
+        mode: run::AccessMode,
 
         /// Optional supervisor deadline, such as 30s, 5m, or 1h.
         #[arg(long, value_name = "DURATION")]

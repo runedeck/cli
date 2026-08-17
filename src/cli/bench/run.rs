@@ -7,9 +7,9 @@ use super::report::{
     FreshResult, OutputParams, RecordResult, ReusedResult, RunRecord, RunSettings, TextCorrect,
     WrittenOutputs, write_outputs,
 };
+use super::runner::{Readiness, create_runner};
 use super::scoring::is_correct;
 use super::suite::{TestCase, TestSuite};
-use crate::cli::providers::{Readiness, create_runner};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Mutex;

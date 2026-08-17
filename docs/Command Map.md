@@ -5,7 +5,7 @@ How the overlapping command families relate, so the right tool is obvious.
 ## Running coding tools and skill scripts
 
 - `launch` opens an interactive coding-tool session. It inherits terminal input and output, forwards native arguments, and permits terminal wrappers such as tmux.
-- `run` executes a coding tool noninteractively. It reuses launch profiles and middleware, applies an explicit provider sandbox mode, captures the final answer, and supervises the child process group. No timeout is applied unless requested.
+- `run` executes a coding tool noninteractively. It reuses launch profiles and middleware, applies an explicit access mode, captures the final answer, and supervises the child process group. No timeout is applied unless requested.
 - `exec` runs a script bundled with a skill through the runtime contract declared by that skill.
 
 Use `launch` when a person will interact with the provider, `run` when automation needs a provider answer, and `exec` when the executable belongs to a skill.
