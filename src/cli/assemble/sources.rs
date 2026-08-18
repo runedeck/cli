@@ -605,6 +605,20 @@ fn walk_skill_dir(
         )?;
     }
 
+    // Companions inherit the entrypoint's provider targets. A skill routed
+    // to one provider must not leak its assets into the other provider
+    // trees as directories without a SKILL.md.
+    let skill_targets = file_map
+        .get("SKILL.md")
+        .and_then(|entry| entry.targets.clone());
+    if skill_targets.is_some() {
+        for source in file_map.values_mut() {
+            if source.targets.is_none() {
+                source.targets.clone_from(&skill_targets);
+            }
+        }
+    }
+
     sources.extend(file_map.into_values());
     Ok(())
 }
@@ -805,6 +819,32 @@ mod tests {
         assert!(!qualifiers.contains("opus"));
         assert!(!qualifiers.contains("4"));
         assert!(!qualifiers.contains("6"));
+    }
+
+    #[test]
+    fn skill_companions_inherit_entrypoint_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = scaffold_kind(dir.path(), "skills");
+        let skill = skills.join("ste");
+        std::fs::create_dir(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: ste\ndescription: test\ntargets: [claude]\n---\n\n# ste\n",
+        )
+        .unwrap();
+        std::fs::write(skill.join("helper.md"), "companion body\n").unwrap();
+
+        let valid = HashSet::from(["claude".to_string()]);
+        let sources = collect(dir.path(), &valid).unwrap();
+        let companion = sources
+            .iter()
+            .find(|s| s.relative_path.ends_with("helper.md"))
+            .expect("companion must be collected");
+        assert_eq!(
+            companion.targets,
+            Some(vec!["claude".to_string()]),
+            "companions must inherit the entrypoint's provider targets"
+        );
     }
 
     #[test]
