@@ -1544,7 +1544,7 @@ fn grok_args(invocation: &CliInvocation, prompt_path: &Path) -> Vec<OsString> {
         OsString::from("--prompt-file"),
         prompt_path.as_os_str().to_os_string(),
         OsString::from("--output-format"),
-        OsString::from("plain"),
+        OsString::from("json"),
         OsString::from("--no-memory"),
         OsString::from("--sandbox"),
         OsString::from(match invocation.mode {
@@ -1583,6 +1583,18 @@ fn grok_args(invocation: &CliInvocation, prompt_path: &Path) -> Vec<OsString> {
     }
     args.extend(invocation.extra_args.clone());
     args
+}
+
+#[derive(Deserialize)]
+struct GrokResponse {
+    text: String,
+}
+
+fn grok_final_text(stdout: &str) -> Result<String, CliFailure> {
+    let response: GrokResponse = serde_json::from_str(stdout).map_err(|error| {
+        CliFailure::Provider(format!("grok returned invalid JSON output: {error}"))
+    })?;
+    nonempty_text(&response.text, "grok single-prompt")
 }
 
 fn invoke_grok(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
@@ -1625,7 +1637,7 @@ fn invoke_grok(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             None,
         ))?)?;
         Ok(CliReply {
-            text: nonempty_text(&output.stdout, "grok single-prompt")?,
+            text: grok_final_text(&output.stdout)?,
             stderr: output.stderr,
             completion_tokens: None,
         })
@@ -1641,6 +1653,7 @@ fn invoke_agy(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "--print",
             "--prompt",
             "--print-timeout",
+            "--output-format",
             "--sandbox",
             "--mode",
             "--model",
@@ -1658,6 +1671,8 @@ fn invoke_agy(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
         }),
         OsString::from("--print"),
         OsString::from(combined_prompt(invocation)),
+        OsString::from("--output-format"),
+        OsString::from("json"),
     ];
     if invocation.clean_state_root.is_some() {
         args.push(OsString::from("--disable-slash-commands"));
@@ -1674,11 +1689,30 @@ fn invoke_agy(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
     let output = require_success(run_process_request(&process_request(
         invocation, args, None,
     ))?)?;
+    let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
+        CliFailure::Provider(format!("agy returned invalid JSON output: {error}"))
+    })?;
     Ok(CliReply {
-        text: nonempty_text(&output.stdout, "agy print")?,
+        text: nonempty_text(&response.response, "agy print")?,
         stderr: output.stderr,
-        completion_tokens: None,
+        completion_tokens: response
+            .usage
+            .and_then(|usage| usage.output_tokens)
+            .filter(|tokens| *tokens > 0.0),
     })
+}
+
+#[derive(Deserialize)]
+struct AgyResponse {
+    response: String,
+    #[serde(default)]
+    usage: Option<AgyUsage>,
+}
+
+#[derive(Deserialize)]
+struct AgyUsage {
+    #[serde(default)]
+    output_tokens: Option<f64>,
 }
 
 fn invoke_opencode(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
@@ -1744,13 +1778,7 @@ fn invoke_opencode(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "opencode session error: {message}"
         )));
     }
-    let text = events
-        .iter()
-        .filter(|event| event.kind.as_deref() == Some("text"))
-        .filter_map(|event| event.part.as_ref())
-        .filter_map(|part| part.text.as_deref())
-        .collect::<Vec<_>>()
-        .join("");
+    let text = opencode_final_text(&events)?;
     let completion_tokens = events
         .iter()
         .filter(|event| event.kind.as_deref() == Some("step_finish"))
@@ -1760,7 +1788,7 @@ fn invoke_opencode(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
         .map(|tokens| tokens.max(0.0))
         .sum::<f64>();
     Ok(CliReply {
-        text: nonempty_text(&text, "opencode run")?,
+        text,
         stderr: output.stderr,
         completion_tokens: (completion_tokens > 0.0).then_some(completion_tokens),
     })
@@ -2079,10 +2107,39 @@ struct OpencodeProperties {
 
 #[derive(Deserialize)]
 struct OpencodePart {
+    #[serde(default, rename = "messageID")]
+    message_id: Option<String>,
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
     tokens: Option<OpencodeTokens>,
+}
+
+fn opencode_final_text(events: &[OpencodeEvent]) -> Result<String, CliFailure> {
+    let text_parts = events
+        .iter()
+        .filter(|event| event.kind.as_deref() == Some("text"))
+        .filter_map(|event| event.part.as_ref())
+        .filter(|part| part.text.is_some())
+        .collect::<Vec<_>>();
+    if text_parts.iter().any(|part| part.message_id.is_none()) {
+        return Err(CliFailure::Provider(
+            "opencode text event has no messageID".to_string(),
+        ));
+    }
+    let final_message_id = text_parts
+        .last()
+        .and_then(|part| part.message_id.as_deref())
+        .ok_or_else(|| {
+            CliFailure::Provider("opencode run produced no assistant text message".to_string())
+        })?;
+    let text = text_parts
+        .iter()
+        .filter(|part| part.message_id.as_deref() == Some(final_message_id))
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join("");
+    nonempty_text(&text, "opencode run")
 }
 
 #[derive(Deserialize)]
@@ -2389,7 +2446,7 @@ mod tests {
                 "--prompt-file",
                 "/scratch/prompt.txt",
                 "--output-format",
-                "plain",
+                "json",
                 "--no-memory",
                 "--sandbox",
                 "read-only",
@@ -2452,6 +2509,39 @@ mod tests {
         assert!(args.contains(&OsString::from(format!(
             "--system-prompt-override={CLEAN_SYSTEM_PROMPT}\n\n---\nname: Example"
         ))));
+    }
+
+    #[test]
+    fn grok_json_returns_only_the_final_message_from_a_multi_turn_run() {
+        let stdout = concat!(
+            "{\"text\":\"Final rewritten text.\",",
+            "\"thought\":\"I will read the source first.\",",
+            "\"num_turns\":2,",
+            "\"messages\":[\"I will read the source first.\",\"Final rewritten text.\"]}"
+        );
+
+        assert_eq!(
+            grok_final_text(stdout).expect("final Grok response"),
+            "Final rewritten text."
+        );
+    }
+
+    #[test]
+    fn agy_json_returns_only_the_final_message_from_a_multi_turn_run() {
+        let stdout = concat!(
+            "{\"status\":\"SUCCESS\",",
+            "\"response\":\"Final rewritten text.\",",
+            "\"num_turns\":3,",
+            "\"messages\":[\"I will read the source.\",\"Final rewritten text.\"],",
+            "\"usage\":{\"output_tokens\":17}}"
+        );
+        let response: AgyResponse = serde_json::from_str(stdout).expect("valid Agy response");
+
+        assert_eq!(response.response, "Final rewritten text.");
+        assert_eq!(
+            response.usage.and_then(|usage| usage.output_tokens),
+            Some(17.0)
+        );
     }
 
     #[test]
@@ -2609,5 +2699,35 @@ mod tests {
         );
 
         assert_eq!(opencode_session_error(&events), Some("route failed"));
+    }
+
+    #[test]
+    fn opencode_returns_only_the_last_assistant_message() {
+        let events: Vec<OpencodeEvent> = parse_jsonl(concat!(
+            "{\"type\":\"text\",\"part\":{\"messageID\":\"msg_1\",\"text\":\"I will read the source first.\"}}\n",
+            "{\"type\":\"step_finish\",\"part\":{\"messageID\":\"msg_1\",\"tokens\":{\"output\":12}}}\n",
+            "{\"type\":\"text\",\"part\":{\"messageID\":\"msg_2\",\"text\":\"Final rewritten \"}}\n",
+            "{\"type\":\"text\",\"part\":{\"messageID\":\"msg_2\",\"text\":\"text.\"}}",
+        ));
+
+        assert_eq!(
+            opencode_final_text(&events).expect("final OpenCode response"),
+            "Final rewritten text."
+        );
+    }
+
+    #[test]
+    fn opencode_rejects_mixed_identified_and_unidentified_text() {
+        let events: Vec<OpencodeEvent> = parse_jsonl(concat!(
+            "{\"type\":\"text\",\"part\":{\"messageID\":\"msg_1\",\"text\":\"Earlier text.\"}}\n",
+            "{\"type\":\"text\",\"part\":{\"text\":\"Unidentified final text.\"}}",
+        ));
+
+        assert_eq!(
+            opencode_final_text(&events),
+            Err(CliFailure::Provider(
+                "opencode text event has no messageID".to_string()
+            ))
+        );
     }
 }
