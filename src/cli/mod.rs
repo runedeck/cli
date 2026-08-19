@@ -616,6 +616,22 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         prompt_file: Option<std::path::PathBuf>,
 
+        /// Read additional system context from a UTF-8 text file.
+        #[arg(long, value_name = "FILE")]
+        system_prompt_file: Option<std::path::PathBuf>,
+
+        /// Override the resolved harness binary.
+        #[arg(long, value_name = "FILE")]
+        binary: Option<std::path::PathBuf>,
+
+        /// Override the resolved model identifier.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Hide supported user-level harness state. Project context can remain visible.
+        #[arg(long)]
+        clean_harness_state: bool,
+
         /// Repository or working directory supplied to the coding tool.
         #[arg(long, value_name = "DIR", default_value = ".")]
         repo: std::path::PathBuf,
@@ -1425,6 +1441,10 @@ pub fn run() -> i32 {
             tool,
             prompt,
             prompt_file,
+            system_prompt_file,
+            binary,
+            model,
+            clean_harness_state,
             repo,
             mode,
             timeout,
@@ -1434,6 +1454,10 @@ pub fn run() -> i32 {
                 tool,
                 prompt,
                 prompt_file,
+                system_prompt_file,
+                binary,
+                model,
+                clean_harness_state,
                 repository: repo,
                 mode,
                 timeout,

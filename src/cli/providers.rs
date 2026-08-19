@@ -903,6 +903,7 @@ pub(crate) struct CliInvocation {
     pub(crate) model: Option<String>,
     pub(crate) native_timeout: Option<Duration>,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) clean_state_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1002,6 +1003,189 @@ fn combined_prompt(invocation: &CliInvocation) -> String {
     }
 }
 
+fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), CliFailure> {
+    let text = std::fs::read_to_string(source).map_err(|error| {
+        CliFailure::Io(format!(
+            "cannot read Codex route configuration {}: {error}",
+            source.display()
+        ))
+    })?;
+    let config: toml::Value = toml::from_str(&text).map_err(|error| {
+        CliFailure::Arguments(format!(
+            "cannot parse Codex route configuration {}: {error}",
+            source.display()
+        ))
+    })?;
+    let provider_name = config
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| {
+            CliFailure::Arguments("Codex clean state requires model_provider".to_string())
+        })?;
+    let provider = config
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .and_then(|providers| providers.get(provider_name))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| {
+            CliFailure::Arguments(format!(
+                "Codex provider configuration not found: {provider_name}"
+            ))
+        })?;
+    let mut clean_provider = toml::map::Map::new();
+    for key in [
+        "name",
+        "base_url",
+        "wire_api",
+        "env_key",
+        "http_headers",
+        "env_http_headers",
+        "query_params",
+    ] {
+        if let Some(value) = provider.get(key) {
+            clean_provider.insert(key.to_string(), value.clone());
+        }
+    }
+    let mut providers = toml::map::Map::new();
+    providers.insert(
+        provider_name.to_string(),
+        toml::Value::Table(clean_provider),
+    );
+    let mut clean = toml::map::Map::new();
+    clean.insert(
+        "model_provider".to_string(),
+        toml::Value::String(provider_name.to_string()),
+    );
+    clean.insert("model_providers".to_string(), toml::Value::Table(providers));
+    let rendered = toml::to_string(&toml::Value::Table(clean)).map_err(|error| {
+        CliFailure::Arguments(format!("cannot render Codex clean configuration: {error}"))
+    })?;
+    std::fs::write(target, rendered).map_err(|error| {
+        CliFailure::Io(format!(
+            "cannot write Codex clean configuration {}: {error}",
+            target.display()
+        ))
+    })
+}
+
+fn copy_opencode_route_config(
+    source: &Path,
+    target: &Path,
+    model: Option<&str>,
+) -> Result<(), CliFailure> {
+    let text = match std::fs::read_to_string(source) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
+        Err(error) => {
+            return Err(CliFailure::Io(format!(
+                "cannot read OpenCode route configuration {}: {error}",
+                source.display()
+            )));
+        }
+    };
+    let source_config: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        CliFailure::Arguments(format!(
+            "cannot parse OpenCode route configuration {}: {error}",
+            source.display()
+        ))
+    })?;
+    let mut clean = serde_json::Map::new();
+    if let Some(schema) = source_config.get("$schema") {
+        clean.insert("$schema".to_string(), schema.clone());
+    }
+    if let Some(provider_name) = model.and_then(|value| value.split_once('/').map(|pair| pair.0))
+        && let Some(provider) = source_config
+            .get("provider")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|providers| providers.get(provider_name))
+    {
+        let mut providers = serde_json::Map::new();
+        providers.insert(provider_name.to_string(), provider.clone());
+        clean.insert("provider".to_string(), serde_json::Value::Object(providers));
+    }
+    let rendered = serde_json::to_vec(&serde_json::Value::Object(clean)).map_err(|error| {
+        CliFailure::Arguments(format!(
+            "cannot render OpenCode clean configuration: {error}"
+        ))
+    })?;
+    std::fs::write(target, rendered).map_err(|error| {
+        CliFailure::Io(format!(
+            "cannot write OpenCode clean configuration {}: {error}",
+            target.display()
+        ))
+    })
+}
+
+pub(crate) fn prepare_clean_state(
+    provider: CliProvider,
+    root: &Path,
+    model: Option<&str>,
+) -> Result<(), CliFailure> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| CliFailure::Io("cannot resolve home directory".to_string()))?;
+    match provider {
+        CliProvider::Codex => {
+            let source_root =
+                std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
+            copy_codex_route_config(&source_root.join("config.toml"), &root.join("config.toml"))
+        }
+        CliProvider::Grok => {
+            let source = home.join(".grok/auth.json");
+            let target_root = root.join(".grok");
+            std::fs::create_dir_all(&target_root).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot create Grok clean state {}: {error}",
+                    target_root.display()
+                ))
+            })?;
+            std::fs::copy(&source, target_root.join("auth.json")).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot bridge Grok authentication {}: {error}",
+                    source.display()
+                ))
+            })?;
+            Ok(())
+        }
+        CliProvider::Opencode => {
+            let source_config_root = std::env::var_os("XDG_CONFIG_HOME")
+                .map_or_else(|| home.join(".config"), PathBuf::from);
+            let target_config_root = root.join("config/opencode");
+            std::fs::create_dir_all(&target_config_root).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot create OpenCode clean configuration {}: {error}",
+                    target_config_root.display()
+                ))
+            })?;
+            copy_opencode_route_config(
+                &source_config_root.join("opencode/opencode.json"),
+                &target_config_root.join("opencode.json"),
+                model,
+            )?;
+
+            let source_data_root = std::env::var_os("XDG_DATA_HOME")
+                .map_or_else(|| home.join(".local/share"), PathBuf::from);
+            let source = source_data_root.join("opencode/auth.json");
+            let target_data_root = root.join("data/opencode");
+            std::fs::create_dir_all(&target_data_root).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot create OpenCode clean state {}: {error}",
+                    target_data_root.display()
+                ))
+            })?;
+            if source.is_file() {
+                std::fs::copy(&source, target_data_root.join("auth.json")).map_err(|error| {
+                    CliFailure::Io(format!(
+                        "cannot bridge OpenCode authentication {}: {error}",
+                        source.display()
+                    ))
+                })?;
+            }
+            Ok(())
+        }
+        CliProvider::Claude | CliProvider::Agy => Ok(()),
+    }
+}
+
 fn process_request(
     invocation: &CliInvocation,
     args: Vec<OsString>,
@@ -1012,6 +1196,56 @@ fn process_request(
     request.current_dir = Some(invocation.repository.clone());
     request.env.clone_from(&invocation.env);
     request.env_remove = vec![OsString::from("HARNESS_AUTOMATED")];
+    if let Some(root) = &invocation.clean_state_root {
+        let root = root.as_os_str().to_os_string();
+        match invocation.provider {
+            CliProvider::Claude => {
+                request
+                    .env
+                    .push((OsString::from("CLAUDE_CONFIG_DIR"), root));
+                request.env_remove.push(OsString::from("CLAUDECODE"));
+            }
+            CliProvider::Codex => {
+                request.env.push((OsString::from("CODEX_HOME"), root));
+            }
+            CliProvider::Agy => {
+                request
+                    .env
+                    .push((OsString::from("ANTIGRAVITY_EXECUTABLE_DATA_DIR"), root));
+            }
+            CliProvider::Grok => {
+                request.env.push((OsString::from("HOME"), root));
+            }
+            CliProvider::Opencode => {
+                let root = PathBuf::from(root);
+                for (key, directory) in [
+                    ("XDG_CONFIG_HOME", "config"),
+                    ("XDG_DATA_HOME", "data"),
+                    ("XDG_STATE_HOME", "state"),
+                ] {
+                    request
+                        .env
+                        .push((OsString::from(key), root.join(directory).into_os_string()));
+                }
+                request.env.push((
+                    OsString::from("OPENCODE_DISABLE_PROJECT_CONFIG"),
+                    OsString::from("1"),
+                ));
+                request.env.push((
+                    OsString::from("OPENCODE_DISABLE_EXTERNAL_SKILLS"),
+                    OsString::from("1"),
+                ));
+                request.env.push((
+                    OsString::from("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"),
+                    OsString::from("1"),
+                ));
+                request.env.push((
+                    OsString::from("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS"),
+                    OsString::from("1"),
+                ));
+            }
+        }
+    }
     request.stdin = stdin;
     request.timeout = invocation.timeout;
     request
@@ -1075,6 +1309,15 @@ fn finish_scratch<T>(result: Result<T, CliFailure>, scratch: &PathBuf) -> Result
 }
 
 const READ_ONLY_TOOLS: &str = "Read,Glob,Grep";
+const CLEAN_SYSTEM_PROMPT: &str = "Follow only the current user prompt. Do not use user rules, project rules, skills, memory, plugins, or prior sessions.";
+
+fn clean_system_prompt(system_prompt: &str) -> String {
+    if system_prompt.trim().is_empty() {
+        CLEAN_SYSTEM_PROMPT.to_string()
+    } else {
+        format!("{CLEAN_SYSTEM_PROMPT}\n\n{}", system_prompt.trim())
+    }
+}
 
 fn claude_args(invocation: &CliInvocation) -> Vec<OsString> {
     let mut args = vec![
@@ -1087,6 +1330,9 @@ fn claude_args(invocation: &CliInvocation) -> Vec<OsString> {
             SandboxMode::WorkspaceWrite => "acceptEdits",
         }),
     ];
+    if invocation.clean_state_root.is_some() {
+        args.extend([OsString::from("--setting-sources"), OsString::from("")]);
+    }
     if invocation.mode == SandboxMode::ReadOnly {
         args.extend([
             OsString::from("--tools"),
@@ -1099,7 +1345,12 @@ fn claude_args(invocation: &CliInvocation) -> Vec<OsString> {
         args.push(OsString::from("--model"));
         args.push(OsString::from(model));
     }
-    if !invocation.system_prompt.trim().is_empty() {
+    if invocation.clean_state_root.is_some() {
+        args.push(OsString::from("--system-prompt"));
+        args.push(OsString::from(clean_system_prompt(
+            &invocation.system_prompt,
+        )));
+    } else if !invocation.system_prompt.trim().is_empty() {
         args.push(OsString::from("--append-system-prompt"));
         args.push(OsString::from(&invocation.system_prompt));
     }
@@ -1127,6 +1378,7 @@ fn invoke_claude(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "--tools",
             "--add-dir",
             "--settings",
+            "--setting-sources",
         ],
     )?;
     let output = require_success(run_process_request(&process_request(
@@ -1206,6 +1458,7 @@ fn invoke_codex(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "-m",
             "--model",
             "--json",
+            "--ignore-rules",
             "-o",
             "--output-last-message",
             "-c",
@@ -1236,6 +1489,9 @@ fn invoke_codex(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
                 SandboxMode::WorkspaceWrite => "workspace-write",
             }),
         ];
+        if invocation.clean_state_root.is_some() {
+            args.push(OsString::from("--ignore-rules"));
+        }
         if let Some(model) = &invocation.model {
             args.push(OsString::from("-m"));
             args.push(OsString::from(model));
@@ -1319,9 +1575,11 @@ fn grok_args(invocation: &CliInvocation, prompt_path: &Path) -> Vec<OsString> {
         args.push(OsString::from("-m"));
         args.push(OsString::from(model));
     }
-    if !invocation.system_prompt.trim().is_empty() {
-        args.push(OsString::from("--system-prompt-override"));
-        args.push(OsString::from(&invocation.system_prompt));
+    if invocation.clean_state_root.is_some() || !invocation.system_prompt.trim().is_empty() {
+        args.push(OsString::from(format!(
+            "--system-prompt-override={}",
+            clean_system_prompt(&invocation.system_prompt)
+        )));
     }
     args.extend(invocation.extra_args.clone());
     args
@@ -1387,6 +1645,7 @@ fn invoke_agy(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "--mode",
             "--model",
             "--dangerously-skip-permissions",
+            "--disable-slash-commands",
             "--add-dir",
         ],
     )?;
@@ -1400,6 +1659,9 @@ fn invoke_agy(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
         OsString::from("--print"),
         OsString::from(combined_prompt(invocation)),
     ];
+    if invocation.clean_state_root.is_some() {
+        args.push(OsString::from("--disable-slash-commands"));
+    }
     if let Some(model) = &invocation.model {
         args.push(OsString::from("--model"));
         args.push(OsString::from(model));
@@ -1447,13 +1709,13 @@ fn invoke_opencode(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
             "--username",
         ],
     )?;
-    let mut args = vec![
-        OsString::from("run"),
+    let mut args = vec![OsString::from("run")];
+    args.extend([
         OsString::from("--dir"),
         invocation.repository.as_os_str().to_os_string(),
         OsString::from("--format"),
         OsString::from("json"),
-    ];
+    ]);
     if let Some(model) = &invocation.model {
         args.push(OsString::from("-m"));
         args.push(OsString::from(model));
@@ -1465,11 +1727,14 @@ fn invoke_opencode(invocation: &CliInvocation) -> Result<CliReply, CliFailure> {
     args.push(OsString::from(combined_prompt(invocation)));
     let mut request = process_request(invocation, args, None);
     if invocation.mode == SandboxMode::ReadOnly {
+        let permissions = if invocation.clean_state_root.is_some() {
+            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow"}"#
+        } else {
+            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow","skill":"allow"}"#
+        };
         request.env.push((
             OsString::from("OPENCODE_PERMISSION"),
-            OsString::from(
-                r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow","skill":"allow"}"#,
-            ),
+            OsString::from(permissions),
         ));
     }
     let output = require_success(run_process_request(&request)?)?;
@@ -1547,6 +1812,7 @@ fn benchmark_cli_invocation(
         model,
         native_timeout: None,
         timeout: Some(timeout),
+        clean_state_root: None,
     })
 }
 
@@ -2004,6 +2270,7 @@ mod tests {
             model: None,
             native_timeout: None,
             timeout: None,
+            clean_state_root: None,
         };
 
         assert_eq!(
@@ -2012,6 +2279,29 @@ mod tests {
                 "automated codex execution owns these profile arguments: --sandbox=workspace-write; remove them from the launch profile".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn clean_codex_config_keeps_only_route_fields() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let source = directory.path().join("source.toml");
+        let target = directory.path().join("clean.toml");
+        std::fs::write(
+            &source,
+            "model_provider = \"proxy\"\nhooks = [\"secret\"]\n[model_providers.proxy]\nname = \"Proxy\"\nbase_url = \"http://localhost\"\nwire_api = \"responses\"\nenv_key = \"PROXY_KEY\"\nhttp_headers = { version = \"1\" }\nenv_http_headers = { authorization = \"PROXY_AUTH\" }\nquery_params = { beta = \"true\" }\n[plugins.test]\nenabled = true\n",
+        )
+        .expect("write config");
+
+        copy_codex_route_config(&source, &target).expect("copy clean config");
+        let clean = std::fs::read_to_string(target).expect("read clean config");
+
+        assert!(clean.contains("model_provider = \"proxy\""));
+        assert!(clean.contains("env_key = \"PROXY_KEY\""));
+        assert!(clean.contains("http_headers"));
+        assert!(clean.contains("env_http_headers"));
+        assert!(clean.contains("query_params"));
+        assert!(!clean.contains("hooks"));
+        assert!(!clean.contains("plugins"));
     }
 
     #[test]
@@ -2028,6 +2318,7 @@ mod tests {
             model: None,
             native_timeout: None,
             timeout: None,
+            clean_state_root: None,
         };
 
         assert_eq!(
@@ -2048,6 +2339,32 @@ mod tests {
     }
 
     #[test]
+    fn clean_claude_overrides_system_prompt() {
+        let invocation = CliInvocation {
+            provider: CliProvider::Claude,
+            binary: OsString::from("claude"),
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            repository: PathBuf::from("."),
+            mode: SandboxMode::ReadOnly,
+            system_prompt: "Use this rule.".to_string(),
+            prompt: "Inspect only".to_string(),
+            model: None,
+            native_timeout: None,
+            timeout: None,
+            clean_state_root: Some(PathBuf::from("/clean")),
+        };
+        let args = claude_args(&invocation);
+
+        assert!(args.windows(2).any(|pair| pair
+            == [
+                OsString::from("--system-prompt"),
+                OsString::from(format!("{CLEAN_SYSTEM_PROMPT}\n\nUse this rule.")),
+            ]));
+        assert!(!args.contains(&OsString::from("--append-system-prompt")));
+    }
+
+    #[test]
     fn grok_read_only_limits_tools_and_denies_writes() {
         let invocation = CliInvocation {
             provider: CliProvider::Grok,
@@ -2061,6 +2378,7 @@ mod tests {
             model: None,
             native_timeout: None,
             timeout: None,
+            clean_state_root: None,
         };
 
         assert_eq!(
@@ -2088,6 +2406,138 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn clean_grok_uses_neutral_system_prompt() {
+        let invocation = CliInvocation {
+            provider: CliProvider::Grok,
+            binary: OsString::from("grok"),
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            repository: PathBuf::from("/repo"),
+            mode: SandboxMode::ReadOnly,
+            system_prompt: String::new(),
+            prompt: "Inspect only".to_string(),
+            model: None,
+            native_timeout: None,
+            timeout: None,
+            clean_state_root: Some(PathBuf::from("/clean")),
+        };
+        let args = grok_args(&invocation, &PathBuf::from("/scratch/prompt.txt"));
+
+        assert!(args.contains(&OsString::from(format!(
+            "--system-prompt-override={CLEAN_SYSTEM_PROMPT}"
+        ))));
+    }
+
+    #[test]
+    fn grok_system_prompt_accepts_frontmatter() {
+        let invocation = CliInvocation {
+            provider: CliProvider::Grok,
+            binary: OsString::from("grok"),
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            repository: PathBuf::from("/repo"),
+            mode: SandboxMode::ReadOnly,
+            system_prompt: "---\nname: Example".to_string(),
+            prompt: "Inspect only".to_string(),
+            model: None,
+            native_timeout: None,
+            timeout: None,
+            clean_state_root: None,
+        };
+        let args = grok_args(&invocation, &PathBuf::from("/scratch/prompt.txt"));
+
+        assert!(args.contains(&OsString::from(format!(
+            "--system-prompt-override={CLEAN_SYSTEM_PROMPT}\n\n---\nname: Example"
+        ))));
+    }
+
+    #[test]
+    fn clean_state_redirects_codex_and_agy_data() {
+        for (provider, key) in [
+            (CliProvider::Codex, "CODEX_HOME"),
+            (CliProvider::Agy, "ANTIGRAVITY_EXECUTABLE_DATA_DIR"),
+            (CliProvider::Grok, "HOME"),
+        ] {
+            let invocation = CliInvocation {
+                provider,
+                binary: OsString::from("provider"),
+                extra_args: Vec::new(),
+                env: Vec::new(),
+                repository: PathBuf::from("."),
+                mode: SandboxMode::ReadOnly,
+                system_prompt: String::new(),
+                prompt: "Inspect only".to_string(),
+                model: None,
+                native_timeout: None,
+                timeout: None,
+                clean_state_root: Some(PathBuf::from("/clean")),
+            };
+            let request = process_request(&invocation, Vec::new(), None);
+
+            assert!(
+                request
+                    .env
+                    .contains(&(OsString::from(key), OsString::from("/clean")))
+            );
+        }
+    }
+
+    #[test]
+    fn clean_opencode_config_keeps_only_selected_provider() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let source = temporary.path().join("source.json");
+        let target = temporary.path().join("target.json");
+        std::fs::write(
+            &source,
+            r#"{"$schema":"schema","instructions":["rules/*.md"],"plugin":["plugin"],"provider":{"proton-lumo":{"npm":"provider"},"other":{"npm":"other"}}}"#,
+        )
+        .expect("source configuration");
+
+        copy_opencode_route_config(&source, &target, Some("proton-lumo/lumo-max"))
+            .expect("clean configuration");
+        let clean: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(target).expect("target configuration"))
+                .expect("valid target JSON");
+
+        assert_eq!(clean["$schema"], "schema");
+        assert_eq!(clean["provider"]["proton-lumo"]["npm"], "provider");
+        assert!(clean.get("instructions").is_none());
+        assert!(clean.get("plugin").is_none());
+        assert!(clean["provider"].get("other").is_none());
+    }
+
+    #[test]
+    fn clean_opencode_redirects_xdg_state() {
+        let invocation = CliInvocation {
+            provider: CliProvider::Opencode,
+            binary: OsString::from("opencode"),
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            repository: PathBuf::from("."),
+            mode: SandboxMode::ReadOnly,
+            system_prompt: String::new(),
+            prompt: "Inspect only".to_string(),
+            model: None,
+            native_timeout: None,
+            timeout: None,
+            clean_state_root: Some(PathBuf::from("/clean")),
+        };
+        let request = process_request(&invocation, Vec::new(), None);
+
+        for (key, value) in [
+            ("XDG_CONFIG_HOME", "/clean/config"),
+            ("XDG_DATA_HOME", "/clean/data"),
+            ("XDG_STATE_HOME", "/clean/state"),
+        ] {
+            assert!(
+                request
+                    .env
+                    .contains(&(OsString::from(key), OsString::from(value)))
+            );
+        }
     }
 
     #[test]
@@ -2120,6 +2570,7 @@ mod tests {
                 model: None,
                 native_timeout: None,
                 timeout: None,
+                clean_state_root: None,
             };
 
             assert!(
