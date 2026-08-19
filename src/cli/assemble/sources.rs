@@ -650,6 +650,9 @@ fn collect_skill_files(
         let file_type = checked_file_type(&entry)?;
         if file_type.is_dir() {
             let directory_name = entry.file_name().to_string_lossy().to_string();
+            if directory_name == "__pycache__" {
+                continue;
+            }
             let is_reserved_qualifier = !is_qualifier
                 && relative_dir.as_os_str().is_empty()
                 && (directory_name == "user" || valid_qualifiers.contains(&directory_name));
@@ -1106,7 +1109,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = scaffold_kind(dir.path(), "skills").join("SystematicDebug");
         let scripts_dir = skill_dir.join("scripts");
-        std::fs::create_dir_all(&scripts_dir).unwrap();
+        let cache_dir = scripts_dir.join("__pycache__");
+        std::fs::create_dir_all(&cache_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: SystematicDebug\n---\n# Debug",
@@ -1118,6 +1122,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(scripts_dir.join("inspect.py"), "print('inspect')\n").unwrap();
+        std::fs::write(cache_dir.join("inspect.cpython-314.pyc"), b"cache").unwrap();
 
         let mut sources = Vec::new();
         walk_skill_dir(
@@ -1141,5 +1146,10 @@ mod tests {
             .expect("nested asset");
         assert!(nested.passthrough);
         assert_eq!(nested.content, "print('inspect')\n");
+        assert!(
+            sources
+                .iter()
+                .all(|source| !source.relative_path.contains("__pycache__"))
+        );
     }
 }

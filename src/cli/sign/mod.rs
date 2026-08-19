@@ -73,7 +73,14 @@ fn ensure_index_clean() -> Result<(), Error> {
 pub(crate) fn index_is_clean(repository: Option<&Path>) -> Result<bool, Error> {
     let mut command = Command::new("git");
     if let Some(repository) = repository {
-        command.arg("-C").arg(repository);
+        // An explicit repository must win over inherited hook context, where
+        // GIT_DIR and friends would silently redirect -C to the outer repo.
+        command
+            .arg("-C")
+            .arg(repository)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE");
     }
     let status = command
         .args(["diff", "--cached", "--quiet", "--exit-code"])

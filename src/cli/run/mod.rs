@@ -1,6 +1,8 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
-use crate::cli::surface::{Surface, SurfaceFailure, SurfaceInvocation, invoke_surface};
+use crate::cli::surface::{
+    Surface, SurfaceFailure, SurfaceInvocation, invoke_surface, prepare_clean_state,
+};
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
@@ -15,6 +17,10 @@ pub(crate) struct RunOptions {
     pub(crate) tool: String,
     pub(crate) prompt: Option<String>,
     pub(crate) prompt_file: Option<PathBuf>,
+    pub(crate) system_prompt_file: Option<PathBuf>,
+    pub(crate) binary: Option<PathBuf>,
+    pub(crate) model: Option<String>,
+    pub(crate) clean_harness_state: bool,
     pub(crate) repository: PathBuf,
     pub(crate) mode: AccessMode,
     pub(crate) timeout: Option<String>,
@@ -41,8 +47,11 @@ pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     let prompt = read_prompt(options.prompt.as_deref(), options.prompt_file.as_deref())?;
+    let system_prompt =
+        read_optional_text_file(options.system_prompt_file.as_deref(), "system prompt")?;
     let repository = resolve_repository(&options.repository)?;
     let requested_timeout = options.timeout.as_deref().map(parse_duration).transpose()?;
     let resolve_args = if options.dry_run {
@@ -64,10 +73,14 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
             unsupported.join(", ")
         ));
     }
-    let (binary, extra_args) = resolved
+    let (resolved_binary, extra_args) = resolved
         .argv
         .split_first()
         .ok_or_else(|| "resolved launch command is empty".to_string())?;
+    let binary = options.binary.as_ref().map_or_else(
+        || resolved_binary.clone(),
+        |path| path.as_os_str().to_os_string(),
+    );
     let native_timeout = (surface == Surface::Agy)
         .then_some(requested_timeout)
         .flatten();
@@ -90,20 +103,35 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     }
     resolved.run_pre_steps();
 
+    let model = options
+        .model
+        .clone()
+        .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
+    let clean_state = options
+        .clean_harness_state
+        .then(|| tempfile::Builder::new().prefix("rune-clean-").tempdir())
+        .transpose()
+        .map_err(|error| format!("cannot create clean harness state: {error}"))?;
+    if let Some(state) = &clean_state {
+        prepare_clean_state(surface, state.path(), model.as_deref())
+            .map_err(|error| error.to_string())?;
+    }
     let invocation = SurfaceInvocation {
         surface,
-        binary: binary.clone(),
+        binary,
         extra_args: extra_args.to_vec(),
         env: resolved.env.clone(),
         repository,
         mode: options.mode,
-        system_prompt: String::new(),
+        system_prompt,
         prompt,
-        model: resolved.model.as_ref().map(|model| model.id.clone()),
+        model,
         native_timeout,
         timeout: outer_timeout,
+        clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
     };
 
+    let started = std::time::Instant::now();
     match invoke_surface(&invocation) {
         Ok(reply) => {
             if !reply.stderr.is_empty() {
@@ -119,8 +147,23 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
                         "ok": true,
                         "kind": "success",
                         "tool": resolved.tool,
+                        "requested_route": options.tool,
+                        "requested_provider": resolved.tool,
+                        "resolved_route": options.tool,
+                        "resolved_model": invocation.model,
+                        "resolved_binary": invocation.binary.to_string_lossy(),
                         "model": invocation.model,
                         "text": reply.text,
+                        "duration_ms": started.elapsed().as_millis(),
+                        "clean_harness_state": options.clean_harness_state,
+                        "clean_harness_state_scope": "supported_user_and_project_state",
+                        "usage": {
+                            "input_tokens": Value::Null,
+                            "cache_creation_input_tokens": Value::Null,
+                            "cache_read_input_tokens": Value::Null,
+                            "output_tokens": reply.completion_tokens,
+                            "total_tokens": Value::Null,
+                        },
                         "completion_tokens": reply.completion_tokens,
                     })
                 );
@@ -167,6 +210,21 @@ fn read_prompt(argument: Option<&str>, file: Option<&Path>) -> Result<String, St
         return Err("prompt must not be empty".to_string());
     }
     Ok(prompt)
+}
+
+fn read_optional_text_file(path: Option<&Path>, label: &str) -> Result<String, String> {
+    let Some(path) = path else {
+        return Ok(String::new());
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {label} file {}: {error}", path.display()))?;
+    if text.trim().is_empty() {
+        return Err(format!(
+            "{label} file must not be empty: {}",
+            path.display()
+        ));
+    }
+    Ok(text)
 }
 
 fn resolve_repository(path: &Path) -> Result<PathBuf, String> {
@@ -299,6 +357,19 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_file_requires_content() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("system.md");
+        std::fs::write(&path, "Use the rule.\n").expect("write system prompt");
+        assert_eq!(
+            read_optional_text_file(Some(&path), "system prompt"),
+            Ok("Use the rule.\n".to_string())
+        );
+        std::fs::write(&path, " \n").expect("write empty system prompt");
+        assert!(read_optional_text_file(Some(&path), "system prompt").is_err());
+    }
+
+    #[test]
     fn duration_parser_accepts_documented_units() {
         assert_eq!(parse_duration("250ms"), Ok(Duration::from_millis(250)));
         assert_eq!(parse_duration("30s"), Ok(Duration::from_secs(30)));
@@ -313,6 +384,16 @@ mod tests {
             supervisor_timeout(Surface::Agy, Some(native)),
             Ok(Some(native + AGY_SUPERVISOR_MARGIN))
         );
+    }
+
+    #[test]
+    fn missing_input_usage_keeps_total_unknown() {
+        let usage = json!({
+            "input_tokens": Value::Null,
+            "output_tokens": 20,
+            "total_tokens": Value::Null,
+        });
+        assert!(usage["total_tokens"].is_null());
     }
 
     #[test]
