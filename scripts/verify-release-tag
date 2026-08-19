@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+tag_name=${1:?usage: verify-release-tag <tag>}
+
+if [[ ! "$tag_name" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    printf 'fatal: release tag must match v<major>.<minor>.<patch>: %s\n' "$tag_name" >&2
+    exit 1
+fi
+
+git -C "$repository_root" cat-file -e "$tag_name^{tag}" 2>/dev/null \
+    || { printf 'fatal: %s is not an annotated tag\n' "$tag_name" >&2; exit 1; }
+
+tag_commit=$(git -C "$repository_root" rev-parse "$tag_name^{}")
+git -C "$repository_root" rev-list --first-parent refs/remotes/origin/main \
+    | grep -Fx "$tag_commit" >/dev/null \
+    || { printf 'fatal: %s does not point to the first-parent history of origin/main\n' "$tag_name" >&2; exit 1; }
+
+gnupg_home=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:?TMPDIR must be set}}/skeleton-release-gpg.XXXXXX")
+trap 'command rm -rf "$gnupg_home"' EXIT
+chmod 0700 "$gnupg_home"
+
+gpg --homedir "$gnupg_home" --batch --import "$repository_root/KEYS" >/dev/null 2>&1
+allowed_fingerprints=$(gpg --homedir "$gnupg_home" --batch --with-colons --fingerprint \
+    | awk -F: '$1 == "fpr" { print $10 }')
+[ -n "$allowed_fingerprints" ] \
+    || { printf 'fatal: KEYS contains no OpenPGP fingerprints\n' >&2; exit 1; }
+
+verification_output=$(GNUPGHOME="$gnupg_home" git -C "$repository_root" \
+    verify-tag --raw "$tag_name" 2>&1) \
+    || { printf '%s\n' "$verification_output" >&2; exit 1; }
+
+signer_fingerprint=$(printf '%s\n' "$verification_output" \
+    | awk '/^\[GNUPG:\] VALIDSIG / { print $3; exit }')
+[ -n "$signer_fingerprint" ] \
+    || { printf 'fatal: %s produced no valid signature fingerprint\n' "$tag_name" >&2; exit 1; }
+
+printf '%s\n' "$allowed_fingerprints" | grep -Fx "$signer_fingerprint" >/dev/null \
+    || { printf 'fatal: %s was signed by an unknown fingerprint\n' "$tag_name" >&2; exit 1; }
+
+printf 'Verified %s with fingerprint %s.\n' "$tag_name" "$signer_fingerprint"

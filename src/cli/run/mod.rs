@@ -1,45 +1,22 @@
 use crate::cli::launch;
-use crate::cli::providers::{
-    CliFailure, CliInvocation, CliProvider, ProcessFailure, ProcessTermination, SandboxMode,
-    invoke_cli,
-};
-use clap::ValueEnum;
+use crate::cli::process::{ProcessFailure, ProcessTermination};
+use crate::cli::surface::{Surface, SurfaceFailure, SurfaceInvocation, invoke_surface};
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub(crate) use crate::cli::surface::AccessMode;
+
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum RunMode {
-    ReadOnly,
-    WorkspaceWrite,
-}
-
-impl RunMode {
-    fn sandbox(self) -> SandboxMode {
-        match self {
-            Self::ReadOnly => SandboxMode::ReadOnly,
-            Self::WorkspaceWrite => SandboxMode::WorkspaceWrite,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read-only",
-            Self::WorkspaceWrite => "workspace-write",
-        }
-    }
-}
 
 pub(crate) struct RunOptions {
     pub(crate) tool: String,
     pub(crate) prompt: Option<String>,
     pub(crate) prompt_file: Option<PathBuf>,
     pub(crate) repository: PathBuf,
-    pub(crate) mode: RunMode,
+    pub(crate) mode: AccessMode,
     pub(crate) timeout: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) json: bool,
@@ -74,7 +51,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         Vec::new()
     };
     let resolved = launch::resolve(&options.tool, &resolve_args)?;
-    let provider = CliProvider::from_tool(&resolved.tool).ok_or_else(|| {
+    let surface = Surface::from_tool(&resolved.tool).ok_or_else(|| {
         format!(
             "automated execution is not supported for '{}'; use claude, codex, agy, grok, or opencode",
             resolved.tool
@@ -91,10 +68,10 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .argv
         .split_first()
         .ok_or_else(|| "resolved launch command is empty".to_string())?;
-    let native_timeout = (provider == CliProvider::Agy)
+    let native_timeout = (surface == Surface::Agy)
         .then_some(requested_timeout)
         .flatten();
-    let outer_timeout = supervisor_timeout(provider, requested_timeout)?;
+    let outer_timeout = supervisor_timeout(surface, requested_timeout)?;
 
     if options.dry_run || resolved.dry_run {
         println!(
@@ -113,13 +90,13 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     }
     resolved.run_pre_steps();
 
-    let invocation = CliInvocation {
-        provider,
+    let invocation = SurfaceInvocation {
+        surface,
         binary: binary.clone(),
         extra_args: extra_args.to_vec(),
         env: resolved.env.clone(),
         repository,
-        mode: options.mode.sandbox(),
+        mode: options.mode,
         system_prompt: String::new(),
         prompt,
         model: resolved.model.as_ref().map(|model| model.id.clone()),
@@ -127,7 +104,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         timeout: outer_timeout,
     };
 
-    match invoke_cli(&invocation) {
+    match invoke_surface(&invocation) {
         Ok(reply) => {
             if !reply.stderr.is_empty() {
                 eprint!("{}", reply.stderr);
@@ -230,10 +207,10 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
 }
 
 fn supervisor_timeout(
-    provider: CliProvider,
+    surface: Surface,
     requested: Option<Duration>,
 ) -> Result<Option<Duration>, String> {
-    if provider != CliProvider::Agy {
+    if surface != Surface::Agy {
         return Ok(requested);
     }
     requested
@@ -252,36 +229,36 @@ fn duration_label(timeout: Option<Duration>) -> String {
     )
 }
 
-fn failure_exit_code(failure: &CliFailure) -> i32 {
+fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
-        CliFailure::Process(ProcessFailure::Timeout(_)) => 124,
-        CliFailure::Process(ProcessFailure::ForwardedSignal(signal))
-        | CliFailure::Exit {
+        SurfaceFailure::Process(ProcessFailure::Timeout(_)) => 124,
+        SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal))
+        | SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
             ..
         } => 128 + signal,
-        CliFailure::Process(ProcessFailure::Spawn(_)) => 127,
-        CliFailure::Process(ProcessFailure::OutputLimit { .. }) => 70,
-        CliFailure::Exit {
+        SurfaceFailure::Process(ProcessFailure::Spawn(_)) => 127,
+        SurfaceFailure::Process(ProcessFailure::OutputLimit { .. }) => 70,
+        SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
             ..
         } => *code,
-        CliFailure::Process(_)
-        | CliFailure::Provider(_)
-        | CliFailure::Io(_)
-        | CliFailure::Arguments(_) => 1,
+        SurfaceFailure::Process(_)
+        | SurfaceFailure::Reported(_)
+        | SurfaceFailure::Io(_)
+        | SurfaceFailure::Arguments(_) => 1,
     }
 }
 
-fn failure_json(tool: &str, failure: &CliFailure) -> Value {
+fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
     let (kind, details) = match failure {
-        CliFailure::Process(ProcessFailure::Timeout(timeout)) => {
+        SurfaceFailure::Process(ProcessFailure::Timeout(timeout)) => {
             ("timeout", json!({ "timeout_ms": timeout.as_millis() }))
         }
-        CliFailure::Process(ProcessFailure::ForwardedSignal(signal)) => {
+        SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal)) => {
             ("signal", json!({ "signal": signal }))
         }
-        CliFailure::Process(ProcessFailure::OutputLimit {
+        SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream,
             limit,
             tail,
@@ -289,20 +266,20 @@ fn failure_json(tool: &str, failure: &CliFailure) -> Value {
             "output_limit",
             json!({ "stream": stream, "limit": limit, "tail": tail }),
         ),
-        CliFailure::Process(failure) => {
+        SurfaceFailure::Process(failure) => {
             ("process_failure", json!({ "message": failure.to_string() }))
         }
-        CliFailure::Exit {
+        SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
             stderr,
         } => ("exit", json!({ "exit_code": code, "stderr": stderr })),
-        CliFailure::Exit {
+        SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
             stderr,
         } => ("signal", json!({ "signal": signal, "stderr": stderr })),
-        CliFailure::Provider(message) => ("provider_error", json!({ "message": message })),
-        CliFailure::Io(message) => ("io_error", json!({ "message": message })),
-        CliFailure::Arguments(message) => ("argument_error", json!({ "message": message })),
+        SurfaceFailure::Reported(message) => ("surface_error", json!({ "message": message })),
+        SurfaceFailure::Io(message) => ("io_error", json!({ "message": message })),
+        SurfaceFailure::Arguments(message) => ("argument_error", json!({ "message": message })),
     };
     json!({
         "ok": false,
@@ -318,7 +295,7 @@ mod tests {
 
     #[test]
     fn timeout_is_absent_by_default() {
-        assert_eq!(supervisor_timeout(CliProvider::Codex, None), Ok(None));
+        assert_eq!(supervisor_timeout(Surface::Codex, None), Ok(None));
     }
 
     #[test]
@@ -333,14 +310,14 @@ mod tests {
     fn agy_supervisor_deadline_follows_native_timeout() {
         let native = Duration::from_mins(5);
         assert_eq!(
-            supervisor_timeout(CliProvider::Agy, Some(native)),
+            supervisor_timeout(Surface::Agy, Some(native)),
             Ok(Some(native + AGY_SUPERVISOR_MARGIN))
         );
     }
 
     #[test]
     fn typed_json_distinguishes_output_limit() {
-        let failure = CliFailure::Process(ProcessFailure::OutputLimit {
+        let failure = SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream: "stdout",
             limit: 64,
             tail: "last bytes".to_string(),

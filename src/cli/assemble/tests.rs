@@ -274,3 +274,50 @@ fn assemble_source_keeps_explicit_effort_over_tier_effort() {
     assert!(result.contains("effort: high"));
     assert!(!result.contains("effort: medium"));
 }
+
+#[test]
+fn source_targets_limit_provider_assembly() {
+    let mut source = sources::SourceFile {
+        content_bytes: None,
+        kind: rune::provider::ContentKind::Skills,
+        relative_path: "skills/ste/SKILL.md".to_string(),
+        full_path: "/tmp/skills/ste/SKILL.md".to_string(),
+        qualifier: None,
+        passthrough: false,
+        targets: Some(vec!["claude".to_string()]),
+        rune_id: None,
+        providers: None,
+        source_uri: None,
+        content: "---\nname: ste\ndescription: test\ntargets: [claude]\n---\n\n# ste\n".to_string(),
+    };
+    let provider = |target: &str| rune::provider::ProviderConfig {
+        enabled: true,
+        target: rune::provider::ProviderTarget::Single(target.to_string()),
+        assembly: None,
+        deploy: None,
+        keep_fields: None,
+        models: None,
+        effort: None,
+        model: None,
+        aliases: None,
+        plugin: None,
+    };
+
+    assert!(source_matches_provider_target(
+        &source,
+        "claude",
+        &provider(".claude")
+    ));
+    assert!(!source_matches_provider_target(
+        &source,
+        "codex",
+        &provider(".codex")
+    ));
+
+    source.targets = None;
+    assert!(source_matches_provider_target(
+        &source,
+        "codex",
+        &provider(".codex")
+    ));
+}

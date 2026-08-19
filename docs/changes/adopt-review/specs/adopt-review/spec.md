@@ -83,14 +83,14 @@ The completed review SHALL leave no block ledger in the artifact tree. Adopt/v1 
 - **WHEN** `rune adopt start <url> --kind rule --name no-tabs` runs against a module
 - **THEN** the file lands at `rules/no-tabs.md` with an adopt sidecar and a review session opens
 
-### Requirement: Names follow the kebab-case standard
+### Requirement: Names follow the source schema
 
-Adopted artifact names SHALL match `^[a-z][a-z0-9-]*$`, be at most 64 characters, and equal the containing directory name for skills. PascalCase upstream names SHALL be converted, with the conversion recorded as a transform.
+Adopted artifact names SHALL match `^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$`, be at most 64 characters, and equal the containing directory name for skills.
 
-#### Scenario: PascalCase upstream
+#### Scenario: Explicit deck casing
 
-- **WHEN** an upstream skill named `AdoptArtifact` is adopted without `--name`
-- **THEN** it lands as `adopt-artifact`
+- **WHEN** an artifact is adopted with `--name AdoptArtifact`, `--name adopt-artifact`, or `--name adopt_artifact`
+- **THEN** Rune preserves that valid source name
 
 ### Requirement: Abandon closes a session safely
 

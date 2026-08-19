@@ -8,6 +8,20 @@ fn module() -> tempfile::TempDir {
     dir
 }
 
+fn init_git(directory: &std::path::Path) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(["init", "--quiet"])
+        .output()
+        .expect("git init runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn adopt_skill_writes_aligned_artifact_and_sidecar() {
     let dir = module();
@@ -178,6 +192,47 @@ fn github_branch_url_is_rejected_not_fetched_as_html() {
     let error = classify_url("https://github.com/runedeck/rune/blob/main/skills/Demo/SKILL.md")
         .expect_err("branch ref must be rejected");
     assert!(error.contains("40-char commit SHA"));
+}
+
+#[test]
+fn plain_local_file_path_is_canonicalized() {
+    let directory = tempfile::tempdir().expect("source directory");
+    let source_path = directory.path().join("Rule.md");
+    std::fs::write(&source_path, "Rule body.\n").expect("source file");
+
+    let source = classify_url(source_path.to_str().expect("utf8 path")).expect("local source");
+    let canonical = source_path.canonicalize().expect("canonical source");
+
+    assert_eq!(
+        source.original_url,
+        format!("file://{}", canonical.display())
+    );
+    assert!(matches!(source.fetch_url, FetchUrl::File(path) if path == canonical));
+}
+
+#[test]
+fn relative_local_file_path_is_canonicalized() {
+    let current = std::env::current_dir().expect("current directory");
+    let directory = tempfile::tempdir_in(&current).expect("source directory");
+    let source_path = directory.path().join("Rule.md");
+    std::fs::write(&source_path, "Rule body.\n").expect("source file");
+    let relative = source_path
+        .strip_prefix(&current)
+        .expect("temp path under current directory");
+
+    let source = classify_url(relative.to_str().expect("utf8 path")).expect("local source");
+    assert!(
+        matches!(source.fetch_url, FetchUrl::File(path) if path == source_path.canonicalize().expect("canonical source"))
+    );
+}
+
+#[test]
+fn missing_local_path_and_remote_scheme_fail_clearly() {
+    let missing = classify_url("missing-adopt-source.md").expect_err("missing source");
+    assert!(missing.contains("local source does not exist"), "{missing}");
+
+    let remote = classify_url("ftp://example.test/Rule.md").expect_err("unsupported scheme");
+    assert!(remote.contains("local path"), "{remote}");
 }
 
 #[test]
@@ -442,6 +497,7 @@ fn segmentation_is_deterministic_and_covers_the_file() {
 
 fn review_module_with_schema() -> tempfile::TempDir {
     let dir = module();
+    init_git(dir.path());
     std::fs::create_dir_all(dir.path().join("skills")).expect("skills dir");
     std::fs::write(
         dir.path().join("skills/.mdschema"),
@@ -619,6 +675,7 @@ fn kept_content_deleted_blocks_finalize() {
 #[test]
 fn adopt_rule_places_single_file_with_session() {
     let dir = module();
+    init_git(dir.path());
     std::fs::create_dir_all(dir.path().join("rules")).expect("rules dir");
     std::fs::write(
         dir.path().join("rules/.mdschema"),
@@ -651,6 +708,22 @@ fn adopt_rule_places_single_file_with_session() {
             .exists(),
         "session state never lands in source provenance"
     );
+}
+
+#[test]
+fn artifact_names_accept_deck_casing_and_safe_separators() {
+    for name in [
+        "AdoptArtifact",
+        "adopt-artifact",
+        "adopt_artifact",
+        "Skill2",
+    ] {
+        assert_eq!(validate_artifact_name(name), Ok(name));
+    }
+    for name in ["", "-lead", "trail-", "two--dashes", "has space"] {
+        assert!(validate_artifact_name(name).is_err(), "accepted {name:?}");
+    }
+    assert!(validate_artifact_name(&"a".repeat(65)).is_err());
 }
 
 #[test]

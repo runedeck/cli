@@ -78,6 +78,49 @@ struct CopierAnswers<'a> {
     source: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SetupStatus {
+    Completed,
+    Declined,
+    NonInteractive,
+    MakeUnavailable,
+    ExistingMakefile,
+    NoMakefile,
+    DryRun,
+    Failed,
+}
+
+#[derive(Debug, Serialize)]
+struct SetupResult {
+    status: SetupStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+impl SetupResult {
+    fn new(status: SetupStatus) -> Self {
+        Self {
+            status,
+            detail: None,
+        }
+    }
+
+    fn with_detail(status: SetupStatus, detail: impl Into<String>) -> Self {
+        Self {
+            status,
+            detail: Some(detail.into()),
+        }
+    }
+
+    fn needs_manual_step(&self) -> bool {
+        !matches!(
+            self.status,
+            SetupStatus::Completed | SetupStatus::NoMakefile
+        )
+    }
+}
+
 // Independent step outcomes for the JSON report; an enum would force
 // consumers to decode combinations that are genuinely orthogonal.
 #[allow(clippy::struct_excessive_bools)]
@@ -91,6 +134,7 @@ struct ProjectResult {
     workshop: bool,
     dry_run: bool,
     quest_bound: bool,
+    setup: SetupResult,
     #[serde(flatten)]
     action: ActionResult,
 }
@@ -144,7 +188,7 @@ pub fn run_project(
     options: InitOptions,
     json: bool,
 ) -> i32 {
-    match scaffold_project(target, selection, skeleton, brief, options) {
+    match scaffold_project(target, selection, skeleton, brief, options, json) {
         Ok(result) => {
             print_project(&result, json);
             i32::from(result.action.has_errors())
@@ -162,6 +206,7 @@ fn scaffold_project(
     skeleton_override: Option<&str>,
     brief: &str,
     options: InitOptions,
+    json: bool,
 ) -> Result<ProjectResult, Error> {
     let context = resolve_project_context(target, skeleton_override)?;
     let ProjectContext {
@@ -224,6 +269,8 @@ fn scaffold_project(
         );
     }
 
+    let makefile_path = destination.join("Makefile");
+    let makefile_existed = fs::symlink_metadata(&makefile_path).is_ok();
     fs::create_dir_all(&destination).map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -245,6 +292,10 @@ fn scaffold_project(
         false
     };
     let quest_bound = bind_quest_if_requested(&destination, options.bind)?;
+    let makefile_installed = installed_paths
+        .iter()
+        .any(|path| path == Path::new("Makefile"));
+    let setup = offer_project_setup(&destination, makefile_existed, makefile_installed, json)?;
 
     Ok(ProjectResult {
         destination,
@@ -255,6 +306,7 @@ fn scaffold_project(
         workshop,
         dry_run: false,
         quest_bound,
+        setup,
         action,
     })
 }
@@ -472,6 +524,7 @@ fn dry_run_result(
         workshop,
         dry_run: true,
         quest_bound: false,
+        setup: SetupResult::new(SetupStatus::DryRun),
         action,
     })
 }
@@ -571,10 +624,92 @@ fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
     }
 }
 
+fn command_on_path(command: &str) -> bool {
+    Command::new(command)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 fn jj_on_path() -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|directory| directory.join("jj").is_file())
-    })
+    command_on_path("jj")
+}
+
+fn make_on_path() -> bool {
+    command_on_path("make")
+}
+
+fn write_setup_prompt(output: &mut impl Write, destination: &Path) -> Result<(), Error> {
+    write!(
+        output,
+        "run `make install` in {} now? [y/N] ",
+        destination.display()
+    )
+    .and_then(|()| output.flush())
+    .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write setup prompt: {error}")))
+}
+
+fn confirm_setup(destination: &Path) -> Result<bool, Error> {
+    write_setup_prompt(&mut io::stderr(), destination)?;
+    let mut answer = String::new();
+    let bytes = io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot read setup answer: {error}")))?;
+    if bytes == 0 {
+        return Ok(false);
+    }
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn run_make_install(destination: &Path) -> SetupResult {
+    let status = Command::new("make")
+        .args(["-f", "Makefile", "install"])
+        .current_dir(destination)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .status();
+    match status {
+        Ok(status) if status.success() => SetupResult::new(SetupStatus::Completed),
+        Ok(status) => SetupResult::with_detail(
+            SetupStatus::Failed,
+            format!("make install exited with {status}"),
+        ),
+        Err(error) => SetupResult::with_detail(
+            SetupStatus::Failed,
+            format!("cannot run make install: {error}"),
+        ),
+    }
+}
+
+fn offer_project_setup(
+    destination: &Path,
+    makefile_existed: bool,
+    makefile_installed: bool,
+    json: bool,
+) -> Result<SetupResult, Error> {
+    if makefile_existed {
+        return Ok(SetupResult::new(SetupStatus::ExistingMakefile));
+    }
+    if !makefile_installed {
+        return Ok(SetupResult::new(SetupStatus::NoMakefile));
+    }
+    if !make_on_path() {
+        return Ok(SetupResult::new(SetupStatus::MakeUnavailable));
+    }
+    if json || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Ok(SetupResult::new(SetupStatus::NonInteractive));
+    }
+    if !confirm_setup(destination)? {
+        return Ok(SetupResult::new(SetupStatus::Declined));
+    }
+    Ok(run_make_install(destination))
 }
 
 /// The side effects a real run would perform beyond writing templates,
@@ -1381,6 +1516,19 @@ fn run_git<const N: usize>(args: [&str; N], directory: Option<&Path>) -> Result<
     ))
 }
 
+fn setup_label(setup: &SetupResult) -> &'static str {
+    match setup.status {
+        SetupStatus::Completed => "completed make install",
+        SetupStatus::Declined => "declined",
+        SetupStatus::NonInteractive => "skipped in noninteractive mode",
+        SetupStatus::MakeUnavailable => "make is unavailable",
+        SetupStatus::ExistingMakefile => "kept existing Makefile",
+        SetupStatus::NoMakefile => "scaffold has no Makefile",
+        SetupStatus::DryRun => "planned only",
+        SetupStatus::Failed => "make install failed",
+    }
+}
+
 fn print_project(result: &ProjectResult, json: bool) {
     if json {
         match serde_json::to_string_pretty(result) {
@@ -1406,9 +1554,16 @@ fn print_project(result: &ProjectResult, json: bool) {
     if result.quest_bound {
         println!("quest: bound to destination");
     }
+    println!("setup: {}", setup_label(&result.setup));
+    if let Some(detail) = &result.setup.detail {
+        println!("setup detail: {detail}");
+    }
     super::output::print(&result.action, false, "created", true);
     println!("next steps:");
     println!("  cd {}", result.destination.display());
+    if result.setup.needs_manual_step() {
+        println!("  make install");
+    }
     println!("  rune add <deck>");
     println!("  rune tui --edit");
 }

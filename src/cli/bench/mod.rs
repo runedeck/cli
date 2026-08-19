@@ -4,12 +4,12 @@ mod json;
 pub(crate) mod registry;
 mod report;
 mod run;
+mod runner;
 mod scoring;
 mod suite;
 #[cfg(test)]
 mod tests;
 
-use crate::cli::providers;
 use crate::cli::style::Sheet;
 use clap::Subcommand;
 use rune::error::{Error, ErrorKind};
@@ -817,11 +817,11 @@ fn doctor(config: &ontology::ResolvedConfig, json: bool) -> Result<i32, Error> {
                     println!("{}", sheet.warn(&format!("{label}: {reason}")));
                     continue;
                 }
-                match providers::create_runner(&resolved[0]).ready() {
-                    providers::Readiness::Ready => {
+                match runner::create_runner(&resolved[0]).ready() {
+                    runner::Readiness::Ready => {
                         println!("{}", sheet.ok(&format!("{label} ready")));
                     }
-                    providers::Readiness::NotReady(reason) => {
+                    runner::Readiness::NotReady(reason) => {
                         println!("{}", sheet.warn(&format!("{label}: {reason}")));
                     }
                 }

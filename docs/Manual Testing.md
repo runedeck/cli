@@ -645,7 +645,7 @@ Expected:
 ### rune adopt
 
 ```sh
-rune adopt start <URL-or-path> --module "$M/scratch"   # imports and opens a review session
+rune adopt start <HTTPS-URL-or-local-path> --module "$M/scratch"   # file:// is also supported
 rune adopt status                  # sessions and their progress
 rune adopt next                    # the next pending blocks awaiting a verdict
 rune adopt verdict SKILL.md:4 keep # verdicts: keep, adapt, cut (--note required for adapt/cut)

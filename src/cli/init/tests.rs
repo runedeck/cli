@@ -82,6 +82,38 @@ fn template_prompt_contains_available_layers() {
 }
 
 #[test]
+fn setup_prompt_is_explicit_and_defaults_to_no() {
+    let mut output = Vec::new();
+    write_setup_prompt(&mut output, Path::new("/work/new-project")).unwrap();
+
+    assert_eq!(
+        String::from_utf8(output).unwrap(),
+        "run `make install` in /work/new-project now? [y/N] "
+    );
+}
+
+#[test]
+fn setup_failure_remains_a_reported_optional_outcome() {
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("Makefile"),
+        "install:\n\t@printf 'broken setup' >&2\n\t@false\n",
+    )
+    .unwrap();
+
+    let setup = run_make_install(project.path());
+
+    assert!(matches!(setup.status, SetupStatus::Failed));
+    assert!(
+        setup
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("make install exited with"))
+    );
+    assert!(setup.needs_manual_step());
+}
+
+#[test]
 fn init_creates_all_files() {
     let temp_directory = TempDir::new().unwrap();
     let result = execute(&temp_directory.path().to_string_lossy()).unwrap();
@@ -132,7 +164,7 @@ fn init_creates_all_files() {
 /// CLI checkout present. This pin is what makes an edit here impossible to
 /// forget there.
 const STABLE_SHELL_SCHEMA_SHA256: &str =
-    "c4f8cb5d5b141367be867ff316f3526edb6c54203dd78f86b18fdba97f116004";
+    "07b32cacbaa15d9dedb7e59f242565837e4bc971587a3254c472a3c30f12ce53";
 
 #[test]
 fn stable_shell_schema_digest_is_pinned() {

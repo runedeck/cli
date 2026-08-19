@@ -1,0 +1,33 @@
+# Copy this file to ~/.config/rune/config.yaml to customize Rune.
+#
+# Rune already ships sol@claude and grok@claude with these localhost
+# CLIProxyAPI defaults. Repeating a profile here replaces that built-in profile,
+# which makes this file a starting point for endpoint or model overrides.
+launch:
+    models:
+        sol:
+            id: gpt-5.6-sol
+            context: 272000
+        grok:
+            id: grok-4.6
+            context: 500000
+
+    profiles:
+        claude:
+            sol:
+                model: sol
+                env:
+                    ANTHROPIC_BASE_URL: http://127.0.0.1:8317
+                    ANTHROPIC_AUTH_TOKEN:
+                        from_env: CLIPROXY_API_KEY
+                    ANTHROPIC_SMALL_FAST_MODEL: gpt-5.6-luna
+                with: [cliproxy]
+
+            grok:
+                model: grok
+                env:
+                    ANTHROPIC_BASE_URL: http://127.0.0.1:8317
+                    ANTHROPIC_AUTH_TOKEN:
+                        from_env: CLIPROXY_API_KEY
+                    ANTHROPIC_SMALL_FAST_MODEL: grok-composer-2.5-fast
+                with: [cliproxy]

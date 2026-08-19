@@ -1,6 +1,15 @@
-# Identities allowed to author commits and Co-Authored-By trailers.
-# Model identities carry the model id in parentheses and a non-routable
-# per-model address. The ci/authorship check ignores a trailing 1m context suffix.
+# Identities for the ci/authorship check. Two lists, two policies.
+#
+# authors: valid as the commit author, and as a Co-Authored-By trailer.
+# The author field MUST match one entry exactly. Model identities carry
+# the model id in parentheses and a non-routable per-model address.
+#
+# trailers: valid ONLY as a Co-Authored-By trailer, never as the author.
+# These are the attribution lines coding harnesses append to the commit
+# message. They form a second provenance channel: the author names who
+# made the commit, the trailer names who helped or which tool assisted.
+# Keeping them separate means a wrong author field can never validate
+# through a trailer alias.
 authors:
     - Martin Zeman <N4M3Z@users.noreply.github.com>
     - Claude (claude) <claude@claude.noreply.nexus.local>
@@ -9,3 +18,9 @@ authors:
     - Claude Opus 4.8 (claude-opus-4-8) <claude-opus-4-8@claude.noreply.nexus.local>
     - Claude Gpt 5.6 Sol (gpt-5.6-sol) <gpt-5.6-sol@claude.noreply.nexus.local>
     - Grok (grok-composer-2.5-fast) <grok-composer-2.5-fast@grok.noreply.nexus.local>
+trailers:
+    - Claude <noreply@anthropic.com>
+    - Claude Fable 5 <noreply@anthropic.com>
+    - Claude Opus 5 <noreply@anthropic.com>
+    - Claude Opus 4.8 <noreply@anthropic.com>
+    - Claude Sonnet 5 <noreply@anthropic.com>

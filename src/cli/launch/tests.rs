@@ -515,6 +515,66 @@ fn ollama_profile_name_falls_back_to_a_model() {
 }
 
 #[test]
+fn direct_flag_disables_profile_middleware() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "claude".to_string(),
+        [(
+            "sol".to_string(),
+            ontology::LaunchProfile {
+                with: vec!["cliproxy".to_string()],
+                ..ontology::LaunchProfile::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+
+    let resolved = resolve_with_config(
+        "sol@claude",
+        &[OsString::from("--direct")],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig {
+            launch,
+            ..ontology::ResolvedConfig::default()
+        },
+    )
+    .expect("direct profile launch");
+
+    assert!(resolved.pre.is_empty());
+    assert!(resolved.wrap.is_empty());
+}
+
+#[test]
+fn grok_route_resolves_from_the_built_in_catalog() {
+    let launch = Launch::default();
+    let profile = ontology::LaunchProfile {
+        model: Some("grok".to_string()),
+        ..ontology::LaunchProfile::default()
+    };
+    let mut plan = LaunchPlan::default();
+
+    let model = apply_profile_model("claude", &profile, &launch, &mut plan)
+        .expect("model route")
+        .expect("resolved model");
+
+    assert_eq!(model.alias, "grok");
+    assert_eq!(model.id, "grok-4.6");
+    assert_eq!(model.context, 500_000);
+    assert_eq!(model.source, ModelSource::BuiltIn);
+    assert_eq!(
+        plan.env,
+        names(&[
+            ("ANTHROPIC_MODEL", "grok-4.6"),
+            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "500000"),
+            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "500000"),
+        ])
+    );
+}
+
+#[test]
 fn claude_model_route_generates_atomic_context_settings() {
     let mut launch = Launch::default();
     let profile = ontology::LaunchProfile {
@@ -701,4 +761,37 @@ fn env_file_parser_handles_export_quotes_and_comments() {
     assert_eq!(parsed.get("C").map(String::as_str), Some("single"));
     assert_eq!(parsed.get("D").map(String::as_str), Some("plain"));
     assert!(!parsed.contains_key("not-a-pair"));
+}
+
+#[test]
+fn direct_mode_omits_profile_middleware() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "claude".to_string(),
+        [(
+            "sol".to_string(),
+            ontology::LaunchProfile {
+                with: vec!["cliproxy".to_string()],
+                ..ontology::LaunchProfile::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+
+    let resolved = resolve_with_config(
+        "sol@claude",
+        &[OsString::from("--direct"), OsString::from("--dry-run")],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig {
+            launch,
+            ..ontology::ResolvedConfig::default()
+        },
+    )
+    .expect("direct launch");
+
+    assert!(resolved.wrap.is_empty());
+    assert!(resolved.pre.is_empty());
 }

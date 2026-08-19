@@ -1,4 +1,8 @@
-# Adoption Session State
+# Adoption Session State Specification
+
+## Purpose
+
+Define how Rune stores temporary adoption reviews and writes final provenance.
 
 ## Requirements
 

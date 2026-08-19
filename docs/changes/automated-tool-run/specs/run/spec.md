@@ -42,7 +42,7 @@ The Run capability SHALL accept exactly one nonempty prompt source.
 
 ### Requirement: Repository and sandbox policy
 
-The Run capability SHALL execute against an existing canonical repository directory with an explicit provider sandbox mode.
+The Run capability SHALL execute against an existing canonical repository directory with an explicit access mode.
 
 #### Scenario: Read-only default
 
