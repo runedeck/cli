@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Git exports repository variables into hooks.
+# Prek and Cargo tests must not inherit them.
+# Otherwise, child Git commands target this repository instead of test repositories.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
 zero=0000000000000000000000000000000000000000
 hook_directory=$(dirname "$0")
 

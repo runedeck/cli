@@ -29,3 +29,17 @@ properties:
             type: string
     allowed-tools:
         type: string
+    targets:
+        type: array
+        items:
+            type: string
+    # Who may invoke the skill. The claude provider already carries both
+    # fields through assembly, so rejecting them here refused a skill the
+    # deployed harness reads. `disable-model-invocation` keeps a skill out
+    # of the model's listing, leaving it a slash command only;
+    # `user-invocable: false` hides it from the menu, leaving it background
+    # knowledge the model loads on its own.
+    disable-model-invocation:
+        type: boolean
+    user-invocable:
+        type: boolean

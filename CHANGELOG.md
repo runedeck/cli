@@ -51,6 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
 - `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
 - Link retargeting follows a renamed directory into non-Markdown targets (`Scripts/run_eval.py` tracks its tree to `scripts/run_eval.py`) and the reference-definition pass preserves CRLF line endings instead of rewriting them to LF.
+- The skill schema accepts `targets`, `disable-model-invocation`, and `user-invocable`, which assembly already supports. A deck can restrict a skill to named providers or person-only invocation. `disable-model-invocation: true` suppresses the trigger-phrasing warning because the model cannot list that skill. Skill companions inherit the entrypoint's `targets`, so a routed skill deploys no orphan assets into other provider trees.
 
 ## [0.5.0] - 2026-07-17
 
