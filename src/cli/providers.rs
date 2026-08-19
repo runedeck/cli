@@ -1182,7 +1182,25 @@ pub(crate) fn prepare_clean_state(
             }
             Ok(())
         }
-        CliProvider::Claude | CliProvider::Agy => Ok(()),
+        CliProvider::Agy => {
+            let source_root = std::env::var_os("ANTIGRAVITY_EXECUTABLE_DATA_DIR")
+                .map_or_else(|| home.join(".gemini/antigravity-cli"), PathBuf::from);
+            std::fs::create_dir_all(root).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot create Agy clean state {}: {error}",
+                    root.display()
+                ))
+            })?;
+            let source = source_root.join("antigravity-oauth-token");
+            std::fs::copy(&source, root.join("antigravity-oauth-token")).map_err(|error| {
+                CliFailure::Io(format!(
+                    "cannot bridge Agy authentication {}: {error}",
+                    source.display()
+                ))
+            })?;
+            Ok(())
+        }
+        CliProvider::Claude => Ok(()),
     }
 }
 
