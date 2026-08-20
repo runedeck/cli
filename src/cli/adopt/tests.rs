@@ -966,6 +966,34 @@ fn reseal_updates_reviewed_sidecar_without_ledger() {
 }
 
 #[test]
+fn reseal_rejects_incomplete_scan_before_sidecar_changes() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let skill = root.join("SKILL.md");
+    let sidecar_path = root.join(".provenance/SKILL.md.yaml");
+    let recorded = manifest::provenance::read(&sidecar_path)
+        .unwrap()
+        .provenance
+        .subject[0]
+        .digest
+        .sha256
+        .clone();
+    std::fs::write(&skill, format!("{UPSTREAM}\nMaintainer edit.\n")).unwrap();
+    let broken = dir.path().join("rules/Broken/.provenance");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("bad.yaml"), "provenance: [\n").unwrap();
+
+    let error = review::reseal(dir.path(), Some("skills/AdoptedSkill")).unwrap_err();
+    assert!(
+        error.contains("cannot inspect provenance sidecar"),
+        "{error}"
+    );
+    let unchanged = manifest::provenance::read(&sidecar_path).unwrap();
+    assert_eq!(unchanged.provenance.subject[0].digest.sha256, recorded);
+}
+
+#[test]
 fn reseal_treats_skill_companions_as_one_artifact() {
     let dir = review_module_with_schema();
     let source = skill_tree_fixture();
@@ -1005,7 +1033,25 @@ fn doctor_reports_legacy_ledgers_without_deleting_them() {
     std::fs::write(&legacy, "legacy: true\n").unwrap();
 
     assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
-    assert!(legacy.exists(), "doctor never silently deletes user files");
+    assert!(legacy.exists(), "doctor must not delete legacy ledgers");
+}
+
+#[test]
+fn doctor_rejects_malformed_provenance_sidecar() {
+    let dir = review_module_with_schema();
+    let provenance = dir.path().join(".provenance");
+    std::fs::create_dir(&provenance).unwrap();
+    std::fs::write(provenance.join("bad.yaml"), "provenance: [\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
+}
+
+#[test]
+fn doctor_rejects_non_directory_provenance_path() {
+    let dir = review_module_with_schema();
+    std::fs::write(dir.path().join(".provenance"), "not a directory\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
 }
 
 #[test]

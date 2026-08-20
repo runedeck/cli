@@ -610,7 +610,9 @@ fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEnt
 /// verdicts, notes, or block entries — content digests and sidecars only.
 pub fn reseal(root: &Path, artifact: Option<&str>) -> Result<i32, String> {
     let pending = find_sessions(root)?;
-    let mut artifacts = reviewed_artifacts(root);
+    let provenance = scan_provenance(root);
+    provenance.require_complete()?;
+    let mut artifacts = provenance.reviewed_artifacts();
     if let Some(selector) = artifact {
         let selector_path = root.join(selector);
         artifacts.retain(|candidate| {
@@ -701,6 +703,7 @@ pub fn doctor_repair(_root: &Path) -> Result<i32, String> {
 /// Exit 1 on any integrity error.
 pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
     let sessions = find_sessions(root)?;
+    let provenance = scan_provenance(root);
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -715,9 +718,9 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
         ));
     }
 
-    inspect_adopt_sidecars(root, &mut errors, &mut warnings);
-    let legacy = legacy_review_records(root)?;
-    for path in &legacy {
+    provenance.report_errors(&mut errors);
+    inspect_adopt_sidecars(&provenance, &mut errors, &mut warnings);
+    for path in provenance.legacy_records() {
         warnings.push(format!(
             "{}: legacy adoption review ledger; reviewed sidecars are authoritative — inspect and remove or archive this file explicitly",
             display_relative(root, path)
@@ -731,7 +734,7 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
                 "errors": errors,
                 "warnings": warnings,
                 "pending_sessions": sessions.len(),
-                "legacy_ledgers": legacy.len(),
+                "legacy_ledgers": provenance.legacy_records().len(),
             }))
             .map_err(|error| format!("cannot serialize doctor report: {error}"))?
         );
@@ -752,149 +755,219 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
     Ok(i32::from(!errors.is_empty()))
 }
 
-fn inspect_adopt_sidecars(directory: &Path, errors: &mut Vec<String>, warnings: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !path.is_dir() {
-            continue;
-        }
-        if name == manifest::PROVENANCE_DIRECTORY {
-            let holder = directory.to_path_buf();
-            let Ok(inner) = fs::read_dir(&path) else {
-                continue;
-            };
-            for sidecar_entry in inner.flatten() {
-                let sidecar_path = sidecar_entry.path();
-                let file_name = sidecar_entry.file_name().to_string_lossy().to_string();
-                if file_name == REVIEW_FILE || file_name.ends_with(".review.yaml") {
-                    continue;
-                }
-                let Ok(sidecar) = manifest::provenance::read(&sidecar_path) else {
-                    continue;
-                };
-                if sidecar.provenance.predicate.build_definition.build_type != "adopt/v1" {
-                    continue;
-                }
-                let Some(subject) = sidecar.provenance.subject.first() else {
-                    errors.push(format!(
-                        "{}: adopt sidecar has no subject",
-                        sidecar_path.display()
-                    ));
-                    continue;
-                };
-                let file = holder.join(Path::new(&subject.name).file_name().unwrap_or_default());
-                let review = &sidecar.provenance.predicate.run_details.metadata.review;
-                if review != "reviewed" {
-                    warnings.push(format!(
-                        "{}: adoption is {review}; continue its temporary session or start a migration",
-                        subject.name
-                    ));
-                    continue;
-                }
-                match fs::read(&file) {
-                    Ok(bytes) => {
-                        let digest = manifest::content_sha256_bytes(&bytes);
-                        if digest != subject.digest.sha256 {
-                            errors.push(format!(
-                                "{}: reviewed sidecar digest does not match the file (sidecar sha256:{}, disk sha256:{digest})",
-                                subject.name, subject.digest.sha256
-                            ));
-                        }
-                    }
-                    Err(error) => errors.push(format!(
-                        "{}: reviewed subject is missing or unreadable: {error}",
-                        subject.name
-                    )),
-                }
-            }
-        } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
-            inspect_adopt_sidecars(&path, errors, warnings);
-        }
+struct AdoptSidecar {
+    path: PathBuf,
+    holder: PathBuf,
+    value: manifest::provenance::ProvenanceSidecar,
+}
+
+#[derive(Default)]
+struct ProvenanceScan {
+    sidecars: Vec<AdoptSidecar>,
+    legacy_records: Vec<PathBuf>,
+    errors: Vec<String>,
+}
+
+impl ProvenanceScan {
+    fn legacy_records(&self) -> &[PathBuf] {
+        &self.legacy_records
     }
-}
 
-fn legacy_review_records(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut records = Vec::new();
-    find_legacy_review_records(root, &mut records)?;
-    records.sort();
-    Ok(records)
-}
-
-fn find_legacy_review_records(directory: &Path, records: &mut Vec<PathBuf>) -> Result<(), String> {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
-            if name == manifest::PROVENANCE_DIRECTORY {
-                for inner in fs::read_dir(&path)
-                    .map_err(|error| format!("cannot read {}: {error}", path.display()))?
-                    .flatten()
-                {
-                    let inner_name = inner.file_name().to_string_lossy().to_string();
-                    if inner_name == REVIEW_FILE || inner_name.ends_with(".review.yaml") {
-                        records.push(inner.path());
-                    }
-                }
-            } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
-                find_legacy_review_records(&path, records)?;
-            }
-        }
+    fn report_errors(&self, errors: &mut Vec<String>) {
+        errors.extend(self.errors.iter().cloned());
     }
-    Ok(())
-}
 
-fn reviewed_artifacts(root: &Path) -> Vec<PathBuf> {
-    let mut artifacts = Vec::new();
-    collect_reviewed_artifacts(root, &mut artifacts);
-    artifacts.sort();
-    artifacts.dedup();
-    artifacts
-}
+    fn require_complete(&self) -> Result<(), String> {
+        if self.errors.is_empty() {
+            return Ok(());
+        }
+        Err(self.errors.join("\n"))
+    }
 
-fn collect_reviewed_artifacts(directory: &Path, artifacts: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
-            if name == manifest::PROVENANCE_DIRECTORY {
-                let holder = directory.to_path_buf();
-                let Ok(inner) = fs::read_dir(&path) else {
-                    continue;
-                };
-                for sidecar_entry in inner.flatten() {
-                    let sidecar_path = sidecar_entry.path();
-                    let Ok(sidecar) = manifest::provenance::read(&sidecar_path) else {
-                        continue;
-                    };
-                    if sidecar.provenance.predicate.build_definition.build_type != "adopt/v1"
-                        || sidecar.provenance.predicate.run_details.metadata.review != "reviewed"
-                    {
-                        continue;
-                    }
-                    let Some(subject) = sidecar.provenance.subject.first() else {
-                        continue;
-                    };
-                    let subject_file =
-                        holder.join(Path::new(&subject.name).file_name().unwrap_or_default());
-                    let artifact = holder
+    fn reviewed_artifacts(&self) -> Vec<PathBuf> {
+        let mut artifacts = self
+            .sidecars
+            .iter()
+            .filter(|entry| {
+                entry.value.provenance.predicate.run_details.metadata.review == "reviewed"
+            })
+            .filter_map(|entry| {
+                let subject = entry.value.provenance.subject.first()?;
+                let subject_file = entry
+                    .holder
+                    .join(Path::new(&subject.name).file_name().unwrap_or_default());
+                Some(
+                    entry
+                        .holder
                         .ancestors()
                         .find(|ancestor| ancestor.join("SKILL.md").is_file())
-                        .map_or(subject_file, Path::to_path_buf);
-                    artifacts.push(artifact);
-                }
-            } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
-                collect_reviewed_artifacts(&path, artifacts);
+                        .map_or(subject_file, Path::to_path_buf),
+                )
+            })
+            .collect::<Vec<_>>();
+        artifacts.sort();
+        artifacts.dedup();
+        artifacts
+    }
+}
+
+fn scan_provenance(root: &Path) -> ProvenanceScan {
+    let mut scan = ProvenanceScan::default();
+    scan_provenance_tree(root, &mut scan);
+    scan.legacy_records.sort();
+    scan.legacy_records.dedup();
+    scan
+}
+
+fn scan_provenance_tree(directory: &Path, scan: &mut ProvenanceScan) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            scan.errors.push(format!(
+                "{}: cannot inspect directory: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect directory entry: {error}",
+                    directory.display()
+                ));
+                continue;
             }
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect file type: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if name == manifest::PROVENANCE_DIRECTORY {
+            if file_type.is_dir() {
+                scan_provenance_directory(directory, &path, scan);
+            } else {
+                scan.errors.push(format!(
+                    "{}: provenance path is not a directory",
+                    path.display()
+                ));
+            }
+        } else if file_type.is_dir() && !SKIP_WALK.contains(&name.as_str()) && name != "build" {
+            scan_provenance_tree(&path, scan);
+        }
+    }
+}
+
+fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut ProvenanceScan) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            scan.errors.push(format!(
+                "{}: cannot inspect provenance directory: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect provenance entry: {error}",
+                    directory.display()
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect file type: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if !file_type.is_file() {
+            scan.errors.push(format!(
+                "{}: provenance entry is not a regular file",
+                path.display()
+            ));
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == REVIEW_FILE || name.ends_with(".review.yaml") {
+            scan.legacy_records.push(path);
+            continue;
+        }
+        match manifest::provenance::read(&path) {
+            Ok(value) if value.provenance.predicate.build_definition.build_type == "adopt/v1" => {
+                scan.sidecars.push(AdoptSidecar {
+                    path,
+                    holder: holder.to_path_buf(),
+                    value,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => scan.errors.push(format!(
+                "{}: cannot inspect provenance sidecar: {error}",
+                path.display()
+            )),
+        }
+    }
+}
+
+fn inspect_adopt_sidecars(
+    scan: &ProvenanceScan,
+    errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    for entry in &scan.sidecars {
+        let Some(subject) = entry.value.provenance.subject.first() else {
+            errors.push(format!(
+                "{}: adopt sidecar has no subject",
+                entry.path.display()
+            ));
+            continue;
+        };
+        let file = entry
+            .holder
+            .join(Path::new(&subject.name).file_name().unwrap_or_default());
+        let review = &entry.value.provenance.predicate.run_details.metadata.review;
+        if review != "reviewed" {
+            warnings.push(format!(
+                "{}: adoption is {review}; continue its temporary session or start a migration",
+                subject.name
+            ));
+            continue;
+        }
+        match fs::read(&file) {
+            Ok(bytes) => {
+                let digest = manifest::content_sha256_bytes(&bytes);
+                if digest != subject.digest.sha256 {
+                    errors.push(format!(
+                        "{}: reviewed sidecar digest does not match the file (sidecar sha256:{}, disk sha256:{digest})",
+                        subject.name, subject.digest.sha256
+                    ));
+                }
+            }
+            Err(error) => errors.push(format!(
+                "{}: reviewed subject is missing or unreadable: {error}",
+                subject.name
+            )),
         }
     }
 }
