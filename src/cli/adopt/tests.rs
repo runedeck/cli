@@ -994,6 +994,37 @@ fn reseal_rejects_incomplete_scan_before_sidecar_changes() {
 }
 
 #[test]
+fn reseal_rejects_subjectless_sidecar_before_sidecar_changes() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let skill = root.join("SKILL.md");
+    let sidecar_path = root.join(".provenance/SKILL.md.yaml");
+    let recorded = manifest::provenance::read(&sidecar_path)
+        .unwrap()
+        .provenance
+        .subject[0]
+        .digest
+        .sha256
+        .clone();
+    std::fs::write(&skill, format!("{UPSTREAM}\nMaintainer edit.\n")).unwrap();
+    let broken = dir.path().join("rules/Broken/.provenance");
+    std::fs::create_dir_all(&broken).unwrap();
+    let mut subjectless = manifest::provenance::read(&sidecar_path).unwrap();
+    subjectless.provenance.subject.clear();
+    std::fs::write(
+        broken.join("subjectless.yaml"),
+        serde_yaml::to_string(&subjectless).unwrap(),
+    )
+    .unwrap();
+
+    let error = review::reseal(dir.path(), Some("skills/AdoptedSkill")).unwrap_err();
+    assert!(error.contains("adopt sidecar has no subject"), "{error}");
+    let unchanged = manifest::provenance::read(&sidecar_path).unwrap();
+    assert_eq!(unchanged.provenance.subject[0].digest.sha256, recorded);
+}
+
+#[test]
 fn reseal_treats_skill_companions_as_one_artifact() {
     let dir = review_module_with_schema();
     let source = skill_tree_fixture();
@@ -1050,6 +1081,51 @@ fn doctor_rejects_malformed_provenance_sidecar() {
 fn doctor_rejects_non_directory_provenance_path() {
     let dir = review_module_with_schema();
     std::fs::write(dir.path().join(".provenance"), "not a directory\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
+}
+
+#[test]
+fn doctor_allows_nested_provenance_evidence_directory() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let evidence = root.join(".provenance/drafts/README.md");
+    std::fs::create_dir_all(evidence.parent().unwrap()).unwrap();
+    std::fs::write(&evidence, "Drafting evidence.\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+    assert_eq!(
+        std::fs::read_to_string(evidence).unwrap(),
+        "Drafting evidence.\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_rejects_symlinked_provenance_entries_and_subtrees() {
+    use std::os::unix::fs::symlink;
+
+    let dir = review_module_with_schema();
+    let targets = tempfile::tempdir().unwrap();
+    let provenance = dir.path().join(".provenance");
+    std::fs::create_dir(&provenance).unwrap();
+    let sidecar_target = targets.path().join("sidecar.yaml");
+    std::fs::write(&sidecar_target, "not provenance\n").unwrap();
+    let sidecar_link = provenance.join("linked.yaml");
+    symlink(&sidecar_target, &sidecar_link).unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
+    std::fs::remove_file(sidecar_link).unwrap();
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+
+    let subtree_target = targets.path().join("subtree/.provenance");
+    std::fs::create_dir_all(&subtree_target).unwrap();
+    symlink(
+        targets.path().join("subtree"),
+        dir.path().join("linked-tree"),
+    )
+    .unwrap();
 
     assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
 }

@@ -756,7 +756,6 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
 }
 
 struct AdoptSidecar {
-    path: PathBuf,
     holder: PathBuf,
     value: manifest::provenance::ProvenanceSidecar,
 }
@@ -791,18 +790,21 @@ impl ProvenanceScan {
             .filter(|entry| {
                 entry.value.provenance.predicate.run_details.metadata.review == "reviewed"
             })
-            .filter_map(|entry| {
-                let subject = entry.value.provenance.subject.first()?;
+            .map(|entry| {
+                let subject = entry
+                    .value
+                    .provenance
+                    .subject
+                    .first()
+                    .expect("provenance scan rejects subjectless adopt sidecars");
                 let subject_file = entry
                     .holder
                     .join(Path::new(&subject.name).file_name().unwrap_or_default());
-                Some(
-                    entry
-                        .holder
-                        .ancestors()
-                        .find(|ancestor| ancestor.join("SKILL.md").is_file())
-                        .map_or(subject_file, Path::to_path_buf),
-                )
+                entry
+                    .holder
+                    .ancestors()
+                    .find(|ancestor| ancestor.join("SKILL.md").is_file())
+                    .map_or(subject_file, Path::to_path_buf)
             })
             .collect::<Vec<_>>();
         artifacts.sort();
@@ -853,6 +855,25 @@ fn scan_provenance_tree(directory: &Path, scan: &mut ProvenanceScan) {
                 continue;
             }
         };
+        if file_type.is_symlink() {
+            if name == manifest::PROVENANCE_DIRECTORY {
+                scan.errors
+                    .push(format!("{}: provenance path is a symlink", path.display()));
+            } else {
+                match fs::metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => scan.errors.push(format!(
+                        "{}: provenance scan does not permit a symlinked subtree",
+                        path.display()
+                    )),
+                    Ok(_) => {}
+                    Err(error) => scan.errors.push(format!(
+                        "{}: cannot inspect symlink target: {error}",
+                        path.display()
+                    )),
+                }
+            }
+            continue;
+        }
         if name == manifest::PROVENANCE_DIRECTORY {
             if file_type.is_dir() {
                 scan_provenance_directory(directory, &path, scan);
@@ -901,6 +922,14 @@ fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut Provena
                 continue;
             }
         };
+        if file_type.is_symlink() {
+            scan.errors
+                .push(format!("{}: provenance entry is a symlink", path.display()));
+            continue;
+        }
+        if file_type.is_dir() {
+            continue;
+        }
         if !file_type.is_file() {
             scan.errors.push(format!(
                 "{}: provenance entry is not a regular file",
@@ -915,11 +944,15 @@ fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut Provena
         }
         match manifest::provenance::read(&path) {
             Ok(value) if value.provenance.predicate.build_definition.build_type == "adopt/v1" => {
-                scan.sidecars.push(AdoptSidecar {
-                    path,
-                    holder: holder.to_path_buf(),
-                    value,
-                });
+                if value.provenance.subject.is_empty() {
+                    scan.errors
+                        .push(format!("{}: adopt sidecar has no subject", path.display()));
+                } else {
+                    scan.sidecars.push(AdoptSidecar {
+                        holder: holder.to_path_buf(),
+                        value,
+                    });
+                }
             }
             Ok(_) => {}
             Err(error) => scan.errors.push(format!(
@@ -936,13 +969,12 @@ fn inspect_adopt_sidecars(
     warnings: &mut Vec<String>,
 ) {
     for entry in &scan.sidecars {
-        let Some(subject) = entry.value.provenance.subject.first() else {
-            errors.push(format!(
-                "{}: adopt sidecar has no subject",
-                entry.path.display()
-            ));
-            continue;
-        };
+        let subject = entry
+            .value
+            .provenance
+            .subject
+            .first()
+            .expect("provenance scan rejects subjectless adopt sidecars");
         let file = entry
             .holder
             .join(Path::new(&subject.name).file_name().unwrap_or_default());
