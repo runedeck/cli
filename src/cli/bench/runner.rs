@@ -332,6 +332,7 @@ fn benchmark_surface_invocation(
         model,
         native_timeout: None,
         timeout: Some(timeout),
+        clean_state_root: None,
     })
 }
 

@@ -32,6 +32,9 @@ fn run_git(repository: &Path, arguments: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
         .arg(repository)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .args(arguments)
         .output()
         .unwrap();

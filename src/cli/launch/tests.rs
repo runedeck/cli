@@ -28,6 +28,7 @@ fn format_dry_run(tool: &ResolvedTool, argv: &[OsString], plan: &LaunchPlan) -> 
         &plan.pre,
         &plan.warnings,
         None,
+        None,
     )
 }
 
@@ -673,6 +674,7 @@ fn model_route_dry_run_reports_provenance_and_generated_settings() {
         &plan.pre,
         &plan.warnings,
         Some(&model),
+        None,
     );
 
     assert!(output.contains("model: sol"), "{output}");
