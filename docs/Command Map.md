@@ -37,13 +37,16 @@ looks wrong:
    `--repair` to restore from build and quarantine orphans)
 5. `provenance` — where did this deployed file come from? (forensics)
 
-`bench doctor` and `spec doctor` are the same idea scoped to their own
-subsystems.
+`bench doctor`, `spec doctor`, and `adopt doctor` are the same idea scoped to
+their own subsystems. `adopt doctor` verifies pending external sessions and
+reviewed adopt sidecar digests; legacy review ledgers are migration warnings,
+not final authority.
 
 ## Bringing content in
 
 - `import` — one-shot: fetch, align, write provenance sidecars, done.
-- `adopt` — the reviewed path over the same import: a block-by-block session
-  (`start`, `next`, `verdict`, `finalize`) that seals maintainer verdicts
-  into a review record. Content that will ship to other people goes through
-  `adopt`; scratch experiments can use `import`.
+- `adopt` — the reviewed path over the same import: a block-by-block external
+  session (`start`, `next`, `verdict`, `finalize`) that seals final digests and
+  concise review metadata into adopt/v1 sidecars, then removes the temporary
+  block state. Content that will ship to other people goes through `adopt`;
+  scratch experiments can use `import`.

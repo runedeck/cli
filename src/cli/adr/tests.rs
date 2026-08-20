@@ -177,6 +177,14 @@ fn import_dry_run_writes_nothing() {
 #[test]
 fn adopt_stages_one_decision_and_opens_a_review_session() {
     let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("module.yaml"), "name: fixture\n").unwrap();
+    let git = std::process::Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["init", "--quiet"])
+        .status()
+        .unwrap();
+    assert!(git.success());
     let source = tempfile::tempdir().unwrap();
     let file = source.path().join("ARCH-0009 Reviewed Decision.md");
     std::fs::write(&file, "# Reviewed Decision\n\nBody under review.\n").unwrap();

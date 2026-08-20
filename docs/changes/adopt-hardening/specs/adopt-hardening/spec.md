@@ -21,9 +21,9 @@ Assembly SHALL exclude any source artifact whose adopt sidecar does not record `
 
 ### Requirement: Verdicts carry decision timestamps
 
-`rune adopt verdict` SHALL record `decidedOn` (UTC RFC 3339) on the block entry at write time, and the sealed record SHALL preserve the full timeline.
+`rune adopt verdict` SHALL record `decidedOn` (UTC RFC 3339) on the block entry at write time, and the temporary session SHALL preserve the timeline until finalize.
 
-#### Scenario: Timeline in the sealed record
+#### Scenario: Timeline in the pending session
 
 - **WHEN** finalize seals a session
 - **THEN** every block entry carries the timestamp of its verdict
@@ -35,21 +35,26 @@ Segmentation SHALL attach `flags` to blocks matching injection heuristics: instr
 #### Scenario: Override phrasing is flagged
 
 - **WHEN** a block contains "ignore previous instructions"
-- **THEN** its entry carries an `instruction-override` flag visible in `next --json` and in the sealed record
+- **THEN** its entry carries an `instruction-override` flag visible in `next --json` and in the pending session
 
-### Requirement: Doctor verifies sealed reviews
+### Requirement: Doctor verifies sessions and reviewed sidecars
 
-`rune adopt doctor` SHALL verify review records: three-way digest agreement (record subject, file on disk, adopt sidecar), state coherence (record `reviewed` iff sidecar `reviewed`; adopt sidecars lacking any record reported; pending sessions reported), completeness (no pending entries in a sealed record; a note on every adapt and cut), and SHALL warn when verdict pacing is implausible for an interactive session. It SHALL exit non-zero on integrity errors and zero on warnings alone. Doctor detects unilateral drift; a coordinated edit of file, sidecar, and record together is caught by the signed-commit layer, not by doctor.
+`rune adopt doctor` SHALL report pending external sessions, verify reviewed adopt/v1 sidecar subject digests against files, and diagnose legacy `review.yaml` / `*.review.yaml` ledgers with an actionable inspect-and-remove-or-archive message. It SHALL NOT require a committed review ledger for reviewed artifacts. It SHALL exit non-zero on integrity errors and zero on warnings alone.
 
-#### Scenario: Post-seal tamper detected
+#### Scenario: Reviewed artifact drifts
 
-- **WHEN** a reviewed artifact's file is edited after finalize without re-review
-- **THEN** doctor reports the digest disagreement as an error naming the file and record
+- **WHEN** a reviewed artifact's file is edited after finalize without reseal
+- **THEN** doctor reports the sidecar-to-file digest disagreement as an error naming the file
 
-#### Scenario: Import without review surfaces
+#### Scenario: Reviewed sidecar needs no ledger
 
-- **WHEN** an adopt sidecar exists with no review record
-- **THEN** doctor reports the artifact as imported but never reviewed
+- **WHEN** an adopt sidecar is reviewed and its digest matches the file while no review ledger exists
+- **THEN** doctor reports no integrity error
+
+#### Scenario: Legacy ledger surfaces
+
+- **WHEN** doctor finds `review.yaml` or `*.review.yaml`
+- **THEN** it reports an actionable migration/removal warning and leaves the file untouched
 
 ### Requirement: Verdict channel is recorded
 

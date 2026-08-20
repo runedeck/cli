@@ -5,15 +5,12 @@
 //! block waits for a maintainer verdict. `verdict` records one decision at a
 //! time. `finalize` refuses while anything is pending, enforces the verdicts
 //! against the edited files, validates structure with mdschema, re-syncs the
-//! adopt sidecars, and seals the record. `abandon` retires a session into the
-//! tree-local trash.
+//! adopt sidecars, and deletes the temporary session. `abandon` retires an
+//! in-flight artifact and session into the tree-local trash.
 //!
-//! The review record is an in-toto Statement v1 with the runedeck
-//! adoption-review predicate. While the session is open it carries each
-//! block's content so `next` and the finalize consistency checks work from
-//! the imported state even after the files are edited; sealing strips the
-//! content and keeps the digests. The record is sealed by the signed commit
-//! that lands it — rune does not sign files itself.
+//! The temporary record carries each block's content so `next` and finalize
+//! can enforce the imported state after edits. It lives outside the source
+//! tree; reviewed adopt sidecars are the permanent authority.
 
 use super::segment::{self, Block, BlockKind};
 use regex::Regex;
@@ -85,10 +82,16 @@ fn host_of(uri: &str) -> Option<&str> {
 pub const REVIEW_PREDICATE_TYPE: &str = "https://runedeck.github.io/attestation/adoption-review/v1";
 const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 const REVIEW_FILE: &str = "review.yaml";
+const SESSION_FILE: &str = "session.yaml";
+const SESSION_DIRECTORY: &str = "adopt-sessions";
 const SKIP_WALK: &[&str] = &[".git", ".jj", ".trash", manifest::PROVENANCE_DIRECTORY];
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ReviewRecord {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub module_root: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub artifact: String,
     pub review: ReviewStatement,
 }
 
@@ -229,7 +232,10 @@ pub fn open_session(
         ));
     }
 
+    let module_root = module_root_for(artifact_root)?;
     let record = ReviewRecord {
+        module_root: path_to_slash(&module_root),
+        artifact: display_relative(&module_root, artifact_root),
         review: ReviewStatement {
             statement_type: STATEMENT_TYPE.to_string(),
             predicate_type: REVIEW_PREDICATE_TYPE.to_string(),
@@ -268,7 +274,7 @@ pub fn status(root: &Path, json: bool) -> Result<i32, String> {
                 let pending = session.pending();
                 serde_json::json!({
                     "artifact": display_relative(root, &session.artifact_root),
-                    "record": display_relative(root, &session.record_path),
+                    "session": session.record_path,
                     "status": session.record.review.predicate.status,
                     "blocks": total,
                     "decided": total - pending.len(),
@@ -396,6 +402,7 @@ pub fn verdict(
     Ok(0)
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn finalize(
     root: &Path,
     artifact: Option<&str>,
@@ -488,19 +495,25 @@ pub fn finalize(
         addition.transport = "finalize".to_string();
         session.record.review.predicate.blocks.push(addition);
     }
-    // Seal the record BEFORE flipping sidecars: a crash between the two
-    // leaves sidecars pending (not deployable), never the reverse. Files that
-    // entered via --allow-new were authored in the ceremony, not imported;
-    // they have no adopt sidecar and stay first-party, covered by the
-    // record's added entries.
-    write_record(&session.record_path, &session.record)?;
+    // Finalize is restartable: write every reviewed sidecar atomically first,
+    // then remove the temporary session. A crash leaves the session available
+    // for another finalize, while already-reviewed sidecars remain valid.
+    // The session disappears only after every imported subject is durable.
+    let summary = adaptation_summary(&session.record.review.predicate.blocks);
     for (file, digest) in &digests {
         let relative = relative_id(&session.artifact_root, file);
         if new_files.contains(&relative) {
             continue;
         }
-        resync_sidecar(&session.artifact_root, file, digest)?;
+        finalize_sidecar(
+            file,
+            digest,
+            &session.record.review.predicate.reviewer,
+            &completed_on,
+            &summary,
+        )?;
     }
+    remove_session_file(&session.record_path)?;
     if !addition_ids.is_empty() {
         println!(
             "content added during review (recorded as `added`, endorsed by your commit): {}",
@@ -508,10 +521,9 @@ pub fn finalize(
         );
     }
     println!(
-        "reviewed {} ({} blocks) — record: {}",
+        "reviewed {} ({} blocks) — temporary session removed",
         display_relative(root, &session.artifact_root),
         session.record.review.predicate.blocks.len(),
-        display_relative(root, &session.record_path),
     );
     Ok(0)
 }
@@ -597,189 +609,121 @@ fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEnt
 /// carries the endorsement. Refuses after nothing changed, and never touches
 /// verdicts, notes, or block entries — content digests and sidecars only.
 pub fn reseal(root: &Path, artifact: Option<&str>) -> Result<i32, String> {
-    let sessions = find_sessions(root)?;
-    let mut sealed: Vec<Session> = sessions
-        .into_iter()
-        .filter(|session| session.record.review.predicate.status == "reviewed")
-        .collect();
+    let pending = find_sessions(root)?;
+    let provenance = scan_provenance(root);
+    provenance.require_complete()?;
+    let mut artifacts = provenance.reviewed_artifacts();
     if let Some(selector) = artifact {
         let selector_path = root.join(selector);
-        sealed.retain(|session| {
-            session.artifact_root == selector_path
-                || display_relative(root, &session.artifact_root) == selector
+        artifacts.retain(|candidate| {
+            candidate == &selector_path || display_relative(root, candidate) == selector
         });
     }
-    let mut session = match sealed.len() {
-        0 => return Err("no sealed review record to reseal".to_string()),
-        1 => sealed.pop().expect("length checked"),
+    let artifact_root = match artifacts.len() {
+        0 => return Err("no reviewed adopt sidecar matches the artifact".to_string()),
+        1 => artifacts.pop().expect("length checked"),
         _ => {
             return Err(format!(
-                "several sealed records; pass --artifact: {}",
-                sealed
+                "several reviewed artifacts; pass --artifact: {}",
+                artifacts
                     .iter()
-                    .map(|session| display_relative(root, &session.artifact_root))
+                    .map(|candidate| display_relative(root, candidate))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
         }
     };
-
-    let mut changed = 0usize;
-    let mut updates: Vec<(PathBuf, String)> = Vec::new();
-    let subject_files: Vec<(String, PathBuf)> = session
-        .record
-        .review
-        .subject
+    if pending
         .iter()
-        .map(|subject| {
-            (
-                subject.name.clone(),
-                session.artifact_root_file(&subject.name),
-            )
-        })
-        .collect();
-    for ((name, file), subject) in subject_files
-        .into_iter()
-        .zip(session.record.review.subject.iter_mut())
+        .any(|session| session.artifact_root == artifact_root)
     {
+        return Err(format!(
+            "{} still has a pending review session; finalize it before resealing",
+            display_relative(root, &artifact_root)
+        ));
+    }
+
+    let files = artifact_files(&artifact_root)?;
+    let mut changed = 0usize;
+    for file in files {
+        let Some(sidecar_path) = manifest::existing_sidecar_for(&file) else {
+            continue;
+        };
+        let sidecar = manifest::provenance::read(&sidecar_path)?;
+        if sidecar.provenance.predicate.build_definition.build_type != "adopt/v1"
+            || sidecar.provenance.predicate.run_details.metadata.review != "reviewed"
+        {
+            return Err(format!(
+                "{} is pending or unreviewed; refusing to reseal",
+                display_relative(root, &file)
+            ));
+        }
         let bytes =
             fs::read(&file).map_err(|error| format!("cannot read {}: {error}", file.display()))?;
         let digest = manifest::content_sha256_bytes(&bytes);
-        if digest != subject.digest.sha256 {
-            println!("resealing {name} (content changed)");
-            subject.digest.sha256.clone_from(&digest);
+        let recorded = sidecar
+            .provenance
+            .subject
+            .first()
+            .map(|subject| subject.digest.sha256.as_str())
+            .unwrap_or_default();
+        if digest != recorded {
+            println!(
+                "resealing {} (content changed)",
+                display_relative(root, &file)
+            );
+            update_sidecar_digest(&file, &digest)?;
             changed += 1;
         }
-        updates.push((file, digest));
     }
     if changed == 0 {
-        println!("nothing changed since the seal; record untouched");
+        println!("nothing changed since review; sidecars untouched");
         return Ok(0);
-    }
-    write_record(&session.record_path, &session.record)?;
-    for (file, digest) in &updates {
-        if manifest::existing_sidecar_for(file).is_some() {
-            resync_sidecar(&session.artifact_root, file, digest)?;
-        }
     }
     println!(
         "resealed {} ({changed} subject(s) updated); the signed commit endorses the touch-ups",
-        display_relative(root, &session.artifact_root)
+        display_relative(root, &artifact_root)
     );
     Ok(0)
 }
 
-/// Repair the one recoverable incoherence: a sealed record whose sidecars
-/// were not flipped because finalize crashed between sealing and re-sync.
-/// The record is the authority — a sidecar is repaired only when the file on
-/// disk matches the record's subject digest exactly.
-pub fn doctor_repair(root: &Path) -> Result<i32, String> {
-    let sessions = find_sessions(root)?;
-    let mut repaired = 0usize;
-    for session in &sessions {
-        if session.record.review.predicate.status != "reviewed" {
-            continue;
-        }
-        for subject in &session.record.review.subject {
-            let file = session.artifact_root_file(&subject.name);
-            let Ok(bytes) = fs::read(&file) else {
-                continue;
-            };
-            if manifest::content_sha256_bytes(&bytes) != subject.digest.sha256 {
-                continue;
-            }
-            let Some(sidecar_path) = manifest::existing_sidecar_for(&file) else {
-                continue;
-            };
-            let sidecar = manifest::provenance::read(&sidecar_path)?;
-            if sidecar.provenance.predicate.run_details.metadata.review == "reviewed" {
-                continue;
-            }
-            resync_sidecar(&session.artifact_root, &file, &subject.digest.sha256)?;
-            println!("repaired {}", display_relative(root, &sidecar_path));
-            repaired += 1;
-        }
-    }
-    println!("{repaired} sidecar(s) repaired");
+/// Retained for CLI compatibility. Reviewed sidecars are updated atomically by
+/// finalize, and pending sessions are restartable, so no ledger-based repair is
+/// safe or necessary.
+#[allow(clippy::unnecessary_wraps)]
+pub fn doctor_repair(_root: &Path) -> Result<i32, String> {
+    println!(
+        "`rune adopt doctor --repair` is deprecated; finalize is restartable and doctor now verifies sessions and sidecars directly"
+    );
     Ok(0)
 }
 
-/// Verify every review record in the tree: sealed records against the files
-/// and sidecars they attest, open sessions surfaced, adopt sidecars without
-/// any record reported. Errors are integrity breaks; warnings are telemetry
-/// (pacing, missing timestamps on legacy records). Exit 1 on any error.
+/// Report pending external sessions, verify reviewed adopt sidecars against
+/// their files, and diagnose legacy ledgers without treating them as authority.
+/// Exit 1 on any integrity error.
 pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
     let sessions = find_sessions(root)?;
+    let provenance = scan_provenance(root);
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-    let mut covered_files: Vec<PathBuf> = Vec::new();
 
     for session in &sessions {
         let label = display_relative(root, &session.artifact_root);
-        let predicate = &session.record.review.predicate;
-        for subject in &session.record.review.subject {
-            covered_files.push(session.artifact_root_file(&subject.name));
-        }
-        if predicate.status == "pending" {
-            let pending = session.pending().len();
-            let total = predicate.blocks.len();
-            warnings.push(format!(
-                "{label}: review in flight ({}/{total} decided, started {})",
-                total - pending,
-                predicate.started_on
-            ));
-            continue;
-        }
-
-        check_sealed_subjects(&label, session, &mut errors, &mut warnings);
-
-        let mut decided: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
-        for block in &predicate.blocks {
-            match block.verdict.as_str() {
-                "pending" => errors.push(format!(
-                    "{label}: sealed record contains a pending block ({})",
-                    block.id
-                )),
-                "adapt" | "cut" if block.note.trim().is_empty() => errors.push(format!(
-                    "{label}: {} verdict on {} has no rationale note",
-                    block.verdict, block.id
-                )),
-                _ => {}
-            }
-            if block.verdict != "added" {
-                if block.decided_on.is_empty() {
-                    warnings.push(format!(
-                        "{label}: {} has no decision timestamp (pre-hardening record)",
-                        block.id
-                    ));
-                } else if block.transport != "review-tty"
-                    && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&block.decided_on)
-                {
-                    decided.push(timestamp.with_timezone(&chrono::Utc));
-                }
-            }
-        }
-        if decided.len() >= 4 {
-            decided.sort();
-            let mut gaps: Vec<i64> = decided
-                .windows(2)
-                .map(|pair| (pair[1] - pair[0]).num_milliseconds())
-                .collect();
-            gaps.sort_unstable();
-            let median = gaps[gaps.len() / 2];
-            if median < 2000 {
-                warnings.push(format!(
-                    "{label}: verdict pacing implausible for an interactive review (median gap {median} ms) — telemetry, not proof"
-                ));
-            }
-        }
+        let pending = session.pending().len();
+        let total = session.record.review.predicate.blocks.len();
+        warnings.push(format!(
+            "{label}: review in flight ({}/{total} decided, started {})",
+            total - pending,
+            session.record.review.predicate.started_on
+        ));
     }
 
-    let mut orphaned: Vec<String> = Vec::new();
-    find_adopt_sidecar_artifacts(root, &mut orphaned, &covered_files);
-    for orphan in orphaned {
+    provenance.report_errors(&mut errors);
+    inspect_adopt_sidecars(&provenance, &mut errors, &mut warnings);
+    for path in provenance.legacy_records() {
         warnings.push(format!(
-            "{orphan}: imported artifact with no review record — backfill via `rune adopt`"
+            "{}: legacy adoption review ledger; reviewed sidecars are authoritative — inspect and remove or archive this file explicitly",
+            display_relative(root, path)
         ));
     }
 
@@ -789,6 +733,8 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "errors": errors,
                 "warnings": warnings,
+                "pending_sessions": sessions.len(),
+                "legacy_ledgers": provenance.legacy_records().len(),
             }))
             .map_err(|error| format!("cannot serialize doctor report: {error}"))?
         );
@@ -800,7 +746,7 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
             println!("⚡ {warning}");
         }
         println!(
-            "{} error(s), {} warning(s) across {} review record(s)",
+            "{} error(s), {} warning(s), {} pending session(s)",
             errors.len(),
             warnings.len(),
             sessions.len()
@@ -809,44 +755,251 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
     Ok(i32::from(!errors.is_empty()))
 }
 
-fn find_adopt_sidecar_artifacts(directory: &Path, orphans: &mut Vec<String>, covered: &[PathBuf]) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
+struct AdoptSidecar {
+    holder: PathBuf,
+    value: manifest::provenance::ProvenanceSidecar,
+}
+
+#[derive(Default)]
+struct ProvenanceScan {
+    sidecars: Vec<AdoptSidecar>,
+    legacy_records: Vec<PathBuf>,
+    errors: Vec<String>,
+}
+
+impl ProvenanceScan {
+    fn legacy_records(&self) -> &[PathBuf] {
+        &self.legacy_records
+    }
+
+    fn report_errors(&self, errors: &mut Vec<String>) {
+        errors.extend(self.errors.iter().cloned());
+    }
+
+    fn require_complete(&self) -> Result<(), String> {
+        if self.errors.is_empty() {
+            return Ok(());
+        }
+        Err(self.errors.join("\n"))
+    }
+
+    fn reviewed_artifacts(&self) -> Vec<PathBuf> {
+        let mut artifacts = self
+            .sidecars
+            .iter()
+            .filter(|entry| {
+                entry.value.provenance.predicate.run_details.metadata.review == "reviewed"
+            })
+            .map(|entry| {
+                let subject = entry
+                    .value
+                    .provenance
+                    .subject
+                    .first()
+                    .expect("provenance scan rejects subjectless adopt sidecars");
+                let subject_file = entry
+                    .holder
+                    .join(Path::new(&subject.name).file_name().unwrap_or_default());
+                entry
+                    .holder
+                    .ancestors()
+                    .find(|ancestor| ancestor.join("SKILL.md").is_file())
+                    .map_or(subject_file, Path::to_path_buf)
+            })
+            .collect::<Vec<_>>();
+        artifacts.sort();
+        artifacts.dedup();
+        artifacts
+    }
+}
+
+fn scan_provenance(root: &Path) -> ProvenanceScan {
+    let mut scan = ProvenanceScan::default();
+    scan_provenance_tree(root, &mut scan);
+    scan.legacy_records.sort();
+    scan.legacy_records.dedup();
+    scan
+}
+
+fn scan_provenance_tree(directory: &Path, scan: &mut ProvenanceScan) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            scan.errors.push(format!(
+                "{}: cannot inspect directory: {error}",
+                directory.display()
+            ));
+            return;
+        }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect directory entry: {error}",
+                    directory.display()
+                ));
+                continue;
+            }
+        };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if !path.is_dir() {
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect file type: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if file_type.is_symlink() {
+            if name == manifest::PROVENANCE_DIRECTORY {
+                scan.errors
+                    .push(format!("{}: provenance path is a symlink", path.display()));
+            } else {
+                match fs::metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => scan.errors.push(format!(
+                        "{}: provenance scan does not permit a symlinked subtree",
+                        path.display()
+                    )),
+                    Ok(_) => {}
+                    Err(error) => scan.errors.push(format!(
+                        "{}: cannot inspect symlink target: {error}",
+                        path.display()
+                    )),
+                }
+            }
             continue;
         }
         if name == manifest::PROVENANCE_DIRECTORY {
-            let holder = directory.to_path_buf();
-            let Ok(inner) = fs::read_dir(&path) else {
+            if file_type.is_dir() {
+                scan_provenance_directory(directory, &path, scan);
+            } else {
+                scan.errors.push(format!(
+                    "{}: provenance path is not a directory",
+                    path.display()
+                ));
+            }
+        } else if file_type.is_dir() && !SKIP_WALK.contains(&name.as_str()) && name != "build" {
+            scan_provenance_tree(&path, scan);
+        }
+    }
+}
+
+fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut ProvenanceScan) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            scan.errors.push(format!(
+                "{}: cannot inspect provenance directory: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect provenance entry: {error}",
+                    directory.display()
+                ));
                 continue;
-            };
-            for sidecar_entry in inner.flatten() {
-                let sidecar_path = sidecar_entry.path();
-                let file_name = sidecar_entry.file_name().to_string_lossy().to_string();
-                if file_name == REVIEW_FILE || file_name.ends_with(".review.yaml") {
-                    continue;
-                }
-                let Ok(sidecar) = manifest::provenance::read(&sidecar_path) else {
-                    continue;
-                };
-                if sidecar.provenance.predicate.build_definition.build_type != "adopt/v1" {
-                    continue;
-                }
-                let Some(subject) = sidecar.provenance.subject.first() else {
-                    continue;
-                };
-                let artifact =
-                    holder.join(Path::new(&subject.name).file_name().unwrap_or_default());
-                if !covered.contains(&artifact) {
-                    orphans.push(subject.name.clone());
+            }
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: cannot inspect file type: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if file_type.is_symlink() {
+            scan.errors
+                .push(format!("{}: provenance entry is a symlink", path.display()));
+            continue;
+        }
+        if file_type.is_dir() {
+            continue;
+        }
+        if !file_type.is_file() {
+            scan.errors.push(format!(
+                "{}: provenance entry is not a regular file",
+                path.display()
+            ));
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == REVIEW_FILE || name.ends_with(".review.yaml") {
+            scan.legacy_records.push(path);
+            continue;
+        }
+        match manifest::provenance::read(&path) {
+            Ok(value) if value.provenance.predicate.build_definition.build_type == "adopt/v1" => {
+                if value.provenance.subject.is_empty() {
+                    scan.errors
+                        .push(format!("{}: adopt sidecar has no subject", path.display()));
+                } else {
+                    scan.sidecars.push(AdoptSidecar {
+                        holder: holder.to_path_buf(),
+                        value,
+                    });
                 }
             }
-        } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
-            find_adopt_sidecar_artifacts(&path, orphans, covered);
+            Ok(_) => {}
+            Err(error) => scan.errors.push(format!(
+                "{}: cannot inspect provenance sidecar: {error}",
+                path.display()
+            )),
+        }
+    }
+}
+
+fn inspect_adopt_sidecars(
+    scan: &ProvenanceScan,
+    errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    for entry in &scan.sidecars {
+        let subject = entry
+            .value
+            .provenance
+            .subject
+            .first()
+            .expect("provenance scan rejects subjectless adopt sidecars");
+        let file = entry
+            .holder
+            .join(Path::new(&subject.name).file_name().unwrap_or_default());
+        let review = &entry.value.provenance.predicate.run_details.metadata.review;
+        if review != "reviewed" {
+            warnings.push(format!(
+                "{}: adoption is {review}; continue its temporary session or start a migration",
+                subject.name
+            ));
+            continue;
+        }
+        match fs::read(&file) {
+            Ok(bytes) => {
+                let digest = manifest::content_sha256_bytes(&bytes);
+                if digest != subject.digest.sha256 {
+                    errors.push(format!(
+                        "{}: reviewed sidecar digest does not match the file (sidecar sha256:{}, disk sha256:{digest})",
+                        subject.name, subject.digest.sha256
+                    ));
+                }
+            }
+            Err(error) => errors.push(format!(
+                "{}: reviewed subject is missing or unreadable: {error}",
+                subject.name
+            )),
         }
     }
 }
@@ -879,7 +1032,7 @@ pub fn abandon(root: &Path, artifact: Option<&str>, yes: bool) -> Result<i32, St
         )
     })?;
     if session.record_path.exists() {
-        let record_target = trash_root.join(REVIEW_FILE);
+        let record_target = trash_root.join(SESSION_FILE);
         fs::rename(&session.record_path, &record_target).map_err(|error| {
             format!(
                 "cannot move {} to {}: {error}",
@@ -887,83 +1040,12 @@ pub fn abandon(root: &Path, artifact: Option<&str>, yes: bool) -> Result<i32, St
                 record_target.display()
             )
         })?;
+        if let Some(parent) = session.record_path.parent() {
+            let _ = fs::remove_dir(parent);
+        }
     }
     println!("abandoned into {}", trash_root.display());
     Ok(0)
-}
-
-/// Verify each sealed subject against disk and its adopt sidecar: content
-/// digests must match the record, and imported subjects must carry a
-/// sidecar that says reviewed. Ceremony-authored subjects (all blocks
-/// `added`) legitimately have no sidecar and warn instead.
-fn check_sealed_subjects(
-    label: &str,
-    session: &Session,
-    errors: &mut Vec<String>,
-    warnings: &mut Vec<String>,
-) {
-    let predicate = &session.record.review.predicate;
-    for subject in &session.record.review.subject {
-        let file = session.artifact_root_file(&subject.name);
-        let Ok(bytes) = fs::read(&file) else {
-            errors.push(format!(
-                "{label}: reviewed subject {} is missing from disk",
-                subject.name
-            ));
-            continue;
-        };
-        let disk_digest = manifest::content_sha256_bytes(&bytes);
-        if disk_digest != subject.digest.sha256 {
-            errors.push(format!(
-                "{label}: {} was edited after review (record sha256:{}, disk sha256:{disk_digest})",
-                subject.name, subject.digest.sha256
-            ));
-        }
-        let Some(sidecar_path) = manifest::existing_sidecar_for(&file) else {
-            // A subject whose content the record carries only as `added`
-            // entries was authored during the ceremony, never imported:
-            // no adopt sidecar exists and none is expected.
-            let ceremony_authored = predicate
-                .blocks
-                .iter()
-                .filter(|block| block.id.starts_with(&format!("{}:", subject.name)))
-                .all(|block| block.verdict == "added");
-            if ceremony_authored {
-                warnings.push(format!(
-                    "{label}: {} was authored during the review (no adopt sidecar; covered by added entries)",
-                    subject.name
-                ));
-            } else {
-                errors.push(format!(
-                    "{label}: sidecar for imported subject {} is missing",
-                    subject.name
-                ));
-            }
-            continue;
-        };
-        match manifest::provenance::read(&sidecar_path) {
-            Ok(sidecar) => {
-                if sidecar.provenance.predicate.run_details.metadata.review != "reviewed" {
-                    errors.push(format!(
-                        "{label}: sidecar for {} does not say reviewed",
-                        subject.name
-                    ));
-                }
-                if let Some(side_subject) = sidecar.provenance.subject.first()
-                    && side_subject.digest.sha256 != subject.digest.sha256
-                {
-                    errors.push(format!(
-                        "{label}: sidecar digest for {} disagrees with the review record",
-                        subject.name
-                    ));
-                }
-            }
-            Err(error) => errors.push(format!(
-                "{label}: cannot read sidecar for {}: {error}",
-                subject.name
-            )),
-        }
-    }
 }
 
 /// The imported blocks, grouped by normalized content, must reconcile with
@@ -1135,11 +1217,17 @@ fn remove_orphaned_sidecar(artifact_root: &Path, recorded_name: &str) {
     }
 }
 
-fn resync_sidecar(artifact_root: &Path, file: &Path, digest: &str) -> Result<(), String> {
+fn finalize_sidecar(
+    file: &Path,
+    digest: &str,
+    reviewer: &str,
+    completed_on: &str,
+    summary: &str,
+) -> Result<(), String> {
     let Some(sidecar_path) = manifest::existing_sidecar_for(file) else {
         return Err(format!(
             "{} has no adopt sidecar at {}; was this imported with rune?",
-            display_relative(artifact_root, file),
+            file.display(),
             manifest::sidecar_for(file).display()
         ));
     };
@@ -1147,10 +1235,63 @@ fn resync_sidecar(artifact_root: &Path, file: &Path, digest: &str) -> Result<(),
     if let Some(subject) = sidecar.provenance.subject.first_mut() {
         subject.digest.sha256 = digest.to_string();
     }
-    sidecar.provenance.predicate.run_details.metadata.review = "reviewed".to_string();
-    let yaml = serde_yaml::to_string(&sidecar)
+    let metadata = &mut sidecar.provenance.predicate.run_details.metadata;
+    metadata.review = "reviewed".to_string();
+    metadata.reviewer = reviewer.to_string();
+    metadata.completed_on = completed_on.to_string();
+    metadata.summary = summary.to_string();
+    write_sidecar(&sidecar_path, &sidecar)
+}
+
+fn update_sidecar_digest(file: &Path, digest: &str) -> Result<(), String> {
+    let Some(sidecar_path) = manifest::existing_sidecar_for(file) else {
+        return Err(format!("{} has no adopt sidecar", file.display()));
+    };
+    let mut sidecar = manifest::provenance::read(&sidecar_path)?;
+    let metadata = &sidecar.provenance.predicate.run_details.metadata;
+    if metadata.review != "reviewed" {
+        return Err(format!(
+            "{} is not a reviewed adoption; refusing to reseal",
+            file.display()
+        ));
+    }
+    if let Some(subject) = sidecar.provenance.subject.first_mut() {
+        subject.digest.sha256 = digest.to_string();
+    }
+    write_sidecar(&sidecar_path, &sidecar)
+}
+
+fn write_sidecar(
+    sidecar_path: &Path,
+    sidecar: &manifest::provenance::ProvenanceSidecar,
+) -> Result<(), String> {
+    let yaml = serde_yaml::to_string(sidecar)
         .map_err(|error| format!("cannot serialize {}: {error}", sidecar_path.display()))?;
-    atomic_write(&sidecar_path, &yaml)
+    atomic_write(sidecar_path, &yaml)
+}
+
+fn adaptation_summary(blocks: &[BlockEntry]) -> String {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for block in blocks {
+        *counts.entry(block.verdict.as_str()).or_default() += 1;
+    }
+    ["keep", "adapt", "cut", "added"]
+        .into_iter()
+        .filter_map(|verdict| {
+            counts
+                .get(verdict)
+                .map(|count| format!("{count} {verdict}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn remove_session_file(path: &Path) -> Result<(), String> {
+    fs::remove_file(path).map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 fn git_identity(root: &Path) -> Result<String, String> {
@@ -1262,32 +1403,89 @@ fn relative_id(artifact_root: &Path, file: &Path) -> String {
     }
 }
 
-fn record_path_for(artifact_root: &Path) -> Result<PathBuf, String> {
-    if artifact_root.is_dir() {
-        Ok(artifact_root
-            .join(manifest::PROVENANCE_DIRECTORY)
-            .join(REVIEW_FILE))
+fn module_root_for(path: &Path) -> Result<PathBuf, String> {
+    let start = if path.is_dir() {
+        path.to_path_buf()
     } else {
-        let parent = artifact_root
-            .parent()
-            .ok_or_else(|| format!("{} has no parent", artifact_root.display()))?;
-        let stem = artifact_root
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
-        Ok(parent
-            .join(manifest::PROVENANCE_DIRECTORY)
-            .join(format!("{stem}.review.yaml")))
+        path.parent()
+            .ok_or_else(|| format!("{} has no parent", path.display()))?
+            .to_path_buf()
+    };
+    for directory in start.ancestors() {
+        if directory.join("module.yaml").is_file() {
+            return fs::canonicalize(directory).map_err(|error| {
+                format!(
+                    "cannot resolve module root {}: {error}",
+                    directory.display()
+                )
+            });
+        }
     }
+    Err(format!(
+        "cannot find module.yaml above {}; adoption sessions need a module root",
+        path.display()
+    ))
+}
+
+fn git_session_root(module_root: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(module_root)
+        .args(["rev-parse", "--path-format=absolute", "--git-path"])
+        .arg(SESSION_DIRECTORY)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+fn fallback_session_root(module_root: &Path) -> Result<PathBuf, String> {
+    let base = dirs::state_dir()
+        .or_else(dirs::cache_dir)
+        .ok_or_else(|| "cannot resolve a user state or cache directory".to_string())?;
+    let key = manifest::content_sha256(&path_to_slash(module_root));
+    Ok(base.join("rune").join(SESSION_DIRECTORY).join(key))
+}
+
+fn session_root_for(module_root: &Path) -> Result<PathBuf, String> {
+    Ok(git_session_root(module_root).unwrap_or(fallback_session_root(module_root)?))
+}
+
+pub(super) fn record_path_for(artifact_root: &Path) -> Result<PathBuf, String> {
+    let module_root = module_root_for(artifact_root)?;
+    let artifact = display_relative(&module_root, artifact_root);
+    let key = manifest::content_sha256(&format!("{}\0{artifact}", path_to_slash(&module_root)));
+    Ok(session_root_for(&module_root)?.join(key).join(SESSION_FILE))
 }
 
 fn find_sessions(root: &Path) -> Result<Vec<Session>, String> {
+    let module_root = module_root_for(root)?;
+    let state_root = session_root_for(&module_root)?;
     let mut sessions = Vec::new();
-    let mut records = Vec::new();
-    find_records(root, &mut records)?;
-    for record_path in records {
+    let Ok(entries) = fs::read_dir(&state_root) else {
+        return Ok(sessions);
+    };
+    for entry in entries.flatten() {
+        let record_path = entry.path().join(SESSION_FILE);
+        if !record_path.is_file() {
+            continue;
+        }
         let record = read_record(&record_path)?;
-        let artifact_root = artifact_root_for(&record_path, &record);
+        let recorded_module = if record.module_root.is_empty() {
+            module_root.clone()
+        } else {
+            PathBuf::from(&record.module_root)
+        };
+        if recorded_module != module_root {
+            continue;
+        }
+        let artifact_root = recorded_module.join(&record.artifact);
         sessions.push(Session {
             record_path,
             artifact_root,
@@ -1298,55 +1496,15 @@ fn find_sessions(root: &Path) -> Result<Vec<Session>, String> {
     Ok(sessions)
 }
 
-fn find_records(directory: &Path, records: &mut Vec<PathBuf>) -> Result<(), String> {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            if name == manifest::PROVENANCE_DIRECTORY {
-                let Ok(inner) = fs::read_dir(&path) else {
-                    continue;
-                };
-                for inner_entry in inner.flatten() {
-                    let inner_name = inner_entry.file_name().to_string_lossy().to_string();
-                    if inner_name == REVIEW_FILE || inner_name.ends_with(".review.yaml") {
-                        records.push(inner_entry.path());
-                    }
-                }
-            } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
-                find_records(&path, records)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn artifact_root_for(record_path: &Path, _record: &ReviewRecord) -> PathBuf {
-    let provenance_dir = record_path.parent().unwrap_or_else(|| Path::new("."));
-    let holder = provenance_dir
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let file_name = record_path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    if file_name == REVIEW_FILE {
-        holder
-    } else {
-        let stem = file_name.trim_end_matches(".review.yaml");
-        holder.join(format!("{stem}.md"))
-    }
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String> {
+    let module_root = module_root_for(root)?;
     let sessions = find_sessions(root)?;
     let mut open: Vec<Session> = sessions
         .into_iter()
@@ -1354,10 +1512,14 @@ fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String
         .collect();
     match artifact {
         Some(selector) => {
-            let selector_path = root.join(selector);
+            let selector_path = if Path::new(selector).is_absolute() {
+                PathBuf::from(selector)
+            } else {
+                module_root.join(selector)
+            };
             open.retain(|session| {
                 session.artifact_root == selector_path
-                    || display_relative(root, &session.artifact_root) == selector
+                    || display_relative(&module_root, &session.artifact_root) == selector
             });
             open.pop()
                 .ok_or_else(|| format!("no open review session matches '{selector}'"))
@@ -1368,7 +1530,7 @@ fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String
             _ => Err(format!(
                 "several sessions are open; pass --artifact: {}",
                 open.iter()
-                    .map(|session| display_relative(root, &session.artifact_root))
+                    .map(|session| display_relative(&module_root, &session.artifact_root))
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
