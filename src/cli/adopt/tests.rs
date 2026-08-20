@@ -947,6 +947,31 @@ fn modules_in_one_repository_use_distinct_session_directories() {
 }
 
 #[test]
+fn relative_root_selects_an_open_session_by_artifact() {
+    let current = std::env::current_dir().expect("current directory");
+    let repository = tempfile::tempdir_in(&current).expect("repository");
+    init_git(repository.path());
+    std::fs::write(repository.path().join("module.yaml"), "name: fixture\n").expect("module");
+
+    for name in ["First", "Second"] {
+        let artifact = repository.path().join("skills").join(name);
+        std::fs::create_dir_all(&artifact).expect("artifact directory");
+        std::fs::write(artifact.join("SKILL.md"), format!("# {name}\n")).expect("skill");
+        review::open_session(&artifact, "https://example.test/skill", "digest")
+            .expect("session opens");
+    }
+
+    let relative_root = repository
+        .path()
+        .strip_prefix(&current)
+        .expect("repository is below the current directory");
+    assert_eq!(
+        review::next(relative_root, Some("skills/Second"), 1, true).expect("session selected"),
+        0
+    );
+}
+
+#[test]
 fn reseal_updates_reviewed_sidecar_without_ledger() {
     let dir = review_module_with_schema();
     let root = adopt_fixture_skill(&dir);

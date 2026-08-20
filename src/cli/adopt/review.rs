@@ -1504,6 +1504,7 @@ fn path_to_slash(path: &Path) -> String {
 }
 
 fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String> {
+    let module_root = module_root_for(root)?;
     let sessions = find_sessions(root)?;
     let mut open: Vec<Session> = sessions
         .into_iter()
@@ -1511,10 +1512,14 @@ fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String
         .collect();
     match artifact {
         Some(selector) => {
-            let selector_path = root.join(selector);
+            let selector_path = if Path::new(selector).is_absolute() {
+                PathBuf::from(selector)
+            } else {
+                module_root.join(selector)
+            };
             open.retain(|session| {
                 session.artifact_root == selector_path
-                    || display_relative(root, &session.artifact_root) == selector
+                    || display_relative(&module_root, &session.artifact_root) == selector
             });
             open.pop()
                 .ok_or_else(|| format!("no open review session matches '{selector}'"))
@@ -1525,7 +1530,7 @@ fn single_session(root: &Path, artifact: Option<&str>) -> Result<Session, String
             _ => Err(format!(
                 "several sessions are open; pass --artifact: {}",
                 open.iter()
-                    .map(|session| display_relative(root, &session.artifact_root))
+                    .map(|session| display_relative(&module_root, &session.artifact_root))
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
