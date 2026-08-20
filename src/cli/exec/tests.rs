@@ -25,6 +25,19 @@ fn extension_runtime_dispatch_picks_shell() {
     assert_eq!(runtime.argv_prefix, &["bash"]);
 }
 
+#[cfg(unix)]
+#[test]
+fn capture_accepts_child_that_closes_stdin() {
+    let mut command = ProcessCommand::new("sh");
+    command.args(["-c", "exec 0<&-; sleep 0.05; printf '{\"ok\":true}\\n'"]);
+    let input = "x".repeat(1024 * 1024);
+
+    let output = run_capture(command, &input).expect("capture child output");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "{\"ok\":true}\n");
+}
+
 #[test]
 fn shell_fixture_round_trips_json_and_input_env() {
     let dir = tempfile::tempdir().expect("tempdir");
