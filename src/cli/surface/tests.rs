@@ -291,9 +291,9 @@ fn grok_system_prompt_accepts_frontmatter() {
     };
     let args = grok_args(&invocation, &PathBuf::from("/scratch/prompt.txt"));
 
-    assert!(args.contains(&OsString::from(format!(
-        "--system-prompt-override={CLEAN_SYSTEM_PROMPT}\n\n---\nname: Example"
-    ))));
+    assert!(args.contains(&OsString::from(
+        "--system-prompt-override=---\nname: Example"
+    )));
 }
 
 #[test]

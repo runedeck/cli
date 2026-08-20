@@ -781,10 +781,15 @@ fn grok_args(invocation: &SurfaceInvocation, prompt_path: &Path) -> Vec<OsString
         args.push(OsString::from("-m"));
         args.push(OsString::from(model));
     }
-    if invocation.clean_state_root.is_some() || !invocation.system_prompt.trim().is_empty() {
+    if invocation.clean_state_root.is_some() {
         args.push(OsString::from(format!(
             "--system-prompt-override={}",
             clean_system_prompt(&invocation.system_prompt)
+        )));
+    } else if !invocation.system_prompt.trim().is_empty() {
+        args.push(OsString::from(format!(
+            "--system-prompt-override={}",
+            invocation.system_prompt.trim()
         )));
     }
     args.extend(invocation.extra_args.clone());
