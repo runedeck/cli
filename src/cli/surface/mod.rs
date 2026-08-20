@@ -168,6 +168,21 @@ fn combined_prompt(invocation: &SurfaceInvocation) -> String {
     }
 }
 
+fn copy_optional_auth_file(
+    source: &Path,
+    target: &Path,
+    surface: &str,
+) -> Result<(), SurfaceFailure> {
+    match std::fs::copy(source, target) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SurfaceFailure::Io(format!(
+            "cannot copy {surface} authentication file {}: {error}",
+            source.display()
+        ))),
+    }
+}
+
 fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFailure> {
     let text = std::fs::read_to_string(source).map_err(|error| {
         SurfaceFailure::Io(format!(
@@ -258,14 +273,22 @@ fn copy_opencode_route_config(
     if let Some(schema) = source_config.get("$schema") {
         clean.insert("$schema".to_string(), schema.clone());
     }
-    if let Some(provider_name) = model.and_then(|value| value.split_once('/').map(|pair| pair.0))
-        && let Some(provider) = source_config
-            .get("provider")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|providers| providers.get(provider_name))
+    if let Some(source_providers) = source_config
+        .get("provider")
+        .and_then(serde_json::Value::as_object)
     {
-        let mut providers = serde_json::Map::new();
-        providers.insert(provider_name.to_string(), provider.clone());
+        let selected_provider = model
+            .and_then(|value| value.split_once('/').map(|pair| pair.0))
+            .and_then(|provider_name| {
+                source_providers
+                    .get(provider_name)
+                    .map(|provider| (provider_name, provider))
+            });
+        let providers = if let Some((provider_name, provider)) = selected_provider {
+            serde_json::Map::from_iter([(provider_name.to_string(), provider.clone())])
+        } else {
+            source_providers.clone()
+        };
         clean.insert("provider".to_string(), serde_json::Value::Object(providers));
     }
     let rendered = serde_json::to_vec(&serde_json::Value::Object(clean)).map_err(|error| {
@@ -337,15 +360,7 @@ pub(crate) fn prepare_clean_state(
                     target_data_root.display()
                 ))
             })?;
-            if source.is_file() {
-                std::fs::copy(&source, target_data_root.join("auth.json")).map_err(|error| {
-                    SurfaceFailure::Io(format!(
-                        "cannot bridge OpenCode authentication {}: {error}",
-                        source.display()
-                    ))
-                })?;
-            }
-            Ok(())
+            copy_optional_auth_file(&source, &target_data_root.join("auth.json"), "OpenCode")
         }
         Surface::Agy => {
             let source_root = std::env::var_os("ANTIGRAVITY_EXECUTABLE_DATA_DIR")
@@ -365,7 +380,15 @@ pub(crate) fn prepare_clean_state(
             })?;
             Ok(())
         }
-        Surface::Claude => Ok(()),
+        Surface::Claude => {
+            let source_root = std::env::var_os("CLAUDE_CONFIG_DIR")
+                .map_or_else(|| home.join(".claude"), PathBuf::from);
+            copy_optional_auth_file(
+                &source_root.join(".credentials.json"),
+                &root.join(".credentials.json"),
+                "Claude",
+            )
+        }
     }
 }
 

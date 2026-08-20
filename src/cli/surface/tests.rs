@@ -227,6 +227,30 @@ fn clean_claude_overrides_system_prompt() {
 }
 
 #[test]
+fn clean_claude_state_keeps_only_credentials() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("source");
+    let target = temporary.path().join("target");
+    std::fs::create_dir_all(&source).expect("source directory");
+    std::fs::create_dir_all(&target).expect("target directory");
+    std::fs::write(source.join(".credentials.json"), "credentials").expect("credentials");
+    std::fs::write(source.join("settings.json"), "settings").expect("settings");
+
+    copy_optional_auth_file(
+        &source.join(".credentials.json"),
+        &target.join(".credentials.json"),
+        "Claude",
+    )
+    .expect("clean Claude state");
+
+    assert_eq!(
+        std::fs::read_to_string(target.join(".credentials.json")).expect("copied credentials"),
+        "credentials"
+    );
+    assert!(!target.join("settings.json").exists());
+}
+
+#[test]
 fn clean_grok_uses_neutral_system_prompt() {
     let invocation = SurfaceInvocation {
         surface: Surface::Grok,
@@ -358,6 +382,29 @@ fn clean_opencode_config_keeps_only_selected_provider() {
     assert!(clean.get("instructions").is_none());
     assert!(clean.get("plugin").is_none());
     assert!(clean["provider"].get("other").is_none());
+}
+
+#[test]
+fn clean_opencode_config_keeps_all_providers_without_selection() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("source.json");
+    std::fs::write(
+        &source,
+        r#"{"instructions":["rules/*.md"],"provider":{"proton-lumo":{"npm":"provider"},"other":{"npm":"other"}}}"#,
+    )
+    .expect("source configuration");
+
+    for model in [None, Some("lumo-max")] {
+        let target = temporary.path().join("target.json");
+        copy_opencode_route_config(&source, &target, model).expect("clean configuration");
+        let clean: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(target).expect("target configuration"))
+                .expect("valid target JSON");
+
+        assert_eq!(clean["provider"]["proton-lumo"]["npm"], "provider");
+        assert_eq!(clean["provider"]["other"]["npm"], "other");
+        assert!(clean.get("instructions").is_none());
+    }
 }
 
 #[test]
