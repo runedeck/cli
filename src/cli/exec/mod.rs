@@ -480,9 +480,17 @@ fn run_capture(
         .stdin
         .take()
         .ok_or_else(|| ExecError::new(2, "cannot open child stdin"))?;
-    stdin
-        .write_all(input.as_bytes())
-        .map_err(|error| ExecError::new(2, format!("cannot write child stdin: {error}")))?;
+    match stdin.write_all(input.as_bytes()) {
+        Ok(()) => {}
+        // A child can close standard input before it exits. Its status and output still define the result.
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => {
+            return Err(ExecError::new(
+                2,
+                format!("cannot write child stdin: {error}"),
+            ));
+        }
+    }
     drop(stdin);
     child
         .wait_with_output()
