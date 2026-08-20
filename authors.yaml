@@ -19,6 +19,7 @@ authors:
     - Claude Opus 51m (claude-opus-51m) <claude-opus-51m@claude.noreply.nexus.local>
     - Claude Opus 4.8 (claude-opus-4-8) <claude-opus-4-8@claude.noreply.nexus.local>
     - Claude Gpt 5.6 Sol (gpt-5.6-sol) <gpt-5.6-sol@claude.noreply.nexus.local>
+    - Codex Gpt 5.6 Sol (gpt-5.6-sol) <gpt-5.6-sol@codex.noreply.nexus.local>
     - Grok (grok-composer-2.5-fast) <grok-composer-2.5-fast@grok.noreply.nexus.local>
 trailers:
     - Claude <noreply@anthropic.com>
