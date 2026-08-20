@@ -387,16 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_input_usage_keeps_total_unknown() {
-        let usage = json!({
-            "input_tokens": Value::Null,
-            "output_tokens": 20,
-            "total_tokens": Value::Null,
-        });
-        assert!(usage["total_tokens"].is_null());
-    }
-
-    #[test]
     fn typed_json_distinguishes_output_limit() {
         let failure = SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream: "stdout",
