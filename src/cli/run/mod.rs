@@ -85,11 +85,17 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .then_some(requested_timeout)
         .flatten();
     let outer_timeout = supervisor_timeout(surface, requested_timeout)?;
+    let model = options
+        .model
+        .clone()
+        .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
 
     if options.dry_run || resolved.dry_run {
+        let mut dry_run_argv = resolved.argv.clone();
+        dry_run_argv[0].clone_from(&binary);
         println!(
             "{}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}",
-            resolved.format_dry_run(),
+            resolved.format_dry_run_with_overrides(&dry_run_argv, options.model.as_deref()),
             repository.display(),
             options.mode.label(),
             duration_label(outer_timeout),
@@ -103,10 +109,6 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     }
     resolved.run_pre_steps();
 
-    let model = options
-        .model
-        .clone()
-        .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
     let clean_state = options
         .clean_harness_state
         .then(|| tempfile::Builder::new().prefix("rune-clean-").tempdir())

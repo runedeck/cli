@@ -72,6 +72,36 @@ fn fresh_install_runs_grok_profile_through_claude() {
         .stdout(predicate::str::contains("timeout: none"));
 }
 
+#[test]
+fn dry_run_reports_binary_and_model_overrides() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let binary = home.path().join("custom-claude");
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+            "--binary",
+            binary.to_str().expect("binary path"),
+            "--model",
+            "custom-model",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "argv: {}",
+            binary.display()
+        )))
+        .stdout(predicate::str::contains("model_id: custom-model"))
+        .stdout(predicate::str::contains("model_source: argument"))
+        .stdout(predicate::str::contains("model_id: gpt-5.6-sol").not());
+}
+
 #[cfg(unix)]
 #[test]
 fn json_reports_requested_and_resolved_routes() {

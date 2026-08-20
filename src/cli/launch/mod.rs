@@ -164,6 +164,14 @@ impl ResolvedLaunch {
         format_resolved_dry_run(self)
     }
 
+    pub(crate) fn format_dry_run_with_overrides(
+        &self,
+        argv: &[OsString],
+        model: Option<&str>,
+    ) -> String {
+        format_resolved_dry_run_with_overrides(self, argv, model)
+    }
+
     pub(crate) fn run_pre_steps(&self) {
         run_pre_steps(&self.pre);
     }
@@ -1125,15 +1133,24 @@ fn is_listening(host: &str, port: u16) -> bool {
 }
 
 fn format_resolved_dry_run(resolved: &ResolvedLaunch) -> String {
+    format_resolved_dry_run_with_overrides(resolved, &resolved.argv, None)
+}
+
+fn format_resolved_dry_run_with_overrides(
+    resolved: &ResolvedLaunch,
+    argv: &[OsString],
+    model_override: Option<&str>,
+) -> String {
     format_dry_run_parts(
         &resolved.tool,
-        &resolved.argv,
+        argv,
         &resolved.display_env,
         resolved.base_url.as_deref(),
         &resolved.wrap,
         &resolved.pre,
         &resolved.warnings,
         resolved.model.as_ref(),
+        model_override,
     )
 }
 
@@ -1147,10 +1164,16 @@ fn format_dry_run_parts(
     pre: &[PreStep],
     warnings: &[String],
     model: Option<&ResolvedModel>,
+    model_override: Option<&str>,
 ) -> String {
     let secrets = credential_values(env);
     let mut lines = vec![format!("tool: {tool}")];
-    if let Some(model) = model {
+    if let Some(model) = model_override {
+        lines.push(format!("model: {model}"));
+        lines.push(format!("model_id: {model}"));
+        lines.push("model_context: <unknown>".to_string());
+        lines.push("model_source: argument".to_string());
+    } else if let Some(model) = model {
         let source = match model.source {
             ModelSource::BuiltIn => "built-in",
             ModelSource::Config => "config",
