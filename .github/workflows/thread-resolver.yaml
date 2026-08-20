@@ -15,3 +15,6 @@ permissions:
 jobs:
     resolve:
         uses: runedeck/seer/.github/workflows/thread-resolver.yaml@main
+        secrets:
+            RUNESEER_APP_ID: ${{ secrets.RUNESEER_APP_ID }}
+            RUNESEER_APP_KEY: ${{ secrets.RUNESEER_APP_KEY }}
