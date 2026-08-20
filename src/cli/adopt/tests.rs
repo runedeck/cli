@@ -923,6 +923,30 @@ fn multiple_git_worktrees_use_distinct_session_directories() {
 }
 
 #[test]
+fn modules_in_one_repository_use_distinct_session_directories() {
+    let repository = tempfile::tempdir().expect("repository");
+    init_git(repository.path());
+    let artifacts: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|module| {
+            let module_root = repository.path().join(module);
+            let artifact = module_root.join("skills/Same");
+            std::fs::create_dir_all(&artifact).expect("artifact directory");
+            std::fs::write(module_root.join("module.yaml"), "name: fixture\n").expect("module");
+            std::fs::write(artifact.join("SKILL.md"), "# Same\n").expect("skill");
+            artifact
+        })
+        .collect();
+
+    let first = review::open_session(&artifacts[0], "https://example.test/first", "one")
+        .expect("first session");
+    let second = review::open_session(&artifacts[1], "https://example.test/second", "two")
+        .expect("second session");
+    assert_ne!(first, second, "modules in one repository must not collide");
+    assert!(first.is_file() && second.is_file());
+}
+
+#[test]
 fn reseal_updates_reviewed_sidecar_without_ledger() {
     let dir = review_module_with_schema();
     let root = adopt_fixture_skill(&dir);
@@ -939,6 +963,37 @@ fn reseal_updates_reviewed_sidecar_without_ledger() {
         manifest::content_sha256(&content)
     );
     assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}
+
+#[test]
+fn reseal_treats_skill_companions_as_one_artifact() {
+    let dir = review_module_with_schema();
+    let source = skill_tree_fixture();
+    let adopted = execute(
+        source
+            .path()
+            .join("skill-creator")
+            .to_str()
+            .expect("utf8 source path"),
+        dir.path().to_str().expect("utf8 temp path"),
+        Some("AdoptedSkill"),
+        None,
+        Kind::Skill,
+        Some("https://example.test/RemoteSkill"),
+        false,
+    )
+    .expect("adopt succeeds");
+    let root = adopted.artifact_root.expect("artifact root");
+    review::open_session(&root, &adopted.upstream_uri, &adopted.upstream_digest)
+        .expect("session opens");
+    finalize_all_keep(&dir, &root);
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!("{UPSTREAM}\nMaintainer edit.\n"),
+    )
+    .expect("skill edit");
+
+    review::reseal(dir.path(), None).expect("one skill reseals without a selector");
 }
 
 #[test]

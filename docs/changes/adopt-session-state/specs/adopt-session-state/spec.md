@@ -2,12 +2,17 @@
 
 ### Requirement: Pending adoption review state is external and durable
 
-The CLI SHALL preserve block-by-block review entries across sequential invocations without writing them into the adopted artifact or its `.provenance` directory. In Git repositories it SHALL prefer worktree-specific Git metadata. In non-Git modules it SHALL use a user state or cache directory keyed by the canonical module root.
+The CLI SHALL preserve block-by-block review entries across sequential invocations without writing them into the adopted artifact or its `.provenance` directory. In Git repositories it SHALL prefer worktree-specific Git metadata. Each session key SHALL include the canonical module root and module-relative artifact path. In non-Git modules it SHALL use a user state or cache directory keyed by the canonical module root.
 
 #### Scenario: Linked worktrees hold separate sessions
 
 - **WHEN** two linked worktrees open adoption sessions
 - **THEN** their session paths differ and each worktree discovers only its own pending state
+
+#### Scenario: Two modules use the same artifact path
+
+- **WHEN** two modules in one Git repository review artifacts at the same module-relative path
+- **THEN** their session paths differ and each module discovers only its own pending state
 
 #### Scenario: Non-Git module resumes review
 

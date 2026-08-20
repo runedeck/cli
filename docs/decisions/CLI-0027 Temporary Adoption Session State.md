@@ -50,7 +50,7 @@ CLI-0023 correctly made every imported block wait for a maintainer verdict, but 
 
 Chosen option: **Option 3**.
 
-**Session placement.** Pending block records are serialized atomically under the repository's worktree-specific Git metadata path when Git can resolve one. Non-git modules fall back to the user's state directory, or cache directory when no state directory exists, keyed by the canonical module root. Each artifact receives a digest-keyed session directory, and the record stores its canonical module root and module-relative artifact path. This makes discovery deterministic across invocations without adding files to the consumer tree.
+**Session placement.** Pending block records are serialized atomically under the repository's worktree-specific Git metadata path when Git can resolve one. Non-git modules fall back to the user's state directory, or cache directory when no state directory exists, keyed by the canonical module root. Each artifact receives a digest-keyed session directory. The digest includes its canonical module root and module-relative artifact path. The record stores the same two values. This makes discovery deterministic across invocations without adding files to the consumer tree.
 
 **Permanent metadata.** Finalize updates every imported adopt/v1 sidecar with the final subject digest, `review: reviewed`, reviewer, completion time, and a concise count summary of kept, adapted, cut, and added blocks. Existing source pin, upstream digest, transforms, and attribution remain in the same sidecar. Per-block entries, text, verdict notes, flags, and decision timestamps remain temporary.
 

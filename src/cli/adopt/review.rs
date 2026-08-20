@@ -886,11 +886,10 @@ fn collect_reviewed_artifacts(directory: &Path, artifacts: &mut Vec<PathBuf>) {
                     };
                     let subject_file =
                         holder.join(Path::new(&subject.name).file_name().unwrap_or_default());
-                    let artifact = if holder.join("SKILL.md") == subject_file {
-                        holder.clone()
-                    } else {
-                        subject_file
-                    };
+                    let artifact = holder
+                        .ancestors()
+                        .find(|ancestor| ancestor.join("SKILL.md").is_file())
+                        .map_or(subject_file, Path::to_path_buf);
                     artifacts.push(artifact);
                 }
             } else if !SKIP_WALK.contains(&name.as_str()) && name != "build" {
@@ -1356,7 +1355,7 @@ fn session_root_for(module_root: &Path) -> Result<PathBuf, String> {
 pub(super) fn record_path_for(artifact_root: &Path) -> Result<PathBuf, String> {
     let module_root = module_root_for(artifact_root)?;
     let artifact = display_relative(&module_root, artifact_root);
-    let key = manifest::content_sha256(&artifact);
+    let key = manifest::content_sha256(&format!("{}\0{artifact}", path_to_slash(&module_root)));
     Ok(session_root_for(&module_root)?.join(key).join(SESSION_FILE))
 }
 

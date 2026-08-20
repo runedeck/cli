@@ -8,12 +8,17 @@ Define how Rune stores temporary adoption reviews and writes final provenance.
 
 ### Requirement: Temporary block review
 
-Rune SHALL store block text, verdicts, notes, flags, and timestamps outside the adopted artifact and its `.provenance` directory. Git worktrees SHALL use worktree-specific metadata. Non-Git modules SHALL use user state keyed by the canonical module root.
+Rune SHALL store block text, verdicts, notes, flags, and timestamps outside the adopted artifact and its `.provenance` directory. Git worktrees SHALL use worktree-specific metadata. Each session key SHALL include the canonical module root and module-relative artifact path. Non-Git modules SHALL use user state keyed by the canonical module root.
 
 #### Scenario: Two worktrees review artifacts
 
 - **WHEN** two linked worktrees start adoption sessions
 - **THEN** each worktree discovers only its own session
+
+#### Scenario: Two modules use the same artifact path
+
+- **WHEN** two modules in one Git repository review artifacts at the same module-relative path
+- **THEN** their session paths differ and each module discovers only its own session
 
 ### Requirement: Concise finalized provenance
 
