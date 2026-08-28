@@ -93,7 +93,9 @@ fn install_into(base: &Path, content: &str) -> Result<InstallReport, Error> {
     let status = match &previous {
         None => "installed",
         Some(existing) if existing == content => "unchanged",
-        Some(existing) if existing.contains("name: rune") => "updated",
+        // Rune owns the file only when it matches a shipped rendering up to
+        // the version line. Any other difference is user work and stays.
+        Some(existing) if strip_version_line(existing) == strip_version_line(content) => "updated",
         Some(_) => {
             return Ok(InstallReport {
                 path: skill_path,
@@ -119,6 +121,16 @@ fn install_into(base: &Path, content: &str) -> Result<InstallReport, Error> {
         path: skill_path,
         status,
     })
+}
+
+/// The skill body with the frontmatter `version:` line removed, so a
+/// pristine install from another release still counts as rune-owned.
+fn strip_version_line(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("version:"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The enabled providers and their default target roots, for skill installs

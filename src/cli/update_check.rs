@@ -5,6 +5,10 @@
 use rune::error::{Error, ErrorKind};
 
 const RELEASES_URL: &str = "https://api.github.com/repos/runedeck/cli/releases/latest";
+/// The repair hint diagnoses the feed instead of retrying the command that
+/// just failed.
+const DIAGNOSE_FEED_COMMAND: &str =
+    "curl -sI https://api.github.com/repos/runedeck/cli/releases/latest";
 
 pub fn check(json: bool) -> Result<i32, Error> {
     let current = env!("CARGO_PKG_VERSION");
@@ -36,7 +40,12 @@ pub fn check(json: bool) -> Result<i32, Error> {
 }
 
 fn latest_release_tag() -> Result<String, Error> {
-    let response = ureq::get(RELEASES_URL)
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .into();
+    let response = agent
+        .get(RELEASES_URL)
         .header("User-Agent", "rune-cli")
         .call()
         .map_err(|error| {
@@ -45,7 +54,7 @@ fn latest_release_tag() -> Result<String, Error> {
                 format!("cannot reach the release feed: {error}"),
             )
             .with_code("update.feed_unreachable")
-            .with_fix_command("rune update --check")
+            .with_fix_command(DIAGNOSE_FEED_COMMAND)
         })?;
     let text = response.into_body().read_to_string().map_err(|error| {
         Error::new(
