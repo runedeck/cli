@@ -51,6 +51,7 @@ pub(crate) mod watchlist;
 
 #[cfg(test)]
 mod tests;
+mod update_check;
 
 use clap::{Parser, Subcommand};
 use rune::error::{Error, ErrorKind};
@@ -281,6 +282,12 @@ enum Command {
     /// Print an agent-ready brief of the resolved working context
     Context,
 
+    /// Check for a newer release (read-only)
+    Update {
+        /// Only report; rune never replaces its own binary.
+        #[arg(long)]
+        check: bool,
+    },
     /// Guided first-run configuration
     Setup {
         /// Accept all defaults without prompting (for CI and scripting).
@@ -940,9 +947,10 @@ enum SkillAction {
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
     },
-    /// Write the agent skill into a harness skills directory
+    /// Write the agent skill into every enabled harness
     Install {
-        /// Skills directory to install into. Defaults to ~/.claude/skills.
+        /// Base directory that holds the provider trees. Defaults to the
+        /// home directory.
         #[arg(long, value_name = "DIR")]
         dir: Option<String>,
     },
@@ -1294,6 +1302,19 @@ pub fn run() -> i32 {
         }
         Command::Context => {
             return exit_code(context::execute(args.json, args.no_color), args.json);
+        }
+        Command::Update { check } => {
+            if !check {
+                let error = rune::error::Error::new(
+                    rune::error::ErrorKind::Config,
+                    "rune update performs no self-replacement; package managers own updates",
+                )
+                .with_code("update.check_only")
+                .with_fix_command("rune update --check");
+                print_error(&error, args.json);
+                return 2;
+            }
+            return exit_code(update_check::check(args.json), args.json);
         }
         Command::Setup { defaults } => {
             return exit_code(
@@ -1960,6 +1981,12 @@ fn deck_help(help: &mut String) {
 
 fn plumbing_help(help: &mut String) {
     help.push_str("\n  Plumbing:\n");
+    help_command(
+        help,
+        "update",
+        "--check",
+        "Check for a newer release (read-only)",
+    );
     help_command(
         help,
         "assemble",

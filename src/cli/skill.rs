@@ -4,7 +4,7 @@
 
 use rune::error::{Error, ErrorKind};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const SKILL_TEMPLATE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -42,46 +42,97 @@ pub fn install(directory: Option<&str>, json: bool) -> Result<i32, Error> {
         None => dirs::home_dir()
             .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?,
     };
-    let base = root.join(".claude/skills");
+    let content = rendered();
+    let mut reports = Vec::new();
+    for (provider, target) in enabled_skill_targets(&root)? {
+        let base = root.join(&target).join("skills");
+        let report = install_into(&base, &content)?;
+        reports.push((provider, report));
+    }
+    if json {
+        let rows: Vec<serde_json::Value> = reports
+            .iter()
+            .map(|(provider, report)| {
+                serde_json::json!({
+                    "provider": provider,
+                    "installed": report.path.display().to_string(),
+                    "status": report.status,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "skills": rows }));
+        return Ok(0);
+    }
+    for (provider, report) in &reports {
+        println!("{provider}: {} → {}", report.status, report.path.display());
+    }
+    println!("agents pick the skill up on their next session");
+    Ok(0)
+}
+
+struct InstallReport {
+    path: PathBuf,
+    status: &'static str,
+}
+
+/// Write the skill into one skills directory. A user-modified file stays
+/// protected: the write happens only when the target is absent or carries
+/// rune's own previous content shape (the rune frontmatter name).
+fn install_into(base: &Path, content: &str) -> Result<InstallReport, Error> {
     let destination = base.join("rune");
     let skill_path = destination.join("SKILL.md");
-    fs::create_dir_all(&base).map_err(|error| {
+    fs::create_dir_all(base).map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot create {}: {error}", base.display()),
         )
     })?;
-    rune::services::confine::confine_for_write(&base, &skill_path)
+    rune::services::confine::confine_for_write(base, &skill_path)
         .map_err(|message| Error::new(ErrorKind::Config, message))?;
-    let content = rendered();
     let previous = fs::read_to_string(&skill_path).ok();
-    let verb = match &previous {
+    let status = match &previous {
         None => "installed",
-        Some(existing) if existing == &content => "unchanged",
-        Some(_) => "updated (previous content replaced)",
+        Some(existing) if existing == content => "unchanged",
+        Some(existing) if existing.contains("name: rune") => "updated",
+        Some(_) => {
+            return Ok(InstallReport {
+                path: skill_path,
+                status: "kept (modified by the user; remove the file to reinstall)",
+            });
+        }
     };
-    fs::create_dir_all(&destination).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot create {}: {error}", destination.display()),
-        )
-    })?;
-    fs::write(&skill_path, content).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", skill_path.display()),
-        )
-    })?;
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({ "installed": skill_path, "status": verb })
-        );
-    } else {
-        println!("{verb} agent skill → {}", skill_path.display());
-        println!("agents pick it up on their next session");
+    if status != "unchanged" {
+        fs::create_dir_all(&destination).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot create {}: {error}", destination.display()),
+            )
+        })?;
+        fs::write(&skill_path, content).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", skill_path.display()),
+            )
+        })?;
     }
-    Ok(0)
+    Ok(InstallReport {
+        path: skill_path,
+        status,
+    })
+}
+
+/// The enabled providers and their default target roots, for skill installs
+/// under a home base.
+fn enabled_skill_targets(root: &Path) -> Result<Vec<(String, String)>, Error> {
+    let merged = crate::cli::config::load_merged_config(root)?;
+    let providers = crate::cli::config::load_providers(&merged)?;
+    let mut targets: Vec<(String, String)> = providers
+        .iter()
+        .filter(|(_, config)| config.enabled)
+        .map(|(name, config)| (name.clone(), config.default_target().to_string()))
+        .collect();
+    targets.sort();
+    Ok(targets)
 }
 
 #[cfg(test)]
