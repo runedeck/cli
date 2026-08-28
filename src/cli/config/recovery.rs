@@ -252,11 +252,24 @@ pub fn reset(key: &str, scope: FileScope, json: bool) -> Result<i32, Error> {
             .with_code("config.unknown_key")
             .with_fix_command("rune config reference --json")
     })?;
-    serde_yaml::from_str::<serde_yaml::Value>(&updated).map_err(|error| {
-        Error::config(format!("the reset result does not parse as YAML: {error}"))
-            .with_code("config.reset_invalid")
-            .with_fix_command(scope.defaults_command())
-    })?;
+    match scope {
+        FileScope::User => {
+            serde_yaml::from_str::<ontology::Config>(&updated).map_err(|error| {
+                Error::config(format!("the reset result does not load: {error}"))
+                    .with_code("config.reset_invalid")
+                    .with_fix_command(scope.defaults_command())
+            })?;
+        }
+        FileScope::Source => {
+            // The overlay-tolerant twin: a source file is a partial overlay,
+            // so the strict merged parser would reject valid fragments.
+            serde_yaml::from_str::<SourceCheckConfig>(&updated).map_err(|error| {
+                Error::config(format!("the reset result does not load: {error}"))
+                    .with_code("config.reset_invalid")
+                    .with_fix_command(scope.defaults_command())
+            })?;
+        }
+    }
 
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let backup = path.with_file_name(format!(

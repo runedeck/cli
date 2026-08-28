@@ -1698,15 +1698,15 @@ fn bare() -> i32 {
 }
 
 /// One line that routes a new user into setup. Fires only when no user
-/// config exists, prints to stdout, and writes nothing.
+/// config exists, prints to stderr with the help, and writes nothing.
 fn first_run_nudge() -> Option<i32> {
     let config = rune::ontology::config_dir().ok()?.join("config.yaml");
     if config.is_file() {
         return None;
     }
-    let sheet = style::Sheet::detect(false);
+    let sheet = style::Sheet::detect_stderr(false);
     eprint!("{}", root_help_styled(&sheet));
-    println!("{}", sheet.row("next", "rune setup"));
+    eprintln!("{}", sheet.row("next", "rune setup"));
     Some(0)
 }
 
