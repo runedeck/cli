@@ -12,7 +12,9 @@ deploy set without a change to any other provider.
 
 ### Requirement: All-provider toggle default
 
-A toggle verb without `--provider` SHALL apply to every enabled provider.
+A toggle verb without `--provider` SHALL apply to every provider that the
+configuration knows, so the overlay records the intent for providers that a
+user enables later.
 
 #### Scenario: Rule turns off everywhere
 

@@ -303,11 +303,9 @@ pub fn toggle_kind(
         }
         vec![one.to_string()]
     } else {
-        let mut names: Vec<String> = known
-            .iter()
-            .filter(|(_, config)| config.enabled)
-            .map(|(name, _)| name.clone())
-            .collect();
+        // Every KNOWN provider, not only the enabled set: the overlay records
+        // intent, so a provider enabled later still honors the toggle.
+        let mut names: Vec<String> = known.keys().cloned().collect();
         names.sort();
         names
     };
