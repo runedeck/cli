@@ -20,7 +20,7 @@ pub(super) fn discover_targets(
     let mut targets = Vec::new();
     let home = dirs::home_dir();
     if let Some(ref home_path) = home
-        && has_provider_dirs(home_path, providers)
+        && has_provider_manifests(home_path, providers)
     {
         targets.push(home_path.clone());
     }
@@ -28,14 +28,14 @@ pub(super) fn discover_targets(
     let is_home = home
         .as_ref()
         .is_some_and(|home_path| root_abs == *home_path);
-    if !is_home && has_provider_dirs(&root_abs, providers) {
+    if !is_home && has_provider_manifests(&root_abs, providers) {
         targets.push(root_abs.clone());
     }
     for location in watched_locations {
         let canonical = fs::canonicalize(location).unwrap_or_else(|_| location.clone());
         if canonical != root_abs
             && !targets.contains(&canonical)
-            && has_provider_dirs(&canonical, providers)
+            && has_provider_manifests(&canonical, providers)
         {
             targets.push(canonical);
         }
@@ -43,8 +43,11 @@ pub(super) fn discover_targets(
     targets
 }
 
-pub(super) fn has_provider_dirs(base: &Path, providers: &[(String, String)]) -> bool {
-    providers.iter().any(|(_, dir)| base.join(dir).is_dir())
+pub(super) fn has_provider_manifests(base: &Path, providers: &[(String, String)]) -> bool {
+    providers.iter().any(|(_, directory)| {
+        fs::symlink_metadata(base.join(directory).join(".manifest"))
+            .is_ok_and(|metadata| metadata.is_file() && !metadata.is_symlink())
+    })
 }
 
 pub fn discover_local_repos(

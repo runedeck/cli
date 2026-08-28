@@ -2,6 +2,7 @@
 //! act, what the manifest selects, what is deployed, and what is in flight.
 
 use rune::error::{Error, ErrorKind};
+use rune::provider::detection::DeploymentState;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +23,7 @@ struct ProviderBrief {
     name: String,
     target: String,
     deployed: bool,
+    deployment_state: DeploymentState,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,29 +147,22 @@ fn describe_source(source: &Source) -> String {
 }
 
 fn probe_providers(root: &Path, warnings: &mut Vec<String>) -> Vec<ProviderBrief> {
-    let merged_config = match crate::cli::config::load_merged_config(root) {
-        Ok(merged_config) => merged_config,
-        Err(error) => {
-            warnings.push(format!("cannot load provider config: {error}"));
-            return Vec::new();
-        }
-    };
-    let providers = match crate::cli::config::load_providers(&merged_config) {
+    let providers = match crate::cli::config::detect_registered_providers(root, root) {
         Ok(providers) => providers,
         Err(error) => {
-            warnings.push(format!("cannot resolve providers: {error}"));
+            warnings.push(format!("Rune cannot detect providers: {error}"));
             return Vec::new();
         }
     };
     let mut briefs = providers
         .into_iter()
-        .map(|(name, provider)| {
-            let target = provider.default_target().to_string();
-            let deployed = root.join(&target).is_dir();
+        .map(|provider| {
+            let deployed = provider.has_manifest();
             ProviderBrief {
-                name,
-                target,
+                name: provider.provider,
+                target: provider.target.to_string_lossy().into_owned(),
                 deployed,
+                deployment_state: provider.deployment_state,
             }
         })
         .collect::<Vec<_>>();
@@ -188,7 +183,22 @@ fn suggest_next_steps(
             .all(|selection| selection.casts.is_empty() && selection.include.is_empty());
         if empty_selection {
             steps.push("stage runes with rune add <id> or rune add --cast <name>".to_string());
-        } else if providers.is_empty() || providers.iter().any(|provider| !provider.deployed) {
+        } else if providers
+            .iter()
+            .any(|provider| provider.deployment_state == DeploymentState::Modified)
+        {
+            steps.push("review provider changes with rune provider status".to_string());
+        } else if providers
+            .iter()
+            .any(|provider| provider.deployment_state == DeploymentState::NeedsRepair)
+        {
+            steps.push("review provider repairs with rune provider status".to_string());
+        } else if providers.iter().any(|provider| {
+            matches!(
+                provider.deployment_state,
+                DeploymentState::NotInstalled | DeploymentState::Outdated
+            )
+        }) {
             steps.push("deploy the staged selection with rune install".to_string());
         } else {
             steps.push("verify deployment integrity with rune doctor".to_string());
@@ -259,10 +269,14 @@ fn print_brief(brief: &ContextBrief, sheet: &crate::cli::style::Sheet) {
         println!("\n{}", sheet.heading("Providers"));
         for provider in &brief.providers {
             let line = format!("{:<12} {:<12}", provider.name, sheet.dim(&provider.target));
-            if provider.deployed {
-                println!("{}", sheet.ok(&format!("{line} deployed")));
+            if provider.deployment_state == DeploymentState::Current {
+                println!("{}", sheet.ok(&format!("{line} current")));
             } else {
-                println!("   {} {line} {}", sheet.dim("○"), sheet.dim("not deployed"));
+                println!(
+                    "   {} {line} {}",
+                    sheet.dim("○"),
+                    sheet.dim(provider.deployment_state.label())
+                );
             }
         }
     }
@@ -294,5 +308,27 @@ fn print_brief(brief: &ContextBrief, sheet: &crate::cli::style::Sheet) {
 fn print_id_list(sheet: &crate::cli::style::Sheet, label: &str, items: &[String]) {
     if !items.is_empty() {
         println!("     {} {}", sheet.dim(label), items.join(", "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_config_directory_without_a_manifest_is_not_deployed() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".codex")).unwrap();
+        let mut warnings = Vec::new();
+
+        let providers = probe_providers(root.path(), &mut warnings);
+        let codex = providers
+            .iter()
+            .find(|provider| provider.name == "codex")
+            .unwrap();
+
+        assert!(!codex.deployed);
+        assert_eq!(codex.deployment_state, DeploymentState::NotInstalled);
+        assert!(warnings.is_empty());
     }
 }

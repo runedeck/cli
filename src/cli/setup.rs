@@ -12,6 +12,16 @@ pub fn execute(defaults: bool, json: bool, no_color: bool) -> Result<i32, Error>
     let config = rune::ontology::load()?;
     let mut actions: Vec<String> = Vec::new();
 
+    let detected_providers = detect_providers()?;
+    if detected_providers.is_empty() {
+        actions.push("no providers detected".to_string());
+    } else {
+        actions.push(format!(
+            "providers detected: {}",
+            detected_providers.join(", ")
+        ));
+    }
+
     let deck = if let Some(deck) = config.deck {
         actions.push(format!("deck already configured: {}", deck.value));
         Some(PathBuf::from(deck.value))
@@ -48,6 +58,32 @@ pub fn execute(defaults: bool, json: bool, no_color: bool) -> Result<i32, Error>
     println!("{}", sheet.row("agent skill", "rune skill install"));
     println!("{}", sheet.row("stage", "rune add <id> && rune install"));
     Ok(0)
+}
+
+fn detect_providers() -> Result<Vec<String>, Error> {
+    let source_root = std::env::current_dir().map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("Rune cannot read the current directory: {error}"),
+        )
+        .with_code("setup.current_directory_unavailable")
+        .with_fix_command("pwd")
+    })?;
+    let home = dirs::home_dir().ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "Rune cannot resolve the home directory.".to_string(),
+        )
+        .with_code("setup.home_unavailable")
+        .with_fix_command("printenv HOME")
+    })?;
+    crate::cli::config::detect_registered_providers(&source_root, &home).map(|providers| {
+        providers
+            .into_iter()
+            .filter(rune::provider::detection::ProviderDetection::is_detected)
+            .map(|provider| provider.provider)
+            .collect()
+    })
 }
 
 fn configure_deck(defaults: bool, actions: &mut Vec<String>) -> Result<Option<PathBuf>, Error> {

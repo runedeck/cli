@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 mod scope;
 
 const BODY_KEY: &str = "body";
-const PROVIDER_TARGETS: &[&str] = &[".claude", ".codex", ".gemini", ".opencode"];
-
 // --- Types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -104,32 +102,91 @@ pub fn execute(
     }
 }
 
-fn discover_current_provider_targets() -> Result<(PathBuf, Vec<PathBuf>), Error> {
+fn discover_current_provider_targets() -> Result<(PathBuf, Vec<(String, PathBuf)>), Error> {
     let current_dir = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot determine current directory: {error}"),
         )
+        .with_code("drift.current_directory_unavailable")
+        .with_fix_command("pwd")
     })?;
-    let targets = discover_provider_targets(&current_dir);
+    let provider_targets = crate::cli::config::registered_provider_target_records(&current_dir)?;
+    let targets = discover_provider_targets(&current_dir, &provider_targets)?;
     if targets.is_empty() {
         return Err(Error::new(
             ErrorKind::Io,
             format!(
                 "no provider target with a .manifest found in current directory; expected one of {}",
-                PROVIDER_TARGETS.join(", ")
+                provider_targets
+                    .iter()
+                    .map(|provider| provider.target.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
-        ));
+        )
+        .with_code("drift.provider_manifest_missing")
+        .with_fix_command("rune provider status"));
     }
     Ok((current_dir, targets))
 }
 
-fn discover_provider_targets(base: &Path) -> Vec<PathBuf> {
-    PROVIDER_TARGETS
-        .iter()
-        .map(PathBuf::from)
-        .filter(|target| base.join(target).join(".manifest").is_file())
+fn discover_provider_targets(
+    base: &Path,
+    provider_targets: &[crate::cli::config::RegisteredProviderTarget],
+) -> Result<Vec<(String, PathBuf)>, Error> {
+    let mut discovered =
+        BTreeMap::<PathBuf, Vec<crate::cli::config::RegisteredProviderTarget>>::new();
+    for provider in provider_targets {
+        let relative = PathBuf::from(&provider.target);
+        let manifest = base.join(&relative).join(".manifest");
+        if std::fs::symlink_metadata(manifest)
+            .is_ok_and(|metadata| metadata.is_file() && !metadata.is_symlink())
+        {
+            discovered
+                .entry(relative)
+                .or_default()
+                .push(provider.clone());
+        }
+    }
+    discovered
+        .into_iter()
+        .map(|(target, providers)| {
+            preferred_provider_for_drift(base, &target, &providers)
+                .map(|provider| (provider, target))
+        })
         .collect()
+}
+
+fn preferred_provider_for_drift(
+    base: &Path,
+    target: &Path,
+    providers: &[crate::cli::config::RegisteredProviderTarget],
+) -> Result<String, Error> {
+    if let [only] = providers {
+        return Ok(only.provider.clone());
+    }
+    let enabled = providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .collect::<Vec<_>>();
+    if let [only] = enabled.as_slice() {
+        return Ok(only.provider.clone());
+    }
+    Err(Error::new(
+        ErrorKind::Config,
+        format!(
+            "Rune cannot infer one provider for {}. Matching providers: {}.",
+            base.join(target).display(),
+            providers
+                .iter()
+                .map(|provider| provider.provider.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    )
+    .with_code("drift.provider_ambiguous")
+    .with_fix_command("rune provider status"))
 }
 
 fn execute_deck_upstream(

@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn discovery_uses_the_registry_for_agentskills() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".agents")).unwrap();
+    std::fs::write(root.path().join(".agents/.manifest"), "{}\n").unwrap();
+    let provider_targets =
+        crate::cli::config::registered_provider_target_records(root.path()).unwrap();
+
+    let discovered = discover_provider_targets(root.path(), &provider_targets).unwrap();
+
+    assert!(
+        discovered.iter().any(|(provider, target)| {
+            provider == "agentskills" && target == Path::new(".agents")
+        })
+    );
+}
+
+#[test]
+fn shared_target_prefers_the_only_enabled_provider() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".agents")).unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "providers:\n    codex:\n        target:\n            default: .codex\n            skills: .agents\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join(".agents/.manifest"), "{}\n").unwrap();
+    let provider_targets =
+        crate::cli::config::registered_provider_target_records(root.path()).unwrap();
+
+    let discovered = discover_provider_targets(root.path(), &provider_targets).unwrap();
+
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].0, "codex");
+    assert_eq!(discovered[0].1, Path::new(".agents"));
+}
+
+#[test]
 fn split_parts_separates_frontmatter_and_body() {
     let content = "---\nname: test\n---\n\nBody text here.";
     let (frontmatter, body) = split_parts(content);
