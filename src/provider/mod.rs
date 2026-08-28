@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // --- Content Kind ---
@@ -57,7 +58,7 @@ impl AssemblyRule {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ProviderConfig {
     pub target: ProviderTarget,
     pub assembly: Option<Vec<String>>,
@@ -120,7 +121,7 @@ impl ProviderConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ProviderTarget {
     Single(String),
@@ -163,7 +164,7 @@ impl ProviderTarget {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderTargetMap {
     pub default: String,
@@ -210,7 +211,12 @@ struct Wrapper {
 
 pub fn load_providers(defaults_content: &str) -> Result<HashMap<String, ProviderConfig>, String> {
     let wrapper: Wrapper = parse_yaml(defaults_content, "providers")?;
-    let mut providers = wrapper.providers;
+    resolve_providers(wrapper.providers)
+}
+
+pub fn resolve_providers(
+    mut providers: HashMap<String, ProviderConfig>,
+) -> Result<HashMap<String, ProviderConfig>, String> {
     for (name, provider) in &mut providers {
         apply_plugin_layout(name, provider)?;
     }

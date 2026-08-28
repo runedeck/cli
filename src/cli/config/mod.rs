@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+mod recovery;
+mod source;
+
+pub use recovery::{CheckScope, FileScope, check, defaults, reference};
+use source::SourceConfig;
+
 /// Embedded at compile time so the binary works when symlinked away from
 /// its source tree (e.g. ~/.local/bin/rune).
 const EMBEDDED_DEFAULTS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/defaults.yaml"));
@@ -153,24 +159,39 @@ pub fn load_merged_config(module_root: &Path) -> Result<String, Error> {
 /// `models`). The module's `providers:` section overrides specific fields per provider.
 /// If the module has no providers: section, embedded defaults are used entirely.
 pub fn load_providers(config: &str) -> Result<HashMap<String, provider::ProviderConfig>, Error> {
-    let embedded_providers = provider::load_providers(EMBEDDED_DEFAULTS).map_err(|error| {
+    let embedded_config = source::providers(EMBEDDED_DEFAULTS).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!("failed to load embedded provider config: {error}"),
         )
+        .with_code("config.embedded_providers_invalid")
+        .with_fix_command("rune config defaults --scope source")
+    })?;
+    let embedded_providers = provider::resolve_providers(embedded_config).map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!("failed to load embedded provider config: {error}"),
+        )
+        .with_code("config.embedded_providers_invalid")
+        .with_fix_command("rune config defaults --scope source")
     })?;
 
     let Ok(module_config) = yaml::deep_merge(EMBEDDED_DEFAULTS, config) else {
         return Ok(embedded_providers);
     };
 
-    match provider::load_providers(&module_config) {
+    match source::providers(&module_config)
+        .map_err(|error| error.to_string())
+        .and_then(provider::resolve_providers)
+    {
         Ok(providers) => Ok(providers),
         // A semantic conflict the user must resolve; falling back to
         // embedded defaults would silently discard their overrides and
         // deploy to the wrong locations.
         Err(error) if error.contains("cannot combine with a by-kind target map") => {
-            Err(Error::new(ErrorKind::Config, error))
+            Err(Error::new(ErrorKind::Config, error)
+                .with_code("config.incompatible")
+                .with_fix_command("rune config check --scope source"))
         }
         Err(error) => {
             eprintln!(
@@ -187,35 +208,41 @@ pub fn load_providers(config: &str) -> Result<HashMap<String, provider::Provider
 #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
 pub fn load_settings_filenames(module_root: &Path) -> Vec<String> {
     let merged = load_merged_config(module_root).unwrap_or_default();
-    let from_module = parse_settings_filenames(&merged);
-    if from_module.is_empty() {
-        parse_settings_filenames(EMBEDDED_DEFAULTS)
-    } else {
-        from_module
-    }
-}
-
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-fn parse_settings_filenames(config: &str) -> Vec<String> {
-    #[derive(serde::Deserialize, Default)]
-    struct DashboardConfig {
-        #[serde(default)]
-        settings_files: Vec<String>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct Wrapper {
-        #[serde(default)]
-        dashboard: DashboardConfig,
-    }
-    match serde_yaml::from_str::<Wrapper>(config) {
-        Ok(wrapper) => wrapper.dashboard.settings_files,
+    let from_module = match source::dashboard(&merged) {
+        Ok(config) => config.settings_files,
         Err(error) => {
             eprintln!(
                 "warning: failed to parse dashboard.settings_files ({error}), using embedded defaults"
             );
             Vec::new()
         }
+    };
+    if from_module.is_empty() {
+        SourceConfig::installed_defaults()
+            .map(|config| config.dashboard.settings_files)
+            .unwrap_or_default()
+    } else {
+        from_module
     }
+}
+
+pub(crate) fn source_spec_root(config: &str) -> Option<String> {
+    source::spec(config).ok()?.root?.joined()
+}
+
+pub(crate) fn source_adr_prefixes(config: &str) -> Option<String> {
+    source::adr(config).ok()?.prefixes?.joined()
+}
+
+pub(crate) fn source_validate_excludes(config: &str) -> Vec<String> {
+    source::validate(config)
+        .map(|config| {
+            config
+                .exclude
+                .map(|exclude| exclude.items())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 /// Load remap-tools.yaml from the module, falling back to embedded defaults.

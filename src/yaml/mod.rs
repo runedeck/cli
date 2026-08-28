@@ -1,6 +1,6 @@
 mod merge;
 
-pub use merge::deep_merge;
+pub use merge::{deep_merge, deep_merge_quiet};
 use serde_yaml::Value;
 
 /// Extract a scalar value from raw YAML text using a dot-separated expression.

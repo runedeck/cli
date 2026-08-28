@@ -70,6 +70,37 @@ fn load_providers_module_config_overrides_target() {
 }
 
 #[test]
+fn load_providers_ignores_an_invalid_unrelated_section() {
+    let module_config =
+        "spec:\n    root: 42\nproviders:\n    claude:\n        target: .custom-claude\n";
+    let providers = load_providers(module_config).unwrap();
+    assert_eq!(providers["claude"].default_target(), ".custom-claude");
+}
+
+#[test]
+fn validate_excludes_accept_scalar_and_list_values() {
+    assert_eq!(
+        source_validate_excludes("validate:\n    exclude: templates/*\n"),
+        vec!["templates/*"]
+    );
+    assert_eq!(
+        source_validate_excludes("validate:\n    exclude: [templates/*, generated/*]\n"),
+        vec!["templates/*", "generated/*"]
+    );
+    assert_eq!(
+        source_validate_excludes("validate.exclude: generated/*\n"),
+        vec!["generated/*"]
+    );
+}
+
+#[test]
+fn flat_source_keys_override_nested_values() {
+    let config = "spec:\n    root: docs\nspec.root: openspec\nadr:\n    prefixes: CLI\nadr.prefixes: [ARCH, DATA]\n";
+    assert_eq!(source_spec_root(config).as_deref(), Some("openspec"));
+    assert_eq!(source_adr_prefixes(config).as_deref(), Some("ARCH, DATA"));
+}
+
+#[test]
 fn load_providers_opt_in_plugin_derives_the_plugin_root() {
     let module_config = "providers:\n    claude:\n        plugin: rune\n";
     let providers = load_providers(module_config).unwrap();

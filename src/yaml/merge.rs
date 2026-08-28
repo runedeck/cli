@@ -31,6 +31,19 @@ use serde_yaml::Value;
 /// extra: true
 /// ```
 pub fn deep_merge(defaults_content: &str, override_content: &str) -> Result<String, String> {
+    deep_merge_with_warnings(defaults_content, override_content, true)
+}
+
+/// Deep-merge two YAML documents without printing type-conflict warnings.
+pub fn deep_merge_quiet(defaults_content: &str, override_content: &str) -> Result<String, String> {
+    deep_merge_with_warnings(defaults_content, override_content, false)
+}
+
+fn deep_merge_with_warnings(
+    defaults_content: &str,
+    override_content: &str,
+    show_warnings: bool,
+) -> Result<String, String> {
     let mut base: Value = serde_yaml::from_str(defaults_content)
         .map_err(|e| format!("failed to parse defaults YAML: {e}"))?;
 
@@ -40,7 +53,7 @@ pub fn deep_merge(defaults_content: &str, override_content: &str) -> Result<Stri
     match (&base, &overlay) {
         (_, Value::Null) => {}
         (Value::Null, _) => base = overlay,
-        _ => merge_value(&mut base, overlay, ""),
+        _ => merge_value(&mut base, overlay, "", show_warnings),
     }
 
     serde_yaml::to_string(&base).map_err(|e| format!("failed to serialize merged YAML: {e}"))
@@ -51,7 +64,7 @@ pub fn deep_merge(defaults_content: &str, override_content: &str) -> Result<Stri
 /// Type conflicts (e.g. base is a mapping, overlay is a sequence) keep the base
 /// value and skip the overlay. This prevents downstream deserialization failures
 /// when a module's config uses a different YAML type than the embedded defaults.
-fn merge_value(base: &mut Value, overlay: Value, key_path: &str) {
+fn merge_value(base: &mut Value, overlay: Value, key_path: &str, show_warnings: bool) {
     match (&mut *base, overlay) {
         (Value::Mapping(base_map), Value::Mapping(overlay_map)) => {
             for (key, overlay_val) in overlay_map {
@@ -62,7 +75,9 @@ fn merge_value(base: &mut Value, overlay: Value, key_path: &str) {
                     format!("{key_path}.{key_label}")
                 };
                 match base_map.get_mut(&key) {
-                    Some(base_val) => merge_value(base_val, overlay_val, &nested_path),
+                    Some(base_val) => {
+                        merge_value(base_val, overlay_val, &nested_path, show_warnings);
+                    }
                     None => {
                         base_map.insert(key, overlay_val);
                     }
@@ -72,14 +87,14 @@ fn merge_value(base: &mut Value, overlay: Value, key_path: &str) {
         (base_value @ Value::Mapping(_), overlay_value) => {
             if replace_on_type_conflict(key_path) {
                 *base_value = overlay_value;
-            } else {
+            } else if show_warnings {
                 warn_type_conflict(key_path, "mapping", describe_value(&overlay_value));
             }
         }
         (base_value, overlay_value @ Value::Mapping(_)) => {
             if replace_on_type_conflict(key_path) {
                 *base_value = overlay_value;
-            } else {
+            } else if show_warnings {
                 warn_type_conflict(key_path, describe_value(base_value), "mapping");
             }
         }
