@@ -59,6 +59,21 @@ Ask the human for approval before every write step.
 - **Configuration questions**: `rune config path` shows the file,
   `rune config get <key>` reads one value.
 
+## Machine contract
+
+Add `--json` to a command for machine-readable output. A failed command
+prints one JSON object on stdout:
+
+```json
+{"code": "config.unknown_key", "message": "...", "fix_command": "rune config"}
+```
+
+- `code` is stable across releases. Match on it, never on `message`.
+- `fix_command` is the exact next command, built from resolved paths.
+  It is null when no safe repair exists.
+- Exit codes: 0 success, 1 the command found issues (check, doctor
+  --verify), 2 the command itself failed.
+
 ## Rules for you
 
 - Do not invent config keys, flags, or commands. Verify with the installed help.
