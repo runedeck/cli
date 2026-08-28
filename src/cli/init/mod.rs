@@ -187,17 +187,10 @@ pub fn run_project(
     brief: &str,
     options: InitOptions,
     json: bool,
-) -> i32 {
-    match scaffold_project(target, selection, skeleton, brief, options, json) {
-        Ok(result) => {
-            print_project(&result, json);
-            i32::from(result.action.has_errors())
-        }
-        Err(error) => {
-            eprintln!("fatal: {error}");
-            2
-        }
-    }
+) -> Result<i32, Error> {
+    let result = scaffold_project(target, selection, skeleton, brief, options, json)?;
+    print_project(&result, json);
+    Ok(i32::from(result.action.has_errors()))
 }
 
 fn scaffold_project(

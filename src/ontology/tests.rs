@@ -175,6 +175,21 @@ fn project_yaml_is_ignored() {
 }
 
 #[test]
+fn malformed_config_has_a_stable_repair() {
+    let path = Path::new("/tmp/config.yaml");
+    let error = parse_config("ontology: [", path).expect_err("config must be malformed");
+
+    assert_eq!(error.kind(), ErrorKind::Config);
+    assert_eq!(error.code(), "config.invalid");
+    assert_eq!(error.fix_command(), Some("rune config path"));
+    assert!(
+        error
+            .message()
+            .starts_with("/tmp/config.yaml is malformed:")
+    );
+}
+
+#[test]
 fn lore_and_artifacts_resolve_from_env() {
     let resolved = resolve_config(
         &Config::default(),

@@ -111,6 +111,14 @@ fn execute_unknown_provider_lists_available_choices() {
         message.contains("claude"),
         "available list should include claude: {message}"
     );
+    assert_eq!(error.code(), "provider.unknown");
+    let fix_command = error
+        .fix_command()
+        .expect("unknown provider must include a provider-list command");
+    assert!(fix_command.contains(&module_directory.path().display().to_string()));
+    assert!(fix_command.ends_with("rune provider"));
+    assert!(!fix_command.contains('<'));
+    assert!(!fix_command.contains('>'));
 }
 
 #[test]
@@ -160,6 +168,49 @@ fn execute_provider_filter_skips_unrequested_providers() {
 }
 
 #[test]
+fn corrupt_manifest_error_has_no_unsafe_fix_command() {
+    let module = TempDir::new().unwrap();
+    write_module_yaml(module.path());
+    std::fs::create_dir_all(module.path().join("rules")).unwrap();
+    std::fs::write(module.path().join("rules/OnlyRule.md"), "body\n").unwrap();
+    let target = TempDir::new().unwrap();
+    let source = module.path().to_string_lossy();
+    let target_text = target.path().to_string_lossy();
+
+    execute(
+        &source,
+        Some(&target_text),
+        &["claude".to_string()],
+        false,
+        true,
+        false,
+        false,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    std::fs::write(target.path().join(".claude/.manifest"), "invalid: [").unwrap();
+
+    let error = execute(
+        &source,
+        Some(&target_text),
+        &["claude".to_string()],
+        false,
+        true,
+        false,
+        false,
+        Some("rules/OnlyRule.md"),
+        None,
+        false,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code(), "install.manifest_corrupt");
+    assert_eq!(error.fix_command(), None);
+}
+
+#[test]
 fn commitless_repository_has_no_freshness_warning() {
     let module = TempDir::new().unwrap();
     std::process::Command::new("git")
@@ -173,7 +224,7 @@ fn commitless_repository_has_no_freshness_warning() {
 
     assert!(detect_stale_source(module.path()).unwrap().is_none());
     assert!(
-        warn_or_block_stale_source(module.path(), false)
+        warn_or_block_stale_source(module.path(), false, "rune install --allow-stale")
             .unwrap()
             .is_empty()
     );
@@ -184,8 +235,63 @@ fn freshness_probe_failure_is_returned_as_a_warning() {
     let module = TempDir::new().unwrap();
     std::fs::create_dir(module.path().join(".git")).unwrap();
 
-    let warnings = warn_or_block_stale_source(module.path(), false).unwrap();
+    let warnings =
+        warn_or_block_stale_source(module.path(), false, "rune install --allow-stale").unwrap();
 
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("cannot determine git freshness"));
+}
+
+#[test]
+fn install_command_preserves_options_and_resolves_paths() {
+    let source = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    let command = install_command(
+        &source.path().to_string_lossy(),
+        Some(&target.path().to_string_lossy()),
+        &["codex".to_string()],
+        true,
+        false,
+        false,
+        true,
+        Some("skills/Alpha"),
+        Some("gpt-5"),
+        true,
+    );
+
+    assert!(command.contains(&source.path().to_string_lossy().to_string()));
+    assert!(command.contains(&target.path().to_string_lossy().to_string()));
+    assert!(command.contains("--provider codex"));
+    assert!(command.contains("--force"));
+    assert!(command.contains("--no-prune"));
+    assert!(command.contains("--dry-run"));
+    assert!(command.contains("--only skills/Alpha"));
+    assert!(command.contains("--model gpt-5"));
+    assert!(command.ends_with("--allow-stale"));
+    assert!(!command.contains('<'));
+    assert!(!command.contains('>'));
+}
+
+#[test]
+fn install_command_preserves_the_directory_when_target_is_omitted() {
+    let source = TempDir::new().unwrap();
+    let current_directory = crate::cli::resolved_path(Path::new("."));
+    let command = install_command(
+        &source.path().to_string_lossy(),
+        None,
+        &[],
+        false,
+        true,
+        false,
+        false,
+        None,
+        None,
+        true,
+    );
+
+    assert!(command.starts_with(&format!(
+        "cd {} && rune install --source ",
+        crate::cli::shell_quote(&current_directory.to_string_lossy())
+    )));
+    assert!(command.ends_with("--allow-stale"));
 }

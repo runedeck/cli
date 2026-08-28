@@ -321,6 +321,136 @@ fn json_flag_accepted_globally() {
         .success();
 }
 
+#[test]
+fn structured_error_json_has_the_stable_shape() {
+    let home = tempfile::tempdir().unwrap();
+    let output = rune()
+        .env("HOME", home.path())
+        .args(["--json", "config", "get", "definitely-unknown"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["code"], "config.unknown_key");
+    assert_eq!(error["fix_command"], "rune config");
+    let message = error["message"].as_str().unwrap();
+    assert!(message.starts_with("Rune does not recognize config key 'definitely-unknown'."));
+    assert!(message.contains("Use one of these keys:"));
+}
+
+#[test]
+fn init_errors_use_the_shared_json_renderer() {
+    let home = tempfile::tempdir().unwrap();
+    let output = rune()
+        .env("HOME", home.path())
+        .env_remove("RUNE_TARGETS")
+        .args([
+            "--json",
+            "init",
+            "example",
+            "--skeleton",
+            "/path/that/does/not/exist",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["code"], "error.io");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("cannot resolve ")
+    );
+    assert!(error["fix_command"].is_null());
+}
+
+#[test]
+fn structured_error_human_fix_uses_a_separate_line() {
+    let home = tempfile::tempdir().unwrap();
+    let output = rune()
+        .env("HOME", home.path())
+        .args(["config", "get", "definitely-unknown"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let lines = stderr.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("Rune does not recognize config key 'definitely-unknown'."));
+    assert_eq!(lines[1], "fix: rune config");
+}
+
+#[test]
+fn setup_invalid_selection_names_the_retry_command() {
+    let home = tempfile::tempdir().unwrap();
+    for name in ["alpha", "beta"] {
+        let deck = home.path().join("Developer").join(name);
+        std::fs::create_dir_all(&deck).unwrap();
+        std::fs::write(deck.join("deck.yaml"), "name: test\n").unwrap();
+    }
+
+    rune()
+        .env("HOME", home.path())
+        .arg("setup")
+        .write_stdin("not-a-number\n")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("fix: rune setup"));
+}
+
+#[test]
+fn strict_install_error_uses_the_resolved_review_command() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("Rune's module");
+    let rules = source.join("rules");
+    let provenance = rules.join(".provenance");
+    std::fs::create_dir_all(&provenance).unwrap();
+    std::fs::write(rules.join("Review.md"), "body\n").unwrap();
+    std::fs::write(provenance.join("Review.md.yaml"), "invalid: [").unwrap();
+
+    let output = rune()
+        .args([
+            "--json",
+            "install",
+            "--source",
+            source.to_str().unwrap(),
+            "--strict",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let source = source.canonicalize().unwrap();
+    let expected = format!(
+        "rune adopt status --root {}",
+        shell_quote_for_test(&source.to_string_lossy())
+    );
+    assert_eq!(error["code"], "install.review_pending");
+    assert_eq!(error["fix_command"], expected);
+    assert!(!expected.contains('<'));
+    assert!(!expected.contains('>'));
+}
+
+fn shell_quote_for_test(value: &str) -> String {
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "-_./:=@".contains(character))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 #[cfg(not(feature = "tui"))]
 #[test]
 fn no_args_exits_with_error() {

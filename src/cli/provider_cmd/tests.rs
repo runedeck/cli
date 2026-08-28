@@ -15,5 +15,7 @@ fn toggling_writes_the_enabled_key_and_survives_reload() {
 fn unknown_provider_errors_with_known_names() {
     let temp = tempfile::tempdir().unwrap();
     let error = set_enabled_at(temp.path(), "nonexistent", true, true).unwrap_err();
-    assert!(error.to_string().contains("known:"), "{error}");
+    assert!(error.to_string().contains("Known providers:"), "{error}");
+    assert_eq!(error.code(), "provider.unknown");
+    assert_eq!(error.fix_command(), Some("rune provider"));
 }

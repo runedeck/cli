@@ -117,6 +117,15 @@ fn stale_git_source_refuses_install_without_allow_stale() {
         stderr.contains("--allow-stale"),
         "refusal must explain the override flag: {stderr}"
     );
+    let fix_line = stderr
+        .lines()
+        .find(|line| line.starts_with("fix: "))
+        .expect("the error must include one fix line");
+    assert!(fix_line.contains(&module.path().display().to_string()));
+    assert!(fix_line.contains(&target.path().display().to_string()));
+    assert!(fix_line.ends_with("--allow-stale"));
+    assert!(!fix_line.contains('<'));
+    assert!(!fix_line.contains('>'));
     assert!(
         !target.path().join(".claude/rules/Freshness.md").exists(),
         "refused install must not deploy stale content"
