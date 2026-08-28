@@ -29,33 +29,38 @@ struct Tone {
 }
 
 fn accent_tone() -> Tone {
+    let tone = crate::cli::theme::current().accent;
     Tone {
-        rgb: crate::cli::theme::current().accent,
-        ansi: 36,
+        rgb: tone.rgb,
+        ansi: tone.ansi,
     }
 }
 fn good_tone() -> Tone {
+    let tone = crate::cli::theme::current().good;
     Tone {
-        rgb: crate::cli::theme::current().good,
-        ansi: 32,
+        rgb: tone.rgb,
+        ansi: tone.ansi,
     }
 }
 fn alert_tone() -> Tone {
+    let tone = crate::cli::theme::current().alert;
     Tone {
-        rgb: crate::cli::theme::current().alert,
-        ansi: 33,
+        rgb: tone.rgb,
+        ansi: tone.ansi,
     }
 }
 fn bad_tone() -> Tone {
+    let tone = crate::cli::theme::current().bad;
     Tone {
-        rgb: crate::cli::theme::current().bad,
-        ansi: 31,
+        rgb: tone.rgb,
+        ansi: tone.ansi,
     }
 }
 fn violet_tone() -> Tone {
+    let tone = crate::cli::theme::current().violet;
     Tone {
-        rgb: crate::cli::theme::current().violet,
-        ansi: 35,
+        rgb: tone.rgb,
+        ansi: tone.ansi,
     }
 }
 
