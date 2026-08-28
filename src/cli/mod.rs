@@ -908,6 +908,26 @@ enum CompletionAction {
 
 #[derive(Subcommand)]
 enum KindAction {
+    /// Turn one staged rune of this kind on for one or all providers
+    On {
+        /// Rune name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Turn one staged rune of this kind off for one or all providers
+    Off {
+        /// Rune name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
     /// Stage runes of this kind in the consumer `.rune` manifest
     Add {
         /// Rune names, comma-separated; qualify as <domain>/<name> when ambiguous.
@@ -926,6 +946,26 @@ enum KindAction {
 
 #[derive(Subcommand)]
 enum SkillAction {
+    /// Turn one staged skill on for one or all providers
+    On {
+        /// Skill name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Turn one staged skill off for one or all providers
+    Off {
+        /// Skill name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
     /// Stage skills in the consumer `.rune` manifest
     Add {
         /// Skill names, comma-separated; qualify as <domain>/<name> when ambiguous.
@@ -1590,6 +1630,26 @@ pub fn run() -> i32 {
                     ),
                     args.json,
                 ),
+                Some(SkillAction::On { name, provider }) => exit_code(
+                    add::toggle_kind(
+                        rune::provider::ContentKind::Skills,
+                        &name,
+                        provider.as_deref(),
+                        true,
+                        args.json,
+                    ),
+                    args.json,
+                ),
+                Some(SkillAction::Off { name, provider }) => exit_code(
+                    add::toggle_kind(
+                        rune::provider::ContentKind::Skills,
+                        &name,
+                        provider.as_deref(),
+                        false,
+                        args.json,
+                    ),
+                    args.json,
+                ),
                 Some(SkillAction::Install { dir }) => {
                     exit_code(skill::install(dir.as_deref(), args.json), args.json)
                 }
@@ -2242,18 +2302,25 @@ fn run_kind_add(
     no_color: bool,
     json: bool,
 ) -> i32 {
-    let Some(KindAction::Add {
-        name,
-        source,
-        reference,
-    }) = action
-    else {
-        return exit_code(add::list_kind(kind, None, no_color), json);
-    };
-    exit_code(
-        add::execute_kind(kind, &name, source.as_deref(), reference.as_deref()),
-        json,
-    )
+    match action {
+        None => exit_code(add::list_kind(kind, None, no_color), json),
+        Some(KindAction::Add {
+            name,
+            source,
+            reference,
+        }) => exit_code(
+            add::execute_kind(kind, &name, source.as_deref(), reference.as_deref()),
+            json,
+        ),
+        Some(KindAction::On { name, provider }) => exit_code(
+            add::toggle_kind(kind, &name, provider.as_deref(), true, json),
+            json,
+        ),
+        Some(KindAction::Off { name, provider }) => exit_code(
+            add::toggle_kind(kind, &name, provider.as_deref(), false, json),
+            json,
+        ),
+    }
 }
 
 /// Dispatch a `rune watch` subcommand to its handler.

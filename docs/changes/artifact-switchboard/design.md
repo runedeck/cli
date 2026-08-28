@@ -20,6 +20,13 @@ becomes visible in the provider tree on the next install.
   `.trash/<timestamp>Z/`.
 - TUI: a matrix editor over the same overlay data, after the CLI surface exists.
 
+## Limits
+
+- The `include` overlay is honored by assemble and reserved for hand edits. The `on` verb removes
+  the exclusion instead of writing an include entry.
+- The overlay block is rendered with spaces and LF line endings. Tab-indented or CRLF manifests
+  stay valid but lose byte-exactness inside the owned block.
+
 ## Risks
 
 - Toggle writes can destroy manifest comments. The writes go through the syntax-preserving

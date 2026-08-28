@@ -158,6 +158,177 @@ pub fn execute_kind(
 
 /// List the source deck's runes of one kind (`rune skill` bare), marking
 /// ids the manifest already includes.
+/// Resolve one bare rune name to the source that stages it and the overlay
+/// key to write: the deck-canonical id for a deck source, `kind/Name` for a
+/// module source. Unknown names and cross-source ambiguity fail loudly.
+fn resolve_toggle_target(
+    target: &Target,
+    kind: rune::provider::ContentKind,
+    name: &str,
+) -> Result<(String, String), Error> {
+    let qualifiers = valid_qualifiers(&target.repo_root)?;
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for (label, list) in &target.manifest.runes {
+        let Some(source_entry) = target.manifest.sources.get(label) else {
+            continue;
+        };
+        candidates.extend(candidates_for_source(
+            target,
+            source_entry,
+            label,
+            list,
+            kind,
+            name,
+            &qualifiers,
+        )?);
+    }
+    let kind_segment = kind.as_str();
+    match candidates.len() {
+        0 => Err(Error::new(
+            ErrorKind::Config,
+            format!("no source selection stages the {kind_segment} rune '{name}'"),
+        )
+        .with_code("toggle.unknown_rune")
+        .with_fix_command(format!("rune {} add {name}", kind_verb(kind)))),
+        1 => Ok(candidates.swap_remove(0)),
+        _ => Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "'{name}' is ambiguous; candidates: {}",
+                candidates
+                    .iter()
+                    .map(|(_, id)| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .with_code("toggle.ambiguous_rune")
+        .with_fix_command(format!("rune {} off <qualified-id>", kind_verb(kind)))),
+    }
+}
+
+/// Candidate (source label, overlay key) pairs for one source. A deck source
+/// resolves through enumeration. Only the known plain-module shape falls
+/// back to the staged kind lists; every other enumeration failure
+/// propagates.
+#[allow(clippy::too_many_arguments)]
+fn candidates_for_source(
+    target: &Target,
+    source_entry: &crate::cli::dotrune::Source,
+    label: &str,
+    list: &crate::cli::dotrune::RuneList,
+    kind: rune::provider::ContentKind,
+    name: &str,
+    qualifiers: &std::collections::HashSet<String>,
+) -> Result<Vec<(String, String)>, Error> {
+    let kind_segment = kind.as_str();
+    match crate::cli::dotrune::enumerate_ids(source_entry, label, &target.repo_root, qualifiers) {
+        Ok(ids) => Ok(ids
+            .iter()
+            .filter_map(|id| {
+                let mut parts = id.splitn(3, '/');
+                let (Some(_), Some(id_kind), Some(id_name)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    return None;
+                };
+                (id_kind == kind_segment && (id_name == name || id == name))
+                    .then(|| (label.to_string(), id.clone()))
+            })
+            .collect()),
+        Err(error)
+            if error
+                .message()
+                .contains("kind-scoped add requires a deck-root source") =>
+        {
+            let staged = match kind {
+                rune::provider::ContentKind::Skills => &list.skills,
+                rune::provider::ContentKind::Agents => &list.agents,
+                rune::provider::ContentKind::Rules => &list.rules,
+                rune::provider::ContentKind::Hooks => &list.hooks,
+            };
+            let listed = staged.iter().any(|staged_name| staged_name == name)
+                || list
+                    .include
+                    .iter()
+                    .any(|id| id == name || id.ends_with(&format!("/{name}")));
+            Ok(if listed {
+                vec![(label.to_string(), format!("{kind_segment}/{name}"))]
+            } else {
+                Vec::new()
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+const fn kind_verb(kind: rune::provider::ContentKind) -> &'static str {
+    match kind {
+        rune::provider::ContentKind::Skills => "skill",
+        rune::provider::ContentKind::Agents => "agent",
+        rune::provider::ContentKind::Rules => "rule",
+        rune::provider::ContentKind::Hooks => "hook",
+    }
+}
+
+/// Toggle one staged rune of this kind for one provider or every enabled
+/// provider, through the surgical `.rune` writer.
+pub fn toggle_kind(
+    kind: rune::provider::ContentKind,
+    name: &str,
+    provider: Option<&str>,
+    on: bool,
+    json: bool,
+) -> Result<i32, Error> {
+    let target = prepare_for(None, None, false)?;
+    let merged = crate::cli::config::load_merged_config(&target.repo_root)?;
+    let known = crate::cli::config::load_providers(&merged)?;
+    let providers: Vec<String> = if let Some(one) = provider {
+        if !known.contains_key(one) {
+            let mut names: Vec<&String> = known.keys().collect();
+            names.sort();
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "Rune does not recognize provider '{one}'. Known providers: {}.",
+                    names
+                        .iter()
+                        .map(|name| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )
+            .with_code("provider.unknown")
+            .with_fix_command("rune provider"));
+        }
+        vec![one.to_string()]
+    } else {
+        let mut names: Vec<String> = known
+            .iter()
+            .filter(|(_, config)| config.enabled)
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        names
+    };
+    let (label, key) = resolve_toggle_target(&target, kind, name)?;
+    let messages =
+        crate::cli::dotrune::toggle::apply(&target.repo_root, &label, &key, &providers, !on)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "toggled": messages, "next": "rune install" })
+        );
+        return Ok(0);
+    }
+    let sheet = crate::cli::style::Sheet::detect(false);
+    for message in &messages {
+        println!("{}", sheet.ok(message));
+    }
+    println!("{}", sheet.row("next", "rune install"));
+    Ok(0)
+}
+
 pub fn list_kind(
     kind: rune::provider::ContentKind,
     source: Option<&str>,
@@ -205,6 +376,18 @@ pub fn list_kind(
     if let Some(first) = title.get_mut(..1) {
         first.make_ascii_uppercase();
     }
+    let toggles = crate::cli::dotrune::toggle::toggle_map(&target.manifest);
+    let merged = crate::cli::config::load_merged_config(&target.repo_root)?;
+    let known = crate::cli::config::load_providers(&merged)?;
+    let provider_columns: Vec<String> = {
+        let mut names: Vec<String> = known
+            .iter()
+            .filter(|(_, config)| config.enabled)
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        names
+    };
     println!("{}", sheet.heading(&title));
     let mut listed = false;
     for id in &ids {
@@ -219,7 +402,21 @@ pub fn list_kind(
         listed = true;
         let row = format!("{:<28} {}", name, sheet.dim(domain));
         if staged.contains(id) {
-            println!("{}", sheet.ok(&format!("{row} staged")));
+            let key = format!("{kind_segment}/{name}");
+            let matrix = provider_columns
+                .iter()
+                .map(|provider| {
+                    if crate::cli::dotrune::toggle::toggled_off_key(&toggles, provider, id)
+                        || crate::cli::dotrune::toggle::toggled_off_key(&toggles, provider, &key)
+                    {
+                        sheet.dim(&format!("{provider}:off"))
+                    } else {
+                        sheet.green(&format!("{provider}:on"))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("{}", sheet.ok(&format!("{row} {matrix}")));
         } else {
             println!("   {} {row}", sheet.dim("○"));
         }
