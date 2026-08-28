@@ -985,6 +985,14 @@ enum ConfigAction {
     },
     /// Print compiler-backed configuration metadata
     Reference,
+    /// Remove one configuration key after writing a backup
+    Reset {
+        /// Dotted configuration key, e.g. providers.codex.enabled.
+        key: String,
+        /// Configuration file scope.
+        #[arg(long, value_enum)]
+        scope: config::FileScope,
+    },
     /// Set a user configuration value
     Set {
         /// Configuration key. Currently supported: deck.
@@ -1455,6 +1463,9 @@ pub fn run() -> i32 {
                     }
                     Some(ConfigAction::Defaults { scope }) => config::defaults(scope, args.json),
                     Some(ConfigAction::Reference) => config::reference(),
+                    Some(ConfigAction::Reset { key, scope }) => {
+                        config::reset(&key, scope, args.json)
+                    }
                     Some(ConfigAction::Set { key, value }) => {
                         ontology::set(&key, &value, args.json)
                     }
@@ -1671,13 +1682,32 @@ fn clean_deck(source: &str, target: Option<&str>) -> Result<ActionResult, Error>
 
 #[cfg(feature = "tui")]
 fn bare() -> i32 {
+    if let Some(code) = first_run_nudge() {
+        return code;
+    }
     crate::tui::run(std::path::PathBuf::from("."), false)
 }
 
 #[cfg(not(feature = "tui"))]
 fn bare() -> i32 {
+    if let Some(code) = first_run_nudge() {
+        return code;
+    }
     eprint!("{}", root_help_styled(&style::Sheet::detect(false)));
     2
+}
+
+/// One line that routes a new user into setup. Fires only when no user
+/// config exists, prints to stdout, and writes nothing.
+fn first_run_nudge() -> Option<i32> {
+    let config = rune::ontology::config_dir().ok()?.join("config.yaml");
+    if config.is_file() {
+        return None;
+    }
+    let sheet = style::Sheet::detect(false);
+    eprint!("{}", root_help_styled(&sheet));
+    println!("{}", sheet.row("next", "rune setup"));
+    Some(0)
 }
 
 fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {

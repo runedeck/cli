@@ -237,6 +237,127 @@ pub fn reference() -> Result<i32, Error> {
     Ok(0)
 }
 
+/// Remove one dotted key from the scoped config file after writing a
+/// timestamped backup. Only the key's lines leave the file, every other
+/// byte survives, and the output names the restore command.
+pub fn reset(key: &str, scope: FileScope, json: bool) -> Result<i32, Error> {
+    let path = config_path(scope)?;
+    let content = fs::read_to_string(&path).map_err(|error| {
+        Error::config(format!("cannot read {}: {error}", path.display()))
+            .with_code("config.missing")
+            .with_fix_command(scope.defaults_command())
+    })?;
+    let updated = remove_key_block(&content, key).map_err(|detail| {
+        Error::config(format!("{}: {detail}", path.display()))
+            .with_code("config.unknown_key")
+            .with_fix_command("rune config reference --json")
+    })?;
+    serde_yaml::from_str::<serde_yaml::Value>(&updated).map_err(|error| {
+        Error::config(format!("the reset result does not parse as YAML: {error}"))
+            .with_code("config.reset_invalid")
+            .with_fix_command(scope.defaults_command())
+    })?;
+
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let backup = path.with_file_name(format!(
+        "{}.rune-backup-{stamp}",
+        path.file_name().map_or_else(
+            || "config.yaml".to_string(),
+            |name| name.to_string_lossy().into_owned()
+        )
+    ));
+    fs::write(&backup, &content)
+        .map_err(|error| Error::io(format!("cannot write {}: {error}", backup.display())))?;
+    let temp = path.with_file_name(format!(".config-reset-{}.tmp", std::process::id()));
+    fs::write(&temp, &updated)
+        .and_then(|()| fs::rename(&temp, &path))
+        .map_err(|error| {
+            let _ = fs::remove_file(&temp);
+            Error::io(format!("cannot rewrite {}: {error}", path.display()))
+        })?;
+
+    let restore = format!(
+        "command cp {} {}",
+        shell_quote(&backup.display().to_string()),
+        shell_quote(&path.display().to_string())
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "removed": key,
+                "scope": scope.as_str(),
+                "backup": backup.display().to_string(),
+                "restore": restore,
+            })
+        );
+        return Ok(0);
+    }
+    let sheet = style::Sheet::detect(false);
+    println!("{}", sheet.ok(&format!("removed {key}")));
+    println!("{}", sheet.row("backup", &backup.display().to_string()));
+    println!("{}", sheet.row("restore", &restore));
+    Ok(0)
+}
+
+/// Remove the lines of one dotted key, including its indented block.
+fn remove_key_block(content: &str, key: &str) -> Result<String, String> {
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let indent_of = |line: &str| line.len() - line.trim_start().len();
+    let mut segments = key.split('.').peekable();
+    let mut search_start = 0;
+    let mut search_end = lines.len();
+    let mut expected_indent = 0;
+    let mut found: Option<(usize, usize)> = None;
+    while let Some(segment) = segments.next() {
+        let mut segment_line = None;
+        for (index, line) in lines.iter().enumerate().take(search_end).skip(search_start) {
+            if line.trim().is_empty() || line.trim_start().starts_with('#') {
+                continue;
+            }
+            if indent_of(line) != expected_indent {
+                continue;
+            }
+            let name = line.trim();
+            if name == format!("{segment}:") || name.starts_with(&format!("{segment}: ")) {
+                segment_line = Some(index);
+                break;
+            }
+        }
+        let Some(start) = segment_line else {
+            return Err(format!("no key '{key}'"));
+        };
+        let mut end = search_end;
+        for (index, line) in lines.iter().enumerate().take(search_end).skip(start + 1) {
+            if !line.trim().is_empty() && indent_of(line) <= indent_of(lines[start]) {
+                end = index;
+                break;
+            }
+        }
+        if segments.peek().is_none() {
+            found = Some((start, end));
+        } else {
+            search_start = start + 1;
+            search_end = end;
+            expected_indent = lines[start + 1..end]
+                .iter()
+                .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+                .map(|line| indent_of(line))
+                .find(|indent| *indent > indent_of(lines[start]))
+                .unwrap_or(indent_of(lines[start]) + 4);
+        }
+    }
+    let (start, end) = found.ok_or_else(|| format!("no key '{key}'"))?;
+    let mut output = String::new();
+    for line in &lines[..start] {
+        output.push_str(line);
+    }
+    for line in &lines[end..] {
+        output.push_str(line);
+    }
+    Ok(output)
+}
+
 fn config_path(scope: FileScope) -> Result<PathBuf, Error> {
     match scope {
         FileScope::User => ontology::config_dir()
