@@ -1,0 +1,10 @@
+error: failed to determine package fingerprint for build script for rune-cli v0.5.0 (/Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme)
+
+Caused by:
+  failed to determine the most recently modified file in /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme
+
+Caused by:
+  failed to determine list of files in /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme
+
+Caused by:
+  did not expect repo at /Users/N4M3Z/Developer/runedeck/cli/.git to be bare

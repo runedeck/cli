@@ -1,0 +1,25 @@
+    Updating crates.io index
+     Locking 495 packages to latest Rust 1.98.0 compatible versions
+      Adding askama v0.13.1 (available: v0.16.0)
+      Adding base64 v0.22.1 (available: v0.23.1)
+      Adding console v0.15.11 (available: v0.16.4)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding gix v0.66.0 (available: v0.87.1)
+      Adding jsonschema v0.46.10 (available: v0.52.0)
+      Adding matchit v0.8.4 (available: v0.8.6)
+      Adding nix v0.30.1 (available: v0.31.3)
+      Adding sha1 v0.10.7 (available: v0.11.0)
+      Adding sha2 v0.10.9 (available: v0.11.0)
+      Adding signal-hook v0.3.18 (available: v0.4.4)
+      Adding toml v0.8.23 (available: v1.1.4+spec-1.1.0)
+      Adding tower-http v0.6.11 (available: v0.7.0)
+error: failed to determine package fingerprint for build script for rune-cli v0.5.0 (/Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme)
+
+Caused by:
+  failed to determine the most recently modified file in /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme
+
+Caused by:
+  failed to determine list of files in /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-theme
+
+Caused by:
+  did not expect repo at /Users/N4M3Z/Developer/runedeck/cli/.git to be bare
