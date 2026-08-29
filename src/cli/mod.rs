@@ -26,8 +26,8 @@ mod init;
 pub(crate) mod install;
 mod launch;
 mod ontology;
-mod plugin;
 mod output;
+mod plugin;
 mod process;
 mod provenance;
 mod provider_cmd;
@@ -1419,6 +1419,7 @@ pub fn run() -> i32 {
                     only.as_deref(),
                     model.as_deref(),
                     allow_stale,
+                    true,
                 ),
                 "deployed",
             )

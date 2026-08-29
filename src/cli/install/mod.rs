@@ -32,6 +32,7 @@ pub fn execute(
     only: Option<&str>,
     model: Option<&str>,
     allow_stale: bool,
+    fire_events: bool,
 ) -> Result<ActionResult, Error> {
     let retry_command = install_command(
         path,
@@ -58,7 +59,9 @@ pub fn execute(
         only,
     )?;
     result.warnings.extend(warnings);
-    if !dry_run {
+    // Only a user install fires plugin events: internal staging
+    // callers (release) pass fire_events false.
+    if fire_events && !dry_run {
         crate::cli::plugin::fire(
             crate::cli::plugin::POST_INSTALL,
             &serde_json::json!({

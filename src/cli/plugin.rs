@@ -214,6 +214,9 @@ fn run_plugin(plugin: &Plugin, payload: &str) -> Result<(), String> {
             Ok(Some(status)) => return Err(format!("exited {status}")),
             Ok(None) if started.elapsed() > PLUGIN_TIMEOUT => {
                 let _ = child.kill();
+                // Reap the killed child: Child::drop does not, and a
+                // long-lived TUI process would accumulate zombies.
+                let _ = child.wait();
                 return Err("timed out after 30 seconds".to_string());
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),

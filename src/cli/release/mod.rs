@@ -103,6 +103,7 @@ pub fn execute(path: &str, embed: bool) -> Result<ActionResult, Error> {
         None,
         None,
         true,
+        false,
     )?;
     result.installed.clear();
     result.skipped.clear();

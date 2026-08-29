@@ -22,6 +22,7 @@ fn execute_errors_on_missing_module() {
         None,
         None,
         false,
+        false,
     );
     assert!(result.is_err());
 }
@@ -39,6 +40,7 @@ fn execute_errors_on_directory_without_module_yaml() {
         false,
         None,
         None,
+        false,
         false,
     );
     let error = result.expect_err("expected install to refuse non-module directory");
@@ -75,6 +77,7 @@ fn execute_succeeds_on_empty_module() {
         None,
         None,
         false,
+        false,
     );
     assert!(result.is_ok());
 }
@@ -95,6 +98,7 @@ fn execute_unknown_provider_lists_available_choices() {
         false,
         None,
         None,
+        false,
         false,
     );
     let error = result.expect_err("unknown provider must error");
@@ -140,6 +144,7 @@ fn execute_provider_filter_skips_unrequested_providers() {
         false,
         None,
         None,
+        false,
         false,
     )
     .expect("install should succeed for known provider");
@@ -188,6 +193,7 @@ fn corrupt_manifest_error_has_no_unsafe_fix_command() {
         None,
         None,
         false,
+        false,
     )
     .unwrap();
     std::fs::write(target.path().join(".claude/.manifest"), "invalid: [").unwrap();
@@ -202,6 +208,7 @@ fn corrupt_manifest_error_has_no_unsafe_fix_command() {
         false,
         Some("rules/OnlyRule.md"),
         None,
+        false,
         false,
     )
     .unwrap_err();
