@@ -1,0 +1,17 @@
+{
+    "total_count": 2,
+    "items": [
+        {
+            "full_name": "runedeck/deck",
+            "html_url": "https://github.com/runedeck/deck",
+            "description": "The runedeck core deck",
+            "stargazers_count": 42
+        },
+        {
+            "full_name": "example/deck",
+            "html_url": "https://github.com/example/deck",
+            "description": null,
+            "stargazers_count": 3
+        }
+    ]
+}

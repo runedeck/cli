@@ -20,6 +20,7 @@
     spec        propose | list | show | doctor | archive | context    Spec-driven change lifecycle under docs/
 
   Deck:
+    discover    [QUERY]                                               Find community decks by GitHub topic
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
     doctor      [--target <DIR>] [--verify] [--repair]                Check and repair deployment integrity
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
