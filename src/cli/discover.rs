@@ -3,7 +3,7 @@
 //! never clones or executes anything it lists.
 
 use rune::error::{Error, ErrorKind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const SEARCH_URL: &str = "https://api.github.com/search/repositories";
 const TOPIC: &str = "runedeck-deck";
@@ -39,7 +39,7 @@ pub fn execute(query: Option<&str>, json: bool, no_color: bool) -> Result<i32, E
             .with_code("discover.feed_unreachable")
             .with_fix_command(DIAGNOSE_COMMAND)
         })?,
-        Err(ureq::Error::StatusCode(403)) => {
+        Err(ureq::Error::StatusCode(403 | 429)) => {
             return Err(Error::new(
                 ErrorKind::Io,
                 "the GitHub search rate limit is exhausted; wait one minute",
@@ -125,38 +125,45 @@ fn percent_encode(word: &str) -> String {
     encoded
 }
 
+/// The typed shape of the search response: a schema mismatch fails at
+/// parse time instead of defaulting silently. Only `description` is
+/// nullable in the API.
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    items: Vec<SearchItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchItem {
+    full_name: String,
+    html_url: String,
+    description: Option<String>,
+    stargazers_count: u64,
+}
+
 /// Pure parser over the search response body.
 fn parse_decks(body: &str) -> Result<Vec<Deck>, String> {
-    let document: serde_json::Value =
+    let response: SearchResponse =
         serde_json::from_str(body).map_err(|error| error.to_string())?;
-    let items = document["items"]
-        .as_array()
-        .ok_or("the response carries no items array")?;
-    let mut decks = Vec::new();
-    for item in items {
-        let name = item["full_name"]
-            .as_str()
-            .ok_or("an item carries no full_name")?
-            .to_string();
-        let url = item["html_url"]
-            .as_str()
-            .ok_or("an item carries no html_url")?
-            .to_string();
-        let description = item["description"]
-            .as_str()
-            .unwrap_or("(no description)")
-            .to_string();
-        let stars = item["stargazers_count"].as_u64().unwrap_or(0);
-        let add_command = format!("rune add <id> --source {url} --ref <commit-sha>");
-        decks.push(Deck {
-            name,
-            description,
-            stars,
-            url,
-            add_command,
-        });
-    }
-    Ok(decks)
+    Ok(response
+        .items
+        .into_iter()
+        .map(|item| {
+            let add_command = format!(
+                "rune add <id> --source {} --ref <commit-sha>",
+                item.html_url
+            );
+            Deck {
+                name: item.full_name,
+                description: item
+                    .description
+                    .unwrap_or_else(|| "(no description)".to_string()),
+                stars: item.stargazers_count,
+                url: item.html_url,
+                add_command,
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -179,6 +186,12 @@ mod tests {
     #[test]
     fn parser_rejects_a_bodyless_response() {
         assert!(parse_decks("{}").is_err());
+    }
+
+    #[test]
+    fn parser_rejects_an_item_with_a_missing_field() {
+        let body = r#"{"items":[{"full_name":"a/b","html_url":"https://x"}]}"#;
+        assert!(parse_decks(body).is_err());
     }
 
     #[test]

@@ -6,5 +6,5 @@
 
 ## 2. Verification
 
-- [x] 2.1 Test response parsing, rate-limit handling, and the JSON shape
+- [x] 2.1 Test response parsing and the JSON shape; map 403 and 429 to `discover.rate_limited`
 - [x] 2.2 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests
