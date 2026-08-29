@@ -26,6 +26,7 @@ mod init;
 pub(crate) mod install;
 mod launch;
 mod ontology;
+mod plugin;
 mod output;
 mod process;
 mod provenance;
@@ -241,6 +242,12 @@ enum Command {
     Hook {
         #[command(subcommand)]
         action: Option<KindAction>,
+    },
+
+    /// List declared plugins under ~/.config/rune/plugins
+    Plugin {
+        #[command(subcommand)]
+        action: Option<PluginAction>,
     },
 
     /// List deploy providers, or toggle them for this source
@@ -967,6 +974,12 @@ enum SkillAction {
 }
 
 #[derive(Subcommand)]
+enum PluginAction {
+    /// List plugin manifests with their events
+    List,
+}
+
+#[derive(Subcommand)]
 enum ReviewAction {
     /// List persisted comments
     List {
@@ -1290,6 +1303,10 @@ pub fn run() -> i32 {
                 ),
                 args.json,
             );
+        }
+        Command::Plugin { action } => {
+            let _ = action.unwrap_or(PluginAction::List);
+            return exit_code(plugin::list(args.json, args.no_color), args.json);
         }
         Command::Provider { action } => {
             return exit_code(provider_cmd::execute(action, args.json), args.json);
@@ -2004,6 +2021,12 @@ fn deck_help(help: &mut String) {
 
 fn plumbing_help(help: &mut String) {
     help.push_str("\n  Plumbing:\n");
+    help_command(
+        help,
+        "plugin",
+        "[list]",
+        "List declared plugins and their events",
+    );
     help_command(
         help,
         "update",

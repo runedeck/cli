@@ -58,6 +58,18 @@ pub fn execute(
         only,
     )?;
     result.warnings.extend(warnings);
+    if !dry_run {
+        crate::cli::plugin::fire(
+            crate::cli::plugin::POST_INSTALL,
+            &serde_json::json!({
+                "event": crate::cli::plugin::POST_INSTALL,
+                "source": crate::cli::resolved_path(Path::new(path)).display().to_string(),
+                "target": target,
+                "providers": requested_providers,
+                "deployed": result.installed.len(),
+            }),
+        );
+    }
     Ok(result)
 }
 
