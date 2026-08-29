@@ -2,7 +2,7 @@
   {VERSION} ({COMMIT}) built {TIME}
 
   Flow:
-    setup       [--defaults]                                          Guided first-run configuration
+    setup       [--plan | --yes]                                      Guided first-run configuration
     init        <SLUG_OR_DIR> [--with <NAMES>] | --module <DIR>       Scaffold a project from a skeleton, or a deck module
     target      [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
     add         <ID[,ID...]>                                          Add runes to the consumer manifest

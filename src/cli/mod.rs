@@ -290,9 +290,17 @@ enum Command {
     },
     /// Guided first-run configuration
     Setup {
-        /// Accept all defaults without prompting (for CI and scripting).
-        #[arg(long)]
+        /// Accept all defaults and apply the plan without a prompt.
+        #[arg(long, hide = true, conflicts_with_all = ["plan", "yes"])]
         defaults: bool,
+
+        /// Print the full plan and make no changes.
+        #[arg(long, conflicts_with = "yes")]
+        plan: bool,
+
+        /// Apply detected defaults after Rune prints the plan.
+        #[arg(long, conflicts_with = "plan")]
+        yes: bool,
     },
 
     /// Bind the target (working repo) that rune commands operate on
@@ -1316,9 +1324,24 @@ pub fn run() -> i32 {
             }
             return exit_code(update_check::check(args.json), args.json);
         }
-        Command::Setup { defaults } => {
+        Command::Setup {
+            defaults,
+            plan,
+            yes,
+        } => {
+            let mode = if yes || defaults {
+                setup::Mode::ApplyDefaults
+            } else if plan {
+                setup::Mode::PlanOnly
+            } else {
+                setup::Mode::Interactive
+            };
             return exit_code(
-                setup::execute(defaults, args.json, args.no_color),
+                setup::execute(setup::Options {
+                    mode,
+                    json: args.json,
+                    no_color: args.no_color,
+                }),
                 args.json,
             );
         }
@@ -1798,7 +1821,7 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "setup",
-        "[--defaults]",
+        "[--plan | --yes]",
         "Guided first-run configuration",
     );
     help_command(

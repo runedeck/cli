@@ -4,7 +4,7 @@
 
 use clap::CommandFactory as _;
 use rune::error::{Error, ErrorKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Shell {
@@ -17,7 +17,7 @@ pub enum Shell {
 }
 
 impl Shell {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Bash => "bash",
             Self::Zsh => "zsh",
@@ -28,7 +28,7 @@ impl Shell {
         }
     }
 
-    fn from_environment() -> Option<Self> {
+    pub(crate) fn from_environment() -> Option<Self> {
         let shell_path = std::env::var("SHELL").ok()?;
         match std::path::Path::new(&shell_path).file_name()?.to_str()? {
             "bash" => Some(Self::Bash),
@@ -95,39 +95,104 @@ pub fn print(shell: Shell) -> i32 {
     }
 }
 
-pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
+pub(crate) struct InstallPlan {
+    shell: Shell,
+    destination: PathBuf,
+    content: String,
+    cache_removals: Vec<PathBuf>,
+}
+
+impl InstallPlan {
+    pub(crate) fn shell_name(&self) -> &'static str {
+        self.shell.name()
+    }
+
+    pub(crate) fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub(crate) fn cache_removals(&self) -> &[PathBuf] {
+        &self.cache_removals
+    }
+
+    pub(crate) fn apply(&self) -> Result<usize, Error> {
+        if let Some(parent) = self.destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+                .with_code("completion.directory_create_failed")
+                .with_fix_command(format!("rune completion install {}", self.shell.name()))
+            })?;
+        }
+        std::fs::write(&self.destination, &self.content).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot write {}: {error}", self.destination.display()),
+            )
+            .with_code("completion.write_failed")
+            .with_fix_command(format!("rune completion install {}", self.shell.name()))
+        })?;
+        for path in &self.cache_removals {
+            std::fs::remove_file(path).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot remove completion cache {}: {error}", path.display()),
+                )
+                .with_code("completion.cache_remove_failed")
+                .with_fix_command(format!("rune completion install {}", self.shell.name()))
+            })?;
+        }
+        Ok(self.cache_removals.len())
+    }
+
+    pub(crate) fn is_current(&self) -> Result<bool, Error> {
+        match std::fs::read_to_string(&self.destination) {
+            Ok(content) => Ok(content == self.content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", self.destination.display()),
+            )
+            .with_code("completion.verify_failed")
+            .with_fix_command(format!("rune completion install {}", self.shell.name()))),
+        }
+    }
+}
+
+pub(crate) fn plan_install(shell: Option<Shell>) -> Result<InstallPlan, Error> {
     let shell = shell.or_else(Shell::from_environment).ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
-            "cannot detect the shell from $SHELL; pass one: rune completion install zsh",
+            "Rune cannot detect the shell from $SHELL. Use: rune completion install zsh",
         )
+        .with_code("completion.shell_unknown")
+        .with_fix_command("rune completion install zsh")
     })?;
     let destination = install_path(shell)?;
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot create {}: {error}", parent.display()),
-            )
-        })?;
-    }
-    std::fs::write(&destination, script(shell)).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", destination.display()),
-        )
-    })?;
-    let cleared_caches = if shell == Shell::Zsh {
-        invalidate_zsh_completion_cache(&zsh_dump_directory()?)
+    let cache_removals = if shell == Shell::Zsh {
+        completion_cache_paths(&zsh_dump_directory()?)?
     } else {
-        0
+        Vec::new()
     };
+    Ok(InstallPlan {
+        shell,
+        destination,
+        content: script(shell),
+        cache_removals,
+    })
+}
+
+pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
+    let plan = plan_install(shell)?;
+    let cleared_caches = plan.apply()?;
     if json {
         println!(
             "{}",
             serde_json::json!({
-                "shell": shell.name(),
-                "installed": destination,
+                "shell": plan.shell.name(),
+                "installed": plan.destination,
                 "cleared_caches": cleared_caches,
             })
         );
@@ -135,17 +200,21 @@ pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
     }
     println!(
         "installed {} completions → {}",
-        shell.name(),
-        destination.display()
+        plan.shell.name(),
+        plan.destination.display()
     );
-    if let Some(followup) = post_install_hint(shell, &destination) {
+    if let Some(followup) = post_install_hint(plan.shell, &plan.destination) {
         println!("{followup}");
     }
     Ok(0)
 }
 
 fn home() -> Result<PathBuf, Error> {
-    dirs::home_dir().ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
+    dirs::home_dir().ok_or_else(|| {
+        Error::new(ErrorKind::Config, "cannot resolve home directory")
+            .with_code("completion.home_unavailable")
+            .with_fix_command("printenv HOME")
+    })
 }
 
 /// Standard per-shell completion locations: zsh prefers Homebrew's
@@ -168,17 +237,21 @@ fn install_path(shell: Shell) -> Result<PathBuf, Error> {
         Shell::Nushell => {
             let data_dir = dirs::data_dir().ok_or_else(|| {
                 Error::new(ErrorKind::Config, "cannot resolve the user data directory")
+                    .with_code("completion.data_directory_unavailable")
+                    .with_fix_command("printenv HOME")
             })?;
             Ok(data_dir.join("nushell/vendor/autoload/rune.nu"))
         }
         Shell::Powershell | Shell::Elvish => Err(Error::new(
             ErrorKind::Config,
             format!(
-                "no standard install location for {}; use: rune completion print {} > <profile-managed path>",
+                "Rune has no standard install location for {}. Use: rune completion print {} > <profile-managed path>",
                 shell.name(),
                 shell.name()
             ),
-        )),
+        )
+        .with_code("completion.install_path_unavailable")
+        .with_fix_command(format!("rune completion print {}", shell.name()))),
     }
 }
 
@@ -198,29 +271,61 @@ fn zsh_dump_directory() -> Result<PathBuf, Error> {
 /// itself produces are touched: `.zcompdump`, its compiled `.zwc` twin, and
 /// the oh-my-zsh `.zcompdump-<host>-<version>` variants (which end in a
 /// digit) — never other dotfiles that merely share the prefix.
-fn invalidate_zsh_completion_cache(dump_directory: &std::path::Path) -> usize {
+fn completion_cache_paths(dump_directory: &Path) -> Result<Vec<PathBuf>, Error> {
     let entries = match std::fs::read_dir(dump_directory) {
         Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
-            eprintln!(
-                "warning: cannot scan {} for completion caches: {error}",
-                dump_directory.display()
-            );
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "cannot scan {} for completion caches: {error}",
+                    dump_directory.display()
+                ),
+            )
+            .with_code("completion.cache_scan_failed")
+            .with_fix_command("rune completion install zsh"));
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!(
+                    "cannot scan {} for completion caches: {error}",
+                    dump_directory.display()
+                ),
+            )
+            .with_code("completion.cache_scan_failed")
+            .with_fix_command("rune completion install zsh")
+        })?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if is_compinit_dump_name(name) {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+#[cfg(test)]
+fn invalidate_zsh_completion_cache(dump_directory: &Path) -> usize {
+    let paths = match completion_cache_paths(dump_directory) {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("warning: {}", error.message());
             return 0;
         }
     };
     let mut cleared = 0;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if !is_compinit_dump_name(name) {
-            continue;
-        }
-        match std::fs::remove_file(entry.path()) {
+    for path in paths {
+        match std::fs::remove_file(&path) {
             Ok(()) => cleared += 1,
             Err(error) => eprintln!(
                 "warning: cannot remove completion cache {}: {error}",
-                entry.path().display()
+                path.display()
             ),
         }
     }
@@ -256,11 +361,9 @@ fn post_install_hint(shell: Shell, destination: &std::path::Path) -> Option<Stri
             "add to ~/.zshrc before compinit: fpath+=(~/.zfunc)\nthen restart the shell"
                 .to_string(),
         ),
-        Shell::Zsh => Some("completion cache cleared; restart the shell to rebuild it".to_string()),
+        Shell::Zsh => Some("Completion cache cleared. Restart the shell.".to_string()),
         Shell::Fish | Shell::Nushell => Some("restart the shell to load".to_string()),
-        Shell::Bash => {
-            Some("requires the bash-completion package; restart the shell to load".to_string())
-        }
+        Shell::Bash => Some("Install the bash-completion package. Restart the shell.".to_string()),
         Shell::Powershell | Shell::Elvish => None,
     }
 }

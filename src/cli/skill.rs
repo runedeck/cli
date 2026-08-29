@@ -123,6 +123,91 @@ fn install_into(base: &Path, content: &str) -> Result<InstallReport, Error> {
     })
 }
 
+/// One frozen plan: the rune skill rendered once, targeted at every
+/// enabled provider's skills directory under the home base. The wizard
+/// prints each destination before any write.
+pub(crate) struct InstallPlan {
+    targets: Vec<(String, PathBuf)>,
+    content: String,
+}
+
+impl InstallPlan {
+    pub(crate) fn destinations(&self) -> Vec<PathBuf> {
+        self.targets
+            .iter()
+            .map(|(_, base)| base.join("rune/SKILL.md"))
+            .collect()
+    }
+
+    pub(crate) fn apply(&self) -> Result<Vec<(PathBuf, &'static str)>, Error> {
+        let mut written = Vec::new();
+        for (_, base) in &self.targets {
+            let report = install_into(base, &self.content)?;
+            written.push((report.path, report.status));
+        }
+        Ok(written)
+    }
+
+    /// Passed when every target is current or user-modified (protected).
+    /// A missing or rune-owned-but-outdated file fails the check.
+    pub(crate) fn is_current(&self) -> Result<(bool, String), Error> {
+        use std::fmt::Write as _;
+        let mut current = 0usize;
+        let mut kept = 0usize;
+        let mut failing = Vec::new();
+        for (provider, base) in &self.targets {
+            let path = base.join("rune/SKILL.md");
+            match std::fs::read_to_string(&path) {
+                Ok(existing) if existing == self.content => current += 1,
+                Ok(existing)
+                    if strip_version_line(&existing) != strip_version_line(&self.content) =>
+                {
+                    kept += 1;
+                }
+                Ok(_) => failing.push(provider.clone()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    failing.push(provider.clone());
+                }
+                Err(error) => {
+                    return Err(Error::new(
+                        ErrorKind::Io,
+                        format!("cannot read {}: {error}", path.display()),
+                    )
+                    .with_code("skill.verify_failed")
+                    .with_fix_command("rune skill install"));
+                }
+            }
+        }
+        let mut detail = format!("{current} current");
+        if kept > 0 {
+            let _ = write!(detail, ", {kept} kept (user-modified)");
+        }
+        if !failing.is_empty() {
+            let _ = write!(detail, ", failing: {}", failing.join(", "));
+        }
+        Ok((failing.is_empty(), detail))
+    }
+}
+
+pub(crate) fn plan_install(directory: Option<&str>) -> Result<InstallPlan, Error> {
+    let root = match directory {
+        Some(directory) => PathBuf::from(directory),
+        None => dirs::home_dir().ok_or_else(|| {
+            Error::new(ErrorKind::Config, "cannot resolve home directory")
+                .with_code("skill.home_unavailable")
+                .with_fix_command("printenv HOME")
+        })?,
+    };
+    let targets = enabled_skill_targets(&root)?
+        .into_iter()
+        .map(|(provider, target)| (provider, root.join(target).join("skills")))
+        .collect();
+    Ok(InstallPlan {
+        targets,
+        content: rendered(),
+    })
+}
+
 /// The skill body with the frontmatter `version:` line removed, so a
 /// pristine install from another release still counts as rune-owned.
 fn strip_version_line(content: &str) -> String {

@@ -21,6 +21,14 @@ pub struct Config {
     /// primary (registry, default results); every entry contributes its
     /// suites, and a suite's outputs stay in the checkout that owns it.
     pub bench: Vec<String>,
+    pub setup: Option<SetupRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SetupRecord {
+    pub version: u32,
+    pub completed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
@@ -326,6 +334,7 @@ pub struct ResolvedConfig {
     pub env: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
+    pub setup: Option<SetupRecord>,
     #[serde(skip)]
     pub launch: Launch,
     #[serde(skip)]
@@ -717,6 +726,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         env: env_file,
         ontology,
         extensions,
+        setup: config.setup.clone(),
         launch: resolve_launch(&config.launch),
         bench: config.bench.clone(),
     }
