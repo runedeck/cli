@@ -219,6 +219,14 @@ pub fn defaults(scope: FileScope, json: bool) -> Result<i32, Error> {
 }
 
 pub fn reference() -> Result<i32, Error> {
+    println!("{}", reference_document()?);
+    Ok(0)
+}
+
+/// The complete config reference as one pretty JSON document. The committed
+/// copy at `docs/config-reference.json` is compared against this output by
+/// a test, so schema drift fails the suite.
+pub fn reference_document() -> Result<String, Error> {
     let user_defaults = ontology::installed_defaults();
     let source_defaults = SourceConfig::installed_defaults().map_err(|error| {
         Error::config(format!("cannot load the source defaults: {error}"))
@@ -228,13 +236,11 @@ pub fn reference() -> Result<i32, Error> {
     let user = reference_entries::<ontology::Config>(&user_defaults)?;
     let source = reference_entries::<SourceConfig>(&source_defaults)?;
     let document = serde_json::json!({ "user": user, "source": source });
-    let rendered = serde_json::to_string_pretty(&document).map_err(|error| {
+    serde_json::to_string_pretty(&document).map_err(|error| {
         Error::config(format!("cannot serialize the config reference: {error}"))
             .with_code("config.reference_serialize")
             .with_fix_command("rune config defaults --scope user")
-    })?;
-    println!("{rendered}");
-    Ok(0)
+    })
 }
 
 /// Remove one dotted key from the scoped config file after writing a
