@@ -199,8 +199,9 @@ fn direct_update(binary: &std::path::Path, json: bool) -> Result<i32, Error> {
         .build()
         .into();
     let archive = fetch_bytes(&agent, &format!("{base}/{asset}"))?;
-    let checksum_line = fetch_text(&agent, &format!("{base}/{asset}.sha256"))?;
-    verify_archive(&archive, &checksum_line)?;
+    let sums = fetch_text(&agent, &format!("{base}/SHA256SUMS"))?;
+    let digest = published_digest(&sums, asset)?;
+    verify_archive(&archive, &digest)?;
 
     let staging = tempfile::tempdir().map_err(|error| {
         Error::new(
@@ -268,16 +269,36 @@ fn direct_update(binary: &std::path::Path, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
-/// Fail closed: the downloaded archive must match the published SHA-256.
-fn verify_archive(archive: &[u8], checksum_line: &str) -> Result<(), Error> {
-    let expected = checksum_line.split_whitespace().next().unwrap_or_default();
-    if expected.len() != 64 {
-        return Err(
-            Error::new(ErrorKind::Parse, "the published checksum is malformed")
-                .with_code("update.checksum_invalid")
-                .with_fix_command(DIAGNOSE_FEED_COMMAND),
-        );
+/// The digest for one archive out of the release's combined SHA256SUMS.
+/// The release publishes no per-asset checksum file.
+fn published_digest(sums: &str, asset: &str) -> Result<String, Error> {
+    for line in sums.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(digest), Some(name)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if name.trim_start_matches('*') != asset {
+            continue;
+        }
+        if digest.len() != 64 {
+            return Err(
+                Error::new(ErrorKind::Parse, "the published checksum is malformed")
+                    .with_code("update.checksum_invalid")
+                    .with_fix_command(DIAGNOSE_FEED_COMMAND),
+            );
+        }
+        return Ok(digest.to_string());
     }
+    Err(Error::new(
+        ErrorKind::Parse,
+        format!("SHA256SUMS carries no entry for {asset}"),
+    )
+    .with_code("update.checksum_invalid")
+    .with_fix_command(DIAGNOSE_FEED_COMMAND))
+}
+
+/// Fail closed: the downloaded archive must match the published SHA-256.
+fn verify_archive(archive: &[u8], expected: &str) -> Result<(), Error> {
     let actual = rune::manifest::content_sha256_bytes(archive);
     if actual != expected {
         return Err(Error::new(
@@ -344,20 +365,42 @@ mod tests {
 
     #[test]
     fn checksum_mismatch_fails_closed() {
-        let error = verify_archive(b"payload", &format!("{} archive", "a".repeat(64)))
-            .expect_err("mismatch must fail");
+        let error =
+            verify_archive(b"payload", &"a".repeat(64)).expect_err("mismatch must fail");
         assert_eq!(error.code(), "update.checksum_mismatch");
     }
 
     #[test]
     fn malformed_checksum_fails_closed() {
-        let error = verify_archive(b"payload", "short").expect_err("malformed must fail");
+        let sums = "short rune-cli-macos-aarch64.tar.gz";
+        let error = published_digest(sums, "rune-cli-macos-aarch64.tar.gz")
+            .expect_err("malformed must fail");
         assert_eq!(error.code(), "update.checksum_invalid");
+    }
+
+    #[test]
+    fn missing_sums_entry_fails_closed() {
+        let sums = format!("{}  rune-cli-linux-x86_64.tar.gz", "a".repeat(64));
+        let error = published_digest(&sums, "rune-cli-macos-aarch64.tar.gz")
+            .expect_err("missing entry must fail");
+        assert_eq!(error.code(), "update.checksum_invalid");
+    }
+
+    #[test]
+    fn digest_is_found_among_entries() {
+        let sums = format!(
+            "{}  rune-cli-linux-x86_64.tar.gz\n{}  rune-cli-macos-aarch64.tar.gz\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        );
+        let digest = published_digest(&sums, "rune-cli-macos-aarch64.tar.gz")
+            .expect("entry is found");
+        assert_eq!(digest, "b".repeat(64));
     }
 
     #[test]
     fn matching_checksum_verifies() {
         let digest = rune::manifest::content_sha256_bytes(b"payload");
-        verify_archive(b"payload", &format!("{digest}  archive")).expect("match verifies");
+        verify_archive(b"payload", &digest).expect("match verifies");
     }
 }

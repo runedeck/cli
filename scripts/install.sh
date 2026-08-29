@@ -23,15 +23,11 @@ main() {
 
     os="$(uname -s)"
     arch="$(uname -m)"
-    case "$os" in
-        Darwin) platform="macos" ;;
-        Linux)  platform="linux" ;;
-        *)      fail "unsupported OS: $os (use a release archive from https://github.com/$REPO/releases)" ;;
-    esac
-    case "$arch" in
-        arm64|aarch64) cpu="aarch64" ;;
-        x86_64|amd64)  cpu="x86_64" ;;
-        *)             fail "unsupported architecture: $arch" ;;
+    # The release publishes archives for macOS aarch64 and Linux x86_64 only.
+    case "$os-$arch" in
+        Darwin-arm64|Darwin-aarch64) platform="macos"; cpu="aarch64" ;;
+        Linux-x86_64|Linux-amd64)    platform="linux"; cpu="x86_64" ;;
+        *) fail "no release archive is published for $os/$arch; see https://github.com/$REPO/releases" ;;
     esac
     archive="rune-cli-$platform-$cpu.tar.gz"
     log "detected $platform/$cpu"
@@ -53,12 +49,12 @@ main() {
         "$base/$archive" -o "$workdir/$archive" \
         || fail "download failed: $base/$archive"
     curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 \
-        "$base/$archive.sha256" -o "$workdir/$archive.sha256" \
-        || fail "checksum download failed: $base/$archive.sha256"
+        "$base/SHA256SUMS" -o "$workdir/SHA256SUMS" \
+        || fail "checksum download failed: $base/SHA256SUMS"
 
-    expected="$(cut -d' ' -f1 < "$workdir/$archive.sha256")"
+    expected="$(awk -v name="$archive" '"'"'$2 == name || $2 == "*" name { print $1; exit }'"'"' "$workdir/SHA256SUMS")"
     actual="$(checksum "$workdir/$archive")"
-    [ -n "$expected" ] || fail "the published checksum is empty"
+    [ -n "$expected" ] || fail "SHA256SUMS carries no entry for $archive"
     [ "$expected" = "$actual" ] \
         || fail "checksum mismatch: expected $expected, got $actual; not installing"
     log "SHA-256 verified"
