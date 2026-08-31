@@ -52,7 +52,7 @@ main() {
         "$base/SHA256SUMS" -o "$workdir/SHA256SUMS" \
         || fail "checksum download failed: $base/SHA256SUMS"
 
-    expected="$(awk -v name="$archive" '"'"'$2 == name || $2 == "*" name { print $1; exit }'"'"' "$workdir/SHA256SUMS")"
+    expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; exit }' "$workdir/SHA256SUMS")"
     actual="$(checksum "$workdir/$archive")"
     [ -n "$expected" ] || fail "SHA256SUMS carries no entry for $archive"
     [ "$expected" = "$actual" ] \
