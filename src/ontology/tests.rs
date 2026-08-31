@@ -116,6 +116,21 @@ fn deck_is_unset_without_env_or_config() {
 }
 
 #[test]
+fn setup_record_parses_and_resolves() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        directory.path().join("config.yaml"),
+        "setup:\n    version: 1\n    completed:\n        - deck\n        - providers\n",
+    )
+    .expect("write config");
+
+    let resolved = load_from_dir_with_env(directory.path(), &no_env).expect("load config");
+    let record = resolved.setup.expect("setup record");
+    assert_eq!(record.version, 1);
+    assert_eq!(record.completed, ["deck", "providers"]);
+}
+
+#[test]
 fn config_beats_default() {
     let config = Config {
         ontology: Ontology {

@@ -124,7 +124,10 @@ fn reset_handles_two_space_indent() {
     let home = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
     let config = source.path().join("config.yaml");
-    write_config(&config, "providers:\n  codex:\n    enabled: false\n  claude:\n    plugin: rune\n");
+    write_config(
+        &config,
+        "providers:\n  codex:\n    enabled: false\n  claude:\n    plugin: rune\n",
+    );
 
     rune()
         .env("HOME", home.path())

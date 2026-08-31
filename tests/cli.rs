@@ -333,11 +333,14 @@ fn structured_error_json_has_the_stable_shape() {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stderr.is_empty());
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(error["code"], "config.unknown_key");
-    assert_eq!(error["fix_command"], "rune config");
-    let message = error["message"].as_str().unwrap();
-    assert!(message.starts_with("Rune does not recognize config key 'definitely-unknown'."));
-    assert!(message.contains("Use one of these keys:"));
+    assert_eq!(
+        error,
+        serde_json::json!({
+            "code": "config.unknown_key",
+            "message": "Rune does not recognize config key 'definitely-unknown'.",
+            "fix_command": "rune config",
+        })
+    );
 }
 
 #[test]
@@ -403,6 +406,175 @@ fn setup_invalid_selection_names_the_retry_command() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("fix: rune setup"));
+}
+
+fn create_setup_deck(home: &std::path::Path) -> std::path::PathBuf {
+    let deck = home.join("Developer/demo");
+    std::fs::create_dir_all(&deck).unwrap();
+    std::fs::write(deck.join("deck.yaml"), "name: demo\n").unwrap();
+    deck
+}
+
+#[test]
+fn setup_plan_json_writes_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let deck = create_setup_deck(home.path());
+    std::fs::create_dir(home.path().join(".agents")).unwrap();
+
+    let output = rune()
+        .current_dir(source.path())
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .env("SHELL", "/bin/bash")
+        .args(["setup", "--plan", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(plan["version"], 1);
+    assert!(plan["writes"].as_array().is_some_and(|writes| {
+        writes
+            .iter()
+            .any(|write| write["step"] == "write verified setup record")
+    }));
+    assert!(
+        plan["provider_toggles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|toggle| toggle["provider"] == "agentskills" && toggle["enabled"] == true)
+    );
+    assert!(deck.join("deck.yaml").is_file());
+    assert!(!home.path().join(".config/rune/config.yaml").exists());
+    assert!(!source.path().join("config.yaml").exists());
+    assert!(
+        !home
+            .path()
+            .join(".local/share/bash-completion/completions/rune")
+            .exists()
+    );
+    assert!(!home.path().join(".claude").exists());
+}
+
+#[test]
+fn setup_yes_applies_detected_defaults() {
+    let home = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let deck = create_setup_deck(home.path());
+    std::fs::create_dir(home.path().join(".agents")).unwrap();
+
+    rune()
+        .current_dir(source.path())
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .env("SHELL", "/bin/bash")
+        .args(["setup", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Verification"))
+        .stdout(predicate::str::contains("wrote setup record"));
+
+    let user_config: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(home.path().join(".config/rune/config.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(user_config["deck"].as_str(), deck.to_str());
+    assert_eq!(user_config["setup"]["version"].as_u64(), Some(1));
+    let completed = user_config["setup"]["completed"].as_sequence().unwrap();
+    for step in ["deck", "providers", "shell_completion", "agent_skill"] {
+        assert!(
+            completed.iter().any(|value| value.as_str() == Some(step)),
+            "{step}"
+        );
+    }
+
+    let source_config: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(source.path().join("config.yaml")).unwrap())
+            .unwrap();
+    assert_eq!(
+        source_config["providers"]["agentskills"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        source_config["providers"]["codex"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert!(
+        home.path()
+            .join(".local/share/bash-completion/completions/rune")
+            .is_file()
+    );
+    assert!(home.path().join(".claude/skills/rune/SKILL.md").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_verification_failure_writes_no_record() {
+    let home = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let config_path = home.path().join(".config/rune/config.yaml");
+    let completion_path = home
+        .path()
+        .join(".local/share/bash-completion/completions/rune");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(completion_path.parent().unwrap()).unwrap();
+    std::fs::write(&config_path, "deck: /tmp/deck\n").unwrap();
+    std::fs::hard_link(&config_path, &completion_path).unwrap();
+
+    rune()
+        .current_dir(source.path())
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .env("SHELL", "/bin/bash")
+        .args(["setup", "--yes"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("Verification"))
+        .stdout(predicate::str::contains("user config parses"))
+        .stderr(predicate::str::contains("fix: rune setup --yes"));
+
+    let content = std::fs::read_to_string(config_path).unwrap();
+    assert!(!content.contains("setup:"));
+}
+
+#[test]
+fn setup_prints_every_write_before_apply() {
+    let home = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    create_setup_deck(home.path());
+    std::fs::create_dir(home.path().join(".agents")).unwrap();
+
+    let output = rune()
+        .current_dir(source.path())
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .env("SHELL", "/bin/bash")
+        .args(["setup", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let apply = stdout.find(" Apply").unwrap();
+    let paths = [
+        home.path().join(".config/rune/config.yaml"),
+        source.path().join("config.yaml"),
+        home.path()
+            .join(".local/share/bash-completion/completions/rune"),
+        home.path().join(".claude/skills/rune/SKILL.md"),
+    ];
+    for path in paths {
+        let path = path.display().to_string();
+        let first = stdout.find(&path).unwrap();
+        let last = stdout.rfind(&path).unwrap();
+        assert!(first < apply, "{path}");
+        assert!(last > apply, "{path}");
+    }
+    for provider in ["agentskills", "claude", "codex", "gemini", "opencode"] {
+        assert!(stdout[..apply].contains(provider), "{provider}");
+    }
 }
 
 #[test]
