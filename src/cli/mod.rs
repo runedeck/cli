@@ -282,9 +282,9 @@ enum Command {
     /// Print an agent-ready brief of the resolved working context
     Context,
 
-    /// Check for a newer release (read-only)
+    /// Update rune, or report with --check
     Update {
-        /// Only report; rune never replaces its own binary.
+        /// Only report; make no changes.
         #[arg(long)]
         check: bool,
     },
@@ -1312,17 +1312,11 @@ pub fn run() -> i32 {
             return exit_code(context::execute(args.json, args.no_color), args.json);
         }
         Command::Update { check } => {
-            if !check {
-                let error = rune::error::Error::new(
-                    rune::error::ErrorKind::Config,
-                    "rune update performs no self-replacement; package managers own updates",
-                )
-                .with_code("update.check_only")
-                .with_fix_command("rune update --check");
-                print_error(&error, args.json);
-                return 2;
-            }
-            return exit_code(update_check::check(args.json), args.json);
+            return if check {
+                exit_code(update_check::check(args.json), args.json)
+            } else {
+                exit_code(update_check::update(args.json), args.json)
+            };
         }
         Command::Setup {
             defaults,
