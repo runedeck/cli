@@ -1,0 +1,31 @@
+## 1. Recovery and guidance
+
+- [ ] 1.1 Extend the error type with `code` and `fix_command` and render errors once
+- [ ] 1.2 Migrate setup, config, provider, install, and doctor errors to the structured form
+- [ ] 1.3 Add `rune config check` for the user and source scopes
+- [ ] 1.4 Add `rune config defaults` with commented output from the installed binary
+- [ ] 1.5 Add `rune config reference` with compiler-backed key metadata
+- [ ] 1.6 Publish `docs/agent-guide.md` with read-only first steps
+
+## 2. Provider insight
+
+- [ ] 2.1 Build the bundled detection registry beside the embedded provider defaults
+- [ ] 2.2 Add `rune provider status` with the six lifecycle states
+- [ ] 2.3 Add `rune provider explain` with evidence, state, and fix command
+- [ ] 2.4 Move setup, context, status, doctor, and drift to the shared registry
+- [ ] 2.5 Add the config-reference drift check to CI
+
+## 3. Safe mutation and onboarding
+
+- [ ] 3.1 Add the syntax-preserving config editor with the managed override fallback
+- [ ] 3.2 Add scoped `rune config reset` with backup, verification, and atomic write
+- [ ] 3.3 Protect modified installed skills from silent replacement
+- [ ] 3.4 Extend `rune setup` with plan, approval, apply, verification, and the versioned record
+- [ ] 3.5 Add the first-run nudge in the dispatch path, independent of the `tui` feature
+
+## 4. Verification
+
+- [ ] 4.1 Test plan-only mode, apply order, and the versioned setup record
+- [ ] 4.2 Test check exit codes, defaults output, reset backup and restore, and reference drift
+- [ ] 4.3 Test lifecycle states, explain evidence, and the protected `modified` state
+- [ ] 4.4 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests
