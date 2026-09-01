@@ -268,6 +268,13 @@ pub(crate) fn detect_registered_providers(
     target_base: &Path,
 ) -> Result<Vec<provider::detection::ProviderDetection>, Error> {
     let search_path = std::env::var_os("PATH");
+    // Provider trees resolve under the target base, but opencode's wiring
+    // lives under the home directory wherever the trees are.
+    let home = dirs::home_dir().ok_or_else(|| {
+        Error::new(ErrorKind::Config, "cannot resolve home directory")
+            .with_code("provider.home_unavailable")
+            .with_fix_command("printenv HOME")
+    })?;
     load_registered_providers(source_root).map(|providers| {
         providers
             .into_iter()
@@ -278,6 +285,7 @@ pub(crate) fn detect_registered_providers(
                     &registered.config,
                     source_root,
                     target_base,
+                    &home,
                     search_path.as_deref(),
                 )
             })
