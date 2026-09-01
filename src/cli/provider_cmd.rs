@@ -39,7 +39,6 @@ struct ProviderReport {
     evidence: Vec<DetectionEvidence>,
     deployment_state: DeploymentState,
     fix_command: Option<String>,
-    #[serde(skip)]
     recommended_action: RecommendedAction,
 }
 
@@ -98,6 +97,15 @@ fn reports_at(root: &Path) -> Result<Vec<ProviderReport>, Error> {
 
 fn report_from_detection(root: &Path, detection: ProviderDetection) -> ProviderReport {
     let fix_command = fix_command(root, &detection);
+    // A non-installable source cannot honor an install recommendation, so
+    // the truthful action is a review of the working context.
+    let recommended_action = if detection.recommended_action == RecommendedAction::Install
+        && !installable_source(root)
+    {
+        RecommendedAction::Review
+    } else {
+        detection.recommended_action
+    };
     ProviderReport {
         provider: detection.provider,
         config_source: CONFIG_SOURCE,
@@ -105,7 +113,7 @@ fn report_from_detection(root: &Path, detection: ProviderDetection) -> ProviderR
         evidence: detection.evidence,
         deployment_state: detection.deployment_state,
         fix_command,
-        recommended_action: detection.recommended_action,
+        recommended_action,
     }
 }
 
@@ -213,10 +221,7 @@ fn print_explanation(report: &ProviderReport) {
 }
 
 fn command_label(report: &ProviderReport) -> &'static str {
-    if report.recommended_action == RecommendedAction::Review
-        || (report.recommended_action == RecommendedAction::Install
-            && report.fix_command.as_deref() == Some("rune context"))
-    {
+    if report.recommended_action == RecommendedAction::Review {
         "review:"
     } else {
         "fix:"

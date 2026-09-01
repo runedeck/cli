@@ -105,7 +105,8 @@ pub enum DeploymentState {
     Modified,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RecommendedAction {
     None,
     Enable,
