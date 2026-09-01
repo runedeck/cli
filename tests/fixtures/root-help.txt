@@ -40,6 +40,7 @@
     watch       <COMMAND>                                             Manage monitored rune locations
 
   Plumbing:
+    plugin      [list]                                                List declared plugins and their events
     update      --check                                               Check for a newer release (read-only)
     assemble    [--source <DIR>]                                      Assemble rune content into build/
     deploy      [--source <DIR>] [--target <DIR>]                     Deploy assembled runes

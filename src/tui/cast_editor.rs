@@ -358,6 +358,7 @@ impl CastEditor {
             None,
             false,
             false,
+            true,
         ) {
             Ok(result) => {
                 self.status = install_result_status(&result);

@@ -33,6 +33,7 @@ pub fn execute(
     model: Option<&str>,
     allow_stale: bool,
     strict: bool,
+    fire_events: bool,
 ) -> Result<ActionResult, Error> {
     let retry_command = install_command(
         path,
@@ -60,6 +61,20 @@ pub fn execute(
         only,
     )?;
     result.warnings.extend(warnings);
+    // Only a user install fires plugin events: internal staging
+    // callers (release) pass fire_events false.
+    if fire_events && !dry_run {
+        crate::cli::plugin::fire(
+            crate::cli::plugin::POST_INSTALL,
+            &serde_json::json!({
+                "event": crate::cli::plugin::POST_INSTALL,
+                "source": crate::cli::resolved_path(Path::new(path)).display().to_string(),
+                "target": target,
+                "providers": requested_providers,
+                "deployed": result.installed.len(),
+            }),
+        );
+    }
     Ok(result)
 }
 
