@@ -12,6 +12,7 @@ mod cowork;
 #[cfg(feature = "dashboard")]
 mod dashboard;
 mod deploy;
+mod discover;
 mod dispatch;
 #[cfg(feature = "docs")]
 mod docs;
@@ -90,6 +91,13 @@ enum Command {
     Spec {
         #[command(subcommand)]
         action: SpecAction,
+    },
+
+    /// Find community decks by GitHub topic
+    Discover {
+        /// Free-text terms added to the topic search.
+        #[arg(value_name = "QUERY")]
+        query: Option<String>,
     },
 
     /// Render the deck, specification, change, and deployment dashboard
@@ -1239,6 +1247,12 @@ pub fn run() -> i32 {
     let (result, verb) = match command {
         #[cfg(feature = "spec")]
         Command::Spec { action } => return run_spec(action, args.json),
+        Command::Discover { query } => {
+            return exit_code(
+                discover::execute(query.as_deref(), args.json, args.no_color),
+                args.json,
+            );
+        }
         Command::Status { source } => {
             return exit_code(
                 status::execute(&source, args.no_color, args.json),
@@ -1855,6 +1869,7 @@ fn root_help_styled(sheet: &style::Sheet) -> String {
     flow_help(&mut help);
     spec_help(&mut help);
     deck_help(&mut help);
+    deck_tail_help(&mut help);
     plumbing_help(&mut help);
 
     help.push_str(
@@ -1977,6 +1992,12 @@ fn deck_help(help: &mut String) {
     help.push_str("\n  Deck:\n");
     help_command(
         help,
+        "discover",
+        "[QUERY]",
+        "Find community decks by GitHub topic",
+    );
+    help_command(
+        help,
         "status",
         "[--source <DIR>]",
         "Show deck, spec, change, and deploy status",
@@ -2053,6 +2074,9 @@ fn deck_help(help: &mut String) {
         "[enable|disable <name>]",
         "List or toggle deploy providers",
     );
+}
+
+fn deck_tail_help(help: &mut String) {
     help_command(
         help,
         "todo",
