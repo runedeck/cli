@@ -97,7 +97,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{:?}: {}", self.kind, self.message)
+        write!(formatter, "{}", self.message)
     }
 }
 

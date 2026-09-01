@@ -3,12 +3,12 @@ adr: "docs/decisions/CLI-0028 Setup Plan and Apply.md"
 status: proposed
 ---
 
-# Herdr Setup Ux
+# Setup UX
 
 ## Why
 
 `rune setup` configures a deck and stops. New users get no route into setup, no provider selection,
-no verification, and no recovery command when a config breaks. A study of herdr v0.8.2 identified
+no verification, and no recovery command when a config breaks. A study of Herdr v0.8.2 identified
 setup, recovery, and evidence patterns that transfer to rune without importing its multiplexer.
 Rune keeps its stronger artifact safety model: manifests distinguish unchanged, stale, and modified
 files, and no adopted pattern may weaken that. Governing decisions: CLI-0028 with CLI-0029 and

@@ -505,8 +505,11 @@ fn unknown_key_issue(
     behavior: UnknownBehavior,
 ) -> ConfigIssue {
     let impact = unknown_key_impact(behavior);
+    let suggestion = nearest_known_key(scope, &key)
+        .map(|known| format!("; nearest known key: '{known}'"))
+        .unwrap_or_default();
     let error = Error::config(format!(
-        "{} contains the unknown key '{key}'",
+        "{} contains the unknown key '{key}'{suggestion}",
         path.display()
     ))
     .with_code(UNKNOWN_KEY_CODE)
@@ -529,6 +532,49 @@ const fn unknown_key_impact(behavior: UnknownBehavior) -> &'static str {
             "Rune rejects this configuration section, so its settings do not load."
         }
     }
+}
+
+/// The known key path closest to an unknown key, when one is close enough
+/// to be a plausible typo (edit distance at most one third of the length).
+fn nearest_known_key(scope: FileScope, key: &str) -> Option<String> {
+    let entries = match scope {
+        FileScope::User => reference_entries::<ontology::Config>(&ontology::installed_defaults()),
+        FileScope::Source => {
+            let defaults = SourceConfig::installed_defaults().ok()?;
+            reference_entries::<SourceConfig>(&defaults)
+        }
+    }
+    .ok()?;
+    let mut best: Option<(usize, String)> = None;
+    for entry in entries {
+        if entry.key.is_empty() {
+            continue;
+        }
+        let distance = edit_distance(key, &entry.key);
+        if best.as_ref().is_none_or(|(current, _)| distance < *current) {
+            best = Some((distance, entry.key));
+        }
+    }
+    let (distance, candidate) = best?;
+    (distance * 3 <= key.len().max(candidate.len())).then_some(candidate)
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (row, left_char) in left.iter().enumerate() {
+        current[0] = row + 1;
+        for (column, right_char) in right.iter().enumerate() {
+            let substitution = previous[column] + usize::from(left_char != right_char);
+            current[column + 1] = substitution
+                .min(previous[column + 1] + 1)
+                .min(current[column] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }
 
 fn invalid_issue(scope: FileScope, path: &Path, detail: &str) -> ConfigIssue {
