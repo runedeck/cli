@@ -7,7 +7,7 @@ use rune::provider::detection::{
     CONFIG_SOURCE, DeploymentState, DetectionEvidence, ProviderDetection, RecommendedAction,
 };
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum ProviderAction {
@@ -290,9 +290,57 @@ fn set_enabled(name: &str, enabled: bool, json: bool) -> Result<i32, Error> {
 }
 
 fn set_enabled_at(root: &Path, name: &str, enabled: bool, json: bool) -> Result<i32, Error> {
+    let plan = plan_enabled_at(root, &[(name.to_string(), enabled)])?;
+    plan.apply()?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "provider": name, "enabled": enabled })
+        );
+    } else {
+        let sheet = crate::cli::style::Sheet::detect(false);
+        let state = if enabled { "enabled" } else { "disabled" };
+        println!("{}", sheet.ok(&format!("{name} {state} in ./config.yaml")));
+    }
+    Ok(0)
+}
+
+pub(crate) struct EnablementPlan {
+    path: PathBuf,
+    rendered: String,
+    root: PathBuf,
+}
+
+impl EnablementPlan {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn apply(&self) -> Result<(), Error> {
+        crate::cli::config::write_atomic(&self.path, &self.rendered).map_err(|error| {
+            Error::new(error.kind(), error.message())
+                .with_code("provider.config_write_failed")
+                .with_fix_command(format!(
+                    "ls -ld -- {}",
+                    crate::cli::shell_quote(
+                        &crate::cli::resolved_path(&self.root).to_string_lossy()
+                    )
+                ))
+        })
+    }
+}
+
+pub(crate) fn plan_enabled_at(
+    root: &Path,
+    toggles: &[(String, bool)],
+) -> Result<EnablementPlan, Error> {
     let merged = crate::cli::config::load_merged_config(root)?;
     let providers = crate::cli::config::load_providers(&merged)?;
-    if !providers.contains_key(name) {
+    if let Some((name, _)) = toggles
+        .iter()
+        .find(|(name, _)| !providers.contains_key(name))
+    {
         let mut known: Vec<&String> = providers.keys().collect();
         known.sort();
         return Err(Error::new(
@@ -338,21 +386,23 @@ fn set_enabled_at(root: &Path, name: &str, enabled: bool, json: bool) -> Result<
         .with_code("provider.config_invalid")
         .with_fix_command(config_check_command(root)));
     };
-    let entry = provider_map
-        .entry(serde_yaml::Value::from(name))
-        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-    let Some(entry_map) = entry.as_mapping_mut() else {
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!("config.yaml providers.{name}: is not a map"),
-        )
-        .with_code("provider.config_invalid")
-        .with_fix_command(config_check_command(root)));
-    };
-    entry_map.insert(
-        serde_yaml::Value::from("enabled"),
-        serde_yaml::Value::from(enabled),
-    );
+    for (name, enabled) in toggles {
+        let entry = provider_map
+            .entry(serde_yaml::Value::from(name.as_str()))
+            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        let Some(entry_map) = entry.as_mapping_mut() else {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("config.yaml providers.{name}: is not a map"),
+            )
+            .with_code("provider.config_invalid")
+            .with_fix_command(config_check_command(root)));
+        };
+        entry_map.insert(
+            serde_yaml::Value::from("enabled"),
+            serde_yaml::Value::from(*enabled),
+        );
+    }
 
     let mut rendered = serde_yaml::to_string(&document).map_err(|error| {
         Error::new(
@@ -365,26 +415,11 @@ fn set_enabled_at(root: &Path, name: &str, enabled: bool, json: bool) -> Result<
     if !rendered.ends_with('\n') {
         rendered.push('\n');
     }
-    crate::cli::config::write_atomic(&config_path, &rendered).map_err(|error| {
-        Error::new(error.kind(), error.message())
-            .with_code("provider.config_write_failed")
-            .with_fix_command(format!(
-                "ls -ld -- {}",
-                crate::cli::shell_quote(&crate::cli::resolved_path(root).to_string_lossy())
-            ))
-    })?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({ "provider": name, "enabled": enabled })
-        );
-    } else {
-        let sheet = crate::cli::style::Sheet::detect(false);
-        let state = if enabled { "enabled" } else { "disabled" };
-        println!("{}", sheet.ok(&format!("{name} {state} in ./config.yaml")));
-    }
-    Ok(0)
+    Ok(EnablementPlan {
+        path: config_path,
+        rendered,
+        root: root.to_path_buf(),
+    })
 }
 
 fn config_check_command(root: &Path) -> String {

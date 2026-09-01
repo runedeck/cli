@@ -52,7 +52,7 @@ const ONTOLOGY_KEYS: [&str; 12] = [
 ];
 
 pub fn set(key: &str, value: &str, json: bool) -> Result<i32, Error> {
-    let config_path = persist(key, value)?;
+    let config_path = persist_structured(key, value)?;
     if json {
         println!(
             "{}",
@@ -68,7 +68,7 @@ const SCALAR_KEYS: [&str; 2] = ["deck", "env"];
 
 fn unsupported_key(key: &str) -> String {
     format!(
-        "Rune does not recognize config key '{key}'. Use one of these keys: {}, bench, {}",
+        "Rune does not support config key '{key}'. Use one of these keys: {}, bench, {}",
         SCALAR_KEYS.join(", "),
         ONTOLOGY_KEYS.join(", ")
     )
@@ -94,6 +94,36 @@ fn supported_key(key: &str) -> bool {
 /// `bench` holds a list of workspace checkouts: set appends (first entry is
 /// the primary), unset removes the whole list.
 pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, Error> {
+    persist_structured(key, value)
+}
+
+pub fn persist_setup(record: &rune::ontology::SetupRecord) -> Result<std::path::PathBuf, Error> {
+    let config_path = ontology::config_dir()?.join("config.yaml");
+    let mut document =
+        read_config_document(&config_path).map_err(|error| setup_record_error(&error))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!(
+            "{} must contain a YAML mapping",
+            config_path.display()
+        ))
+    })?;
+    let value = serde_yaml::to_value(record).map_err(|error| {
+        Error::config(format!("cannot serialize the setup record: {error}"))
+            .with_code("setup.record_invalid")
+            .with_fix_command("rune setup --yes")
+    })?;
+    mapping.insert(serde_yaml::Value::from("setup"), value);
+    write_config_document(&config_path, &document).map_err(|error| setup_record_error(&error))?;
+    Ok(config_path)
+}
+
+fn setup_record_error(error: &Error) -> Error {
+    Error::new(error.kind(), error.message().to_string())
+        .with_code("setup.record_write_failed")
+        .with_fix_command("rune setup --yes")
+}
+
+fn persist_structured(key: &str, value: &str) -> Result<std::path::PathBuf, Error> {
     let nested = ONTOLOGY_KEYS.contains(&key);
     if !supported_key(key) {
         return Err(unknown_key_error(unsupported_key(key)));
@@ -112,13 +142,15 @@ pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, Error> {
 
 pub fn get(key: &str, json: bool) -> Result<i32, Error> {
     if !supported_key(key) {
-        return Err(unknown_key_error(unsupported_key(key)));
+        return Err(unknown_key_error(format!(
+            "Rune does not recognize config key '{key}'."
+        )));
     }
     let config = ontology::load()?;
     let field = ontology::fields(&config)
         .into_iter()
         .find(|field| field.key == key)
-        .ok_or_else(|| unknown_key_error(unsupported_key(key)))?;
+        .ok_or_else(|| unknown_key_error(format!("Rune does not recognize config key '{key}'.")))?;
     if json {
         let output = serde_json::to_string_pretty(&field)
             .map_err(|error| Error::config(format!("cannot serialize config field: {error}")))?;

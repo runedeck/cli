@@ -12,6 +12,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
             env: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions,
+            setup: None,
             launch,
             bench: Vec::new(),
 
@@ -250,6 +251,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
             env: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions: Vec::new(),
+            setup: None,
             launch: Launch::default(),
             bench: Vec::new(),
 

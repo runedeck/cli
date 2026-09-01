@@ -20,7 +20,7 @@
 - [ ] 3.1 Add the syntax-preserving config editor with the managed override fallback
 - [x] 3.2 Add scoped `rune config reset` with backup, verification, and atomic write
 - [ ] 3.3 Protect modified installed skills from silent replacement
-- [ ] 3.4 Extend `rune setup` with plan, approval, apply, verification, and the versioned record
+- [x] 3.4 Extend `rune setup` with plan, approval, apply, verification, and the versioned record
 - [x] 3.5 Add the first-run nudge in the dispatch path, independent of the `tui` feature
 
 ## 4. Verification
