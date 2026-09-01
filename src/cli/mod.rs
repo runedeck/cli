@@ -1708,10 +1708,15 @@ fn bare() -> i32 {
 }
 
 /// One line that routes a new user into setup. Fires only when no user
-/// config exists, prints to stderr with the help, and writes nothing.
+/// config exists and the environment names no deck, prints to stderr with
+/// the help, and writes nothing.
 fn first_run_nudge() -> Option<i32> {
     let config = rune::ontology::config_dir().ok()?.join("config.yaml");
     if config.is_file() {
+        return None;
+    }
+    // `RUNE_DECK` configures rune without a file. That user is not new.
+    if rune::ontology::load().is_ok_and(|resolved| resolved.deck.is_some()) {
         return None;
     }
     let sheet = style::Sheet::detect_stderr(false);
