@@ -1,0 +1,11 @@
+version: 3
+sources:
+    deck:
+        local: ../deck
+runes:
+    deck:
+        include: [core/skills/Deslop, core/rules/Style]
+        providers:
+            claude:
+                exclude: [skills/Deslop, rules/Style]
+                include: [rules/Style]

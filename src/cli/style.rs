@@ -28,26 +28,41 @@ struct Tone {
     ansi: u8,
 }
 
-const ACCENT: Tone = Tone {
-    rgb: (125, 207, 255),
-    ansi: 36,
-};
-const GOOD: Tone = Tone {
-    rgb: (158, 206, 106),
-    ansi: 32,
-};
-const ALERT: Tone = Tone {
-    rgb: (224, 175, 104),
-    ansi: 33,
-};
-const BAD: Tone = Tone {
-    rgb: (247, 118, 142),
-    ansi: 31,
-};
-const VIOLET: Tone = Tone {
-    rgb: (187, 154, 247),
-    ansi: 35,
-};
+fn accent_tone() -> Tone {
+    let tone = crate::cli::theme::current().accent;
+    Tone {
+        rgb: tone.rgb,
+        ansi: tone.ansi,
+    }
+}
+fn good_tone() -> Tone {
+    let tone = crate::cli::theme::current().good;
+    Tone {
+        rgb: tone.rgb,
+        ansi: tone.ansi,
+    }
+}
+fn alert_tone() -> Tone {
+    let tone = crate::cli::theme::current().alert;
+    Tone {
+        rgb: tone.rgb,
+        ansi: tone.ansi,
+    }
+}
+fn bad_tone() -> Tone {
+    let tone = crate::cli::theme::current().bad;
+    Tone {
+        rgb: tone.rgb,
+        ansi: tone.ansi,
+    }
+}
+fn violet_tone() -> Tone {
+    let tone = crate::cli::theme::current().violet;
+    Tone {
+        rgb: tone.rgb,
+        ansi: tone.ansi,
+    }
+}
 
 pub struct Sheet {
     depth: Depth,
@@ -128,23 +143,23 @@ impl Sheet {
     }
 
     pub fn red(&self, text: &str) -> String {
-        self.tone(BAD, text)
+        self.tone(bad_tone(), text)
     }
 
     pub fn green(&self, text: &str) -> String {
-        self.tone(GOOD, text)
+        self.tone(good_tone(), text)
     }
 
     pub fn yellow(&self, text: &str) -> String {
-        self.tone(ALERT, text)
+        self.tone(alert_tone(), text)
     }
 
     pub fn cyan(&self, text: &str) -> String {
-        self.tone(ACCENT, text)
+        self.tone(accent_tone(), text)
     }
 
     pub fn magenta(&self, text: &str) -> String {
-        self.tone(VIOLET, text)
+        self.tone(violet_tone(), text)
     }
 
     /// Section heading: ` Bold` on its own line.

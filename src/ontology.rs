@@ -22,6 +22,7 @@ pub struct Config {
     /// suites, and a suite's outputs stay in the checkout that owns it.
     pub bench: Vec<String>,
     pub setup: Option<SetupRecord>,
+    pub theme: Option<ThemeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -29,6 +30,27 @@ pub struct Config {
 pub struct SetupRecord {
     pub version: u32,
     pub completed: Vec<String>,
+}
+
+/// Terminal theme selection: a named palette, an optional light and dark
+/// pair that follows the host appearance, and single-token overrides.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct ThemeConfig {
+    pub name: Option<String>,
+    pub auto_switch: bool,
+    pub dark_name: Option<String>,
+    pub light_name: Option<String>,
+    pub custom: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
@@ -339,6 +361,8 @@ pub struct ResolvedConfig {
     pub launch: Launch,
     #[serde(skip)]
     pub bench: Vec<String>,
+    #[serde(skip)]
+    pub theme: Option<ThemeConfig>,
 }
 
 impl ResolvedConfig {
@@ -729,6 +753,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         setup: config.setup.clone(),
         launch: resolve_launch(&config.launch),
         bench: config.bench.clone(),
+        theme: config.theme.clone(),
     }
 }
 
