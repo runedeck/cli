@@ -143,8 +143,7 @@ struct SearchItem {
 
 /// Pure parser over the search response body.
 fn parse_decks(body: &str) -> Result<Vec<Deck>, String> {
-    let response: SearchResponse =
-        serde_json::from_str(body).map_err(|error| error.to_string())?;
+    let response: SearchResponse = serde_json::from_str(body).map_err(|error| error.to_string())?;
     Ok(response
         .items
         .into_iter()
