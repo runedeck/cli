@@ -36,7 +36,12 @@ fn consumer_fixture(root: &Path) {
 fn plugin_list_shows_manifests_and_events() {
     let home = tempfile::tempdir().unwrap();
     write_plugin(home.path(), "syncer", "post-install", "#!/bin/sh\nexit 0\n");
-    write_plugin(home.path(), "notifier", "post-install", "#!/bin/sh\nexit 0\n");
+    write_plugin(
+        home.path(),
+        "notifier",
+        "post-install",
+        "#!/bin/sh\nexit 0\n",
+    );
 
     let output = rune()
         .env("HOME", home.path())
@@ -70,11 +75,8 @@ fn install_fires_the_post_install_event() {
         .assert()
         .success();
 
-    let event = fs::read_to_string(
-        home.path()
-            .join(".config/rune/plugins/recorder/event.json"),
-    )
-    .expect("the plugin received the event");
+    let event = fs::read_to_string(home.path().join(".config/rune/plugins/recorder/event.json"))
+        .expect("the plugin received the event");
     let payload: serde_json::Value = serde_json::from_str(&event).unwrap();
     assert_eq!(payload["event"], "post-install");
     assert!(payload["deployed"].as_u64().unwrap() >= 1);
@@ -97,7 +99,10 @@ fn failing_plugin_cannot_break_the_install() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("broken"), "warning names the plugin: {stderr}");
+    assert!(
+        stderr.contains("broken"),
+        "warning names the plugin: {stderr}"
+    );
     assert!(root.path().join(".claude/rules/Style.md").is_file());
 }
 

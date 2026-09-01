@@ -365,8 +365,7 @@ mod tests {
 
     #[test]
     fn checksum_mismatch_fails_closed() {
-        let error =
-            verify_archive(b"payload", &"a".repeat(64)).expect_err("mismatch must fail");
+        let error = verify_archive(b"payload", &"a".repeat(64)).expect_err("mismatch must fail");
         assert_eq!(error.code(), "update.checksum_mismatch");
     }
 
@@ -393,8 +392,8 @@ mod tests {
             "a".repeat(64),
             "b".repeat(64)
         );
-        let digest = published_digest(&sums, "rune-cli-macos-aarch64.tar.gz")
-            .expect("entry is found");
+        let digest =
+            published_digest(&sums, "rune-cli-macos-aarch64.tar.gz").expect("entry is found");
         assert_eq!(digest, "b".repeat(64));
     }
 

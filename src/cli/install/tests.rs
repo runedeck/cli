@@ -23,6 +23,7 @@ fn execute_errors_on_missing_module() {
         None,
         false,
         false,
+        false,
     );
     assert!(result.is_err());
 }
@@ -40,6 +41,7 @@ fn execute_errors_on_directory_without_module_yaml() {
         false,
         None,
         None,
+        false,
         false,
         false,
     );
@@ -78,6 +80,7 @@ fn execute_succeeds_on_empty_module() {
         None,
         false,
         false,
+        false,
     );
     assert!(result.is_ok());
 }
@@ -98,6 +101,7 @@ fn execute_unknown_provider_lists_available_choices() {
         false,
         None,
         None,
+        false,
         false,
         false,
     );
@@ -144,6 +148,7 @@ fn execute_provider_filter_skips_unrequested_providers() {
         false,
         None,
         None,
+        false,
         false,
         false,
     )
@@ -194,6 +199,7 @@ fn corrupt_manifest_error_has_no_unsafe_fix_command() {
         None,
         false,
         false,
+        false,
     )
     .unwrap();
     std::fs::write(target.path().join(".claude/.manifest"), "invalid: [").unwrap();
@@ -208,6 +214,7 @@ fn corrupt_manifest_error_has_no_unsafe_fix_command() {
         false,
         Some("rules/OnlyRule.md"),
         None,
+        false,
         false,
         false,
     )
@@ -264,6 +271,7 @@ fn install_command_preserves_options_and_resolves_paths() {
         Some("skills/Alpha"),
         Some("gpt-5"),
         true,
+        false,
     );
 
     assert!(command.contains(&source.path().to_string_lossy().to_string()));
@@ -294,6 +302,7 @@ fn install_command_preserves_the_directory_when_target_is_omitted() {
         None,
         None,
         true,
+        false,
     );
 
     assert!(command.starts_with(&format!(
@@ -301,4 +310,23 @@ fn install_command_preserves_the_directory_when_target_is_omitted() {
         crate::cli::shell_quote(&current_directory.to_string_lossy())
     )));
     assert!(command.ends_with("--allow-stale"));
+}
+
+#[test]
+fn install_command_keeps_strict() {
+    let source = TempDir::new().unwrap();
+    let command = install_command(
+        &source.path().to_string_lossy(),
+        None,
+        &[],
+        false,
+        true,
+        false,
+        false,
+        None,
+        None,
+        true,
+        true,
+    );
+    assert!(command.ends_with("--allow-stale --strict"), "{command}");
 }

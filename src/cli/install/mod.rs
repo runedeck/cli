@@ -32,6 +32,7 @@ pub fn execute(
     only: Option<&str>,
     model: Option<&str>,
     allow_stale: bool,
+    strict: bool,
     fire_events: bool,
 ) -> Result<ActionResult, Error> {
     let retry_command = install_command(
@@ -45,6 +46,7 @@ pub fn execute(
         only,
         model,
         true,
+        strict,
     );
     let warnings = warn_or_block_stale_source(Path::new(path), allow_stale, &retry_command)?;
     assemble::execute_with_options(path, requested_providers, model)?;
@@ -125,6 +127,7 @@ fn install_command(
     only: Option<&str>,
     model: Option<&str>,
     allow_stale: bool,
+    strict: bool,
 ) -> String {
     let source = crate::cli::resolved_path(Path::new(path));
     let mut arguments = vec![
@@ -164,6 +167,9 @@ fn install_command(
     }
     if allow_stale {
         arguments.push("--allow-stale".to_string());
+    }
+    if strict {
+        arguments.push("--strict".to_string());
     }
     let command = arguments.join(" ");
     if target.is_some() {
