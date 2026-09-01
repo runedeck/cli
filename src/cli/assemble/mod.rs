@@ -71,7 +71,9 @@ pub fn execute_with_options(
     let source_uri = config::load_source_uri(module_root);
     let provider_names: Vec<String> = providers.keys().cloned().collect();
     let valid_qualifiers = sources::build_valid_qualifiers(&provider_names, &models);
+    let mut provider_toggles = crate::cli::dotrune::toggle::ToggleMap::default();
     let source_files = if let Some(manifest) = crate::cli::dotrune::load(module_root)? {
+        provider_toggles = crate::cli::dotrune::toggle::toggle_map(&manifest);
         crate::cli::dotrune::resolve_sources(&manifest, module_root, &valid_qualifiers)?
     } else {
         sources::collect(module_root, &valid_qualifiers)?
@@ -94,6 +96,7 @@ pub fn execute_with_options(
 
     let assembled: Result<(), Error> = assemble_providers(
         &providers,
+        &provider_toggles,
         requested_providers,
         &staging_dir,
         module_root,
@@ -151,6 +154,7 @@ pub fn execute_with_options(
 #[allow(clippy::too_many_arguments)]
 fn assemble_providers(
     providers: &std::collections::HashMap<String, rune::provider::ProviderConfig>,
+    provider_toggles: &crate::cli::dotrune::toggle::ToggleMap,
     requested_providers: &[String],
     build_dir: &Path,
     module_root: &Path,
@@ -196,6 +200,9 @@ fn assemble_providers(
             resolve_active_model(model_override, provider_config, models, provider_name);
 
         for source in source_files {
+            if crate::cli::dotrune::toggle::toggled_off(provider_toggles, provider_name, source) {
+                continue;
+            }
             if let Some(deployed) = assemble_source_for_provider(
                 source,
                 module_root,

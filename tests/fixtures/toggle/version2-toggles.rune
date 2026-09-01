@@ -1,0 +1,9 @@
+version: 2
+sources:
+    deck:
+        local: ../deck
+runes:
+    deck:
+        providers:
+            claude:
+                exclude: [skills/Deslop]
