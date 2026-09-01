@@ -60,6 +60,7 @@ fn explain_report_has_the_required_json_fields() {
             "evidence",
             "fix_command",
             "provider",
+            "recommended_action",
             "target",
         ]
     );
@@ -139,6 +140,8 @@ fn protected_and_plain_source_commands_are_review_commands() {
     };
     assert_eq!(command_label(&protected), "review:");
 
+    // A non-installable source downgrades Install to Review at report
+    // construction, so the label follows the enum alone.
     let plain = ProviderReport {
         provider: "codex".to_string(),
         config_source: CONFIG_SOURCE,
@@ -146,7 +149,7 @@ fn protected_and_plain_source_commands_are_review_commands() {
         evidence: Vec::new(),
         deployment_state: DeploymentState::NotInstalled,
         fix_command: Some("rune context".to_string()),
-        recommended_action: RecommendedAction::Install,
+        recommended_action: RecommendedAction::Review,
     };
     assert_eq!(command_label(&plain), "review:");
 }

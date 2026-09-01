@@ -52,11 +52,9 @@ fn legacy_error_has_no_fix_command() {
 }
 
 #[test]
-fn display_includes_kind_and_message() {
+fn display_is_the_message_alone() {
     let error = Error::new(ErrorKind::Deploy, "target missing");
-    let display = format!("{error}");
-    assert!(display.contains("Deploy"));
-    assert!(display.contains("target missing"));
+    assert_eq!(format!("{error}"), "target missing");
 }
 
 #[test]
