@@ -18,6 +18,7 @@ mod filter;
 mod git;
 mod parse;
 mod resolve;
+pub mod toggle;
 
 #[cfg(test)]
 mod tests;
@@ -28,7 +29,7 @@ use std::io::Write as _;
 use std::path::Path;
 
 pub use git::cached_worktree;
-pub use parse::{DotRune, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
+pub use parse::{DotRune, RuneList, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
 #[cfg(feature = "tui")]
 pub use resolve::materialize_source;
 pub use resolve::{enumerate_ids, resolve_sources};
@@ -82,6 +83,13 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
     })?;
 
     parse::parse(content).map(Some)
+}
+
+/// Atomically replace `.rune` with pre-rendered content. The toggle writer
+/// uses this path so a surgical edit keeps every unrelated byte.
+pub(crate) fn write_atomic_content(repo_root: &Path, content: &str) -> Result<(), Error> {
+    let path = repo_root.join(".rune");
+    atomic_write_with(&path, content.as_bytes(), |from, to| fs::rename(from, to))
 }
 
 /// Serialize and atomically replace a consumer manifest.

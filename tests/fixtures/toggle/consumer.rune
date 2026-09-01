@@ -1,0 +1,10 @@
+# consumer manifest (comment must survive toggles)
+version: 1
+sources:
+    mod:
+        local: module
+runes:
+    mod:
+        # staged selection comment
+        rules: [Style, Naming]
+        skills: [Deslop]

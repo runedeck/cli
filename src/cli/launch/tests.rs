@@ -15,6 +15,8 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
             setup: None,
             launch,
             bench: Vec::new(),
+
+            theme: None,
         },
     }
 }
@@ -252,6 +254,8 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
             setup: None,
             launch: Launch::default(),
             bench: Vec::new(),
+
+            theme: None,
         },
     )
     .expect("resolved launch");

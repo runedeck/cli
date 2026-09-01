@@ -871,6 +871,41 @@
       "type": "integer"
     },
     {
+      "default": null,
+      "key": "theme",
+      "type": "object | null"
+    },
+    {
+      "default": false,
+      "key": "theme.auto_switch",
+      "type": "boolean"
+    },
+    {
+      "default": {},
+      "key": "theme.custom",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "theme.custom.*",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "key": "theme.dark_name",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "theme.light_name",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "theme.name",
+      "type": "string | null"
+    },
+    {
       "default": {},
       "key": "watch",
       "type": "object"
