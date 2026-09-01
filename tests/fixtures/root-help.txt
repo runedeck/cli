@@ -23,6 +23,7 @@
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
     doctor      [--target <DIR>] [--verify] [--repair]                Check and repair deployment integrity
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
+    graph       export [--source <DIR>]                               Export the artifact graph as Turtle for SHACL validation
     drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files

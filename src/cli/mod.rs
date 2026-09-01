@@ -22,6 +22,7 @@ pub(crate) mod dotrune;
 mod drift;
 mod exec;
 mod find;
+mod graph;
 mod init;
 pub(crate) mod install;
 mod launch;
@@ -51,6 +52,7 @@ pub(crate) mod watchlist;
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod theme;
 
 use clap::{Parser, Subcommand};
 use rune::error::{Error, ErrorKind};
@@ -449,6 +451,12 @@ enum Command {
         /// Skip SLSA provenance sidecar generation
         #[arg(long)]
         skip_provenance: bool,
+    },
+
+    /// Artifact graph operations: export the deck as Turtle for SHACL validation
+    Graph {
+        #[command(subcommand)]
+        action: graph::GraphAction,
     },
 
     /// Validate deck or rune source files against schemas
@@ -1192,6 +1200,7 @@ pub fn run() -> i32 {
         console::set_colors_enabled(false);
         console::set_colors_enabled_stderr(false);
     }
+    install_theme();
 
     #[cfg(feature = "spec")]
     spec::install_hooks();
@@ -1434,6 +1443,9 @@ pub fn run() -> i32 {
                 validate::execute(&source, args.json, scan, force),
                 args.json,
             );
+        }
+        Command::Graph { action } => {
+            return exit_code(graph::execute(&action), args.json);
         }
         Command::Provenance {
             target,
@@ -1886,6 +1898,7 @@ fn flow_help(help: &mut String) {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn deck_help(help: &mut String) {
     help.push_str("\n  Deck:\n");
     help_command(
@@ -1905,6 +1918,12 @@ fn deck_help(help: &mut String) {
         "validate",
         "[--source <DIR>]",
         "Validate deck or rune files against schemas",
+    );
+    help_command(
+        help,
+        "graph",
+        "export [--source <DIR>]",
+        "Export the artifact graph as Turtle for SHACL validation",
     );
     help_command(
         help,
@@ -2139,6 +2158,30 @@ pub(crate) fn shell_quote(value: &str) -> String {
         return value.to_string();
     }
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Resolve the configured theme once and install it for every renderer.
+/// Config problems never block dispatch: the default palette applies and
+/// the warning surfaces on stderr.
+fn install_theme() {
+    let selection = rune::ontology::load()
+        .ok()
+        .and_then(|config| config.theme)
+        .map(|config| theme::ThemeSelection {
+            name: config.name,
+            auto_switch: config.auto_switch,
+            dark_name: config.dark_name,
+            light_name: config.light_name,
+            custom: config.custom,
+        })
+        .unwrap_or_default();
+    let appearance = theme::appearance_from_colorfgbg(std::env::var("COLORFGBG").ok().as_deref());
+    let (tones, warnings) = theme::resolve(&selection, appearance);
+    let sheet = style::Sheet::detect_stderr(false);
+    for warning in warnings {
+        eprintln!("{} {warning}", sheet.yellow("warning:"));
+    }
+    theme::install(tones);
 }
 
 /// Dispatch a `rune adopt` subcommand to the review state machine.
