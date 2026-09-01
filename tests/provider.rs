@@ -33,6 +33,7 @@ fn provider_explain_json_has_the_required_shape_and_evidence() {
             "evidence",
             "fix_command",
             "provider",
+            "recommended_action",
             "target",
         ]
         .into_iter()
