@@ -35,61 +35,151 @@ const THEMES: &[(&str, ThemeTones)] = &[
     (
         "rune-dark",
         ThemeTones {
-            accent: Tone { rgb: (125, 207, 255), ansi: 36 },
-            good: Tone { rgb: (158, 206, 106), ansi: 32 },
-            alert: Tone { rgb: (224, 175, 104), ansi: 33 },
-            bad: Tone { rgb: (247, 118, 142), ansi: 31 },
-            violet: Tone { rgb: (187, 154, 247), ansi: 35 },
+            accent: Tone {
+                rgb: (125, 207, 255),
+                ansi: 36,
+            },
+            good: Tone {
+                rgb: (158, 206, 106),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (224, 175, 104),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (247, 118, 142),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (187, 154, 247),
+                ansi: 35,
+            },
         },
     ),
     (
         "rune-light",
         ThemeTones {
-            accent: Tone { rgb: (0, 95, 135), ansi: 34 },
-            good: Tone { rgb: (58, 112, 16), ansi: 32 },
-            alert: Tone { rgb: (154, 93, 0), ansi: 33 },
-            bad: Tone { rgb: (179, 38, 66), ansi: 31 },
-            violet: Tone { rgb: (110, 66, 180), ansi: 35 },
+            accent: Tone {
+                rgb: (0, 95, 135),
+                ansi: 34,
+            },
+            good: Tone {
+                rgb: (58, 112, 16),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (154, 93, 0),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (179, 38, 66),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (110, 66, 180),
+                ansi: 35,
+            },
         },
     ),
     (
         "catppuccin-mocha",
         ThemeTones {
-            accent: Tone { rgb: (137, 180, 250), ansi: 36 },
-            good: Tone { rgb: (166, 227, 161), ansi: 32 },
-            alert: Tone { rgb: (250, 179, 135), ansi: 33 },
-            bad: Tone { rgb: (243, 139, 168), ansi: 31 },
-            violet: Tone { rgb: (203, 166, 247), ansi: 35 },
+            accent: Tone {
+                rgb: (137, 180, 250),
+                ansi: 36,
+            },
+            good: Tone {
+                rgb: (166, 227, 161),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (250, 179, 135),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (243, 139, 168),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (203, 166, 247),
+                ansi: 35,
+            },
         },
     ),
     (
         "catppuccin-latte",
         ThemeTones {
-            accent: Tone { rgb: (30, 102, 245), ansi: 34 },
-            good: Tone { rgb: (64, 160, 43), ansi: 32 },
-            alert: Tone { rgb: (254, 100, 11), ansi: 33 },
-            bad: Tone { rgb: (210, 15, 57), ansi: 31 },
-            violet: Tone { rgb: (136, 57, 239), ansi: 35 },
+            accent: Tone {
+                rgb: (30, 102, 245),
+                ansi: 34,
+            },
+            good: Tone {
+                rgb: (64, 160, 43),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (254, 100, 11),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (210, 15, 57),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (136, 57, 239),
+                ansi: 35,
+            },
         },
     ),
     (
         "tokyo-night",
         ThemeTones {
-            accent: Tone { rgb: (122, 162, 247), ansi: 36 },
-            good: Tone { rgb: (158, 206, 106), ansi: 32 },
-            alert: Tone { rgb: (255, 158, 100), ansi: 33 },
-            bad: Tone { rgb: (247, 118, 142), ansi: 31 },
-            violet: Tone { rgb: (187, 154, 247), ansi: 35 },
+            accent: Tone {
+                rgb: (122, 162, 247),
+                ansi: 36,
+            },
+            good: Tone {
+                rgb: (158, 206, 106),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (255, 158, 100),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (247, 118, 142),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (187, 154, 247),
+                ansi: 35,
+            },
         },
     ),
     (
         "nord",
         ThemeTones {
-            accent: Tone { rgb: (136, 192, 208), ansi: 36 },
-            good: Tone { rgb: (163, 190, 140), ansi: 32 },
-            alert: Tone { rgb: (235, 203, 139), ansi: 33 },
-            bad: Tone { rgb: (191, 97, 106), ansi: 31 },
-            violet: Tone { rgb: (180, 142, 173), ansi: 35 },
+            accent: Tone {
+                rgb: (136, 192, 208),
+                ansi: 36,
+            },
+            good: Tone {
+                rgb: (163, 190, 140),
+                ansi: 32,
+            },
+            alert: Tone {
+                rgb: (235, 203, 139),
+                ansi: 33,
+            },
+            bad: Tone {
+                rgb: (191, 97, 106),
+                ansi: 31,
+            },
+            violet: Tone {
+                rgb: (180, 142, 173),
+                ansi: 35,
+            },
         },
     ),
 ];
@@ -194,7 +284,7 @@ pub fn resolve(selection: &ThemeSelection, appearance: Appearance) -> (ThemeTone
 
 fn parse_hex(value: &str) -> Option<(u8, u8, u8)> {
     let hex = value.strip_prefix('#')?;
-    if hex.len() != 6 {
+    if hex.len() != 6 || !hex.is_ascii() {
         return None;
     }
     let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
@@ -286,5 +376,12 @@ mod tests {
         let (tones, warnings) = resolve(&selection, Appearance::Unknown);
         assert_eq!(tones.accent, named(DEFAULT_DARK).unwrap().accent);
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn parse_hex_rejects_non_ascii_without_panicking() {
+        assert_eq!(parse_hex("#a\u{2713}ab"), None);
+        assert_eq!(parse_hex("#\u{e9}\u{e9}\u{e9}"), None);
+        assert_eq!(parse_hex("#7dcfff"), Some((125, 207, 255)));
     }
 }
