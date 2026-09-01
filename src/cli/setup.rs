@@ -83,8 +83,7 @@ fn configure_deck(defaults: bool, actions: &mut Vec<String>) -> Result<Option<Pa
         return Ok(None);
     };
     let deck_text = deck.to_string_lossy();
-    crate::cli::ontology::persist("deck", &deck_text)
-        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    crate::cli::ontology::persist("deck", &deck_text)?;
     actions.push(format!("deck configured: {deck_text}"));
     Ok(Some(deck))
 }
@@ -172,14 +171,20 @@ fn choose(candidates: &[PathBuf]) -> Result<Option<PathBuf>, Error> {
     if trimmed.is_empty() {
         return Ok(None);
     }
-    let index: usize = trimmed
-        .parse()
-        .map_err(|_| Error::new(ErrorKind::Config, format!("not a number: '{trimmed}'")))?;
+    let index: usize = trimmed.parse().map_err(|_| {
+        Error::new(ErrorKind::Config, format!("not a number: '{trimmed}'"))
+            .with_code("setup.selection_invalid")
+            .with_fix_command("rune setup")
+    })?;
     candidates
         .get(index.wrapping_sub(1))
         .cloned()
         .map(Some)
-        .ok_or_else(|| Error::new(ErrorKind::Config, format!("no deck numbered {index}")))
+        .ok_or_else(|| {
+            Error::new(ErrorKind::Config, format!("no deck numbered {index}"))
+                .with_code("setup.selection_invalid")
+                .with_fix_command("rune setup")
+        })
 }
 
 fn flush() -> Result<(), Error> {

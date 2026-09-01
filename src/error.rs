@@ -10,10 +10,24 @@ pub enum ErrorKind {
     Validate,
 }
 
+impl ErrorKind {
+    const fn default_code(self) -> &'static str {
+        match self {
+            Self::Parse => "error.parse",
+            Self::Config => "error.config",
+            Self::Io => "error.io",
+            Self::Deploy => "error.deploy",
+            Self::Validate => "error.validate",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
     message: String,
+    code: &'static str,
+    fix_command: Option<String>,
 }
 
 impl Error {
@@ -21,7 +35,21 @@ impl Error {
         Self {
             kind,
             message: message.into(),
+            code: kind.default_code(),
+            fix_command: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = code;
+        self
+    }
+
+    #[must_use]
+    pub fn with_fix_command(mut self, fix_command: impl Into<String>) -> Self {
+        self.fix_command = Some(fix_command.into());
+        self
     }
 
     /// Wrap a library `Result<_, String>` at the boundary where the CLI takes
@@ -57,11 +85,19 @@ impl Error {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub fn fix_command(&self) -> Option<&str> {
+        self.fix_command.as_deref()
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{:?}: {}", self.kind, self.message)
+        write!(formatter, "{}", self.message)
     }
 }
 

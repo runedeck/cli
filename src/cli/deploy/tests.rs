@@ -85,16 +85,31 @@ fn manifest_recovery_requires_forced_full_deploy() {
 
     let error = load_manifest_or_recover(temp_directory.path(), None, false)
         .expect_err("unforced full deploy must fail closed");
-    assert!(error.message().contains("--force"));
+    assert_eq!(error.code(), "install.manifest_corrupt");
+    assert_eq!(error.fix_command(), None);
 
     for force in [false, true] {
         let error = load_manifest_or_recover(temp_directory.path(), Some("rules"), force)
             .expect_err("filtered deploy must never rebuild a corrupt manifest");
         assert!(error.message().contains("filtered deploy"));
+        assert_eq!(error.fix_command(), None);
     }
 
     let recovered = load_manifest_or_recover(temp_directory.path(), None, true).unwrap();
     assert!(recovered.is_empty());
+}
+
+#[test]
+fn forced_manifest_recovery_does_not_ignore_read_errors() {
+    let temp_directory = TempDir::new().unwrap();
+    std::fs::create_dir(temp_directory.path().join(".manifest")).unwrap();
+
+    let error = load_manifest_or_recover(temp_directory.path(), None, true)
+        .expect_err("forced recovery must not ignore a manifest read error");
+
+    assert_eq!(error.kind(), ErrorKind::Io);
+    assert_eq!(error.code(), "error.io");
+    assert_eq!(error.fix_command(), None);
 }
 
 #[test]

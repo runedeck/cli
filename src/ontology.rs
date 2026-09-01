@@ -513,6 +513,8 @@ fn parse_config(content: &str, path: &Path) -> Result<Config, Error> {
             ErrorKind::Config,
             format!("{} is malformed: {error}", path.display()),
         )
+        .with_code("config.invalid")
+        .with_fix_command("rune config path")
     })
 }
 

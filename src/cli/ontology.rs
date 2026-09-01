@@ -1,12 +1,17 @@
+use rune::error::Error;
 use rune::ontology::{self, Source};
 use std::fs;
 use std::path::Path;
 
-pub fn show(json: bool, no_color: bool) -> Result<i32, String> {
-    let config = ontology::load().map_err(|error| error.to_string())?;
+const CONFIG_FIX_COMMAND: &str = "rune config path";
+const CONFIG_INVALID_CODE: &str = "config.invalid";
+const CONFIG_UNKNOWN_KEY_CODE: &str = "config.unknown_key";
+
+pub fn show(json: bool, no_color: bool) -> Result<i32, Error> {
+    let config = ontology::load()?;
     if json {
         let output = serde_json::to_string_pretty(&config)
-            .map_err(|error| format!("cannot serialize config: {error}"))?;
+            .map_err(|error| Error::config(format!("cannot serialize config: {error}")))?;
         println!("{output}");
         return Ok(0);
     }
@@ -46,7 +51,7 @@ const ONTOLOGY_KEYS: [&str; 12] = [
     "domain",
 ];
 
-pub fn set(key: &str, value: &str, json: bool) -> Result<i32, String> {
+pub fn set(key: &str, value: &str, json: bool) -> Result<i32, Error> {
     let config_path = persist(key, value)?;
     if json {
         println!(
@@ -63,41 +68,60 @@ const SCALAR_KEYS: [&str; 2] = ["deck", "env"];
 
 fn unsupported_key(key: &str) -> String {
     format!(
-        "unsupported config key '{key}'; expected: {}, bench, {}",
+        "Rune does not recognize config key '{key}'. Use one of these keys: {}, bench, {}",
         SCALAR_KEYS.join(", "),
         ONTOLOGY_KEYS.join(", ")
     )
 }
 
+fn unknown_key_error(message: impl Into<String>) -> Error {
+    Error::config(message)
+        .with_code(CONFIG_UNKNOWN_KEY_CODE)
+        .with_fix_command("rune config")
+}
+
+fn invalid_config_error(message: impl Into<String>) -> Error {
+    Error::config(message)
+        .with_code(CONFIG_INVALID_CODE)
+        .with_fix_command(CONFIG_FIX_COMMAND)
+}
+
+fn supported_key(key: &str) -> bool {
+    SCALAR_KEYS.contains(&key) || key == "bench" || ONTOLOGY_KEYS.contains(&key)
+}
+
 /// Write one configuration value without printing; returns the config path.
 /// `bench` holds a list of workspace checkouts: set appends (first entry is
 /// the primary), unset removes the whole list.
-pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, String> {
+pub fn persist(key: &str, value: &str) -> Result<std::path::PathBuf, Error> {
     let nested = ONTOLOGY_KEYS.contains(&key);
-    if !SCALAR_KEYS.contains(&key) && key != "bench" && !nested {
-        return Err(unsupported_key(key));
+    if !supported_key(key) {
+        return Err(unknown_key_error(unsupported_key(key)));
     }
-    let config_dir = ontology::config_dir().map_err(|error| error.to_string())?;
+    let config_dir = ontology::config_dir()?;
     let config_path = config_dir.join("config.yaml");
     if key == "bench" {
         append_to_list_in_file(&config_path, "bench", value)?;
     } else if nested {
-        set_nested_in_file(&config_path, "ontology", key, value)?;
+        set_nested_in_file_structured(&config_path, "ontology", key, value)?;
     } else {
         set_in_file(&config_path, key, value)?;
     }
     Ok(config_path)
 }
 
-pub fn get(key: &str, json: bool) -> Result<i32, String> {
-    let config = ontology::load().map_err(|error| error.to_string())?;
+pub fn get(key: &str, json: bool) -> Result<i32, Error> {
+    if !supported_key(key) {
+        return Err(unknown_key_error(unsupported_key(key)));
+    }
+    let config = ontology::load()?;
     let field = ontology::fields(&config)
         .into_iter()
         .find(|field| field.key == key)
-        .ok_or_else(|| format!("unknown config key '{key}'"))?;
+        .ok_or_else(|| unknown_key_error(unsupported_key(key)))?;
     if json {
         let output = serde_json::to_string_pretty(&field)
-            .map_err(|error| format!("cannot serialize config field: {error}"))?;
+            .map_err(|error| Error::config(format!("cannot serialize config field: {error}")))?;
         println!("{output}");
         return Ok(i32::from(field.value.is_none()));
     }
@@ -110,10 +134,8 @@ pub fn get(key: &str, json: bool) -> Result<i32, String> {
     }
 }
 
-pub fn path(json: bool) -> Result<i32, String> {
-    let config_path = ontology::config_dir()
-        .map_err(|error| error.to_string())?
-        .join("config.yaml");
+pub fn path(json: bool) -> Result<i32, Error> {
+    let config_path = ontology::config_dir()?.join("config.yaml");
     if json {
         println!("{}", serde_json::json!({ "path": config_path }));
     } else {
@@ -122,14 +144,12 @@ pub fn path(json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
-pub fn unset(key: &str, json: bool) -> Result<i32, String> {
+pub fn unset(key: &str, json: bool) -> Result<i32, Error> {
     let nested = ONTOLOGY_KEYS.contains(&key);
-    if !SCALAR_KEYS.contains(&key) && key != "bench" && !nested {
-        return Err(unsupported_key(key));
+    if !supported_key(key) {
+        return Err(unknown_key_error(unsupported_key(key)));
     }
-    let config_path = ontology::config_dir()
-        .map_err(|error| error.to_string())?
-        .join("config.yaml");
+    let config_path = ontology::config_dir()?.join("config.yaml");
     let mut removed = if nested {
         remove_nested_in_file(&config_path, "ontology", key)?
     } else {
@@ -153,11 +173,11 @@ pub fn unset(key: &str, json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
-fn remove_in_file(path: &Path, key: &str) -> Result<bool, String> {
+fn remove_in_file(path: &Path, key: &str) -> Result<bool, Error> {
     let mut document = read_config_document(path)?;
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!("{} must contain a YAML mapping", path.display()))
+    })?;
     let removed = mapping
         .remove(serde_yaml::Value::String(key.to_string()))
         .is_some();
@@ -167,18 +187,21 @@ fn remove_in_file(path: &Path, key: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
-fn remove_nested_in_file(path: &Path, section: &str, key: &str) -> Result<bool, String> {
+fn remove_nested_in_file(path: &Path, section: &str, key: &str) -> Result<bool, Error> {
     let mut document = read_config_document(path)?;
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!("{} must contain a YAML mapping", path.display()))
+    })?;
     let section_key = serde_yaml::Value::String(section.to_string());
     let Some(section_value) = mapping.get_mut(&section_key) else {
         return Ok(false);
     };
-    let section_mapping = section_value
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{section} in {} must be a YAML mapping", path.display()))?;
+    let section_mapping = section_value.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!(
+            "{section} in {} must be a YAML mapping",
+            path.display()
+        ))
+    })?;
     let removed = section_mapping
         .remove(serde_yaml::Value::String(key.to_string()))
         .is_some();
@@ -197,17 +220,30 @@ pub(crate) fn set_nested_in_file(
     key: &str,
     value: &str,
 ) -> Result<(), String> {
+    set_nested_in_file_structured(path, section, key, value)
+        .map_err(|error| error.message().to_string())
+}
+
+fn set_nested_in_file_structured(
+    path: &Path,
+    section: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), Error> {
     let mut document = read_config_document(path)?;
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!("{} must contain a YAML mapping", path.display()))
+    })?;
     let section_key = serde_yaml::Value::String(section.to_string());
     let section_value = mapping
         .entry(section_key)
         .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-    let section_mapping = section_value
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{section} in {} must be a YAML mapping", path.display()))?;
+    let section_mapping = section_value.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!(
+            "{section} in {} must be a YAML mapping",
+            path.display()
+        ))
+    })?;
     section_mapping.insert(
         serde_yaml::Value::String(key.to_string()),
         serde_yaml::Value::String(value.to_string()),
@@ -215,18 +251,18 @@ pub(crate) fn set_nested_in_file(
     write_config_document(path, &document)
 }
 
-fn append_to_list_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
+fn append_to_list_in_file(path: &Path, key: &str, value: &str) -> Result<(), Error> {
     let mut document = read_config_document(path)?;
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!("{} must contain a YAML mapping", path.display()))
+    })?;
     let list_key = serde_yaml::Value::String(key.to_string());
     let list_value = mapping
         .entry(list_key)
         .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
-    let sequence = list_value
-        .as_sequence_mut()
-        .ok_or_else(|| format!("{key} in {} must be a YAML list", path.display()))?;
+    let sequence = list_value.as_sequence_mut().ok_or_else(|| {
+        invalid_config_error(format!("{key} in {} must be a YAML list", path.display()))
+    })?;
     let entry = serde_yaml::Value::String(value.to_string());
     if !sequence.contains(&entry) {
         sequence.push(entry);
@@ -234,11 +270,11 @@ fn append_to_list_in_file(path: &Path, key: &str, value: &str) -> Result<(), Str
     write_config_document(path, &document)
 }
 
-fn set_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
+fn set_in_file(path: &Path, key: &str, value: &str) -> Result<(), Error> {
     let mut document = read_config_document(path)?;
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| format!("{} must contain a YAML mapping", path.display()))?;
+    let mapping = document.as_mapping_mut().ok_or_else(|| {
+        invalid_config_error(format!("{} must contain a YAML mapping", path.display()))
+    })?;
     mapping.insert(
         serde_yaml::Value::String(key.to_string()),
         serde_yaml::Value::String(value.to_string()),
@@ -246,25 +282,30 @@ fn set_in_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
     write_config_document(path, &document)
 }
 
-fn read_config_document(path: &Path) -> Result<serde_yaml::Value, String> {
+fn read_config_document(path: &Path) -> Result<serde_yaml::Value, Error> {
     match fs::read_to_string(path) {
-        Ok(content) => serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .map_err(|error| format!("{} is malformed: {error}", path.display())),
+        Ok(content) => serde_yaml::from_str::<serde_yaml::Value>(&content).map_err(|error| {
+            invalid_config_error(format!("{} is malformed: {error}", path.display()))
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
         }
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+        Err(error) => Err(Error::io(format!(
+            "cannot read {}: {error}",
+            path.display()
+        ))),
     }
 }
 
-fn write_config_document(path: &Path, document: &serde_yaml::Value) -> Result<(), String> {
+fn write_config_document(path: &Path, document: &serde_yaml::Value) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+            .map_err(|error| Error::io(format!("cannot create {}: {error}", parent.display())))?;
     }
     let content = serde_yaml::to_string(document)
-        .map_err(|error| format!("cannot serialize config: {error}"))?;
-    fs::write(path, content).map_err(|error| format!("cannot write {}: {error}", path.display()))
+        .map_err(|error| Error::config(format!("cannot serialize config: {error}")))?;
+    fs::write(path, content)
+        .map_err(|error| Error::io(format!("cannot write {}: {error}", path.display())))
 }
 
 fn format_source(source: Source) -> &'static str {
@@ -277,7 +318,106 @@ fn format_source(source: Source) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{remove_in_file, remove_nested_in_file, set_in_file, set_nested_in_file};
+    use super::{
+        append_to_list_in_file, get, read_config_document, remove_in_file, remove_nested_in_file,
+        set, set_in_file, set_nested_in_file, set_nested_in_file_structured, unset,
+    };
+
+    fn assert_unknown_key(error: &rune::error::Error) {
+        assert_eq!(error.kind(), rune::error::ErrorKind::Config);
+        assert_eq!(error.code(), "config.unknown_key");
+        assert_eq!(error.fix_command(), Some("rune config"));
+    }
+
+    fn assert_invalid_config(error: &rune::error::Error) {
+        assert_eq!(error.kind(), rune::error::ErrorKind::Config);
+        assert_eq!(error.code(), "config.invalid");
+        assert_eq!(error.fix_command(), Some("rune config path"));
+    }
+
+    #[test]
+    fn unknown_key_commands_have_stable_repairs() {
+        let first = get("not-a-key", false).expect_err("key must be unknown");
+        let second = get("not-a-key", false).expect_err("key must stay unknown");
+        assert_unknown_key(&first);
+        assert_unknown_key(&second);
+        assert_eq!(first.code(), second.code());
+        assert_eq!(first.message(), second.message());
+
+        let set_error = set("not-a-key", "value", false).expect_err("set must fail");
+        let unset_error = unset("not-a-key", false).expect_err("unset must fail");
+        assert_unknown_key(&set_error);
+        assert_unknown_key(&unset_error);
+    }
+
+    #[test]
+    fn malformed_config_has_a_repair_command() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("config.yaml");
+        std::fs::write(&path, "ontology: [\n").expect("fixture");
+
+        let error = set_in_file(&path, "deck", "/tmp/deck").expect_err("config must fail");
+
+        assert_invalid_config(&error);
+        assert!(
+            error
+                .message()
+                .starts_with(&format!("{} is malformed:", path.display()))
+        );
+    }
+
+    #[test]
+    fn invalid_config_shapes_have_a_repair_command() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root_path = directory.path().join("root.yaml");
+        std::fs::write(&root_path, "- item\n").expect("root fixture");
+        let root_error =
+            set_in_file(&root_path, "deck", "/tmp/deck").expect_err("root must be a mapping");
+        assert_invalid_config(&root_error);
+        assert_eq!(
+            root_error.message(),
+            format!("{} must contain a YAML mapping", root_path.display())
+        );
+
+        let nested_path = directory.path().join("nested.yaml");
+        std::fs::write(&nested_path, "ontology: []\n").expect("nested fixture");
+        let nested_error =
+            set_nested_in_file_structured(&nested_path, "ontology", "lore", "/tmp/lore")
+                .expect_err("ontology must be a mapping");
+        assert_invalid_config(&nested_error);
+        assert_eq!(
+            nested_error.message(),
+            format!(
+                "ontology in {} must be a YAML mapping",
+                nested_path.display()
+            )
+        );
+
+        let list_path = directory.path().join("list.yaml");
+        std::fs::write(&list_path, "bench: /tmp/bench\n").expect("list fixture");
+        let list_error = append_to_list_in_file(&list_path, "bench", "/tmp/other")
+            .expect_err("bench must be a list");
+        assert_invalid_config(&list_error);
+        assert_eq!(
+            list_error.message(),
+            format!("bench in {} must be a YAML list", list_path.display())
+        );
+    }
+
+    #[test]
+    fn config_read_error_has_no_repair_command() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let parent_file = directory.path().join("not-a-directory");
+        std::fs::write(&parent_file, "fixture").expect("parent fixture");
+        let path = parent_file.join("config.yaml");
+
+        let error = read_config_document(&path).expect_err("read must fail");
+
+        assert_eq!(error.kind(), rune::error::ErrorKind::Io);
+        assert_eq!(error.code(), "error.io");
+        assert_eq!(error.fix_command(), None);
+        assert!(error.message().starts_with("cannot read "));
+    }
 
     #[test]
     fn nested_setter_writes_under_ontology() {

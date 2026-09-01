@@ -54,7 +54,7 @@ pub(crate) mod watchlist;
 mod tests;
 
 use clap::{Parser, Subcommand};
-use rune::error::Error;
+use rune::error::{Error, ErrorKind};
 use rune::result::ActionResult;
 use std::{ffi::OsString, fmt::Write as _};
 
@@ -1160,13 +1160,21 @@ pub fn run() -> i32 {
         #[cfg(feature = "spec")]
         Command::Spec { action } => return run_spec(action, args.json),
         Command::Status { source } => {
-            return exit_code(status::execute(&source, args.no_color, args.json));
+            return exit_code(
+                status::execute(&source, args.no_color, args.json),
+                args.json,
+            );
         }
         Command::Doctor {
             target,
             verify,
             repair,
-        } => return exit_code(doctor::execute(&target, verify, repair, args.json)),
+        } => {
+            return exit_code(
+                doctor::execute(&target, verify, repair, args.json),
+                args.json,
+            );
+        }
         #[cfg(feature = "tui")]
         Command::Tui {
             source,
@@ -1214,21 +1222,24 @@ pub fn run() -> i32 {
                 (init::execute(&module), "initialized")
             } else {
                 let target = target.expect("clap requires a project target or --module");
-                return init::run_project(
-                    &target,
-                    init::TemplateSelection {
-                        names: &templates,
-                        language: lang,
-                        purpose,
-                    },
-                    skeleton.as_deref(),
-                    &brief,
-                    init::InitOptions {
-                        workshop,
-                        spine,
-                        dry_run,
-                        bind,
-                    },
+                return exit_code(
+                    init::run_project(
+                        &target,
+                        init::TemplateSelection {
+                            names: &templates,
+                            language: lang,
+                            purpose,
+                        },
+                        skeleton.as_deref(),
+                        &brief,
+                        init::InitOptions {
+                            workshop,
+                            spine,
+                            dry_run,
+                            bind,
+                        },
+                        args.json,
+                    ),
                     args.json,
                 );
             }
@@ -1239,33 +1250,41 @@ pub fn run() -> i32 {
             source,
             reference,
         } => {
-            return exit_code(add::execute(
-                rune.as_deref(),
-                cast.as_deref(),
-                source.as_deref(),
-                reference.as_deref(),
-            ));
+            return exit_code(
+                add::execute(
+                    rune.as_deref(),
+                    cast.as_deref(),
+                    source.as_deref(),
+                    reference.as_deref(),
+                ),
+                args.json,
+            );
         }
         Command::Provider { action } => {
-            return exit_code(provider_cmd::execute(action, args.json));
+            return exit_code(provider_cmd::execute(action, args.json), args.json);
         }
         Command::Todo { action, all } => {
-            return exit_code(todo::execute(action, all, args.json));
+            return exit_code(todo::execute(action, all, args.json), args.json);
         }
         #[cfg(feature = "adr")]
         Command::Adr { action } => {
-            return exit_code(adr::execute(action, args.json));
+            return exit_code(adr::execute(action, args.json), args.json);
         }
         Command::Bench { action } => {
-            return exit_code(bench::execute(&action, args.json));
+            return exit_code(bench::execute(&action, args.json), args.json);
         }
         #[cfg(feature = "docs")]
         Command::Docs { action } => {
-            return exit_code(docs::execute(&action, args.json));
+            return exit_code(docs::execute(&action, args.json), args.json);
         }
-        Command::Context => return exit_code(context::execute(args.json, args.no_color)),
+        Command::Context => {
+            return exit_code(context::execute(args.json, args.no_color), args.json);
+        }
         Command::Setup { defaults } => {
-            return exit_code(setup::execute(defaults, args.json, args.no_color));
+            return exit_code(
+                setup::execute(defaults, args.json, args.no_color),
+                args.json,
+            );
         }
         Command::Target {
             target,
@@ -1273,7 +1292,10 @@ pub fn run() -> i32 {
             unbind,
             list,
         } => {
-            return exit_code(target::execute(target.as_deref(), clone, unbind, list));
+            return exit_code(
+                target::execute(target.as_deref(), clone, unbind, list),
+                args.json,
+            );
         }
         Command::Install {
             source,
@@ -1294,10 +1316,18 @@ pub fn run() -> i32 {
                 let pending =
                     assemble::sources::pending_review_paths(std::path::Path::new(&source));
                 if !pending.is_empty() {
-                    print_fatal(&format!(
-                        "--strict: adoption review pending for {}",
-                        pending.join(", ")
-                    ));
+                    let source_root = resolved_path(std::path::Path::new(&source));
+                    let fix_command = format!(
+                        "rune adopt status --root {}",
+                        shell_quote(&source_root.to_string_lossy())
+                    );
+                    let error = Error::new(
+                        ErrorKind::Config,
+                        format!("adoption review is pending for {}", pending.join(", ")),
+                    )
+                    .with_code("install.review_pending")
+                    .with_fix_command(fix_command);
+                    print_error(&error, args.json);
                     return 1;
                 }
             }
@@ -1313,6 +1343,7 @@ pub fn run() -> i32 {
                     only.as_deref(),
                     model.as_deref(),
                     allow_stale,
+                    strict,
                 ),
                 "deployed",
             )
@@ -1353,22 +1384,23 @@ pub fn run() -> i32 {
             scan,
             force,
         } => {
-            return exit_code(validate::execute(&source, args.json, scan, force));
+            return exit_code(
+                validate::execute(&source, args.json, scan, force),
+                args.json,
+            );
         }
         Command::Graph { action } => {
-            return exit_code(graph::execute(&action));
+            return exit_code(graph::execute(&action), args.json);
         }
         Command::Provenance {
             target,
             source_uri,
             show_orphans,
         } => {
-            return exit_code(provenance::execute(
-                &target,
-                source_uri.as_deref(),
-                show_orphans,
+            return exit_code(
+                provenance::execute(&target, source_uri.as_deref(), show_orphans, args.json),
                 args.json,
-            ));
+            );
         }
         Command::Drift {
             source,
@@ -1377,14 +1409,17 @@ pub fn run() -> i32 {
             ignore,
             all,
         } => {
-            return exit_code(drift::execute(
-                &source,
-                upstream.as_deref(),
-                target.as_deref(),
-                &ignore,
-                all,
+            return exit_code(
+                drift::execute(
+                    &source,
+                    upstream.as_deref(),
+                    target.as_deref(),
+                    &ignore,
+                    all,
+                    args.json,
+                ),
                 args.json,
-            ));
+            );
         }
         Command::Clean { source, target } => {
             if rune::deck::is_deck(std::path::Path::new(&source)) {
@@ -1410,13 +1445,18 @@ pub fn run() -> i32 {
             )
         }
         Command::Config { action } => {
-            return exit_code(match action {
-                Some(ConfigAction::Set { key, value }) => ontology::set(&key, &value, args.json),
-                Some(ConfigAction::Get { key }) => ontology::get(&key, args.json),
-                Some(ConfigAction::Unset { key }) => ontology::unset(&key, args.json),
-                Some(ConfigAction::Path) => ontology::path(args.json),
-                None => ontology::show(args.json, args.no_color),
-            });
+            return exit_code(
+                match action {
+                    Some(ConfigAction::Set { key, value }) => {
+                        ontology::set(&key, &value, args.json)
+                    }
+                    Some(ConfigAction::Get { key }) => ontology::get(&key, args.json),
+                    Some(ConfigAction::Unset { key }) => ontology::unset(&key, args.json),
+                    Some(ConfigAction::Path) => ontology::path(args.json),
+                    None => ontology::show(args.json, args.no_color),
+                },
+                args.json,
+            );
         }
         Command::Import {
             url,
@@ -1438,15 +1478,18 @@ pub fn run() -> i32 {
                     dry_run,
                 )
                 .map(|adopted| adopted.exit),
+                args.json,
             );
         }
         Command::Adopt { action } => return run_adopt(action, args.json),
-        Command::Find { query, kind } => return exit_code(find::execute(&query, kind, args.json)),
+        Command::Find { query, kind } => {
+            return exit_code(find::execute(&query, kind, args.json), args.json);
+        }
         Command::Exec { skill, rest } => {
-            return exit_code(exec::execute_cli(&skill, args.json, &rest));
+            return exit_code(exec::execute_cli(&skill, args.json, &rest), args.json);
         }
         Command::Launch { tool, rest } => {
-            return exit_code(launch::execute_cli(&tool, &rest));
+            return exit_code(launch::execute_cli(&tool, &rest), args.json);
         }
         Command::Run {
             tool,
@@ -1461,23 +1504,28 @@ pub fn run() -> i32 {
             timeout,
             dry_run,
         } => {
-            return exit_code(run::execute(&run::RunOptions {
-                tool,
-                prompt,
-                prompt_file,
-                system_prompt_file,
-                binary,
-                model,
-                clean_harness_state,
-                repository: repo,
-                mode,
-                timeout,
-                dry_run,
-                json: args.json,
-            }));
+            return exit_code(
+                run::execute(&run::RunOptions {
+                    tool,
+                    prompt,
+                    prompt_file,
+                    system_prompt_file,
+                    binary,
+                    model,
+                    clean_harness_state,
+                    repository: repo,
+                    mode,
+                    timeout,
+                    dry_run,
+                    json: args.json,
+                }),
+                args.json,
+            );
         }
         #[cfg(feature = "dashboard")]
-        Command::Dashboard { root, port } => return exit_code(dashboard::execute(&root, port)),
+        Command::Dashboard { root, port } => {
+            return exit_code(dashboard::execute(&root, port), args.json);
+        }
         Command::Release {
             deck,
             source,
@@ -1485,7 +1533,7 @@ pub fn run() -> i32 {
             format,
         } => {
             if format.as_deref() == Some("cowork") {
-                return exit_code(cowork::package(&source, args.json));
+                return exit_code(cowork::package(&source, args.json), args.json);
             }
             (
                 release::execute_source(&source, deck.as_deref(), embed),
@@ -1498,63 +1546,83 @@ pub fn run() -> i32 {
             commit,
             verify,
         } => {
-            return exit_code(sign::execute(
-                amend,
-                tag.as_deref(),
-                commit.as_deref(),
-                verify.as_deref(),
-            ));
+            return exit_code(
+                sign::execute(amend, tag.as_deref(), commit.as_deref(), verify.as_deref()),
+                args.json,
+            );
         }
         Command::Watch { action } => return run_watch(action, args.json),
         Command::Review { action } => {
-            return exit_code(match action {
-                ReviewAction::List { target } => review::list(target.as_deref()),
-                ReviewAction::Export { target, format } => {
-                    review::export(target.as_deref(), format)
-                }
-            });
+            return exit_code(
+                match action {
+                    ReviewAction::List { target } => review::list(target.as_deref()),
+                    ReviewAction::Export { target, format } => {
+                        review::export(target.as_deref(), format)
+                    }
+                },
+                args.json,
+            );
         }
         Command::Skill { action } => {
             return match action {
-                None => exit_code(add::list_kind(
-                    rune::provider::ContentKind::Skills,
-                    None,
-                    args.no_color,
-                )),
+                None => exit_code(
+                    add::list_kind(rune::provider::ContentKind::Skills, None, args.no_color),
+                    args.json,
+                ),
                 Some(SkillAction::Add {
                     name,
                     source,
                     reference,
-                }) => exit_code(add::execute_kind(
-                    rune::provider::ContentKind::Skills,
-                    &name,
-                    source.as_deref(),
-                    reference.as_deref(),
-                )),
+                }) => exit_code(
+                    add::execute_kind(
+                        rune::provider::ContentKind::Skills,
+                        &name,
+                        source.as_deref(),
+                        reference.as_deref(),
+                    ),
+                    args.json,
+                ),
                 Some(SkillAction::Install { dir }) => {
-                    exit_code(skill::install(dir.as_deref(), args.json))
+                    exit_code(skill::install(dir.as_deref(), args.json), args.json)
                 }
                 Some(SkillAction::Show) => skill::show(),
             };
         }
         Command::Agent { action } => {
-            return run_kind_add(rune::provider::ContentKind::Agents, action, args.no_color);
+            return run_kind_add(
+                rune::provider::ContentKind::Agents,
+                action,
+                args.no_color,
+                args.json,
+            );
         }
         Command::Rule { action } => {
-            return run_kind_add(rune::provider::ContentKind::Rules, action, args.no_color);
+            return run_kind_add(
+                rune::provider::ContentKind::Rules,
+                action,
+                args.no_color,
+                args.json,
+            );
         }
         Command::Hook { action } => {
-            return run_kind_add(rune::provider::ContentKind::Hooks, action, args.no_color);
+            return run_kind_add(
+                rune::provider::ContentKind::Hooks,
+                action,
+                args.no_color,
+                args.json,
+            );
         }
         Command::Completion { action } => {
             return match action {
                 CompletionAction::Install { shell } => {
-                    exit_code(completion::install(shell, args.json))
+                    exit_code(completion::install(shell, args.json), args.json)
                 }
                 CompletionAction::Print { shell } => completion::print(shell),
             };
         }
-        Command::External(external_args) => return exit_code(dispatch::external(&external_args)),
+        Command::External(external_args) => {
+            return exit_code(dispatch::external(&external_args), args.json);
+        }
     };
 
     report(result, args.json, verb, verbose_files)
@@ -1917,22 +1985,99 @@ fn help_command(help: &mut String, name: &str, argument_hint: &str, description:
         .expect("writing root help to a string cannot fail");
 }
 
-/// Collapse a subcommand's `Result<exit_code, _>` into a process exit code,
-/// printing a `fatal:` line on `Err`.
-fn exit_code<E: std::fmt::Display>(result: Result<i32, E>) -> i32 {
+trait CliFailure: std::fmt::Display {
+    fn code(&self) -> &'static str;
+
+    fn message(&self) -> &str;
+
+    fn fix_command(&self) -> Option<&str>;
+}
+
+impl CliFailure for Error {
+    fn code(&self) -> &'static str {
+        self.code()
+    }
+
+    fn message(&self) -> &str {
+        self.message()
+    }
+
+    fn fix_command(&self) -> Option<&str> {
+        self.fix_command()
+    }
+}
+
+impl CliFailure for String {
+    fn code(&self) -> &'static str {
+        "error.cli"
+    }
+
+    fn message(&self) -> &str {
+        self
+    }
+
+    fn fix_command(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// Convert one subcommand result into a process exit code.
+fn exit_code<E: CliFailure>(result: Result<i32, E>, json: bool) -> i32 {
     match result {
         Ok(code) => code,
         Err(error) => {
-            print_fatal(&error);
+            print_error(&error, json);
             2
         }
     }
 }
 
-/// One fatal line, red where stderr is a terminal, plain otherwise.
-pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
+/// Print one structured error at the CLI boundary.
+fn print_error<E: CliFailure>(error: &E, json: bool) {
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "code": error.code(),
+                "message": error.message(),
+                "fix_command": error.fix_command(),
+            })
+        );
+        return;
+    }
+
+    print_human_error(error, error.fix_command());
+}
+
+fn print_human_error<E: std::fmt::Display>(error: &E, fix_command: Option<&str>) {
     let sheet = style::Sheet::detect_stderr(false);
     eprintln!("{} {error}", sheet.red("fatal:"));
+    if let Some(fix_command) = fix_command {
+        eprintln!("{} {fix_command}", sheet.cyan("fix:"));
+    }
+}
+
+pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
+    print_human_error(error, None);
+}
+
+pub(crate) fn resolved_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.canonicalize()
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "-_./:=@".contains(character))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Dispatch a `rune adopt` subcommand to the review state machine.
@@ -2016,7 +2161,7 @@ fn run_adopt(action: AdoptAction, json: bool) -> i32 {
             }
         }
     };
-    exit_code(result)
+    exit_code(result, json)
 }
 
 /// Dispatch a `rune spec` subcommand to its lifecycle handler.
@@ -2040,7 +2185,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
             SpecAction::Export { .. } | SpecAction::Import { .. } => unreachable!(),
         };
         if let Err(error) = spec::offer_root_choice(&source, json) {
-            return exit_code(Err::<i32, Error>(error));
+            return exit_code(Err::<i32, Error>(error), json);
         }
     }
     let result = match action {
@@ -2086,7 +2231,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         } => spec::archive(&source, &change_id, yes, abandon, json),
         SpecAction::Context { change_id, source } => spec::context(&source, &change_id, json),
     };
-    exit_code(result)
+    exit_code(result, json)
 }
 
 /// Dispatch a kind namespace: bare lists the kind, `add` stages by name.
@@ -2094,6 +2239,7 @@ fn run_kind_add(
     kind: rune::provider::ContentKind,
     action: Option<KindAction>,
     no_color: bool,
+    json: bool,
 ) -> i32 {
     let Some(KindAction::Add {
         name,
@@ -2101,14 +2247,12 @@ fn run_kind_add(
         reference,
     }) = action
     else {
-        return exit_code(add::list_kind(kind, None, no_color));
+        return exit_code(add::list_kind(kind, None, no_color), json);
     };
-    exit_code(add::execute_kind(
-        kind,
-        &name,
-        source.as_deref(),
-        reference.as_deref(),
-    ))
+    exit_code(
+        add::execute_kind(kind, &name, source.as_deref(), reference.as_deref()),
+        json,
+    )
 }
 
 /// Dispatch a `rune watch` subcommand to its handler.
@@ -2119,7 +2263,7 @@ fn run_watch(action: WatchAction, json: bool) -> i32 {
         WatchAction::Git { url, reference } => watchlist::add_git(&url, &reference, json),
         WatchAction::Remove { path } => watchlist::remove(&path, json),
     };
-    exit_code(result)
+    exit_code(result, json)
 }
 
 /// Print a structured `ActionResult` and return the corresponding exit code.
@@ -2130,7 +2274,7 @@ fn report(result: Result<ActionResult, Error>, json: bool, verb: &str, verbose: 
             i32::from(action_result.has_errors())
         }
         Err(error) => {
-            print_fatal(&error);
+            print_error(&error, json);
             2
         }
     }

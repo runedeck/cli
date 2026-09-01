@@ -12,6 +12,8 @@ const PROVIDERS: &[(&str, &str)] = &[
     ("opencode", ".opencode"),
 ];
 const MANAGED_DIRECTORIES: &[&str] = &["agents", "skills", "rules", "hooks"];
+const MANIFEST_MISSING_CODE: &str = "doctor.manifest_missing";
+const MANIFEST_CORRUPT_CODE: &str = "doctor.manifest_corrupt";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -82,7 +84,7 @@ fn inspect_and_repair(
     source_root: &Path,
     repair: bool,
 ) -> Result<DoctorReport, Error> {
-    let targets = discover_targets(target)?;
+    let targets = discover_targets(target, source_root)?;
     let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%MZ").to_string();
     let mut reports = Vec::with_capacity(targets.len());
     let mut repairs = Vec::new();
@@ -133,7 +135,7 @@ fn exit_status(report: &DoctorReport, verify: bool, repair: bool) -> i32 {
     i32::from(broken && (verify || repair))
 }
 
-fn discover_targets(target: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
+fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
     if target.join(".manifest").is_file() {
         let provider = provider_for_target(target).ok_or_else(|| {
             Error::new(
@@ -172,15 +174,60 @@ fn discover_targets(target: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
         .collect::<Vec<_>>();
     targets.extend(nested);
     if targets.is_empty() {
-        return Err(Error::new(
-            ErrorKind::Io,
+        let error = Error::io(
             format!(
                 "no rune deployment manifest found under {}; expected .manifest in a provider directory",
                 target.display()
             ),
-        ));
+        )
+        .with_code(MANIFEST_MISSING_CODE);
+        let provider = provider_for_target(target);
+        let Some(fix_command) = install_fix_command(source_root, target, provider) else {
+            return Err(error);
+        };
+        return Err(error.with_fix_command(fix_command));
     }
     Ok(targets)
+}
+
+fn install_fix_command(
+    source_root: &Path,
+    target: &Path,
+    provider: Option<&str>,
+) -> Option<String> {
+    if !target_is_empty(target)
+        || (!source_root.join("module.yaml").is_file() && !source_root.join(".rune").is_file())
+    {
+        return None;
+    }
+
+    let source = crate::cli::resolved_path(source_root);
+    let target_base = if provider_for_target(target).is_some() {
+        target.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        target
+    };
+    let target_base = crate::cli::resolved_path(target_base);
+    let mut arguments = vec![
+        "rune".to_string(),
+        "install".to_string(),
+        "--source".to_string(),
+        crate::cli::shell_quote(&source.to_string_lossy()),
+        "--target".to_string(),
+        crate::cli::shell_quote(&target_base.to_string_lossy()),
+    ];
+    if let Some(provider) = provider {
+        arguments.push("--provider".to_string());
+        arguments.push(crate::cli::shell_quote(provider));
+    }
+    Some(arguments.join(" "))
+}
+
+fn target_is_empty(target: &Path) -> bool {
+    match fs::read_dir(target) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Skills-directory plugin roots (`<target>/skills/<plugin>/.manifest`) are
@@ -218,6 +265,7 @@ fn load_manifest(target: &Path) -> Result<HashMap<String, manifest::ManifestEntr
             ErrorKind::Config,
             format!("corrupt .manifest at {}: {error}", path.display()),
         )
+        .with_code(MANIFEST_CORRUPT_CODE)
     })?;
     for key in entries.keys() {
         validate_managed_relative(key)?;
@@ -578,7 +626,7 @@ fn print_human(report: &DoctorReport, repaired: bool) {
                 IntegrityStatus::Modified => println!(
                     "{} {}",
                     sheet.warn(&format!("modified {}", finding.path)),
-                    sheet.dim("(left untouched; `rune install --force` replaces it)")
+                    sheet.dim("(Rune left this file unchanged.)")
                 ),
                 IntegrityStatus::Missing => {
                     println!("{}", sheet.fail(&format!("missing  {}", finding.path)));
@@ -768,6 +816,97 @@ mod tests {
         assert_eq!(exit_status(&broken, false, false), 0);
         assert_eq!(exit_status(&broken, true, false), 1);
         assert_eq!(exit_status(&broken, false, true), 1);
+    }
+
+    #[test]
+    fn missing_manifest_for_target_base_has_resolved_fix_command() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(source.join("module.yaml"), "name: test\n").unwrap();
+
+        let error = discover_targets(&target, &source).unwrap_err();
+
+        let expected = format!(
+            "rune install --source {} --target {}",
+            crate::cli::shell_quote(&source.canonicalize().unwrap().to_string_lossy()),
+            crate::cli::shell_quote(&target.canonicalize().unwrap().to_string_lossy())
+        );
+        assert_eq!(error.code(), MANIFEST_MISSING_CODE);
+        assert_eq!(error.fix_command(), Some(expected.as_str()));
+        assert!(!expected.contains('<'));
+        assert!(!expected.contains('>'));
+    }
+
+    #[test]
+    fn missing_manifest_for_provider_directory_has_provider_fix_command() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target_base = root.path().join("target");
+        let provider_target = target_base.join(".codex");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&provider_target).unwrap();
+        fs::write(source.join(".rune"), "sources: {}\n").unwrap();
+
+        let error = discover_targets(&provider_target, &source).unwrap_err();
+
+        let expected = format!(
+            "rune install --source {} --target {} --provider codex",
+            crate::cli::shell_quote(&source.canonicalize().unwrap().to_string_lossy()),
+            crate::cli::shell_quote(&target_base.canonicalize().unwrap().to_string_lossy())
+        );
+        assert_eq!(error.code(), MANIFEST_MISSING_CODE);
+        assert_eq!(error.fix_command(), Some(expected.as_str()));
+        assert!(!expected.contains('<'));
+        assert!(!expected.contains('>'));
+    }
+
+    #[test]
+    fn missing_manifest_without_valid_source_has_no_fix_command() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+
+        let error = discover_targets(&target, &source).unwrap_err();
+
+        assert_eq!(error.code(), MANIFEST_MISSING_CODE);
+        assert_eq!(error.fix_command(), None);
+    }
+
+    #[test]
+    fn missing_manifest_in_nonempty_target_has_no_fix_command() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(source.join("module.yaml"), "name: test\n").unwrap();
+        fs::write(target.join("user-file.md"), "user content\n").unwrap();
+
+        let error = discover_targets(&target, &source).unwrap_err();
+
+        assert_eq!(error.code(), MANIFEST_MISSING_CODE);
+        assert_eq!(error.fix_command(), None);
+    }
+
+    #[test]
+    fn corrupt_manifest_has_a_stable_code_and_no_fix_command() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let provider_target = root.path().join("target/.codex");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&provider_target).unwrap();
+        fs::write(source.join("module.yaml"), "name: test\n").unwrap();
+        fs::write(provider_target.join(".manifest"), "invalid: [").unwrap();
+
+        let error = inspect_and_repair(&provider_target, &source, false).unwrap_err();
+
+        assert_eq!(error.code(), MANIFEST_CORRUPT_CODE);
+        assert_eq!(error.fix_command(), None);
     }
 
     #[test]

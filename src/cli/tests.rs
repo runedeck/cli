@@ -127,3 +127,11 @@ fn sign_commit_argument_requires_a_tag() {
 
     assert!(error.to_string().contains("--tag"));
 }
+
+#[test]
+fn shell_quote_escapes_spaces_and_apostrophes() {
+    assert_eq!(
+        super::shell_quote("/tmp/Rune's deck"),
+        "'/tmp/Rune'\\''s deck'"
+    );
+}

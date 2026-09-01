@@ -80,14 +80,16 @@ fn set_enabled_at(root: &Path, name: &str, enabled: bool, json: bool) -> Result<
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "unknown provider '{name}'; known: {}",
+                "Rune does not recognize provider '{name}'. Known providers: {}.",
                 known
                     .iter()
                     .map(|name| name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-        ));
+        )
+        .with_code("provider.unknown")
+        .with_fix_command("rune provider"));
     }
 
     let config_path = root.join("config.yaml");

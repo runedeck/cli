@@ -32,8 +32,22 @@ pub fn execute(
     only: Option<&str>,
     model: Option<&str>,
     allow_stale: bool,
+    strict: bool,
 ) -> Result<ActionResult, Error> {
-    let warnings = warn_or_block_stale_source(Path::new(path), allow_stale)?;
+    let retry_command = install_command(
+        path,
+        target,
+        requested_providers,
+        force,
+        prune,
+        interactive,
+        dry_run,
+        only,
+        model,
+        true,
+        strict,
+    );
+    let warnings = warn_or_block_stale_source(Path::new(path), allow_stale, &retry_command)?;
     assemble::execute_with_options(path, requested_providers, model)?;
     let mut result = deploy::execute(
         path,
@@ -49,7 +63,11 @@ pub fn execute(
     Ok(result)
 }
 
-fn warn_or_block_stale_source(module_root: &Path, allow_stale: bool) -> Result<Vec<String>, Error> {
+fn warn_or_block_stale_source(
+    module_root: &Path,
+    allow_stale: bool,
+    fix_command: &str,
+) -> Result<Vec<String>, Error> {
     let module_label = module_label(module_root);
     let stale = match detect_stale_source(module_root) {
         Ok(Some(stale)) => stale,
@@ -76,8 +94,78 @@ fn warn_or_block_stale_source(module_root: &Path, allow_stale: bool) -> Result<V
 
     Err(Error::new(
         ErrorKind::Config,
-        format!("{warning}. Refusing to install; pass --allow-stale to continue."),
-    ))
+        format!("{warning}. Rune requires --allow-stale to continue."),
+    )
+    .with_code("install.source_stale")
+    .with_fix_command(fix_command))
+}
+
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
+fn install_command(
+    path: &str,
+    target: Option<&str>,
+    requested_providers: &[String],
+    force: bool,
+    prune: bool,
+    interactive: bool,
+    dry_run: bool,
+    only: Option<&str>,
+    model: Option<&str>,
+    allow_stale: bool,
+    strict: bool,
+) -> String {
+    let source = crate::cli::resolved_path(Path::new(path));
+    let mut arguments = vec![
+        "rune".to_string(),
+        "install".to_string(),
+        "--source".to_string(),
+        crate::cli::shell_quote(&source.to_string_lossy()),
+    ];
+    if let Some(target) = target {
+        let target = crate::cli::resolved_path(Path::new(target));
+        arguments.push("--target".to_string());
+        arguments.push(crate::cli::shell_quote(&target.to_string_lossy()));
+    }
+    for provider in requested_providers {
+        arguments.push("--provider".to_string());
+        arguments.push(crate::cli::shell_quote(provider));
+    }
+    if force {
+        arguments.push("--force".to_string());
+    }
+    if !prune {
+        arguments.push("--no-prune".to_string());
+    }
+    if interactive {
+        arguments.push("--interactive".to_string());
+    }
+    if dry_run {
+        arguments.push("--dry-run".to_string());
+    }
+    if let Some(only) = only {
+        arguments.push("--only".to_string());
+        arguments.push(crate::cli::shell_quote(only));
+    }
+    if let Some(model) = model {
+        arguments.push("--model".to_string());
+        arguments.push(crate::cli::shell_quote(model));
+    }
+    if allow_stale {
+        arguments.push("--allow-stale".to_string());
+    }
+    if strict {
+        arguments.push("--strict".to_string());
+    }
+    let command = arguments.join(" ");
+    if target.is_some() {
+        return command;
+    }
+
+    let current_directory = crate::cli::resolved_path(Path::new("."));
+    format!(
+        "cd {} && {command}",
+        crate::cli::shell_quote(&current_directory.to_string_lossy())
+    )
 }
 
 fn module_label(module_root: &Path) -> String {

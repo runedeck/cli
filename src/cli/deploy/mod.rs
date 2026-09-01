@@ -47,7 +47,17 @@ pub fn execute(
     if requested_providers.is_empty() {
         providers.retain(|_, provider| provider.enabled);
     } else {
-        providers = filter_requested_providers(&providers, requested_providers)?;
+        providers =
+            filter_requested_providers(&providers, requested_providers).map_err(|error| {
+                let source = crate::cli::resolved_path(module_root);
+                let fix_command = format!(
+                    "cd {} && rune provider",
+                    crate::cli::shell_quote(&source.to_string_lossy())
+                );
+                error
+                    .with_code("provider.unknown")
+                    .with_fix_command(fix_command)
+            })?;
     }
 
     let module_source_uri = config::load_source_uri(module_root);
@@ -1066,24 +1076,21 @@ fn load_manifest_or_recover(
 ) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
     match load_deployed_manifest(target_base) {
         Ok(entries) => Ok(entries),
+        Err(error) if error.kind() == ErrorKind::Io => Err(error),
         Err(error) if only.is_some() => Err(Error::new(
             ErrorKind::Config,
-            format!(
-                "refusing filtered deploy over a corrupt manifest ({error}); \
-                 run a full install with --force to rebuild it"
-            ),
-        )),
+            format!("a filtered deploy cannot rebuild the corrupt manifest: {error}"),
+        )
+        .with_code("install.manifest_corrupt")),
         Err(error) if force => {
             eprintln!("warning: {error}; rebuilding manifest from this deploy");
             Ok(HashMap::new())
         }
         Err(error) => Err(Error::new(
             ErrorKind::Config,
-            format!(
-                "refusing deploy over a corrupt manifest ({error}); \
-                 rerun the full install with --force to rebuild it"
-            ),
-        )),
+            format!("the deploy cannot use the corrupt manifest: {error}"),
+        )
+        .with_code("install.manifest_corrupt")),
     }
 }
 
