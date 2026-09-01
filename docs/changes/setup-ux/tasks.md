@@ -9,10 +9,10 @@
 
 ## 2. Provider insight
 
-- [ ] 2.1 Build the bundled detection registry beside the embedded provider defaults
-- [ ] 2.2 Add `rune provider status` with the six lifecycle states
-- [ ] 2.3 Add `rune provider explain` with evidence, state, and fix command
-- [ ] 2.4 Move setup, context, status, doctor, and drift to the shared registry
+- [x] 2.1 Build the bundled detection registry beside the embedded provider defaults
+- [x] 2.2 Add `rune provider status` with the six lifecycle states
+- [x] 2.3 Add `rune provider explain` with evidence, state, and fix command
+- [x] 2.4 Move setup, context, status, doctor, and drift to the shared registry
 - [ ] 2.5 Add the config-reference drift check to CI
 
 ## 3. Safe mutation and onboarding

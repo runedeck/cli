@@ -1,0 +1,27 @@
+version: 1
+
+providers:
+    agentskills:
+        config_directories:
+            - .agents
+
+    claude:
+        executable: claude
+        config_directories:
+            - .claude
+
+    codex:
+        executable: codex
+        config_directories:
+            - .codex
+
+    gemini:
+        executable: gemini
+        config_directories:
+            - .gemini
+
+    opencode:
+        executable: opencode
+        config_directories:
+            - .config/opencode
+            - .opencode

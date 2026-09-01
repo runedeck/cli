@@ -77,7 +77,7 @@ pub fn execute(source: &str, no_color: bool, json: bool) -> Result<i32, Error> {
 }
 
 fn collect(root: &Path) -> Result<StatusDashboard, Error> {
-    let provider_targets = provider_targets(root);
+    let provider_targets = provider_targets(root)?;
     let watched_locations = super::watchlist::watched_locations();
     let view = match services::build_view(root, &provider_targets, &watched_locations) {
         Ok(view) => Some(view),
@@ -188,19 +188,8 @@ fn collect_changes(root: &Path) -> Result<Vec<ChangeStatus>, Error> {
     Ok(changes)
 }
 
-fn provider_targets(root: &Path) -> Vec<(String, String)> {
-    let merged = super::config::load_merged_config(root).unwrap_or_default();
-    let mut targets = super::config::load_providers(&merged).map_or_else(
-        |_| Vec::new(),
-        |providers| {
-            providers
-                .into_iter()
-                .map(|(name, provider)| (name, provider.default_target().to_string()))
-                .collect::<Vec<_>>()
-        },
-    );
-    targets.sort_by(|left, right| left.0.cmp(&right.0));
-    targets
+fn provider_targets(root: &Path) -> Result<Vec<(String, String)>, Error> {
+    super::config::registered_provider_targets(root)
 }
 
 fn empty_rune_counts() -> BTreeMap<String, usize> {

@@ -21,6 +21,20 @@ const EMBEDDED_REMAP_TOOLS: &str = include_str!(concat!(
 const EMBEDDED_MODELS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/models.yaml"));
 
+#[derive(Debug, Clone)]
+pub(crate) struct RegisteredProvider {
+    pub(crate) name: String,
+    pub(crate) config: provider::ProviderConfig,
+    pub(crate) detection: provider::detection::DetectionRule,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RegisteredProviderTarget {
+    pub(crate) provider: String,
+    pub(crate) target: String,
+    pub(crate) enabled: bool,
+}
+
 /// Advisory per-target lock held while a process mutates a deploy target
 /// (deploy, prune, doctor --repair). A second rune process fails fast
 /// instead of interleaving manifest and tree writes. The lock file records
@@ -138,16 +152,30 @@ pub fn load_merged_config(module_root: &Path) -> Result<String, Error> {
     // defaults.yaml is optional; if missing, we fall back to embedded defaults
     // to allow modules without local configuration to install.
     let defaults_content = if defaults_path.is_file() {
-        read_file(&defaults_path)?
+        read_file(&defaults_path).map_err(|error| {
+            Error::new(error.kind(), error.message())
+                .with_code("config.defaults_unreadable")
+                .with_fix_command("rune config check --scope source")
+        })?
     } else {
         String::new()
     };
 
     let config_path = module_root.join("config.yaml");
     if config_path.is_file() {
-        let config_content = read_file(&config_path)?;
-        yaml::deep_merge(&defaults_content, &config_content)
-            .map_err(|e| Error::new(ErrorKind::Config, format!("config merge failed: {e}")))
+        let config_content = read_file(&config_path).map_err(|error| {
+            Error::new(error.kind(), error.message())
+                .with_code("config.override_unreadable")
+                .with_fix_command("rune config check --scope source")
+        })?;
+        yaml::deep_merge(&defaults_content, &config_content).map_err(|error| {
+            Error::new(
+                ErrorKind::Config,
+                format!("Rune cannot merge the source configuration: {error}"),
+            )
+            .with_code("config.merge_invalid")
+            .with_fix_command("rune config check --scope source")
+        })
     } else {
         Ok(defaults_content)
     }
@@ -200,6 +228,107 @@ pub fn load_providers(config: &str) -> Result<HashMap<String, provider::Provider
             Ok(embedded_providers)
         }
     }
+}
+
+/// Load only providers that have trusted, bundled detection rules.
+pub(crate) fn load_registered_providers(root: &Path) -> Result<Vec<RegisteredProvider>, Error> {
+    let merged = load_merged_config(root)?;
+    let mut configured = load_providers(&merged)?;
+    let registry = provider::detection::bundled_registry().map_err(|error| {
+        Error::new(
+            ErrorKind::Config,
+            format!("Rune cannot load the bundled provider registry: {error}"),
+        )
+        .with_code("provider.registry_invalid")
+        .with_fix_command("rune --version")
+    })?;
+
+    registry
+        .into_iter()
+        .map(|(name, detection)| {
+            let config = configured.remove(&name).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Config,
+                    format!("The bundled provider registry has no configuration for '{name}'."),
+                )
+                .with_code("provider.registry_mismatch")
+                .with_fix_command("rune --version")
+            })?;
+            Ok(RegisteredProvider {
+                name,
+                config,
+                detection,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn detect_registered_providers(
+    source_root: &Path,
+    target_base: &Path,
+) -> Result<Vec<provider::detection::ProviderDetection>, Error> {
+    let search_path = std::env::var_os("PATH");
+    // Provider trees resolve under the target base, but opencode's wiring
+    // lives under the home directory wherever the trees are.
+    let home = dirs::home_dir().ok_or_else(|| {
+        Error::new(ErrorKind::Config, "cannot resolve home directory")
+            .with_code("provider.home_unavailable")
+            .with_fix_command("printenv HOME")
+    })?;
+    load_registered_providers(source_root).map(|providers| {
+        providers
+            .into_iter()
+            .map(|registered| {
+                provider::detection::detect_provider(
+                    &registered.name,
+                    &registered.detection,
+                    &registered.config,
+                    source_root,
+                    target_base,
+                    &home,
+                    search_path.as_deref(),
+                )
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn registered_provider_targets(root: &Path) -> Result<Vec<(String, String)>, Error> {
+    registered_provider_target_records(root).map(|targets| {
+        targets
+            .into_iter()
+            .map(|target| (target.provider, target.target))
+            .collect()
+    })
+}
+
+pub(crate) fn registered_provider_target_records(
+    root: &Path,
+) -> Result<Vec<RegisteredProviderTarget>, Error> {
+    let mut targets = load_registered_providers(root)?
+        .into_iter()
+        .flat_map(|provider| {
+            let name = provider.name;
+            let enabled = provider.config.enabled;
+            provider
+                .config
+                .target_roots()
+                .into_iter()
+                .map(|target| RegisteredProviderTarget {
+                    provider: name.clone(),
+                    target: target.to_string(),
+                    enabled,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    targets.sort_by(|left, right| {
+        left.provider
+            .cmp(&right.provider)
+            .then_with(|| left.target.cmp(&right.target))
+    });
+    targets.dedup();
+    Ok(targets)
 }
 
 /// Load the allowlist of settings filenames the dashboard surfaces per harness,

@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod detection;
+
 // --- Content Kind ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -5,12 +5,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const PROVIDERS: &[(&str, &str)] = &[
-    ("claude", ".claude"),
-    ("codex", ".codex"),
-    ("gemini", ".gemini"),
-    ("opencode", ".opencode"),
-];
 const MANAGED_DIRECTORIES: &[&str] = &["agents", "skills", "rules", "hooks"];
 const MANIFEST_MISSING_CODE: &str = "doctor.manifest_missing";
 const MANIFEST_CORRUPT_CODE: &str = "doctor.manifest_corrupt";
@@ -91,7 +85,7 @@ fn inspect_and_repair(
 
     for (provider, provider_target) in targets {
         let manifest = load_manifest(&provider_target)?;
-        let initial = inspect_target(&provider_target, &manifest)?;
+        let initial = inspect_target(&provider, &provider_target, &manifest)?;
         if repair {
             repair_findings(
                 &provider,
@@ -104,7 +98,7 @@ fn inspect_and_repair(
             )?;
         }
         let findings = if repair {
-            inspect_target(&provider_target, &manifest)?
+            inspect_target(&provider, &provider_target, &manifest)?
         } else {
             initial
         };
@@ -136,34 +130,43 @@ fn exit_status(report: &DoctorReport, verify: bool, repair: bool) -> i32 {
 }
 
 fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
-    if target.join(".manifest").is_file() {
-        let provider = provider_for_target(target).ok_or_else(|| {
+    let provider_targets = crate::cli::config::registered_provider_target_records(source_root)?;
+    if has_regular_manifest(target) {
+        let provider = provider_for_target(target, &provider_targets)?.ok_or_else(|| {
             Error::new(
                 ErrorKind::Config,
                 format!(
                     "cannot infer provider for {}; expected one of {}",
                     target.display(),
-                    PROVIDERS
+                    provider_targets
                         .iter()
-                        .map(|(_, directory)| *directory)
+                        .map(|provider| provider.target.as_str())
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
             )
+            .with_code("doctor.provider_unknown")
+            .with_fix_command("rune provider status")
         })?;
-        return Ok(vec![(provider.to_string(), target.to_path_buf())]);
+        return Ok(vec![(provider.provider, target.to_path_buf())]);
     }
 
-    let mut targets = PROVIDERS
-        .iter()
-        .filter_map(|(provider, directory)| {
-            let provider_target = target.join(directory);
-            provider_target
-                .join(".manifest")
-                .is_file()
-                .then(|| ((*provider).to_string(), provider_target))
-        })
-        .collect::<Vec<_>>();
+    let mut discovered =
+        BTreeMap::<PathBuf, Vec<crate::cli::config::RegisteredProviderTarget>>::new();
+    for provider in &provider_targets {
+        let provider_target = target.join(&provider.target);
+        if has_regular_manifest(&provider_target) {
+            discovered
+                .entry(provider_target)
+                .or_default()
+                .push(provider.clone());
+        }
+    }
+    let mut targets = Vec::new();
+    for (provider_target, providers) in discovered {
+        let provider = preferred_provider(&provider_target, &providers)?;
+        targets.push((provider.provider, provider_target));
+    }
     let nested = targets
         .iter()
         .flat_map(|(provider, provider_target)| {
@@ -173,6 +176,8 @@ fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, Pa
         })
         .collect::<Vec<_>>();
     targets.extend(nested);
+    targets.sort_by(|left, right| left.1.cmp(&right.1));
+    targets.dedup_by(|left, right| left.1 == right.1);
     if targets.is_empty() {
         let error = Error::io(
             format!(
@@ -181,8 +186,8 @@ fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, Pa
             ),
         )
         .with_code(MANIFEST_MISSING_CODE);
-        let provider = provider_for_target(target);
-        let Some(fix_command) = install_fix_command(source_root, target, provider) else {
+        let provider = provider_for_target(target, &provider_targets)?;
+        let Some(fix_command) = install_fix_command(source_root, target, provider.as_ref()) else {
             return Err(error);
         };
         return Err(error.with_fix_command(fix_command));
@@ -193,7 +198,7 @@ fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, Pa
 fn install_fix_command(
     source_root: &Path,
     target: &Path,
-    provider: Option<&str>,
+    provider: Option<&crate::cli::config::RegisteredProviderTarget>,
 ) -> Option<String> {
     if !target_is_empty(target)
         || (!source_root.join("module.yaml").is_file() && !source_root.join(".rune").is_file())
@@ -202,12 +207,11 @@ fn install_fix_command(
     }
 
     let source = crate::cli::resolved_path(source_root);
-    let target_base = if provider_for_target(target).is_some() {
-        target.parent().unwrap_or_else(|| Path::new("."))
-    } else {
-        target
-    };
-    let target_base = crate::cli::resolved_path(target_base);
+    let target_base = provider.map_or_else(
+        || target.to_path_buf(),
+        |provider| strip_target_suffix(target, &provider.target),
+    );
+    let target_base = crate::cli::resolved_path(&target_base);
     let mut arguments = vec![
         "rune".to_string(),
         "install".to_string(),
@@ -218,9 +222,26 @@ fn install_fix_command(
     ];
     if let Some(provider) = provider {
         arguments.push("--provider".to_string());
-        arguments.push(crate::cli::shell_quote(provider));
+        arguments.push(crate::cli::shell_quote(&provider.provider));
     }
     Some(arguments.join(" "))
+}
+
+fn strip_target_suffix(target: &Path, configured_target: &str) -> PathBuf {
+    let suffix = Path::new(configured_target);
+    if suffix.is_absolute() || !target.ends_with(suffix) {
+        return target
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+    }
+    let mut base = target.to_path_buf();
+    for _ in suffix.components() {
+        if !base.pop() {
+            return PathBuf::from(".");
+        }
+    }
+    base
 }
 
 fn target_is_empty(target: &Path) -> bool {
@@ -239,17 +260,67 @@ fn nested_managed_roots(provider_target: &Path) -> Vec<PathBuf> {
     let mut roots = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join(".manifest").is_file())
+        .filter(|path| path.is_dir() && has_regular_manifest(path))
         .collect::<Vec<_>>();
     roots.sort();
     roots
 }
 
-fn provider_for_target(target: &Path) -> Option<&'static str> {
-    let name = target.file_name()?.to_str()?;
-    PROVIDERS
+fn has_regular_manifest(target: &Path) -> bool {
+    fs::symlink_metadata(target.join(".manifest"))
+        .is_ok_and(|metadata| metadata.is_file() && !metadata.is_symlink())
+}
+
+fn provider_for_target(
+    target: &Path,
+    provider_targets: &[crate::cli::config::RegisteredProviderTarget],
+) -> Result<Option<crate::cli::config::RegisteredProviderTarget>, Error> {
+    let matches = provider_targets
         .iter()
-        .find_map(|(provider, directory)| (*directory == name).then_some(*provider))
+        .filter(|provider| target.ends_with(Path::new(&provider.target)))
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        Ok(None)
+    } else {
+        preferred_provider(target, &matches).map(Some)
+    }
+}
+
+fn preferred_provider(
+    target: &Path,
+    providers: &[crate::cli::config::RegisteredProviderTarget],
+) -> Result<crate::cli::config::RegisteredProviderTarget, Error> {
+    if let [only] = providers {
+        return Ok(only.clone());
+    }
+    let enabled = providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .collect::<Vec<_>>();
+    if let [only] = enabled.as_slice() {
+        return Ok((*only).clone());
+    }
+    Err(ambiguous_provider_error(
+        target,
+        &providers
+            .iter()
+            .map(|provider| provider.provider.clone())
+            .collect::<Vec<_>>(),
+    ))
+}
+
+fn ambiguous_provider_error(target: &Path, providers: &[String]) -> Error {
+    Error::new(
+        ErrorKind::Config,
+        format!(
+            "Rune cannot infer one provider for {}. Matching providers: {}.",
+            target.display(),
+            providers.join(", ")
+        ),
+    )
+    .with_code("doctor.provider_ambiguous")
+    .with_fix_command("rune provider status")
 }
 
 fn load_manifest(target: &Path) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
@@ -306,6 +377,7 @@ fn validate_managed_relative(relative: &str) -> Result<(), Error> {
 }
 
 fn inspect_target(
+    provider: &str,
     target: &Path,
     entries: &HashMap<String, manifest::ManifestEntry>,
 ) -> Result<Vec<Finding>, Error> {
@@ -332,15 +404,32 @@ fn inspect_target(
     // Rule wiring: if the manifest recorded a block, the harness's instruction
     // file must still carry the generated markers. A deleted block is a
     // wiring finding, not a missing managed file.
-    if entries.contains_key(crate::cli::deploy::wiring::WIRING_MANIFEST_KEY)
-        && let Some(instruction_file) = wiring_instruction_file(target)
+    if let Some(entry) = entries.get(crate::cli::deploy::wiring::WIRING_MANIFEST_KEY)
+        && let Some(instruction_file) = wiring_instruction_file(provider, target)
     {
-        let wired = fs::read_to_string(&instruction_file)
-            .is_ok_and(|content| content.contains(crate::cli::deploy::wiring::BEGIN_MARKER));
-        if !wired {
+        let status = match fs::read_to_string(&instruction_file) {
+            Ok(content)
+                if rune::provider::detection::managed_wiring_digest(&content).as_deref()
+                    == Some(&entry.fingerprint) =>
+            {
+                None
+            }
+            Ok(content)
+                if content.contains(crate::cli::deploy::wiring::BEGIN_MARKER)
+                    || content.contains(crate::cli::deploy::wiring::END_MARKER) =>
+            {
+                Some(IntegrityStatus::Modified)
+            }
+            Ok(_) => Some(IntegrityStatus::Missing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Some(IntegrityStatus::Missing)
+            }
+            Err(_) => Some(IntegrityStatus::Modified),
+        };
+        if let Some(status) = status {
             findings.insert(
                 format!("{} (rule wiring)", instruction_file.display()),
-                IntegrityStatus::Missing,
+                status,
             );
         }
     }
@@ -360,10 +449,10 @@ fn inspect_target(
 
 /// The instruction file whose generated block a wired harness maintains.
 /// opencode wires a config array rather than an inline block, so it has none.
-fn wiring_instruction_file(target: &Path) -> Option<PathBuf> {
-    match target.file_name().and_then(|name| name.to_str()) {
-        Some(".codex") => Some(target.join("AGENTS.md")),
-        Some(".gemini") => Some(target.join("GEMINI.md")),
+fn wiring_instruction_file(provider: &str, target: &Path) -> Option<PathBuf> {
+    match provider {
+        "codex" => Some(target.join("AGENTS.md")),
+        "gemini" => Some(target.join("GEMINI.md")),
         _ => None,
     }
 }
@@ -409,7 +498,7 @@ fn collect_managed_files_recursive(
         // files and gets its own scan; the predicate mirrors
         // nested_managed_roots exactly so no other .manifest-bearing
         // directory escapes the orphan scan.
-        if entry.path().join(".manifest").is_file()
+        if has_regular_manifest(&entry.path())
             && entry.path().parent() == Some(target.join("skills").as_path())
         {
             continue;
@@ -719,6 +808,49 @@ mod tests {
             finding.status == IntegrityStatus::Modified && finding.path == "skills/Alpha/SKILL.md"
         }));
         assert!(report.repairs.is_empty());
+    }
+
+    #[test]
+    fn discovery_uses_the_registry_for_agentskills() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(target.join(".agents")).unwrap();
+        fs::write(target.join(".agents/.manifest"), "{}\n").unwrap();
+
+        let report = inspect_and_repair(&target, &source, false).unwrap();
+
+        assert_eq!(report.targets.len(), 1);
+        assert_eq!(report.targets[0].provider, "agentskills");
+        assert_eq!(
+            report.targets[0].target,
+            target.join(".agents").display().to_string()
+        );
+    }
+
+    #[test]
+    fn shared_target_prefers_the_only_enabled_provider() {
+        let root = TempDir::new().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(target.join(".agents")).unwrap();
+        fs::write(
+            source.join("config.yaml"),
+            "providers:\n    codex:\n        target:\n            default: .codex\n            skills: .agents\n",
+        )
+        .unwrap();
+        fs::write(target.join(".agents/.manifest"), "{}\n").unwrap();
+
+        let report = inspect_and_repair(&target, &source, false).unwrap();
+
+        assert_eq!(report.targets.len(), 1);
+        assert_eq!(report.targets[0].provider, "codex");
+        assert_eq!(
+            report.targets[0].target,
+            target.join(".agents").display().to_string()
+        );
     }
 
     #[test]

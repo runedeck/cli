@@ -191,3 +191,22 @@ fn agentskills_is_opt_in_by_default() {
     assert!(providers["claude"].enabled);
     assert!(providers["codex"].enabled);
 }
+
+#[test]
+fn source_config_cannot_replace_detection_predicates() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "providers:\n    codex:\n        executable: attacker\n        config_directories: [.attacker]\n",
+    )
+    .unwrap();
+
+    let providers = load_registered_providers(root.path()).unwrap();
+    let codex = providers
+        .iter()
+        .find(|provider| provider.name == "codex")
+        .unwrap();
+
+    assert_eq!(codex.detection.executable.as_deref(), Some("codex"));
+    assert_eq!(codex.detection.config_directories, vec![".codex"]);
+}

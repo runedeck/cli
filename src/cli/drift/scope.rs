@@ -40,15 +40,16 @@ pub fn execute(
     let source_uri = config::load_source_uri(module_root);
     let module_name = (!source_uri.is_empty()).then_some(source_uri.as_str());
 
-    let merged_config = config::load_merged_config(module_root)?;
-    let providers = config::load_providers(&merged_config)?;
+    let providers = config::load_registered_providers(module_root)?;
 
     let ignored: HashSet<&str> = ignore.iter().map(String::as_str).collect();
     let base = Path::new(target_base);
     let mut result = DriftResult::default();
     let mut compared_any = false;
 
-    for (provider_name, provider_config) in &providers {
+    for provider in &providers {
+        let provider_name = &provider.name;
+        let provider_config = &provider.config;
         // Deploy skips opt-in providers unless named explicitly, so their
         // build output has no deployed counterpart to verify.
         if !provider_config.enabled {
@@ -106,20 +107,15 @@ pub fn execute(
 /// working directory. This mode needs neither source material nor `build/`.
 pub fn execute_discovered(
     target_base: &Path,
-    discovered_targets: &[PathBuf],
+    discovered_targets: &[(String, PathBuf)],
     show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
     let mut result = DriftResult::default();
 
-    for target in discovered_targets {
+    for (provider, target) in discovered_targets {
         let deployed_base = target_base.join(target);
-        let category = target
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .trim_start_matches('.')
-            .to_string();
+        let category = provider.clone();
         let mut entries = load_deployed_manifest(&deployed_base)?
             .into_iter()
             .collect::<Vec<_>>();
@@ -180,17 +176,19 @@ pub fn execute_deck(
     show_all: bool,
     json_output: bool,
 ) -> Result<i32, Error> {
-    let merged_config = config::load_merged_config(&deck.root)?;
-    let providers = config::load_providers(&merged_config)?;
+    let providers = config::load_registered_providers(&deck.root)?;
     let base = Path::new(target_base);
     let mut result = DriftResult::default();
-    let mut providers = providers.iter().collect::<Vec<_>>();
-    providers.sort_by_key(|(name, _)| *name);
 
     for deck_entry in &deck.entries {
         println!("== {} ==", deck_entry.name);
         let source_uri = deck_entry.manifest.source_uri();
-        for (provider_name, provider_config) in &providers {
+        for provider in &providers {
+            let provider_name = &provider.name;
+            let provider_config = &provider.config;
+            if !provider_config.enabled {
+                continue;
+            }
             for target_root in provider_config.target_roots() {
                 let deployed_base = base.join(target_root);
                 for (key, entry) in load_deployed_manifest(&deployed_base).unwrap_or_else(|error| {
