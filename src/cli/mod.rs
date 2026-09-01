@@ -23,6 +23,7 @@ pub(crate) mod dotrune;
 mod drift;
 mod exec;
 mod find;
+mod graph;
 mod init;
 pub(crate) mod install;
 mod launch;
@@ -290,9 +291,9 @@ enum Command {
     /// Print an agent-ready brief of the resolved working context
     Context,
 
-    /// Check for a newer release (read-only)
+    /// Update rune, or report with --check
     Update {
-        /// Only report; rune never replaces its own binary.
+        /// Only report; make no changes.
         #[arg(long)]
         check: bool,
     },
@@ -472,6 +473,12 @@ enum Command {
         /// Skip SLSA provenance sidecar generation
         #[arg(long)]
         skip_provenance: bool,
+    },
+
+    /// Artifact graph operations: export the deck as Turtle for SHACL validation
+    Graph {
+        #[command(subcommand)]
+        action: graph::GraphAction,
     },
 
     /// Validate deck or rune source files against schemas
@@ -1326,17 +1333,11 @@ pub fn run() -> i32 {
             return exit_code(context::execute(args.json, args.no_color), args.json);
         }
         Command::Update { check } => {
-            if !check {
-                let error = rune::error::Error::new(
-                    rune::error::ErrorKind::Config,
-                    "rune update performs no self-replacement; package managers own updates",
-                )
-                .with_code("update.check_only")
-                .with_fix_command("rune update --check");
-                print_error(&error, args.json);
-                return 2;
-            }
-            return exit_code(update_check::check(args.json), args.json);
+            return if check {
+                exit_code(update_check::check(args.json), args.json)
+            } else {
+                exit_code(update_check::update(args.json), args.json)
+            };
         }
         Command::Setup {
             defaults,
@@ -1460,6 +1461,9 @@ pub fn run() -> i32 {
                 validate::execute(&source, args.json, scan, force),
                 args.json,
             );
+        }
+        Command::Graph { action } => {
+            return exit_code(graph::execute(&action), args.json);
         }
         Command::Provenance {
             target,
@@ -1756,15 +1760,15 @@ fn bare() -> i32 {
 }
 
 /// One line that routes a new user into setup. Fires only when no user
-/// config exists, prints to stdout, and writes nothing.
+/// config exists, prints to stderr with the help, and writes nothing.
 fn first_run_nudge() -> Option<i32> {
     let config = rune::ontology::config_dir().ok()?.join("config.yaml");
     if config.is_file() {
         return None;
     }
-    let sheet = style::Sheet::detect(false);
+    let sheet = style::Sheet::detect_stderr(false);
     eprint!("{}", root_help_styled(&sheet));
-    println!("{}", sheet.row("next", "rune setup"));
+    eprintln!("{}", sheet.row("next", "rune setup"));
     Some(0)
 }
 
@@ -1915,6 +1919,7 @@ fn flow_help(help: &mut String) {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn deck_help(help: &mut String) {
     help.push_str("\n  Deck:\n");
     help_command(
@@ -1940,6 +1945,12 @@ fn deck_help(help: &mut String) {
         "validate",
         "[--source <DIR>]",
         "Validate deck or rune files against schemas",
+    );
+    help_command(
+        help,
+        "graph",
+        "export [--source <DIR>]",
+        "Export the artifact graph as Turtle for SHACL validation",
     );
     help_command(
         help,
