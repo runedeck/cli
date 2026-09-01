@@ -270,6 +270,7 @@ fn detect_codex(root: &Path, enabled: bool) -> detection::ProviderDetection {
         &detection_config(enabled),
         root,
         root,
+        root,
         None,
     )
 }
@@ -287,7 +288,7 @@ fn split_target_config() -> ProviderConfig {
 
 fn detect_with_config(root: &Path, config: &ProviderConfig) -> detection::ProviderDetection {
     let registry = detection::bundled_registry().unwrap();
-    detection::detect_provider("codex", &registry["codex"], config, root, root, None)
+    detection::detect_provider("codex", &registry["codex"], config, root, root, root, None)
 }
 
 fn write_manifest_at(
@@ -450,6 +451,7 @@ fn provider_detection_reports_path_and_config_evidence_without_execution() {
         "codex",
         &registry["codex"],
         &detection_config(true),
+        root.path(),
         root.path(),
         root.path(),
         Some(bin.as_os_str()),
@@ -739,6 +741,7 @@ fn opencode_managed_instruction_is_checked() {
         &config,
         root.path(),
         root.path(),
+        root.path(),
         None,
     );
     assert_eq!(
@@ -760,6 +763,7 @@ fn opencode_managed_instruction_is_checked() {
         "opencode",
         &registry["opencode"],
         &config,
+        root.path(),
         root.path(),
         root.path(),
         None,

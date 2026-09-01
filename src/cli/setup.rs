@@ -156,7 +156,11 @@ fn build_plan(automatic: bool) -> Result<SetupPlan, Error> {
     let (provider_toggles, provider_edit) =
         select_provider_plan(&source_root, &home, automatic, &mut notes)?;
     let completion = select_completion_plan(automatic, &mut notes)?;
-    let skill = select_skill_plan(automatic, &mut notes)?;
+    let selection = provider_toggles
+        .iter()
+        .map(|toggle| (toggle.provider.clone(), toggle.enabled))
+        .collect::<Vec<_>>();
+    let skill = select_skill_plan(automatic, &selection, &mut notes)?;
 
     if let Some(target) = crate::cli::target::bound_target() {
         notes.push(format!("target bound: {}", target.display()));
@@ -272,13 +276,14 @@ fn select_completion_plan(
 
 fn select_skill_plan(
     automatic: bool,
+    selection: &[(String, bool)],
     notes: &mut Vec<String>,
 ) -> Result<Option<crate::cli::skill::InstallPlan>, Error> {
     if !automatic && !confirm_selection("install the Rune agent skill?")? {
         notes.push("agent skill install skipped".to_string());
         return Ok(None);
     }
-    crate::cli::skill::plan_install(None)
+    crate::cli::skill::plan_install_with(None, selection)
         .map(Some)
         .map_err(|error| setup_error(&error, "setup.skill_plan_failed", "rune skill install"))
 }

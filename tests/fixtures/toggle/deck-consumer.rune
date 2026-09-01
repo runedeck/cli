@@ -1,0 +1,7 @@
+version: 1
+sources:
+    deck:
+        local: deck
+runes:
+    deck:
+        include: [core/rules/Style, core/rules/Naming]
