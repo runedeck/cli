@@ -8,7 +8,7 @@ use std::path::Path;
 mod recovery;
 mod source;
 
-pub use recovery::{CheckScope, FileScope, check, defaults, reference};
+pub use recovery::{CheckScope, FileScope, check, defaults, reference, reset};
 use source::SourceConfig;
 
 /// Embedded at compile time so the binary works when symlinked away from
