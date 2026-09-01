@@ -52,6 +52,7 @@ pub(crate) mod watchlist;
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod theme;
 mod update_check;
 
 use clap::{Parser, Subcommand};
@@ -930,6 +931,26 @@ enum CompletionAction {
 
 #[derive(Subcommand)]
 enum KindAction {
+    /// Turn one staged rune of this kind on for one or all providers
+    On {
+        /// Rune name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Turn one staged rune of this kind off for one or all providers
+    Off {
+        /// Rune name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
     /// Stage runes of this kind in the consumer `.rune` manifest
     Add {
         /// Rune names, comma-separated; qualify as <domain>/<name> when ambiguous.
@@ -948,6 +969,26 @@ enum KindAction {
 
 #[derive(Subcommand)]
 enum SkillAction {
+    /// Turn one staged skill on for one or all providers
+    On {
+        /// Skill name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Turn one staged skill off for one or all providers
+    Off {
+        /// Skill name as staged (bare name).
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Provider to toggle. Omit to apply to every enabled provider.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
     /// Stage skills in the consumer `.rune` manifest
     Add {
         /// Skill names, comma-separated; qualify as <domain>/<name> when ambiguous.
@@ -1183,6 +1224,7 @@ pub fn run() -> i32 {
         console::set_colors_enabled(false);
         console::set_colors_enabled_stderr(false);
     }
+    install_theme();
 
     #[cfg(feature = "spec")]
     spec::install_hooks();
@@ -1409,6 +1451,7 @@ pub fn run() -> i32 {
                     only.as_deref(),
                     model.as_deref(),
                     allow_stale,
+                    strict,
                 ),
                 "deployed",
             )
@@ -1655,6 +1698,26 @@ pub fn run() -> i32 {
                     ),
                     args.json,
                 ),
+                Some(SkillAction::On { name, provider }) => exit_code(
+                    add::toggle_kind(
+                        rune::provider::ContentKind::Skills,
+                        &name,
+                        provider.as_deref(),
+                        true,
+                        args.json,
+                    ),
+                    args.json,
+                ),
+                Some(SkillAction::Off { name, provider }) => exit_code(
+                    add::toggle_kind(
+                        rune::provider::ContentKind::Skills,
+                        &name,
+                        provider.as_deref(),
+                        false,
+                        args.json,
+                    ),
+                    args.json,
+                ),
                 Some(SkillAction::Install { dir }) => {
                     exit_code(skill::install(dir.as_deref(), args.json), args.json)
                 }
@@ -1752,10 +1815,15 @@ fn bare() -> i32 {
 }
 
 /// One line that routes a new user into setup. Fires only when no user
-/// config exists, prints to stderr with the help, and writes nothing.
+/// config exists and the environment names no deck, prints to stderr with
+/// the help, and writes nothing.
 fn first_run_nudge() -> Option<i32> {
     let config = rune::ontology::config_dir().ok()?.join("config.yaml");
     if config.is_file() {
+        return None;
+    }
+    // `RUNE_DECK` configures rune without a file. That user is not new.
+    if rune::ontology::load().is_ok_and(|resolved| resolved.deck.is_some()) {
         return None;
     }
     let sheet = style::Sheet::detect_stderr(false);
@@ -2178,6 +2246,30 @@ pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Resolve the configured theme once and install it for every renderer.
+/// Config problems never block dispatch: the default palette applies and
+/// the warning surfaces on stderr.
+fn install_theme() {
+    let selection = rune::ontology::load()
+        .ok()
+        .and_then(|config| config.theme)
+        .map(|config| theme::ThemeSelection {
+            name: config.name,
+            auto_switch: config.auto_switch,
+            dark_name: config.dark_name,
+            light_name: config.light_name,
+            custom: config.custom,
+        })
+        .unwrap_or_default();
+    let appearance = theme::appearance_from_colorfgbg(std::env::var("COLORFGBG").ok().as_deref());
+    let (tones, warnings) = theme::resolve(&selection, appearance);
+    let sheet = style::Sheet::detect_stderr(false);
+    for warning in warnings {
+        eprintln!("{} {warning}", sheet.yellow("warning:"));
+    }
+    theme::install(tones);
+}
+
 /// Dispatch a `rune adopt` subcommand to the review state machine.
 fn run_adopt(action: AdoptAction, json: bool) -> i32 {
     use std::path::Path;
@@ -2339,18 +2431,25 @@ fn run_kind_add(
     no_color: bool,
     json: bool,
 ) -> i32 {
-    let Some(KindAction::Add {
-        name,
-        source,
-        reference,
-    }) = action
-    else {
-        return exit_code(add::list_kind(kind, None, no_color), json);
-    };
-    exit_code(
-        add::execute_kind(kind, &name, source.as_deref(), reference.as_deref()),
-        json,
-    )
+    match action {
+        None => exit_code(add::list_kind(kind, None, no_color), json),
+        Some(KindAction::Add {
+            name,
+            source,
+            reference,
+        }) => exit_code(
+            add::execute_kind(kind, &name, source.as_deref(), reference.as_deref()),
+            json,
+        ),
+        Some(KindAction::On { name, provider }) => exit_code(
+            add::toggle_kind(kind, &name, provider.as_deref(), true, json),
+            json,
+        ),
+        Some(KindAction::Off { name, provider }) => exit_code(
+            add::toggle_kind(kind, &name, provider.as_deref(), false, json),
+            json,
+        ),
+    }
 }
 
 /// Dispatch a `rune watch` subcommand to its handler.

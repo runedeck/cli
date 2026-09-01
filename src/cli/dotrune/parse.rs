@@ -9,6 +9,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Version 2 adds the `dirs:` workspace-member section; version 1 files
 /// keep parsing unchanged.
 pub const SCHEMA_VERSION_DIRS: u32 = 2;
+/// Version 3 adds per-provider `providers:` toggle overlays inside a
+/// source's rune list; version 1 and 2 files keep parsing unchanged.
+pub const SCHEMA_VERSION_TOGGLES: u32 = 3;
 
 /// Test-only escape hatch: when this env var is set, `file://` URLs pass
 /// validation so integration tests can use a local bare repo as the origin
@@ -226,6 +229,27 @@ pub struct RuneList {
     pub rules: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
+    /// Per-provider deploy-set overlays (schema v3): `exclude` removes
+    /// selected runes from one provider's deploy set, `include` restores
+    /// single names on top of the exclusion.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub providers: BTreeMap<String, ProviderToggles>,
+}
+
+/// One provider's deploy-set overlay inside a source's rune list.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, default)]
+pub struct ProviderToggles {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+}
+
+impl ProviderToggles {
+    pub fn is_empty(&self) -> bool {
+        self.exclude.is_empty() && self.include.is_empty()
+    }
 }
 
 fn string_or_list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
@@ -264,16 +288,27 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
     let manifest: DotRune = serde_yaml::from_str(content)
         .map_err(|error| Error::new(ErrorKind::Parse, format!(".rune: {error}")))?;
 
-    if manifest.version != SCHEMA_VERSION && manifest.version != SCHEMA_VERSION_DIRS {
+    if manifest.version < SCHEMA_VERSION || manifest.version > SCHEMA_VERSION_TOGGLES {
         return Err(Error::new(
             ErrorKind::Parse,
             format!(
-                ".rune: schema version {} is not supported (this build understands versions {SCHEMA_VERSION} and {SCHEMA_VERSION_DIRS})",
+                ".rune: schema version {} is not supported (this build understands versions {SCHEMA_VERSION} to {SCHEMA_VERSION_TOGGLES})",
                 manifest.version
             ),
         ));
     }
-    if manifest.version == SCHEMA_VERSION && !manifest.dirs.is_empty() {
+    if manifest.version < SCHEMA_VERSION_TOGGLES
+        && manifest
+            .runes
+            .values()
+            .any(|list| !list.providers.is_empty())
+    {
+        return Err(Error::new(
+            ErrorKind::Parse,
+            ".rune: provider toggles require version 3".to_string(),
+        ));
+    }
+    if manifest.version < SCHEMA_VERSION_DIRS && !manifest.dirs.is_empty() {
         return Err(Error::new(
             ErrorKind::Parse,
             ".rune: dirs requires version 2".to_string(),
