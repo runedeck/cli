@@ -5,7 +5,7 @@
 - [ ] 1.3 Add `rune config check` for the user and source scopes
 - [ ] 1.4 Add `rune config defaults` with commented output from the installed binary
 - [ ] 1.5 Add `rune config reference` with compiler-backed key metadata
-- [ ] 1.6 Publish `docs/agent-guide.md` with read-only first steps
+- [x] 1.6 Publish `docs/agent-guide.md` with read-only first steps
 
 ## 2. Provider insight
 
