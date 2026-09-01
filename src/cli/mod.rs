@@ -1343,6 +1343,7 @@ pub fn run() -> i32 {
                     only.as_deref(),
                     model.as_deref(),
                     allow_stale,
+                    strict,
                 ),
                 "deployed",
             )
