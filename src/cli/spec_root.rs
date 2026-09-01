@@ -47,7 +47,7 @@ mod fallback {
             .canonicalize()
             .map_err(|error| root_error("resolve repository", root, error))?;
         let merged = crate::cli::config::load_merged_config(root)?;
-        let configured = rune::yaml::yaml_list(&merged, "spec.root");
+        let configured = crate::cli::config::source_spec_root(&merged);
         let relative = match configured.as_deref() {
             Some(configured) => validate_configured_root(configured)?,
             None => autodetect_relative_root(&repository)?,

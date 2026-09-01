@@ -30,9 +30,7 @@ fn load_exclude_patterns(module_root: &Path) -> Vec<String> {
     let Ok(merged_config) = config::load_merged_config(module_root) else {
         return Vec::new();
     };
-    rune::yaml::yaml_list(&merged_config, "validate.exclude")
-        .map(|list| list.split(", ").map(String::from).collect())
-        .unwrap_or_default()
+    config::source_validate_excludes(&merged_config)
 }
 
 fn check_trailing_whitespace(

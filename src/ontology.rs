@@ -1,11 +1,12 @@
 use crate::error::{Error, ErrorKind};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub deck: Option<String>,
@@ -22,7 +23,7 @@ pub struct Config {
     pub bench: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct Ontology {
     pub targets: Option<String>,
@@ -40,8 +41,18 @@ pub struct Ontology {
     pub domain: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
 #[serde(default)]
+#[schemars(transform = add_launch_schema_aliases)]
 pub struct Launch {
     #[serde(alias = "default-with")]
     pub default_with: Vec<String>,
@@ -53,7 +64,7 @@ pub struct Launch {
     pub profiles: HashMap<String, HashMap<String, LaunchProfile>>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 pub struct LaunchModel {
     pub id: String,
     pub context: u64,
@@ -61,7 +72,16 @@ pub struct LaunchModel {
     pub compact: Option<u8>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
 #[serde(default)]
 pub struct LaunchProfile {
     pub model: Option<String>,
@@ -72,7 +92,7 @@ pub struct LaunchProfile {
 
 /// A literal value or a reference resolved from the parent environment at
 /// launch time (`from_env: KEY`), so secrets never live in config files.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ProfileEnvValue {
     Literal(String),
@@ -82,15 +102,34 @@ pub enum ProfileEnvValue {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
 #[serde(default)]
+#[schemars(transform = add_launch_tool_schema_aliases)]
 pub struct LaunchTool {
     pub binary: Option<String>,
     #[serde(alias = "base-url-env")]
     pub base_url_env: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
 #[serde(default)]
 pub struct LaunchMiddleware {
     pub pxpipe: PxpipeConfig,
@@ -101,12 +140,39 @@ pub struct LaunchMiddleware {
     pub cliproxy: CliproxyConfig,
 }
 
+fn add_launch_schema_aliases(schema: &mut schemars::Schema) {
+    add_schema_alias(schema, "default_with", "default-with");
+}
+
+fn add_launch_tool_schema_aliases(schema: &mut schemars::Schema) {
+    add_schema_alias(schema, "base_url_env", "base-url-env");
+}
+
+fn add_schema_alias(schema: &mut schemars::Schema, canonical: &str, alias: &str) {
+    let Some(properties) = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(mut alias_schema) = properties.get(canonical).cloned() else {
+        return;
+    };
+    if let Some(mapping) = alias_schema.as_object_mut() {
+        mapping.insert(
+            "x-rune-alias-for".to_string(),
+            serde_json::Value::String(canonical.to_string()),
+        );
+    }
+    properties.insert(alias.to_string(), alias_schema);
+}
+
 /// Liveness check for a local AI-API proxy (CLIProxyAPI-shaped), the
 /// process a cross-harness profile's `ANTHROPIC_BASE_URL` points at. It
 /// probes the proxy port and warns when it is down. `command` is empty by
 /// default (check-only); set it to a start command (e.g. `brew services
 /// run cliproxyapi`) to opt into self-heal.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct CliproxyConfig {
     pub host: String,
@@ -124,7 +190,7 @@ impl Default for CliproxyConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct PxpipeConfig {
     pub base_url: String,
@@ -146,7 +212,7 @@ impl Default for PxpipeConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct OtelConfig {
     pub endpoint: String,
@@ -162,7 +228,7 @@ impl Default for OtelConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct PresidioConfig {
     pub base_url: String,
@@ -180,7 +246,7 @@ impl Default for PresidioConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct SquidConfig {
     pub http_proxy: String,
@@ -196,7 +262,7 @@ impl Default for SquidConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct DockerConfig {
     pub image: String,
@@ -212,7 +278,7 @@ impl Default for DockerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct Watch {}
 
@@ -426,6 +492,21 @@ impl ResolvedOntology {
             Key::Githooks => self.githooks.as_ref(),
             Key::Domain => self.domain.as_ref(),
         }
+    }
+}
+
+/// Return the effective user defaults that ship in this binary.
+#[must_use]
+pub fn installed_defaults() -> Config {
+    Config {
+        env: Some("~/.env".to_string()),
+        ontology: Ontology {
+            targets: Key::Targets.default().map(str::to_string),
+            archive: Key::Archive.default().map(str::to_string),
+            ..Ontology::default()
+        },
+        launch: resolve_launch(&Launch::default()),
+        ..Config::default()
     }
 }
 

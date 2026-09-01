@@ -16,7 +16,7 @@ pub(crate) use rune_docs::spec::{DiagnosticSeverity, ListSort, SpecViolation};
 pub(crate) fn install_hooks() {
     let _ = rune_docs::spec::set_root_config_lookup(|root| {
         crate::cli::config::load_merged_config(root)
-            .map(|merged| rune::yaml::yaml_list(&merged, "spec.root"))
+            .map(|merged| crate::cli::config::source_spec_root(&merged))
             .map_err(|error| format!("cannot read config for spec.root: {error}"))
     });
     rune_docs::sheet::set_no_color(crate::cli::style::global_no_color());
@@ -110,7 +110,7 @@ pub(crate) fn offer_root_choice(source: &str, json: bool) -> Result<(), Error> {
     let Ok(merged) = crate::cli::config::load_merged_config(root) else {
         return Ok(());
     };
-    if rune::yaml::yaml_list(&merged, "spec.root").is_some() {
+    if crate::cli::config::source_spec_root(&merged).is_some() {
         return Ok(());
     }
     let native =

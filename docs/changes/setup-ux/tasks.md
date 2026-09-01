@@ -2,9 +2,9 @@
 
 - [x] 1.1 Extend the error type with `code` and `fix_command` and render errors once
 - [x] 1.2 Migrate setup, config, provider, install, and doctor errors to the structured form
-- [ ] 1.3 Add `rune config check` for the user and source scopes
-- [ ] 1.4 Add `rune config defaults` with commented output from the installed binary
-- [ ] 1.5 Add `rune config reference` with compiler-backed key metadata
+- [x] 1.3 Add `rune config check` for the user and source scopes
+- [x] 1.4 Add `rune config defaults` with commented output from the installed binary
+- [x] 1.5 Add `rune config reference` with compiler-backed key metadata
 - [x] 1.6 Publish `docs/agent-guide.md` with read-only first steps
 
 ## 2. Provider insight

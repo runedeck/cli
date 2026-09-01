@@ -66,7 +66,7 @@ pub fn execute_at(root: &Path, action: AdrAction, json: bool) -> Result<i32, Err
     match action {
         AdrAction::New { title, prefix } => {
             let merged = crate::cli::config::load_merged_config(root)?;
-            let configured = rune::yaml::yaml_list(&merged, "adr.prefixes");
+            let configured = crate::cli::config::source_adr_prefixes(&merged);
             let (id, path) =
                 rune_docs::adr::new_record(root, &title, &prefix, configured.as_deref())
                     .map_err(|error| convert(&error))?;

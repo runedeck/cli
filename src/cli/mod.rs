@@ -978,6 +978,20 @@ enum ReviewAction {
 
 #[derive(Subcommand)]
 enum ConfigAction {
+    /// Check user and source configuration files
+    Check {
+        /// Configuration file scope.
+        #[arg(long, value_enum, default_value_t = config::CheckScope::All)]
+        scope: config::CheckScope,
+    },
+    /// Print the installed default configuration
+    Defaults {
+        /// Configuration file scope.
+        #[arg(long, value_enum)]
+        scope: config::FileScope,
+    },
+    /// Print compiler-backed configuration metadata
+    Reference,
     /// Set a user configuration value
     Set {
         /// Configuration key. Currently supported: deck.
@@ -1447,6 +1461,11 @@ pub fn run() -> i32 {
         Command::Config { action } => {
             return exit_code(
                 match action {
+                    Some(ConfigAction::Check { scope }) => {
+                        config::check(scope, args.json, args.no_color)
+                    }
+                    Some(ConfigAction::Defaults { scope }) => config::defaults(scope, args.json),
+                    Some(ConfigAction::Reference) => config::reference(),
                     Some(ConfigAction::Set { key, value }) => {
                         ontology::set(&key, &value, args.json)
                     }
