@@ -189,7 +189,14 @@ impl InstallPlan {
     }
 }
 
-pub(crate) fn plan_install(directory: Option<&str>) -> Result<InstallPlan, Error> {
+/// Plan a skill install where `overrides` replaces the enabled flag of the
+/// named providers. Setup passes its planned provider selection here, so a
+/// provider enabled in the same run gets the skill and a disabled one does
+/// not, before the selection is written.
+pub(crate) fn plan_install_with(
+    directory: Option<&str>,
+    overrides: &[(String, bool)],
+) -> Result<InstallPlan, Error> {
     let root = match directory {
         Some(directory) => PathBuf::from(directory),
         None => dirs::home_dir().ok_or_else(|| {
@@ -198,7 +205,7 @@ pub(crate) fn plan_install(directory: Option<&str>) -> Result<InstallPlan, Error
                 .with_fix_command("printenv HOME")
         })?,
     };
-    let targets = enabled_skill_targets(&root)?
+    let targets = skill_targets_with(&root, overrides)?
         .into_iter()
         .map(|(provider, target)| (provider, root.join(target).join("skills")))
         .collect();
@@ -221,11 +228,24 @@ fn strip_version_line(content: &str) -> String {
 /// The enabled providers and their default target roots, for skill installs
 /// under a home base.
 fn enabled_skill_targets(root: &Path) -> Result<Vec<(String, String)>, Error> {
+    skill_targets_with(root, &[])
+}
+
+fn skill_targets_with(
+    root: &Path,
+    overrides: &[(String, bool)],
+) -> Result<Vec<(String, String)>, Error> {
     let merged = crate::cli::config::load_merged_config(root)?;
     let providers = crate::cli::config::load_providers(&merged)?;
+    let enabled = |name: &String, config: &rune::provider::ProviderConfig| {
+        overrides
+            .iter()
+            .find(|(provider, _)| provider == name)
+            .map_or(config.enabled, |(_, enabled)| *enabled)
+    };
     let mut targets: Vec<(String, String)> = providers
         .iter()
-        .filter(|(_, config)| config.enabled)
+        .filter(|(name, config)| enabled(name, config))
         .map(|(name, config)| (name.clone(), config.default_target().to_string()))
         .collect();
     targets.sort();

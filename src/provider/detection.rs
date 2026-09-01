@@ -220,6 +220,7 @@ pub fn detect_provider(
     config: &ProviderConfig,
     source_root: &Path,
     target_base: &Path,
+    home: &Path,
     search_path: Option<&OsStr>,
 ) -> ProviderDetection {
     let default_target = resolve_target(target_base, config.default_target());
@@ -237,6 +238,7 @@ pub fn detect_provider(
                     config,
                     source_root,
                     target_base,
+                    home,
                     &target_root,
                     &entries,
                     &mut flags,
@@ -492,6 +494,7 @@ fn inspect_manifest_entries(
     config: &ProviderConfig,
     source_root: &Path,
     target_base: &Path,
+    home: &Path,
     target_root: &Path,
     entries: &BTreeMap<String, manifest::ManifestEntry>,
     flags: &mut DetectionFlags,
@@ -503,7 +506,7 @@ fn inspect_manifest_entries(
                 let wiring = inspect_wiring(
                     provider,
                     source_root,
-                    target_base,
+                    home,
                     target_root,
                     &entry.fingerprint,
                     flags,
@@ -758,13 +761,13 @@ fn valid_digest(digest: &str) -> bool {
 fn inspect_wiring(
     provider: &str,
     source_root: &Path,
-    target_base: &Path,
+    home: &Path,
     target_root: &Path,
     expected_digest: &str,
     flags: &mut DetectionFlags,
 ) -> DetectionEvidence {
     if provider == "opencode" {
-        return inspect_opencode_wiring(target_base, target_root, expected_digest, flags);
+        return inspect_opencode_wiring(home, target_root, expected_digest, flags);
     }
     let instruction_name = match provider {
         "codex" => "AGENTS.md",
@@ -801,14 +804,16 @@ fn inspect_wiring(
     }
 }
 
+/// opencode reads its wiring from the XDG config under the home directory,
+/// which deploy writes regardless of the target base.
 fn inspect_opencode_wiring(
-    target_base: &Path,
+    home: &Path,
     target_root: &Path,
     expected_digest: &str,
     flags: &mut DetectionFlags,
 ) -> DetectionEvidence {
-    let config_path = target_base.join(".config/opencode/opencode.json");
-    let result = match inspect_relative_path(target_base, ".config/opencode/opencode.json") {
+    let config_path = home.join(".config/opencode/opencode.json");
+    let result = match inspect_relative_path(home, ".config/opencode/opencode.json") {
         PathInspection::Symlink(_) => {
             flags.record(
                 IssueSeverity::Modified,

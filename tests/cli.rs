@@ -507,7 +507,10 @@ fn setup_yes_applies_detected_defaults() {
             .join(".local/share/bash-completion/completions/rune")
             .is_file()
     );
-    assert!(home.path().join(".claude/skills/rune/SKILL.md").is_file());
+    // The skill follows the planned selection: agentskills was detected,
+    // claude was not, so only the detected provider gets it.
+    assert!(home.path().join(".agents/skills/rune/SKILL.md").is_file());
+    assert!(!home.path().join(".claude/skills/rune/SKILL.md").exists());
 }
 
 #[cfg(unix)]
@@ -563,7 +566,7 @@ fn setup_prints_every_write_before_apply() {
         source.path().join("config.yaml"),
         home.path()
             .join(".local/share/bash-completion/completions/rune"),
-        home.path().join(".claude/skills/rune/SKILL.md"),
+        home.path().join(".agents/skills/rune/SKILL.md"),
     ];
     for path in paths {
         let path = path.display().to_string();
