@@ -13,7 +13,7 @@
 - [x] 2.2 Add `rune provider status` with the six lifecycle states
 - [x] 2.3 Add `rune provider explain` with evidence, state, and fix command
 - [x] 2.4 Move setup, context, status, doctor, and drift to the shared registry
-- [ ] 2.5 Add the config-reference drift check to CI
+- [x] 2.5 Add the config-reference drift check to CI
 
 ## 3. Safe mutation and onboarding
 

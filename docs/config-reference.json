@@ -1,0 +1,914 @@
+{
+  "source": [
+    {
+      "default": {
+        "prefixes": null
+      },
+      "key": "adr",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "adr.prefixes",
+      "type": "string | array<string> | null"
+    },
+    {
+      "default": {
+        "settings_files": [
+          "settings.json",
+          "config.json",
+          "config.toml",
+          "config.yaml",
+          "config.yml",
+          "opencode.json"
+        ]
+      },
+      "key": "dashboard",
+      "type": "object"
+    },
+    {
+      "default": [
+        "settings.json",
+        "config.json",
+        "config.toml",
+        "config.yaml",
+        "config.yml",
+        "opencode.json"
+      ],
+      "key": "dashboard.settings_files",
+      "type": "array<string>"
+    },
+    {
+      "default": {
+        "agentskills": {
+          "aliases": [
+            "agents"
+          ],
+          "assembly": [
+            "kebab-case-skills",
+            "strip-links"
+          ],
+          "deploy": null,
+          "effort": null,
+          "enabled": false,
+          "keep_fields": {
+            "agents": [
+              "name",
+              "description"
+            ],
+            "rules": [],
+            "skills": [
+              "name",
+              "description",
+              "license",
+              "compatibility",
+              "metadata",
+              "allowed-tools"
+            ]
+          },
+          "model": null,
+          "models": null,
+          "plugin": null,
+          "target": ".agents"
+        },
+        "claude": {
+          "aliases": [
+            "claudecode"
+          ],
+          "assembly": null,
+          "deploy": null,
+          "effort": null,
+          "enabled": true,
+          "keep_fields": {
+            "agents": [
+              "name",
+              "description",
+              "model",
+              "allowedTools"
+            ],
+            "rules": [],
+            "skills": [
+              "name",
+              "description",
+              "version",
+              "when_to_use",
+              "argument-hint",
+              "arguments",
+              "allowed-tools",
+              "disallowed-tools",
+              "disable-model-invocation",
+              "user-invocable",
+              "model",
+              "effort",
+              "context",
+              "agent",
+              "paths",
+              "shell"
+            ]
+          },
+          "model": "claude-opus-4-6",
+          "models": {
+            "fast": [
+              "sonnet"
+            ],
+            "light": [
+              "haiku"
+            ],
+            "strong": [
+              "opus"
+            ]
+          },
+          "plugin": null,
+          "target": ".claude"
+        },
+        "codex": {
+          "aliases": [
+            "codexcli"
+          ],
+          "assembly": [
+            "agents-to-toml",
+            "strip-links"
+          ],
+          "deploy": [
+            "rulesync"
+          ],
+          "effort": {
+            "fast": "low",
+            "light": "low",
+            "strong": "medium"
+          },
+          "enabled": true,
+          "keep_fields": {
+            "agents": [
+              "name",
+              "description",
+              "model",
+              "effort"
+            ],
+            "rules": [],
+            "skills": [
+              "name",
+              "description",
+              "version"
+            ]
+          },
+          "model": "gpt-5.5",
+          "models": {
+            "fast": [
+              "gpt-5.4"
+            ],
+            "light": [
+              "gpt-5.3-codex"
+            ],
+            "strong": [
+              "gpt-5.5"
+            ]
+          },
+          "plugin": null,
+          "target": ".codex"
+        },
+        "gemini": {
+          "aliases": [
+            "geminicli"
+          ],
+          "assembly": [
+            "kebab-case-agents",
+            "remap-tools",
+            "strip-links"
+          ],
+          "deploy": [
+            "rulesync"
+          ],
+          "effort": null,
+          "enabled": true,
+          "keep_fields": {
+            "agents": [
+              "name",
+              "description"
+            ],
+            "rules": [],
+            "skills": [
+              "name",
+              "description",
+              "version"
+            ]
+          },
+          "model": "gemini-2.5-pro",
+          "models": {
+            "fast": [
+              "gemini-2.5-flash"
+            ],
+            "light": [
+              "gemini-2.0-flash"
+            ],
+            "strong": [
+              "gemini-2.5-pro"
+            ]
+          },
+          "plugin": null,
+          "target": ".gemini"
+        },
+        "opencode": {
+          "aliases": null,
+          "assembly": [
+            "kebab-case-agents",
+            "strip-links"
+          ],
+          "deploy": [
+            "rulesync"
+          ],
+          "effort": null,
+          "enabled": true,
+          "keep_fields": {
+            "agents": [
+              "name",
+              "description"
+            ],
+            "rules": [],
+            "skills": [
+              "name",
+              "description",
+              "version"
+            ]
+          },
+          "model": "claude-opus-4-6",
+          "models": {
+            "fast": [
+              "claude-sonnet-4-6"
+            ],
+            "light": [
+              "claude-sonnet-4-6"
+            ],
+            "strong": [
+              "claude-opus-4-6"
+            ]
+          },
+          "plugin": null,
+          "target": ".opencode"
+        }
+      },
+      "key": "providers",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "providers.*",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "providers.*.aliases",
+      "type": "array<string> | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.assembly",
+      "type": "array<string> | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.deploy",
+      "type": "array<string> | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.effort",
+      "type": "object | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.effort.*",
+      "type": "string"
+    },
+    {
+      "default": true,
+      "key": "providers.*.enabled",
+      "type": "boolean"
+    },
+    {
+      "default": null,
+      "key": "providers.*.keep_fields",
+      "type": "object | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.keep_fields.*",
+      "type": "array<string>"
+    },
+    {
+      "default": null,
+      "key": "providers.*.model",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.models",
+      "type": "object | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.models.*",
+      "type": "array<string>"
+    },
+    {
+      "default": null,
+      "key": "providers.*.plugin",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.target",
+      "type": "string | object"
+    },
+    {
+      "default": null,
+      "key": "providers.*.target.agents",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.target.default",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "key": "providers.*.target.rules",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "providers.*.target.skills",
+      "type": "string | null"
+    },
+    {
+      "default": {
+        "root": null
+      },
+      "key": "spec",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "spec.root",
+      "type": "string | array<string> | null"
+    },
+    {
+      "default": {
+        "exclude": [
+          "templates/*"
+        ]
+      },
+      "key": "validate",
+      "type": "object"
+    },
+    {
+      "default": [
+        "templates/*"
+      ],
+      "key": "validate.exclude",
+      "type": "string | array<string> | null"
+    }
+  ],
+  "user": [
+    {
+      "default": [],
+      "key": "bench",
+      "type": "array<string>"
+    },
+    {
+      "default": null,
+      "key": "deck",
+      "type": "string | null"
+    },
+    {
+      "default": "~/.env",
+      "key": "env",
+      "type": "string | null"
+    },
+    {
+      "default": [],
+      "key": "extensions",
+      "type": "array<string>"
+    },
+    {
+      "default": {
+        "default_with": [],
+        "middleware": {
+          "cliproxy": {
+            "command": "",
+            "host": "127.0.0.1",
+            "port": 8317
+          },
+          "docker": {
+            "args": [],
+            "image": "ghcr.io/runedeck/rune-coding-tool:latest"
+          },
+          "otel": {
+            "endpoint": "http://127.0.0.1:4318",
+            "service_name": "rune-launch"
+          },
+          "presidio": {
+            "base_url": "http://127.0.0.1:47822",
+            "host": "127.0.0.1",
+            "port": 47822
+          },
+          "pxpipe": {
+            "base_url": "http://127.0.0.1:47821",
+            "command": "pxpipe",
+            "host": "127.0.0.1",
+            "log_path": "~/.pxpipe/proxy.log",
+            "port": 47821
+          },
+          "squid": {
+            "http_proxy": "http://127.0.0.1:3128",
+            "https_proxy": "http://127.0.0.1:3128"
+          }
+        },
+        "models": {},
+        "profiles": {
+          "claude": {
+            "grok": {
+              "args": [],
+              "env": {
+                "ANTHROPIC_AUTH_TOKEN": {
+                  "from_env": "CLIPROXY_API_KEY"
+                },
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
+                "ANTHROPIC_SMALL_FAST_MODEL": "grok-composer-2.5-fast"
+              },
+              "model": "grok",
+              "with": [
+                "cliproxy"
+              ]
+            },
+            "sol": {
+              "args": [],
+              "env": {
+                "ANTHROPIC_AUTH_TOKEN": {
+                  "from_env": "CLIPROXY_API_KEY"
+                },
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
+                "ANTHROPIC_SMALL_FAST_MODEL": "gpt-5.6-luna"
+              },
+              "model": "sol",
+              "with": [
+                "cliproxy"
+              ]
+            }
+          }
+        },
+        "tools": {}
+      },
+      "key": "launch",
+      "type": "object"
+    },
+    {
+      "default": [],
+      "key": "launch.default-with",
+      "type": "array<string>"
+    },
+    {
+      "default": [],
+      "key": "launch.default_with",
+      "type": "array<string>"
+    },
+    {
+      "default": {
+        "cliproxy": {
+          "command": "",
+          "host": "127.0.0.1",
+          "port": 8317
+        },
+        "docker": {
+          "args": [],
+          "image": "ghcr.io/runedeck/rune-coding-tool:latest"
+        },
+        "otel": {
+          "endpoint": "http://127.0.0.1:4318",
+          "service_name": "rune-launch"
+        },
+        "presidio": {
+          "base_url": "http://127.0.0.1:47822",
+          "host": "127.0.0.1",
+          "port": 47822
+        },
+        "pxpipe": {
+          "base_url": "http://127.0.0.1:47821",
+          "command": "pxpipe",
+          "host": "127.0.0.1",
+          "log_path": "~/.pxpipe/proxy.log",
+          "port": 47821
+        },
+        "squid": {
+          "http_proxy": "http://127.0.0.1:3128",
+          "https_proxy": "http://127.0.0.1:3128"
+        }
+      },
+      "key": "launch.middleware",
+      "type": "object"
+    },
+    {
+      "default": {
+        "command": "",
+        "host": "127.0.0.1",
+        "port": 8317
+      },
+      "key": "launch.middleware.cliproxy",
+      "type": "object"
+    },
+    {
+      "default": "",
+      "key": "launch.middleware.cliproxy.command",
+      "type": "string"
+    },
+    {
+      "default": "127.0.0.1",
+      "key": "launch.middleware.cliproxy.host",
+      "type": "string"
+    },
+    {
+      "default": 8317,
+      "key": "launch.middleware.cliproxy.port",
+      "type": "integer"
+    },
+    {
+      "default": {
+        "args": [],
+        "image": "ghcr.io/runedeck/rune-coding-tool:latest"
+      },
+      "key": "launch.middleware.docker",
+      "type": "object"
+    },
+    {
+      "default": [],
+      "key": "launch.middleware.docker.args",
+      "type": "array<string>"
+    },
+    {
+      "default": "ghcr.io/runedeck/rune-coding-tool:latest",
+      "key": "launch.middleware.docker.image",
+      "type": "string"
+    },
+    {
+      "default": {
+        "endpoint": "http://127.0.0.1:4318",
+        "service_name": "rune-launch"
+      },
+      "key": "launch.middleware.otel",
+      "type": "object"
+    },
+    {
+      "default": "http://127.0.0.1:4318",
+      "key": "launch.middleware.otel.endpoint",
+      "type": "string"
+    },
+    {
+      "default": "rune-launch",
+      "key": "launch.middleware.otel.service_name",
+      "type": "string"
+    },
+    {
+      "default": {
+        "base_url": "http://127.0.0.1:47822",
+        "host": "127.0.0.1",
+        "port": 47822
+      },
+      "key": "launch.middleware.presidio",
+      "type": "object"
+    },
+    {
+      "default": "http://127.0.0.1:47822",
+      "key": "launch.middleware.presidio.base_url",
+      "type": "string"
+    },
+    {
+      "default": "127.0.0.1",
+      "key": "launch.middleware.presidio.host",
+      "type": "string"
+    },
+    {
+      "default": 47822,
+      "key": "launch.middleware.presidio.port",
+      "type": "integer"
+    },
+    {
+      "default": {
+        "base_url": "http://127.0.0.1:47821",
+        "command": "pxpipe",
+        "host": "127.0.0.1",
+        "log_path": "~/.pxpipe/proxy.log",
+        "port": 47821
+      },
+      "key": "launch.middleware.pxpipe",
+      "type": "object"
+    },
+    {
+      "default": "http://127.0.0.1:47821",
+      "key": "launch.middleware.pxpipe.base_url",
+      "type": "string"
+    },
+    {
+      "default": "pxpipe",
+      "key": "launch.middleware.pxpipe.command",
+      "type": "string"
+    },
+    {
+      "default": "127.0.0.1",
+      "key": "launch.middleware.pxpipe.host",
+      "type": "string"
+    },
+    {
+      "default": "~/.pxpipe/proxy.log",
+      "key": "launch.middleware.pxpipe.log_path",
+      "type": "string"
+    },
+    {
+      "default": 47821,
+      "key": "launch.middleware.pxpipe.port",
+      "type": "integer"
+    },
+    {
+      "default": {
+        "http_proxy": "http://127.0.0.1:3128",
+        "https_proxy": "http://127.0.0.1:3128"
+      },
+      "key": "launch.middleware.squid",
+      "type": "object"
+    },
+    {
+      "default": "http://127.0.0.1:3128",
+      "key": "launch.middleware.squid.http_proxy",
+      "type": "string"
+    },
+    {
+      "default": "http://127.0.0.1:3128",
+      "key": "launch.middleware.squid.https_proxy",
+      "type": "string"
+    },
+    {
+      "default": {},
+      "key": "launch.models",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.models.*",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.models.*.compact",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "launch.models.*.context",
+      "type": "integer"
+    },
+    {
+      "default": null,
+      "key": "launch.models.*.id",
+      "type": "string"
+    },
+    {
+      "default": {
+        "claude": {
+          "grok": {
+            "args": [],
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": {
+                "from_env": "CLIPROXY_API_KEY"
+              },
+              "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
+              "ANTHROPIC_SMALL_FAST_MODEL": "grok-composer-2.5-fast"
+            },
+            "model": "grok",
+            "with": [
+              "cliproxy"
+            ]
+          },
+          "sol": {
+            "args": [],
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": {
+                "from_env": "CLIPROXY_API_KEY"
+              },
+              "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
+              "ANTHROPIC_SMALL_FAST_MODEL": "gpt-5.6-luna"
+            },
+            "model": "sol",
+            "with": [
+              "cliproxy"
+            ]
+          }
+        }
+      },
+      "key": "launch.profiles",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.profiles.*",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.profiles.*.*",
+      "type": "object"
+    },
+    {
+      "default": [],
+      "key": "launch.profiles.*.*.args",
+      "type": "array<string>"
+    },
+    {
+      "default": {},
+      "key": "launch.profiles.*.*.env",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.profiles.*.*.env.*",
+      "type": "string | object"
+    },
+    {
+      "default": null,
+      "key": "launch.profiles.*.*.env.*.from_env",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "key": "launch.profiles.*.*.model",
+      "type": "string | null"
+    },
+    {
+      "default": [],
+      "key": "launch.profiles.*.*.with",
+      "type": "array<string>"
+    },
+    {
+      "default": {},
+      "key": "launch.tools",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.tools.*",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "launch.tools.*.base-url-env",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "launch.tools.*.base_url_env",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "launch.tools.*.binary",
+      "type": "string | null"
+    },
+    {
+      "default": {
+        "archive": "~/Agents/archive",
+        "artifacts": null,
+        "developer": null,
+        "domain": null,
+        "githooks": null,
+        "lore": null,
+        "mount": null,
+        "owner": null,
+        "quests": null,
+        "skeleton": null,
+        "targets": "~/Agents",
+        "vault": null,
+        "work": null
+      },
+      "key": "ontology",
+      "type": "object"
+    },
+    {
+      "default": "~/Agents/archive",
+      "key": "ontology.archive",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.artifacts",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.developer",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.domain",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.githooks",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.lore",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.mount",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.owner",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.quests",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.skeleton",
+      "type": "string | null"
+    },
+    {
+      "default": "~/Agents",
+      "key": "ontology.targets",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.vault",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ontology.work",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "setup",
+      "type": "object | null"
+    },
+    {
+      "default": null,
+      "key": "setup.completed",
+      "type": "array<string>"
+    },
+    {
+      "default": null,
+      "key": "setup.version",
+      "type": "integer"
+    },
+    {
+      "default": null,
+      "key": "theme",
+      "type": "object | null"
+    },
+    {
+      "default": false,
+      "key": "theme.auto_switch",
+      "type": "boolean"
+    },
+    {
+      "default": {},
+      "key": "theme.custom",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "theme.custom.*",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "key": "theme.dark_name",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "theme.light_name",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "theme.name",
+      "type": "string | null"
+    },
+    {
+      "default": {},
+      "key": "watch",
+      "type": "object"
+    }
+  ]
+}
