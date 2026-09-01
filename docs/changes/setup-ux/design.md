@@ -1,10 +1,10 @@
-# Herdr Setup Ux Design
+# Setup UX Design
 
 ## Approach
 
-Adopt herdr's setup clarity, recovery paths, and evidence-rich output while rune keeps its manifest
-safety model. The plan-then-apply wizard beat herdr's Boolean first-run flag because completion must
-mean verified. The bundled detection registry beat herdr's remote manifests because detection data
+Use a Herdr-inspired setup flow while Rune keeps its manifest safety model. The plan-then-apply
+wizard beat Herdr's Boolean first-run flag because completion must mean verified. The bundled
+detection registry beat Herdr's remote manifests because detection data
 steers local writes. Structured repair errors beat message conventions because agents need stable
 identifiers.
 

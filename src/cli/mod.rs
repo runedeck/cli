@@ -22,6 +22,7 @@ pub(crate) mod dotrune;
 mod drift;
 mod exec;
 mod find;
+mod graph;
 mod init;
 pub(crate) mod install;
 mod launch;
@@ -449,6 +450,12 @@ enum Command {
         /// Skip SLSA provenance sidecar generation
         #[arg(long)]
         skip_provenance: bool,
+    },
+
+    /// Artifact graph operations: export the deck as Turtle for SHACL validation
+    Graph {
+        #[command(subcommand)]
+        action: graph::GraphAction,
     },
 
     /// Validate deck or rune source files against schemas
@@ -1381,6 +1388,9 @@ pub fn run() -> i32 {
                 args.json,
             );
         }
+        Command::Graph { action } => {
+            return exit_code(graph::execute(&action), args.json);
+        }
         Command::Provenance {
             target,
             source_uri,
@@ -1807,6 +1817,7 @@ fn flow_help(help: &mut String) {
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn deck_help(help: &mut String) {
     help.push_str("\n  Deck:\n");
     help_command(
@@ -1826,6 +1837,12 @@ fn deck_help(help: &mut String) {
         "validate",
         "[--source <DIR>]",
         "Validate deck or rune files against schemas",
+    );
+    help_command(
+        help,
+        "graph",
+        "export [--source <DIR>]",
+        "Export the artifact graph as Turtle for SHACL validation",
     );
     help_command(
         help,
