@@ -73,7 +73,7 @@ sources:
     // rather than naming the offending key. That's a UX trade-off of the
     // `untagged` shape; the contract is just that the parse fails.
     let error = parse(content).expect_err("unknown source field must error");
-    assert!(error.to_string().starts_with("Parse:"));
+    assert_eq!(error.kind(), rune::error::ErrorKind::Parse);
 }
 
 #[test]
@@ -352,8 +352,9 @@ sources:
         git: https://github.com/N4M3Z/rune-core
 ";
     let error = parse(content).expect_err("git source missing ref must be rejected");
-    assert!(
-        error.to_string().starts_with("Parse:"),
+    assert_eq!(
+        error.kind(),
+        rune::error::ErrorKind::Parse,
         "error must be a parse error: {error}"
     );
 }
