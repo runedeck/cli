@@ -95,7 +95,7 @@ pub(super) fn format_comment_input_lines(
     let type_style = styles::comment_type_style(comment_kind);
     let border_style = styles::comment_border_style();
     let cursor_style = Style::default()
-        .fg(styles::CURSOR_COLOR)
+        .fg(styles::palette().cursor)
         .add_modifier(Modifier::UNDERLINED);
 
     let action = if is_editing { "Edit" } else { "Add" };

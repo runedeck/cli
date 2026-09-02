@@ -8,11 +8,13 @@ use edtui::{
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders},
 };
 
 use super::modal_editor::{ModalAction, ModalState};
+
+use super::styles;
 
 pub(super) enum EditorAction {
     Continue,
@@ -127,16 +129,20 @@ impl FileEditor {
     pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let dirty = if self.is_dirty() { "*" } else { "" };
         let title = format!(" Edit{dirty} · {} ", self.display_path());
-        let line = Style::default().fg(Color::Gray);
+        let line = Style::default().fg(styles::fg_secondary());
         let mode = Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
+            .fg(styles::palette().mode_fg)
+            .bg(styles::accent())
             .add_modifier(Modifier::BOLD);
         let theme = EditorTheme::default()
             .base(Style::default())
-            .cursor_style(Style::default().fg(Color::Black).bg(Color::White))
-            .selection_style(Style::default().fg(Color::Black).bg(Color::Yellow))
-            .line_numbers_style(Style::default().fg(Color::DarkGray))
+            .cursor_style(
+                Style::default()
+                    .fg(styles::palette().panel_bg)
+                    .bg(styles::fg_primary()),
+            )
+            .selection_style(styles::highlight_style(false))
+            .line_numbers_style(Style::default().fg(styles::fg_dim()))
             .status_line(
                 EditorStatusLine::default()
                     .style_line(line)
