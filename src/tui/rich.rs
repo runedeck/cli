@@ -16,6 +16,8 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
+use super::styles;
+
 /// Markdown preview: prose renders through glow, fenced code blocks through
 /// syntect. Glamour leaves fences without a language tag uncolored, so code
 /// gets the same highlighter as the Code tab instead.
@@ -222,8 +224,8 @@ fn glow_style_path() -> Option<String> {
 pub fn highlight_code(path: &str, source: &str) -> Vec<Line<'static>> {
     if source.is_empty() {
         return vec![Line::from(vec![
-            Span::styled("  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("   1 ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  ", Style::default().fg(styles::fg_dim())),
+            Span::styled("   1 ", Style::default().fg(styles::fg_dim())),
             Span::raw("no raw source"),
         ])];
     }
@@ -248,10 +250,10 @@ pub fn highlight_code(path: &str, source: &str) -> Vec<Line<'static>> {
         .enumerate()
         .map(|(index, line)| {
             let mut spans = vec![
-                Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("  ", Style::default().fg(styles::fg_dim())),
                 Span::styled(
                     format!("{:>4} ", index + 1),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 ),
             ];
             match highlighter.highlight_line(line, syntax_set) {
@@ -276,10 +278,10 @@ fn numbered_plain_lines(source: &str) -> Vec<Line<'static>> {
         .enumerate()
         .map(|(index, line)| {
             Line::from(vec![
-                Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("  ", Style::default().fg(styles::fg_dim())),
                 Span::styled(
                     format!("{:>4} ", index + 1),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 ),
                 Span::raw(line.to_string()),
             ])

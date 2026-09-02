@@ -5,12 +5,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
 use crate::cli::dotrune::{self, DotRune};
+
+use super::styles;
 
 #[derive(Debug, Clone)]
 struct EditorRune {
@@ -399,7 +401,7 @@ impl CastEditor {
                     "read-only"
                 }
             ))
-            .style(Style::default().fg(Color::Gray)),
+            .style(Style::default().fg(styles::fg_secondary())),
             layout[0],
         );
 
@@ -461,7 +463,7 @@ impl CastEditor {
             format!(" {hints} │ {}", self.status)
         };
         frame.render_widget(
-            Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(footer).style(Style::default().fg(styles::fg_dim())),
             layout[2],
         );
     }
@@ -476,7 +478,7 @@ impl CastEditor {
                 rows.push(Line::from(Span::styled(
                     format!("▾ {} · {}", item.deck_name, item.group),
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(styles::accent())
                         .add_modifier(Modifier::BOLD),
                 )));
                 previous_group = Some(group);
@@ -486,8 +488,8 @@ impl CastEditor {
             }
             let style = if index == self.cursor {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(styles::palette().mode_fg)
+                    .bg(styles::accent())
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
