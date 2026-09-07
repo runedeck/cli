@@ -49,6 +49,9 @@ use super::rich;
 use super::styles;
 use super::word_wrap::expand_gutter_wrapped;
 
+#[cfg(test)]
+mod tests;
+
 const SECTION_COUNT: usize = 17;
 const LEGACY_SECTION_COUNT: usize = 13;
 const DETAIL_TAB_COUNT: usize = 6;
@@ -308,6 +311,7 @@ impl DetailTab {
 enum ScanState {
     Idle,
     Loading,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -721,7 +725,7 @@ impl App {
     /// The scan finished and found neither a deck nor modules: the first-run
     /// state, which routes into setup instead of an empty list.
     fn is_first_run(&self) -> bool {
-        self.scan_state != ScanState::Loading
+        self.scan_state == ScanState::Idle
             && self.view.deck.is_none()
             && self.view.modules.is_empty()
     }
@@ -879,13 +883,13 @@ impl App {
                 self.clamp_list_selection();
             }
             Ok(Err(error)) => {
-                self.scan_state = ScanState::Idle;
+                self.scan_state = ScanState::Failed;
                 self.scan_receiver = None;
                 self.palette_error = Some(error);
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.scan_state = ScanState::Idle;
+                self.scan_state = ScanState::Failed;
                 self.scan_receiver = None;
                 self.palette_error = Some("scan worker disconnected".to_string());
             }
@@ -1227,6 +1231,11 @@ impl App {
             summary.new,
             self.view.modules.len()
         );
+        let source_text = if source_text.width() > usize::from(area.width) {
+            format!(" {scan}{validation} ")
+        } else {
+            source_text
+        };
         let brand = Span::styled(
             " rune ",
             Style::default()
@@ -1235,17 +1244,19 @@ impl App {
         );
         let mut left = vec![brand];
         left.extend(self.context_spans());
-        let left_width: usize = left.iter().map(Span::width).sum();
-        let padding =
-            usize::from(area.width).saturating_sub(left_width.saturating_add(source_text.width()));
-        left.push(Span::raw(" ".repeat(padding)));
-        left.push(Span::styled(
-            source_text,
-            Style::default().fg(styles::fg_secondary()),
-        ));
+        let regions = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(usize_to_u16(source_text.width())),
+        ])
+        .split(area);
         frame.render_widget(
             Paragraph::new(Line::from(left)).style(styles::status_bar_style()),
-            area,
+            regions[0],
+        );
+        frame.render_widget(
+            Paragraph::new(source_text)
+                .style(styles::status_bar_style().fg(styles::fg_secondary())),
+            regions[1],
         );
     }
 
