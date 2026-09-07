@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
 };
@@ -76,7 +76,7 @@ fn render_comment_row(item: &CommentNavigatorItem, width: usize) -> Line<'static
     Line::from(vec![
         Span::styled(kind, styles::comment_type_style(item.kind)),
         Span::raw(" "),
-        Span::styled(location, Style::default().fg(Color::DarkGray)),
+        Span::styled(location, Style::default().fg(styles::fg_dim())),
         Span::raw(" "),
         Span::raw(first_segment),
     ])

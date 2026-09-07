@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend, style::Color};
 
+use rune::provider::detection::DeploymentState;
 use rune::{
     manifest::FileStatus,
     services::files::{
@@ -1674,14 +1675,12 @@ fn code_search_incrementally_highlights_and_navigates_matches() {
     let backend = TestBackend::new(120, 32);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|frame| app.render(frame)).unwrap();
-    assert!(
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .any(|cell| { matches!(cell.bg, Color::Yellow | Color::Magenta) })
-    );
+    assert!(terminal.backend().buffer().content().iter().any(|cell| {
+        let tones = crate::cli::theme::current();
+        let alert = Color::Rgb(tones.alert.rgb.0, tones.alert.rgb.1, tones.alert.rgb.2);
+        let violet = Color::Rgb(tones.violet.rgb.0, tones.violet.rgb.1, tones.violet.rgb.2);
+        cell.bg == alert || cell.bg == violet
+    }));
     let snapshot = terminal
         .backend()
         .buffer()
@@ -1858,4 +1857,60 @@ fn hooks_section_lists_fixture_hook_and_detail() {
     assert!(detail.contains("source:"));
     assert!(detail.contains("~/.claude/settings.json"));
     assert!(detail.contains("echo fixture-hook"));
+}
+
+#[test]
+fn first_run_panel_routes_into_setup() {
+    let view = DashboardView {
+        modules: Vec::new(),
+        summary: StatusSummary::default(),
+        provenance: Vec::new(),
+        adrs: Vec::new(),
+        deck: None,
+    };
+    let mut app = App::from_view(
+        PathBuf::from("/tmp/empty-root"),
+        Vec::new(),
+        Vec::new(),
+        view,
+    );
+    let output = rendered(&mut app);
+
+    assert!(output.contains("No deck"), "{output}");
+    assert!(output.contains("rune setup"), "{output}");
+    assert!(output.contains("/tmp/empty-root"), "{output}");
+    assert!(output.contains("run rune setup"), "footer hint: {output}");
+    assert!(!output.contains("no rows"), "{output}");
+}
+
+#[test]
+fn status_bar_shows_target_and_provider_states() {
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), fixture_view());
+    app.set_target_label(Some("demo".to_string()));
+    app.set_provider_states(vec![
+        ("claude".to_string(), DeploymentState::Current),
+        ("codex".to_string(), DeploymentState::NotInstalled),
+        ("gemini".to_string(), DeploymentState::Disabled),
+    ]);
+    let output = rendered(&mut app);
+    let status = output.lines().next().unwrap_or_default();
+
+    assert!(status.contains("no deck"), "{status}");
+    assert!(status.contains("target demo"), "{status}");
+    assert!(status.contains("claude ✓"), "{status}");
+    assert!(status.contains("codex ·"), "{status}");
+    assert!(
+        !status.contains("gemini"),
+        "disabled providers stay hidden: {status}"
+    );
+}
+
+#[test]
+fn help_overlay_names_the_close_keys() {
+    let mut app = App::from_view(PathBuf::from("."), Vec::new(), Vec::new(), fixture_view());
+    event::handle_key(&mut app, key(KeyCode::Char('?')));
+    let output = rendered(&mut app);
+
+    assert!(output.contains("? or Esc closes"), "{output}");
+    assert!(output.contains("Global"), "{output}");
 }

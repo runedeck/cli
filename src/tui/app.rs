@@ -15,6 +15,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use rune::provider::detection::DeploymentState;
 use rune::{
     manifest::FileStatus,
     review::{self, ExportFormat, ReviewComment},
@@ -47,6 +48,9 @@ use super::file_editor::{EditorAction as FileEditorAction, FileEditor};
 use super::rich;
 use super::styles;
 use super::word_wrap::expand_gutter_wrapped;
+
+#[cfg(test)]
+mod tests;
 
 const SECTION_COUNT: usize = 17;
 const LEGACY_SECTION_COUNT: usize = 13;
@@ -307,6 +311,7 @@ impl DetailTab {
 enum ScanState {
     Idle,
     Loading,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -633,6 +638,10 @@ pub struct App {
     toast: Option<String>,
     preview: Option<ArtifactPreview>,
     help_state: HelpState,
+    /// Provider deployment states for the status bar, detected once at load.
+    provider_states: Vec<(String, DeploymentState)>,
+    /// The bound working repository, if any, for the status bar.
+    target_label: Option<String>,
     palette: Palette,
     mouse_regions: MouseRegions,
     /// External command queued to run with the real terminal (gitui/jjui,
@@ -691,9 +700,34 @@ pub struct App {
 impl App {
     pub fn load(root: PathBuf) -> Self {
         let mut app = Self::from_view(root, Vec::new(), Vec::new(), empty_dashboard_view());
+        app.provider_states = detect_provider_states(&app.root);
+        app.target_label = crate::cli::target::bound_target_silent().and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        });
         app.start_validation();
         app.start_scan();
         app
+    }
+
+    /// Set the provider states shown in the status bar (tests and snapshots).
+    #[cfg(test)]
+    pub fn set_provider_states(&mut self, states: Vec<(String, DeploymentState)>) {
+        self.provider_states = states;
+    }
+
+    /// Set the bound target label shown in the status bar (tests and snapshots).
+    #[cfg(test)]
+    pub fn set_target_label(&mut self, label: Option<String>) {
+        self.target_label = label;
+    }
+
+    /// The scan finished and found neither a deck nor modules: the first-run
+    /// state, which routes into setup instead of an empty list.
+    fn is_first_run(&self) -> bool {
+        self.scan_state == ScanState::Idle
+            && self.view.deck.is_none()
+            && self.view.modules.is_empty()
     }
 
     #[must_use]
@@ -767,6 +801,8 @@ impl App {
             toast: comment_warning,
             preview: None,
             help_state: HelpState::Closed,
+            provider_states: Vec::new(),
+            target_label: None,
             palette: Palette::new(),
             mouse_regions: MouseRegions::default(),
             pending_external: None,
@@ -847,13 +883,13 @@ impl App {
                 self.clamp_list_selection();
             }
             Ok(Err(error)) => {
-                self.scan_state = ScanState::Idle;
+                self.scan_state = ScanState::Failed;
                 self.scan_receiver = None;
                 self.palette_error = Some(error);
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.scan_state = ScanState::Idle;
+                self.scan_state = ScanState::Failed;
                 self.scan_receiver = None;
                 self.palette_error = Some("scan worker disconnected".to_string());
             }
@@ -1069,6 +1105,14 @@ impl App {
             ])
             .split(frame.area());
         self.render_status(frame, layout[0]);
+        if self.is_first_run() {
+            self.render_first_run(frame, layout[1]);
+            self.render_footer(frame, layout[2]);
+            if self.help_state == HelpState::Open {
+                render_help(frame, frame.area());
+            }
+            return;
+        }
         let mut desired_widths = self.column_widths;
         if self.view.deck.is_some()
             && matches!(
@@ -1187,22 +1231,112 @@ impl App {
             summary.new,
             self.view.modules.len()
         );
+        let source_text = if source_text.width() > usize::from(area.width) {
+            format!(" {scan}{validation} ")
+        } else {
+            source_text
+        };
         let brand = Span::styled(
             " rune ",
             Style::default()
-                .fg(styles::FG_PRIMARY)
+                .fg(styles::fg_primary())
                 .add_modifier(Modifier::BOLD),
         );
-        let padding = usize::from(area.width)
-            .saturating_sub(brand.width().saturating_add(source_text.width()));
+        let mut left = vec![brand];
+        left.extend(self.context_spans());
+        let regions = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(usize_to_u16(source_text.width())),
+        ])
+        .split(area);
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                brand,
-                Span::raw(" ".repeat(padding)),
-                Span::styled(source_text, Style::default().fg(styles::FG_SECONDARY)),
-            ]))
-            .style(styles::status_bar_style()),
-            area,
+            Paragraph::new(Line::from(left)).style(styles::status_bar_style()),
+            regions[0],
+        );
+        frame.render_widget(
+            Paragraph::new(source_text)
+                .style(styles::status_bar_style().fg(styles::fg_secondary())),
+            regions[1],
+        );
+    }
+
+    /// Deck, bound target, and provider states for the status bar.
+    fn context_spans(&self) -> Vec<Span<'static>> {
+        let dim = Style::default().fg(styles::fg_dim());
+        let value = Style::default().fg(styles::fg_secondary());
+        let mut spans = Vec::new();
+        match &self.view.deck {
+            Some(deck) => {
+                spans.push(Span::styled(" deck ", dim));
+                spans.push(Span::styled(deck.name.clone(), value));
+            }
+            None if self.scan_state == ScanState::Loading => {}
+            None => spans.push(Span::styled(" no deck ", dim)),
+        }
+        if let Some(target) = &self.target_label {
+            spans.push(Span::styled(" · target ", dim));
+            spans.push(Span::styled(target.clone(), value));
+        }
+        let mut first = true;
+        for (provider, state) in &self.provider_states {
+            let Some((glyph, color)) = provider_state_glyph(*state) else {
+                continue;
+            };
+            spans.push(Span::styled(if first { " · " } else { " " }, dim));
+            first = false;
+            spans.push(Span::styled(provider.clone(), value));
+            spans.push(Span::styled(
+                format!(" {glyph}"),
+                Style::default().fg(color),
+            ));
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans
+    }
+
+    /// The first-run panel: no deck and no modules under the root. It names
+    /// the root and the three commands that lead out of the empty state.
+    fn render_first_run(&self, frame: &mut Frame<'_>, area: Rect) {
+        let block = Block::default()
+            .title(" No deck ")
+            .borders(Borders::ALL)
+            .border_style(styles::border_style(true));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let key = Style::default()
+            .fg(styles::accent())
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::default().fg(styles::fg_dim());
+        let lines = vec![
+            Line::from(""),
+            Line::from(format!(
+                "  rune found no deck and no modules under {}.",
+                self.root.display()
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  rune setup", key),
+                Span::styled(
+                    "                         configure a deck and the providers",
+                    dim,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  rune config set deck <path-or-url>", key),
+                Span::styled("  point rune at an existing deck", dim),
+            ]),
+            Line::from(vec![
+                Span::styled("  rune tui --source <dir>", key),
+                Span::styled("             inspect another root", dim),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("  q quit  ·  ? help", dim)),
+        ];
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+            inner,
         );
     }
 
@@ -1311,7 +1445,11 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = self.footer_text();
+        let text = if self.is_first_run() {
+            "no deck  ·  run rune setup  ·  q quit  ·  ? help".to_string()
+        } else {
+            self.footer_text()
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(self.footer_mode(), styles::mode_style()),
@@ -1340,7 +1478,7 @@ impl App {
                     Style::default()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(Color::DarkGray)),
+                    Span::styled(prefix, Style::default().fg(styles::fg_dim())),
                     Span::styled(section.label(), style),
                 ]))
             })
@@ -1377,7 +1515,7 @@ impl App {
                     Span::styled(deck_entry.name.clone(), style),
                     Span::styled(
                         format!("  {}", deck_entry.rune_count()),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(styles::fg_dim()),
                     ),
                 ]))
             })
@@ -1406,7 +1544,7 @@ impl App {
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(kind, style),
-                    Span::styled(format!("  {count}"), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("  {count}"), Style::default().fg(styles::fg_dim())),
                 ]))
             })
             .collect::<Vec<_>>();
@@ -1435,7 +1573,7 @@ impl App {
         let mut lines = vec![Line::from(Span::styled(
             artifact_table_header(&target_names),
             Style::default()
-                .fg(Color::Magenta)
+                .fg(styles::violet())
                 .add_modifier(Modifier::BOLD),
         ))];
         lines.extend(
@@ -1504,7 +1642,8 @@ impl App {
 
         if self.scan_state == ScanState::Loading && self.cached_rows.is_empty() {
             frame.render_widget(
-                Paragraph::new("Scanning modules...").style(Style::default().fg(Color::Gray)),
+                Paragraph::new("Scanning modules...")
+                    .style(Style::default().fg(styles::fg_secondary())),
                 inner,
             );
             return;
@@ -1540,7 +1679,7 @@ impl App {
                         return ListItem::new(Line::from(Span::styled(
                             row.label.clone(),
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(styles::violet())
                                 .add_modifier(Modifier::BOLD),
                         )));
                     }
@@ -1569,7 +1708,7 @@ impl App {
                             };
                             let pad = room.saturating_sub(shown_width);
                             spans.push(Span::raw(" ".repeat(pad)));
-                            spans.push(Span::styled(text, base.fg(Color::DarkGray)));
+                            spans.push(Span::styled(text, base.fg(styles::fg_dim())));
                         }
                     }
                     ListItem::new(Line::from(spans))
@@ -1694,7 +1833,8 @@ impl App {
             self.render_validation_problem(frame, area, index);
         } else {
             frame.render_widget(
-                Paragraph::new("✓ no validation problems").style(Style::default().fg(Color::Green)),
+                Paragraph::new("✓ no validation problems")
+                    .style(Style::default().fg(styles::good())),
                 area,
             );
         }
@@ -1706,8 +1846,8 @@ impl App {
             return;
         };
         let (marker, color) = match violation.severity {
-            ViolationSeverity::Error => ("✗", Color::Red),
-            ViolationSeverity::Warning => ("⚡", Color::Yellow),
+            ViolationSeverity::Error => ("✗", styles::bad()),
+            ViolationSeverity::Warning => ("⚡", styles::alert()),
         };
         let mut lines = vec![
             Line::from(vec![
@@ -1794,7 +1934,7 @@ impl App {
             Line::from(cast.description.clone()),
             Line::from(Span::styled(
                 "Space toggles · Enter confirms pending edit",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             )),
             Line::from(""),
         ];
@@ -1920,7 +2060,7 @@ impl App {
                 .is_some_and(|cache| cache.key != expected_key)
             {
                 frame.render_widget(
-                    Paragraph::new("rendering…").style(Style::default().fg(Color::DarkGray)),
+                    Paragraph::new("rendering…").style(Style::default().fg(styles::fg_dim())),
                     chunks[1],
                 );
             } else {
@@ -1953,7 +2093,7 @@ impl App {
         if needs_build {
             if self.preview_cache.is_some() && input_pending() {
                 frame.render_widget(
-                    Paragraph::new("rendering…").style(Style::default().fg(Color::DarkGray)),
+                    Paragraph::new("rendering…").style(Style::default().fg(styles::fg_dim())),
                     area,
                 );
                 return;
@@ -1975,7 +2115,7 @@ impl App {
             {
                 lines.push(Line::from(Span::styled(
                     "─".repeat(usize::from(cache_width)),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 )));
                 match rich::render_markdown_with_glow(&readme, cache_width) {
                     Some(rendered) => lines.extend(rendered),
@@ -2025,7 +2165,7 @@ impl App {
         if needs_build {
             if self.preview_cache.is_some() && input_pending() {
                 frame.render_widget(
-                    Paragraph::new("rendering…").style(Style::default().fg(Color::DarkGray)),
+                    Paragraph::new("rendering…").style(Style::default().fg(styles::fg_dim())),
                     chunks[1],
                 );
                 return;
@@ -2457,9 +2597,9 @@ impl App {
                 *marker = Span::styled(
                     if has_comment { "◆ " } else { "  " },
                     if has_comment {
-                        Style::default().fg(Color::Yellow)
+                        Style::default().fg(styles::alert())
                     } else {
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(styles::fg_dim())
                     },
                 );
             }
@@ -2480,7 +2620,7 @@ impl App {
                 .visual_selection
                 .is_some_and(|selection| selection.contains(index))
             {
-                line.style = Style::default().fg(Color::White).bg(Color::Blue);
+                line.style = styles::visual_selection_style();
             }
             rows.extend(expand_gutter_wrapped(vec![line], CODE_GUTTER, width));
             if let Some(prompt) = prompt {
@@ -2554,7 +2694,7 @@ impl App {
             let matrix = builders::build_matrix(&self.view);
             lines.push(Line::from(Span::styled(
                 "Matrix",
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(styles::violet()),
             )));
             lines.push(Line::from(format!("columns: {}", matrix.cols.join(", "))));
             for row in matrix.rows {
@@ -2569,7 +2709,7 @@ impl App {
         } else {
             lines.push(Line::from(Span::styled(
                 "Nested",
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(styles::violet()),
             )));
             for group in builders::build_nested(&self.view, "kind") {
                 lines.push(Line::from(format!("{} ({})", group.label, group.count)));
@@ -5817,7 +5957,7 @@ impl App {
     fn provenance_lines(&self, module: &ModuleView, artifact: &ArtifactView) -> Vec<Line<'static>> {
         fn field(key: &str, value: String) -> Line<'static> {
             Line::from(vec![
-                Span::styled(format!("{key:<14}"), Style::default().fg(Color::Magenta)),
+                Span::styled(format!("{key:<14}"), Style::default().fg(styles::violet())),
                 Span::raw(value),
             ])
         }
@@ -5891,7 +6031,7 @@ impl App {
         if artifact.provenance_raw.trim().is_empty() {
             lines.push(Line::from(Span::styled(
                 "No provenance sidecar is available for this artifact.",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             )));
         } else {
             lines.extend(rich::highlight_code(
@@ -5908,7 +6048,7 @@ impl App {
 /// to scan without hiding any extension fields.
 fn provenance_field(key: &str, value: impl Into<String>) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<14}"), Style::default().fg(Color::Magenta)),
+        Span::styled(format!("{key:<14}"), Style::default().fg(styles::violet())),
         Span::raw(value.into()),
     ])
 }
@@ -6080,14 +6220,14 @@ fn module_header_lines(module: &ModuleView) -> Vec<Line<'static>> {
             let mut spans = vec![
                 Span::styled(
                     format!("{sha_short} {date} "),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 ),
                 Span::raw(commit.message.clone()),
             ];
             if !commit.jj_change.is_empty() {
                 spans.push(Span::styled(
                     format!(" · jj {}", commit.jj_change),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 ));
             }
             lines.push(Line::from(spans));
@@ -6095,7 +6235,7 @@ fn module_header_lines(module: &ModuleView) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "o open gitui · O open jjui",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(styles::fg_dim()),
         )));
     }
     lines
@@ -6114,12 +6254,15 @@ fn module_vcs_line(vcs: &VcsState) -> Line<'static> {
         branch.push_str(" · jj");
     }
     let (state_label, state_style) = match vcs.worktree {
-        WorktreeState::Clean => ("✓ clean", Style::default().fg(Color::Green)),
-        WorktreeState::Modified => ("⚠ uncommitted changes", Style::default().fg(Color::Yellow)),
-        WorktreeState::Untracked => ("● untracked", Style::default().fg(Color::Magenta)),
+        WorktreeState::Clean => ("✓ clean", Style::default().fg(styles::good())),
+        WorktreeState::Modified => (
+            "⚠ uncommitted changes",
+            Style::default().fg(styles::alert()),
+        ),
+        WorktreeState::Untracked => ("● untracked", Style::default().fg(styles::violet())),
     };
     Line::from(vec![
-        Span::styled(branch, Style::default().fg(Color::Cyan)),
+        Span::styled(branch, Style::default().fg(styles::accent())),
         Span::raw(" · "),
         Span::styled(state_label, state_style),
     ])
@@ -6146,15 +6289,15 @@ fn render_hook_detail(frame: &mut Frame<'_>, area: Rect, hook: &files::HookEntry
     let (_, command) = files::unwrap_shell(&hook.command);
     let lines = vec![
         Line::from(vec![
-            Span::styled("event: ", Style::default().fg(Color::Magenta)),
+            Span::styled("event: ", Style::default().fg(styles::violet())),
             Span::raw(hook.event.clone()),
         ]),
         Line::from(vec![
-            Span::styled("matcher: ", Style::default().fg(Color::Magenta)),
+            Span::styled("matcher: ", Style::default().fg(styles::violet())),
             Span::raw(value_or_any(&hook.matcher).to_string()),
         ]),
         Line::from(vec![
-            Span::styled("source: ", Style::default().fg(Color::Magenta)),
+            Span::styled("source: ", Style::default().fg(styles::violet())),
             Span::raw(hook.source.clone()),
         ]),
         Line::from(""),
@@ -6171,9 +6314,13 @@ fn render_hook_detail(frame: &mut Frame<'_>, area: Rect, hook: &files::HookEntry
 fn render_help(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(Clear, area);
     let block = Block::default()
-        .title(" Help ")
+        .title(format!(
+            " Help · rune {} · ? or Esc closes ",
+            env!("CARGO_PKG_VERSION")
+        ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_style(Style::default().fg(styles::violet()))
+        .style(styles::panel_style());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -6189,19 +6336,16 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
             .map(|(_, group)| *group);
         let mut lines = Vec::new();
         for (group, bindings) in groups {
-            lines.push(Line::from(Span::styled(
-                group,
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            )));
+            lines.push(Line::from(Span::styled(group, styles::heading_style())));
             for (key, description) in bindings {
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{key:<12}"),
-                        Style::default().add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(styles::accent())
+                            .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(*description, Style::default().fg(Color::DarkGray)),
+                    Span::styled(*description, Style::default().fg(styles::fg_dim())),
                 ]));
             }
             lines.push(Line::from(""));
@@ -6222,6 +6366,34 @@ pub fn load_provider_targets(root: &Path) -> Vec<(String, String)> {
         .collect();
     targets.sort_by(|a, b| a.0.cmp(&b.0));
     targets
+}
+
+/// Provider deployment states for the status bar, in provider order.
+/// Detection is bounded filesystem evidence, so it runs once at load.
+fn detect_provider_states(root: &Path) -> Vec<(String, DeploymentState)> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    config::detect_registered_providers(root, &home)
+        .map(|detections| {
+            detections
+                .into_iter()
+                .map(|detection| (detection.provider, detection.deployment_state))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Glyph and tone for one provider state; disabled providers stay hidden.
+fn provider_state_glyph(state: DeploymentState) -> Option<(&'static str, Color)> {
+    Some(match state {
+        DeploymentState::Disabled => return None,
+        DeploymentState::Current => ("✓", styles::good()),
+        DeploymentState::Outdated => ("↑", styles::alert()),
+        DeploymentState::NeedsRepair => ("✗", styles::bad()),
+        DeploymentState::Modified => ("~", styles::violet()),
+        DeploymentState::NotInstalled => ("·", styles::fg_dim()),
+    })
 }
 
 fn empty_dashboard_view() -> DashboardView {
@@ -6299,7 +6471,7 @@ fn selected_style(focused: bool) -> Style {
         styles::selected_style().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-            .fg(Color::White)
+            .fg(styles::fg_primary())
             .add_modifier(Modifier::BOLD)
     }
 }
@@ -6383,10 +6555,10 @@ fn status_dot(status: &str) -> &'static str {
 
 fn status_style(status: &str) -> Style {
     match status {
-        "modified" => Style::default().fg(Color::Yellow),
-        "stale" => Style::default().fg(Color::Red),
-        "new" => Style::default().fg(Color::Magenta),
-        _ => Style::default().fg(Color::DarkGray),
+        "modified" => Style::default().fg(styles::alert()),
+        "stale" => Style::default().fg(styles::bad()),
+        "new" => Style::default().fg(styles::violet()),
+        _ => Style::default().fg(styles::fg_dim()),
     }
 }
 
@@ -6444,10 +6616,10 @@ fn render_choice_popup(
         .title(title.to_string())
         .title_bottom(Line::from(Span::styled(
             footer.to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(styles::fg_dim()),
         )))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(styles::accent()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     let viewport = usize::from(inner.height.max(1)).saturating_sub(usize::from(input.is_some()));
@@ -6468,9 +6640,9 @@ fn render_choice_popup(
         .collect();
     if let Some(path) = input {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("path: ", Style::default().fg(Color::Magenta)),
+            Span::styled("path: ", Style::default().fg(styles::violet())),
             Span::raw(path.to_string()),
-            Span::styled("▌", Style::default().fg(Color::Cyan)),
+            Span::styled("▌", Style::default().fg(styles::accent())),
         ])));
     }
     frame.render_widget(List::new(items), inner);
@@ -6604,13 +6776,16 @@ fn vcs_line(artifact: &ArtifactView) -> Option<Line<'static>> {
         let _ = write!(branch, " ↓{}", vcs.behind);
     }
     let mut spans = vec![
-        Span::styled(branch, Style::default().fg(Color::Cyan)),
+        Span::styled(branch, Style::default().fg(styles::accent())),
         Span::raw(" · "),
     ];
     let (worktree_label, worktree_style) = match vcs.worktree {
-        WorktreeState::Clean => ("✓ committed", Style::default().fg(Color::Green)),
-        WorktreeState::Modified => ("⚠ uncommitted changes", Style::default().fg(Color::Yellow)),
-        WorktreeState::Untracked => ("● untracked", Style::default().fg(Color::Magenta)),
+        WorktreeState::Clean => ("✓ committed", Style::default().fg(styles::good())),
+        WorktreeState::Modified => (
+            "⚠ uncommitted changes",
+            Style::default().fg(styles::alert()),
+        ),
+        WorktreeState::Untracked => ("● untracked", Style::default().fg(styles::violet())),
     };
     spans.push(Span::styled(worktree_label, worktree_style));
     if let Some(commit) = artifact.git_log.first() {
@@ -6618,16 +6793,16 @@ fn vcs_line(artifact: &ArtifactView) -> Option<Line<'static>> {
         let date: String = commit.date.chars().take(10).collect();
         spans.push(Span::styled(
             format!(" · {sha_short} {date}"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(styles::fg_dim()),
         ));
         if !commit.jj_change.is_empty() {
             spans.push(Span::styled(
                 format!(" · jj {}", commit.jj_change),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             ));
         }
     } else if vcs.jj_colocated {
-        spans.push(Span::styled(" · jj", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(" · jj", Style::default().fg(styles::fg_dim())));
     }
     Some(Line::from(spans))
 }
@@ -6668,7 +6843,7 @@ fn preview_lines_for_width(artifact: &ArtifactView, width: u16) -> (Vec<Line<'st
     // A rule separates the file's properties from its content.
     lines.push(Line::from(Span::styled(
         "─".repeat(usize::from(width)),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(styles::fg_dim()),
     )));
     lines.push(Line::from(""));
     let body = if artifact.content_body.is_empty() {
@@ -6809,14 +6984,9 @@ fn highlight_code_search_matches(
                 })
                 .copied();
             let style = matching.map_or(span.style, |(match_start, _)| {
-                span.style
-                    .fg(Color::Black)
-                    .bg(if current == Some((line_index, match_start)) {
-                        Color::Magenta
-                    } else {
-                        Color::Yellow
-                    })
-                    .add_modifier(Modifier::BOLD)
+                span.style.patch(styles::highlight_style(
+                    current == Some((line_index, match_start)),
+                ))
             });
             highlighted.push(Span::styled(text[start..end].to_string(), style));
         }
@@ -6970,7 +7140,7 @@ fn diff_lines(
         let mut lines = vec![
             header,
             Line::from(vec![
-                Span::styled("● ", Style::default().fg(Color::Magenta)),
+                Span::styled("● ", Style::default().fg(styles::violet())),
                 Span::raw("untracked file — whole body is new"),
             ]),
             Line::default(),
@@ -6980,7 +7150,7 @@ fn diff_lines(
                 Line::from(vec![
                     Span::styled(
                         format!("{:>4} {:>4} ", "", index + 1),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(styles::fg_dim()),
                     ),
                     Span::styled(format!("+{line}"), styles::diff_add_style()),
                 ])
@@ -7013,7 +7183,7 @@ fn diff_lines(
         return vec![
             header,
             Line::from(vec![
-                Span::styled("✓ ", Style::default().fg(Color::Green)),
+                Span::styled("✓ ", Style::default().fg(styles::good())),
                 Span::raw("source file matches HEAD — no uncommitted changes"),
             ]),
         ];
@@ -7030,7 +7200,7 @@ fn diff_lines(
             }
             lines.push(Line::from(Span::styled(
                 separator.clone(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             )));
             lines.push(diff_line_colored(raw));
             continue;
@@ -7233,7 +7403,7 @@ fn jj_log_lines(module: &ModuleView) -> Vec<Line<'static>> {
     for row in String::from_utf8_lossy(&output.stdout).lines() {
         let (change, rest) = row.split_at(row.len().min(8));
         lines.push(Line::from(vec![
-            Span::styled(change.to_string(), Style::default().fg(Color::Magenta)),
+            Span::styled(change.to_string(), Style::default().fg(styles::violet())),
             Span::raw(rest.to_string()),
         ]));
     }
@@ -7265,7 +7435,7 @@ fn deployment_lines(groups: &[rune::view::DeployGroup]) -> Vec<Line<'static>> {
     if groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "not deployed anywhere — D deploys it to a target",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(styles::fg_dim()),
         )));
     }
     for group in groups {
@@ -7274,9 +7444,9 @@ fn deployment_lines(groups: &[rune::view::DeployGroup]) -> Vec<Line<'static>> {
             Span::styled(
                 if all_verified { "✓ " } else { "✗ " },
                 Style::default().fg(if all_verified {
-                    Color::Green
+                    styles::good()
                 } else {
-                    Color::Red
+                    styles::bad()
                 }),
             ),
             Span::styled(
@@ -7285,25 +7455,25 @@ fn deployment_lines(groups: &[rune::view::DeployGroup]) -> Vec<Line<'static>> {
             ),
             Span::styled(
                 format!("  {}/{} verified", group.verified, group.total),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             ),
         ]));
         for harness in &group.harnesses {
             let (badge, style) = if harness.verified {
-                ("✓", Style::default().fg(Color::Green))
+                ("✓", Style::default().fg(styles::good()))
             } else {
-                ("✗ DRIFT", Style::default().fg(Color::Red))
+                ("✗ DRIFT", Style::default().fg(styles::bad()))
             };
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled(
                     format!("{:<12}", harness.harness),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(styles::accent()),
                 ),
                 Span::styled(format!("{badge:<8}"), style),
                 Span::styled(
                     harness.deployed_path.clone(),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(styles::fg_dim()),
                 ),
             ]));
         }
@@ -7351,7 +7521,7 @@ fn frontmatter_lines(artifact: &ArtifactView, width: u16) -> Vec<Line<'static>> 
         .iter()
         .map(|(key, value)| {
             Line::from(vec![
-                Span::styled(format!("{key:<18}"), Style::default().fg(Color::Magenta)),
+                Span::styled(format!("{key:<18}"), Style::default().fg(styles::violet())),
                 Span::raw(value.clone()),
             ])
         })
@@ -7366,7 +7536,7 @@ fn history_lines(artifact: &ArtifactView) -> Vec<Line<'static>> {
             Line::from("no git history for this file"),
             Line::from(Span::styled(
                 "o opens gitui on the repository",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(styles::fg_dim()),
             )),
         ];
     }

@@ -26,6 +26,9 @@ pub struct ThemeTones {
     pub alert: Tone,
     pub bad: Tone,
     pub violet: Tone,
+    /// The palette expects a light terminal background. The TUI derives
+    /// its surfaces and text tones from this flag.
+    pub light: bool,
 }
 
 pub const DEFAULT_DARK: &str = "rune-dark";
@@ -55,6 +58,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (187, 154, 247),
                 ansi: 35,
             },
+            light: false,
         },
     ),
     (
@@ -80,6 +84,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (110, 66, 180),
                 ansi: 35,
             },
+            light: true,
         },
     ),
     (
@@ -105,6 +110,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (203, 166, 247),
                 ansi: 35,
             },
+            light: false,
         },
     ),
     (
@@ -130,6 +136,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (136, 57, 239),
                 ansi: 35,
             },
+            light: true,
         },
     ),
     (
@@ -155,6 +162,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (187, 154, 247),
                 ansi: 35,
             },
+            light: false,
         },
     ),
     (
@@ -180,6 +188,7 @@ const THEMES: &[(&str, ThemeTones)] = &[
                 rgb: (180, 142, 173),
                 ansi: 35,
             },
+            light: false,
         },
     ),
 ];
