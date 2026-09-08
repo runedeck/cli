@@ -3,6 +3,7 @@ use rune::manifest;
 use rune::ontology;
 use rune::result::{ActionResult, DeployedFile, SkipReason, SkippedFile};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -545,6 +546,34 @@ fn lexically_normalized(path: &Path) -> PathBuf {
 #[folder = "templates/skeleton/"]
 struct EmbeddedSkeleton;
 
+fn skeleton_bundle_digest<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> String {
+    let mut entries: Vec<_> = entries.into_iter().collect();
+    entries.sort_unstable_by_key(|(path, _)| *path);
+    let mut digest = Sha256::new();
+    for (path, content) in entries {
+        digest.update(path.as_bytes());
+        digest.update([0]);
+        digest.update(Sha256::digest(content));
+        digest.update([0]);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn embedded_skeleton_cache_name() -> String {
+    let entries: Vec<_> = EmbeddedSkeleton::iter()
+        .filter_map(|path| EmbeddedSkeleton::get(&path).map(|content| (path, content)))
+        .collect();
+    let digest = skeleton_bundle_digest(
+        entries
+            .iter()
+            .map(|(path, content)| (path.as_ref(), content.data.as_ref())),
+    );
+    format!(
+        "skeleton-{}-{EMBEDDED_SKELETON_RELEASE}-{digest}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 /// The binary ships the skeleton layers, so init works with no configured
 /// skeleton root and no network. Extraction lands in a per-version cache
 /// directory and is skipped when already present.
@@ -555,20 +584,14 @@ fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
             "cannot resolve the user cache directory; set a skeleton root with `rune config set skeleton <dir>`".to_string(),
         )
     })?;
-    let cache_root = cache_base.join(format!(
-        "rune/skeleton-{}-{EMBEDDED_SKELETON_RELEASE}",
-        env!("CARGO_PKG_VERSION")
-    ));
+    let cache_name = embedded_skeleton_cache_name();
+    let cache_root = cache_base.join("rune").join(&cache_name);
     if cache_root.join("base").is_dir() {
         return Ok(cache_root);
     }
     // Stage the full extraction, then rename into place: a crash mid-way
     // never leaves a half-written tree that looks ready.
-    let staging = cache_base.join(format!(
-        "rune/.skeleton-{}.{}.tmp",
-        env!("CARGO_PKG_VERSION"),
-        std::process::id()
-    ));
+    let staging = cache_base.join(format!("rune/.{cache_name}.{}.tmp", std::process::id()));
     if staging.exists() {
         let _ = fs::remove_dir_all(&staging);
     }

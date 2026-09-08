@@ -29,6 +29,10 @@ docs/plans/
 
 # Parallel feature work
 .worktrees/
+.workspaces/
+
+# Python validation caches
+__pycache__/
 
 # Entire session data (runtime, not source). The hooks Entire installs into
 # .githooks/ are tracked source; only its runtime data here is ignored.

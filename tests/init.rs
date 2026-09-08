@@ -642,6 +642,20 @@ fn embedded_init_writes_tagged_copier_metadata_offline() {
     assert!(agents.contains("Offline Copy"));
     let workflow = fs::read_to_string(destination.join(".github/workflows/quality.yaml")).unwrap();
     assert!(workflow.contains("${{ github.ref }}"));
+    let overlay = fs::read_to_string(destination.join(".rune-skeleton-overlay.yaml")).unwrap();
+    assert!(overlay.contains("release: v0.5.0"));
+    assert!(overlay.contains("owner: runedeck/cli"));
+    for path in [
+        "scripts/author-identity.py",
+        "scripts/check-authorship",
+        "authors.yaml",
+        ".github/workflows/attestations.yaml",
+        "docs/specs/commit-attribution/spec.md",
+    ] {
+        assert!(destination.join(path).is_file(), "missing {path}");
+    }
+    let checker = fs::read_to_string(destination.join("scripts/author-identity.py")).unwrap();
+    assert_eq!(checker, include_str!("../scripts/author-identity.py"));
 }
 
 #[test]

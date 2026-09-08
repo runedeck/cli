@@ -2,6 +2,43 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn skeleton_bundle_digest_covers_paths_contents_and_order() {
+    let original = skeleton_bundle_digest([("base/file", b"one".as_slice())]);
+    assert_ne!(
+        original,
+        skeleton_bundle_digest([("base/file", b"two".as_slice())])
+    );
+    assert_ne!(
+        original,
+        skeleton_bundle_digest([("base/renamed", b"one".as_slice())])
+    );
+    let files = [("base/a", b"one".as_slice()), ("base/b", b"two".as_slice())];
+    assert_eq!(
+        skeleton_bundle_digest(files),
+        skeleton_bundle_digest(files.into_iter().rev())
+    );
+}
+
+#[test]
+fn embedded_skeleton_cache_identity_tracks_attribution_overlay() {
+    let entries: Vec<_> = EmbeddedSkeleton::iter()
+        .filter_map(|path| EmbeddedSkeleton::get(&path).map(|content| (path, content)))
+        .collect();
+    let base_entries = entries
+        .iter()
+        .filter(|(path, _)| path.as_ref() != "base/scripts/author-identity.py")
+        .map(|(path, content)| (path.as_ref(), content.data.as_ref()));
+    let without_helper = skeleton_bundle_digest(base_entries);
+    let cache_name = embedded_skeleton_cache_name();
+    assert!(!cache_name.ends_with(&without_helper));
+    assert!(cache_name.starts_with(&format!("skeleton-{}-v0.5.0-", env!("CARGO_PKG_VERSION"))));
+    assert_ne!(
+        cache_name,
+        format!("skeleton-{}-v0.5.0", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn git_reference_discovers_enclosing_repository_only_for_tracked_directory() {
     let repository = TempDir::new().unwrap();
     run_git(["init", "-b", "main"], Some(repository.path())).unwrap();
