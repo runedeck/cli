@@ -58,7 +58,7 @@ def _address(identity: str) -> tuple[str, str, str]:
     return match[1], match[2], match[3]
 
 
-def _model(identity: str) -> tuple[str, str]:
+def _raw_model(identity: str) -> tuple[str, str]:
     name, local, domain = _address(identity)
     match = re.fullmatch(r"(.+) \(([^()]*)\)", name)
     if not match or not match[1].strip() or match[1] != match[1].strip():
@@ -68,7 +68,12 @@ def _model(identity: str) -> tuple[str, str]:
     model = canonical_model_id(match[2])
     if canonical_model_id(local) != model:
         raise IdentityError("display model ID and address model ID must match")
-    return domain, model
+    return domain, match[2].removesuffix("[1m]")
+
+
+def _model(identity: str) -> tuple[str, str]:
+    domain, model = _raw_model(identity)
+    return domain, canonical_model_id(model)
 
 
 def _valid_domain(domain: str) -> bool:
@@ -179,18 +184,29 @@ def identity_key(policy: Policy, identity: str) -> tuple[str, ...]:
 
 def resolve_identity(policy: Policy, model: str, harness: str = "") -> str:
     """Resolve an existing identity or format one for a trusted harness."""
+    raw_model = model.removesuffix("[1m]")
     model = canonical_model_id(model)
     if harness and not HARNESS.fullmatch(harness):
         raise IdentityError("harness must be a lowercase ASCII slug")
     domain = harness + DOMAIN_SUFFIX
     matches = []
+    exact_matches = []
+    matched_domains = set()
     for identity in policy.authors:
         try:
-            listed_domain, listed_model = _model(identity)
-            if listed_model == model and (not harness or listed_domain == domain):
+            listed_domain, listed_raw = _raw_model(identity)
+            if canonical_model_id(listed_raw) == model and (
+                not harness or listed_domain == domain
+            ):
                 matches.append(identity)
+                matched_domains.add(listed_domain)
+                if listed_raw == raw_model:
+                    exact_matches.append(identity)
         except IdentityError:
             continue
+    if not harness and len(matched_domains) > 1:
+        raise IdentityError("provide a harness when a model matches multiple harnesses")
+    matches = exact_matches or matches
     if len(matches) > 1:
         raise IdentityError("model and harness match multiple listed identities")
     if matches:

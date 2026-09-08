@@ -273,6 +273,124 @@ class AuthorshipIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_outgoing_target_precedence(self):
+        bad = self.new_head(model_identity(harness="unknown"))
+        self.git("update-ref", "refs/heads/fixture", self.base)
+        for directory in SCRIPTS:
+            for arguments, environment, passes in (
+                ([], {"GITLEAKS_PUSH_TO_REF": bad}, False),
+                (
+                    [],
+                    {"GITLEAKS_PUSH_TO_REF": bad, "PRE_COMMIT_TO_REF": ""},
+                    False,
+                ),
+                (
+                    [],
+                    {"GITLEAKS_PUSH_TO_REF": bad, "PRE_COMMIT_TO_REF": self.base},
+                    True,
+                ),
+                (
+                    ["--to-ref", bad],
+                    {
+                        "GITLEAKS_PUSH_TO_REF": self.base,
+                        "PRE_COMMIT_TO_REF": self.base,
+                    },
+                    False,
+                ),
+                ([], {"GITLEAKS_PUSH_TO_REF": "missing-ref"}, False),
+            ):
+                with self.subTest(script=directory, environment=environment):
+                    result = self.run_command(
+                        ["bash", str(directory / "check-authorship"), *arguments],
+                        environment=environment,
+                    )
+                    self.assertEqual(
+                        result.returncode == 0, passes, result.stdout + result.stderr
+                    )
+                    if not passes and "missing-ref" not in environment.values():
+                        self.assertIn(bad, result.stdout + result.stderr)
+
+    def test_pre_push_checks_outgoing_orphan_history_while_head_stays_on_main(self):
+        binaries = self.directory / "fixture-binaries"
+        binaries.mkdir()
+        prek = binaries / "prek"
+        prek.write_text(
+            "#!/bin/sh\n"
+            'test "$*" = "run --stage pre-push --all-files" || exit 90\n'
+            'test -n "$GITLEAKS_PUSH_TO_REF" || exit 91\n'
+            'exec bash "$FIXTURE_AUTHORSHIP_CHECK"\n',
+            encoding="utf-8",
+        )
+        prek.chmod(0o755)
+        (self.repository / ".pre-commit-config.yaml").write_text(
+            "repos: []\n", encoding="utf-8"
+        )
+        self.git("update-ref", "refs/heads/main", self.base)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main")
+        for valid_root in (True, False):
+            root = self.new_head(
+                OWNER if valid_root else model_identity(harness="unknown"),
+                "Outgoing orphan root",
+                parents=(),
+            )
+            outgoing = self.new_head(
+                model_identity(), "Valid outgoing tip", parents=(root,)
+            )
+            for directory in SCRIPTS:
+                with self.subTest(script=directory, valid_root=valid_root):
+                    result = self.run_command(
+                        ["bash", str(directory.parent / ".githooks" / "pre-push")],
+                        content=f"refs/heads/orphan {outgoing} refs/heads/orphan {ZERO}\n",
+                        environment={
+                            "PATH": str(binaries) + os.pathsep + self.environment["PATH"],
+                            "FIXTURE_AUTHORSHIP_CHECK": str(directory / "check-authorship"),
+                        },
+                    )
+                    output = result.stdout + result.stderr
+                    self.assertEqual(result.returncode == 0, valid_root, output)
+                    if valid_root:
+                        self.assertIn(outgoing, output)
+                    else:
+                        self.assertIn(root, output)
+                    self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
+
+    def test_orphan_history_still_requires_a_readable_trusted_base(self):
+        outgoing = self.new_head(model_identity(), parents=())
+        trusted_policy = self.directory / "trusted-authors.yaml"
+        trusted_policy.write_text(POLICY, encoding="utf-8")
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.assert_checks(
+            outgoing,
+            base=ZERO,
+            passes=False,
+            policy_file=trusted_policy,
+            contains="origin/main",
+        )
+
+    def test_merge_base_read_errors_fail(self):
+        head = self.new_head(model_identity())
+        binaries = self.directory / "fixture-binaries"
+        binaries.mkdir()
+        git = binaries / "git"
+        git.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "merge-base" ]; then exit 128; fi\n'
+            'exec "$FIXTURE_REAL_GIT" "$@"\n',
+            encoding="utf-8",
+        )
+        git.chmod(0o755)
+        for directory in SCRIPTS:
+            with self.subTest(script=directory):
+                result = self.run_command(
+                    ["bash", str(directory / "check-authorship"), "--to-ref", head],
+                    environment={
+                        "PATH": str(binaries) + os.pathsep + self.environment["PATH"],
+                        "FIXTURE_REAL_GIT": self.git_binary,
+                    },
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("cannot read the merge base", result.stdout + result.stderr)
+
     def test_trailer_only_alias_passes_as_a_contributor(self):
         head = self.new_head(
             model_identity(), f"Fixture change\n\nCo-Authored-By: {TOOL}"

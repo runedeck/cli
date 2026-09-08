@@ -4,7 +4,7 @@
 set -o pipefail
 
 from="${PRE_COMMIT_FROM_REF:-}"
-to="${PRE_COMMIT_TO_REF:-HEAD}"
+to="${PRE_COMMIT_TO_REF:-${GITLEAKS_PUSH_TO_REF:-HEAD}}"
 authors_file=""
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
 helper="$script_dir/author-identity.py"
@@ -53,16 +53,30 @@ to_commit=$(git rev-parse --verify "$to^{commit}" 2>/dev/null) \
 # A new remote branch has a zero from-ref.
 case "$from" in
     '' | 0000000000000000000000000000000000000000)
-        from=$(git merge-base origin/main "$to_commit" 2>/dev/null) \
+        trusted_base=$(git rev-parse --verify 'origin/main^{commit}' 2>/dev/null) \
             || { echo "check-authorship: cannot resolve origin/main. Set PRE_COMMIT_FROM_REF."; exit 1; }
+        if from=$(git merge-base "$trusted_base" "$to_commit" 2>/dev/null); then
+            :
+        else
+            merge_status=$?
+            # An orphan branch requires a check of its complete reachable history.
+            [ "$merge_status" -eq 1 ] \
+                || { echo "check-authorship: cannot read the merge base for $to_commit"; exit 1; }
+            from=""
+        fi
         ;;
 esac
-from_commit=$(git rev-parse --verify "$from^{commit}" 2>/dev/null) \
-    || { echo "check-authorship: cannot resolve base commit $from"; exit 1; }
+if [ -n "$from" ]; then
+    from_commit=$(git rev-parse --verify "$from^{commit}" 2>/dev/null) \
+        || { echo "check-authorship: cannot resolve base commit $from"; exit 1; }
+    revisions="$from_commit..$to_commit"
+else
+    revisions="$to_commit"
+fi
 
 # Capture each Git read before its loop so a failed read fails the check.
-range=$(git log --format='%H' "$from_commit..$to_commit") \
-    || { echo "check-authorship: cannot list commits in $from_commit..$to_commit"; exit 1; }
+range=$(git log --format='%H' "$revisions") \
+    || { echo "check-authorship: cannot list commits in $revisions"; exit 1; }
 failures=0
 while IFS= read -r commit; do
     [ -n "$commit" ] || continue
@@ -91,5 +105,5 @@ while IFS= read -r commit; do
         fi
     done <<< "$trailers"
 done <<< "$range"
-[ "$failures" -ne 0 ] || echo "Every commit in $from_commit..$to_commit satisfies $authors_source."
+[ "$failures" -ne 0 ] || echo "Every commit in $revisions satisfies $authors_source."
 exit "$failures"

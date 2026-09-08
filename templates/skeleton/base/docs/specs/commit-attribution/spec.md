@@ -35,6 +35,8 @@ CI MUST execute the checker, helper, and policy from the pull request base SHA.
 It MUST read the head only as commit metadata.
 Local validation MUST read `origin/main:authors.yaml` unless the caller supplies an explicit trusted policy file.
 The check MUST inspect every commit from the merge base to the supplied head.
+For an orphan branch, it MUST inspect every commit reachable from the supplied head.
+Target selection MUST prefer `--to-ref`, `PRE_COMMIT_TO_REF`, `GITLEAKS_PUSH_TO_REF`, then `HEAD`.
 It MUST fail when policy or history cannot be read.
 
 An explicit `model_domains:` list MUST define the approved domains.
@@ -63,6 +65,16 @@ Policy validation MUST run even when the commit range is empty.
 - **WHEN** the range is empty and the trusted policy is malformed
 - **THEN** validation fails
 
+#### Scenario: Outgoing orphan differs from the working copy
+
+- **WHEN** the hook supplies an orphan target through `GITLEAKS_PUSH_TO_REF` and `HEAD` points to the default branch
+- **THEN** validation checks the complete outgoing history against the trusted policy
+
+#### Scenario: Explicit target overrides the hook environment
+
+- **WHEN** the caller supplies `--to-ref` and an environment target
+- **THEN** validation checks the explicit target
+
 ### Requirement: Contributor separation
 
 The check MUST accept exact `trailers:` entries only as contributor trailers.
@@ -82,3 +94,20 @@ Other IDs ending in `1m` MUST retain their identity.
 
 - **WHEN** a trailer shares the author's normalized model ID and harness domain
 - **THEN** validation rejects the repeated author
+
+### Requirement: Workspace identity resolution
+
+Within one harness, an exact model ID MUST take precedence over its canonical aliases.
+Context normalization MUST remove `[1m]` before this comparison.
+Multiple matching harnesses MUST require an explicit harness.
+The resolver MUST reject multiple entries with the same model ID and harness.
+
+#### Scenario: Policy contains current and legacy model IDs
+
+- **WHEN** the policy lists both `claude-fable-5` and `claude-fable-51m` for the selected harness
+- **THEN** each ID resolves to its exact entry
+
+#### Scenario: Multiple entries use the same model ID and harness
+
+- **WHEN** two author entries have the same model ID and harness
+- **THEN** resolution rejects the ambiguous identity
