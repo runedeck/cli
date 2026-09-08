@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null || dirname "$0")"
+workspace_root=$(jj workspace root)
+cd "$workspace_root"
+
+for argument in "$@"; do
+    case "$argument" in
+        -b*|--bookmark|--bookmark=*)
+            exec python3 "$workspace_root/.githooks/jj-push-bookmark.py" "$@"
+            ;;
+    esac
+done
 
 zero=0000000000000000000000000000000000000000
 
@@ -76,7 +85,7 @@ jj status >/dev/null
 {
     synthesize_ref_updates
     synthesize_argument_updates "$@"
-} | sort -u | bash "$(git rev-parse --show-toplevel)/.githooks/pre-push" \
+} | sort -u | bash "$workspace_root/.githooks/pre-push" \
     origin "$(git remote get-url origin 2>/dev/null || printf 'origin')"
 
 exec jj git push "$@"

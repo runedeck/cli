@@ -1,0 +1,8 @@
+version: 1
+base:
+    source: https://github.com/runedeck/skeleton.git
+    release: v0.5.0
+overlay:
+    owner: runedeck/cli
+    name: model-identity-policy
+    specification: docs/specs/commit-attribution/spec.md

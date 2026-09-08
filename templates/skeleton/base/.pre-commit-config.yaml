@@ -88,7 +88,7 @@ repos:
 
           - id: semgrep
             name: semgrep OWASP
-            entry: semgrep scan --config=p/owasp-top-ten --metrics=off --quiet .
+            entry: semgrep scan --disable-version-check --config=p/owasp-top-ten --metrics=off --quiet .
             language: system
             pass_filenames: false
             stages: [pre-push]
@@ -99,3 +99,11 @@ repos:
             language: system
             pass_filenames: false
             stages: [pre-push]
+
+          - id: check-authorship
+            name: authorship (push range)
+            entry: bash scripts/check-authorship
+            language: system
+            pass_filenames: false
+            stages: [pre-push]
+            always_run: true
