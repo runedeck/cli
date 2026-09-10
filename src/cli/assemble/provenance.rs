@@ -46,10 +46,17 @@ pub fn build_statement_bytes(
     )
 }
 
-/// Write a `.yaml` sidecar file next to the assembled output, on the shared
-/// full-filename naming so deploy finds it with `manifest::sidecar_path`.
+/// Write generated metadata inside the reserved `.provenance` directory.
 pub fn write_sidecar(output_path: &Path, statement: &str) -> Result<(), Error> {
     let prov_path = manifest::sidecar_path(output_path);
+    if let Some(parent) = prov_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot create {}: {error}", parent.display()),
+            )
+        })?;
+    }
     fs::write(&prov_path, statement).map_err(|e| {
         Error::new(
             ErrorKind::Io,

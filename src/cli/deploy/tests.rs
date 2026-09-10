@@ -342,6 +342,7 @@ fn deploy_provider_files_only_prefix_filters_deployment() {
         &mut result,
         "claude",
         false,
+        false,
         Some("skills/Alpha/"),
     )
     .unwrap();
@@ -396,4 +397,900 @@ fn ensure_destination_within_rejects_symlink_escape() {
 
     assert!(ensure_destination_within(&base.join("skills/Inside/SKILL.md"), &base).is_ok());
     assert!(ensure_destination_within(&base.join("skills/Escape/SKILL.md"), &base).is_err());
+}
+
+struct CodexSkillFixture {
+    module: TempDir,
+    target: TempDir,
+}
+
+impl CodexSkillFixture {
+    fn new() -> Self {
+        let fixture = Self {
+            module: TempDir::new().unwrap(),
+            target: TempDir::new().unwrap(),
+        };
+        fs::write(
+            fixture.module.path().join("module.yaml"),
+            "name: test-module\nversion: 1.0.0\ndescription: Deployment fixture.\nrepository: https://github.com/example/module\n",
+        )
+        .unwrap();
+        fixture.content(
+            "SKILL.md",
+            b"---\nname: Alpha\ndescription: Test skill.\n---\nRead [guide](guide.md).\n",
+        );
+        fixture.content("guide.md", b"Use the complete skill.\n");
+        fixture.content("agents/openai.yaml", b"interface:\n  display_name: Alpha\n");
+        fixture.content("assets/image.bin", &[0, 128, 255, 10]);
+        fixture
+    }
+
+    fn build(&self) -> PathBuf {
+        self.module.path().join("build/codex/skills/Alpha")
+    }
+    fn old(&self) -> PathBuf {
+        self.target.path().join(".codex/skills/Alpha")
+    }
+    fn new_bundle(&self) -> PathBuf {
+        self.target.path().join(".agents/skills/Alpha")
+    }
+
+    fn content(&self, relative: &str, bytes: &[u8]) {
+        let file = self.build().join(relative);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, bytes).unwrap();
+        self.sidecar(relative);
+    }
+
+    fn sidecar(&self, relative: &str) {
+        let file = self.build().join(relative);
+        let fingerprint = manifest::content_sha256_bytes(&deployed_bytes(&file).unwrap());
+        let statement = manifest::generate_statement(
+            &format!("codex/skills/Alpha/{relative}"),
+            &fingerprint,
+            &[],
+            "rune-cli",
+            "https://runedeck.dev/assemble/v1",
+            "1.0.0",
+            "https://github.com/example/module",
+        );
+        let sidecar = manifest::sidecar_path(&file);
+        fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        fs::write(sidecar, statement).unwrap();
+    }
+
+    fn install_legacy(&self) {
+        let root = self.target.path().join(".codex");
+        let mut entries = HashMap::new();
+        deploy_provider_kind_files(
+            &self.module.path().join("build/codex/skills"),
+            rune::provider::ContentKind::Skills,
+            &root,
+            &mut entries,
+            &mut HashSet::new(),
+            &mut ActionResult::new(),
+            "codex",
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        write_manifest(&root, &entries).unwrap();
+    }
+
+    fn deploy(
+        &self,
+        force: bool,
+        prune: bool,
+        dry_run: bool,
+        only: Option<&str>,
+    ) -> Result<ActionResult, Error> {
+        execute(
+            self.module.path().to_str().unwrap(),
+            Some(self.target.path().to_str().unwrap()),
+            &["codex".into()],
+            force,
+            prune,
+            false,
+            dry_run,
+            only,
+        )
+    }
+}
+
+fn tree_bytes(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    collect_files_recursive(root)
+        .unwrap()
+        .into_iter()
+        .map(|path| {
+            (
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                deployed_bytes(&path).unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn codex_defaults_use_shared_skills_and_keep_identity_fields() {
+    let providers = config::load_providers("").unwrap();
+    let codex = &providers["codex"];
+    assert_eq!(codex.default_target(), ".codex");
+    assert_eq!(
+        codex.target_for_kind(rune::provider::ContentKind::Skills),
+        ".agents"
+    );
+    assert_eq!(
+        codex.target_for_kind(rune::provider::ContentKind::Agents),
+        ".codex"
+    );
+    assert_eq!(
+        codex.keep_fields.as_ref().unwrap()["skills"],
+        [
+            "name",
+            "description",
+            "version",
+            "license",
+            "compatibility",
+            "metadata"
+        ]
+    );
+}
+
+#[test]
+fn codex_migration_moves_complete_bundle_and_repeats_without_changes() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    let old = tree_bytes(&fixture.old());
+    let result = fixture.deploy(false, true, false, None).unwrap();
+    assert_eq!(result.pruned.len(), 1);
+    assert!(!fixture.old().exists());
+    assert_eq!(tree_bytes(&fixture.new_bundle()), old);
+    assert_eq!(
+        manifest::bundle::inspect_bundle(&fixture.new_bundle()).digest,
+        manifest::bundle::inspect_bundle(&fixture.build()).digest
+    );
+    let trash = fixture.target.path().join(".codex/.trash");
+    let quarantined = collect_files_recursive(&trash)
+        .unwrap()
+        .into_iter()
+        .find(|file| file.ends_with("Alpha/SKILL.md"))
+        .unwrap();
+    assert_eq!(tree_bytes(quarantined.parent().unwrap()), old);
+    assert!(
+        load_deployed_manifest(&fixture.target.path().join(".codex"))
+            .unwrap()
+            .is_empty()
+    );
+    let before = tree_bytes(fixture.target.path());
+    let second = fixture.deploy(false, true, false, None).unwrap();
+    assert!(second.pruned.is_empty());
+    assert!(second.installed.is_empty());
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+}
+
+#[test]
+fn codex_deploy_preserves_authored_yaml_and_binary_companions() {
+    let fixture = CodexSkillFixture::new();
+    fixture.deploy(false, true, false, None).unwrap();
+    let bundle = fixture.new_bundle();
+    assert_eq!(
+        fs::read(bundle.join("agents/openai.yaml")).unwrap(),
+        b"interface:\n  display_name: Alpha\n"
+    );
+    assert_eq!(
+        fs::read(bundle.join("assets/image.bin")).unwrap(),
+        [0, 128, 255, 10]
+    );
+    assert!(!bundle.join("SKILL.md.yaml").exists());
+    assert!(!bundle.join("agents/openai.yaml.yaml").exists());
+    assert!(bundle.join("agents/.provenance/openai.yaml.yaml").is_file());
+    let entries = load_deployed_manifest(&fixture.target.path().join(".agents")).unwrap();
+    assert_eq!(entries.len(), 4);
+    assert_eq!(
+        entries["skills/Alpha/agents/openai.yaml"]
+            .provenance
+            .as_deref(),
+        Some("skills/Alpha/agents/.provenance/openai.yaml.yaml")
+    );
+}
+
+#[test]
+fn codex_migration_preserves_yaml_that_looks_like_provenance() {
+    let fixture = CodexSkillFixture::new();
+    fixture.content("data", b"authored data\n");
+    let authored = manifest::generate_statement(
+        "codex/skills/Alpha/data",
+        "authored",
+        &[],
+        "author",
+        "https://runedeck.dev/assemble/v1",
+        "1",
+        "source",
+    );
+    fixture.content("data.yaml", authored.as_bytes());
+    fixture.install_legacy();
+    fixture.deploy(false, true, false, None).unwrap();
+    assert_eq!(
+        fs::read(fixture.new_bundle().join("data.yaml")).unwrap(),
+        authored.as_bytes()
+    );
+    let expected = manifest::bundle::inspect_bundle(&fixture.build());
+    let actual = manifest::bundle::inspect_bundle(&fixture.new_bundle());
+    assert_eq!(expected.digest, actual.digest);
+    assert!(actual.entries.iter().any(|entry| entry.path == "data.yaml"));
+}
+
+#[test]
+fn legacy_build_layout_requires_reassembly_before_target_writes() {
+    let fixture = CodexSkillFixture::new();
+    let current = manifest::sidecar_path(&fixture.build().join("SKILL.md"));
+    fs::rename(current, fixture.build().join("SKILL.md.yaml")).unwrap();
+    let before = tree_bytes(fixture.target.path());
+    let error = fixture.deploy(false, true, false, None).unwrap_err();
+    assert_eq!(error.code(), "deploy.legacy_build_layout");
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+    assert!(!fixture.new_bundle().exists());
+}
+
+#[test]
+fn codex_migration_preserves_conflicts_before_any_content_write_even_with_force() {
+    for scenario in [
+        "edit",
+        "extra",
+        "empty-directory",
+        "unknown",
+        "bad-source",
+        "foreign",
+        "missing-source",
+    ] {
+        let fixture = CodexSkillFixture::new();
+        fixture.install_legacy();
+        match scenario {
+            "edit" => fs::write(fixture.old().join("guide.md"), "Local edit.\n").unwrap(),
+            "extra" => fs::write(fixture.old().join("notes.txt"), "Local notes.\n").unwrap(),
+            "empty-directory" => fs::create_dir(fixture.old().join("notes")).unwrap(),
+            "unknown" => fs::remove_file(fixture.old().join(".provenance/guide.md.yaml")).unwrap(),
+            "bad-source" => {
+                let file = fixture.old().join(".provenance/guide.md.yaml");
+                let current = fs::read_to_string(&file).unwrap();
+                fs::write(
+                    file,
+                    current.replace(
+                        "https://github.com/example/module",
+                        "https://github.com/foreign/module",
+                    ),
+                )
+                .unwrap();
+            }
+            "foreign" => {
+                fs::create_dir_all(fixture.new_bundle()).unwrap();
+                fs::write(fixture.new_bundle().join("SKILL.md"), "Foreign skill.\n").unwrap();
+            }
+            "missing-source" => {
+                fs::remove_file(fixture.build().join(".provenance/guide.md.yaml")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = tree_bytes(fixture.target.path());
+        let error = fixture.deploy(true, true, false, None).expect_err(scenario);
+        assert_eq!(
+            error.code(),
+            "CSI005_MIGRATION_CONFLICT",
+            "{scenario}: {error}"
+        );
+        assert_eq!(tree_bytes(fixture.target.path()), before, "{scenario}");
+        assert!(fixture.old().is_dir(), "{scenario}");
+        assert!(
+            !fixture.target.path().join(".codex/.trash").exists(),
+            "{scenario}"
+        );
+    }
+}
+
+#[test]
+fn codex_migration_no_prune_keeps_legacy_claims_and_then_resumes() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    let legacy = tree_bytes(&fixture.target.path().join(".codex"));
+    fixture.deploy(false, false, false, None).unwrap();
+    assert_eq!(tree_bytes(&fixture.target.path().join(".codex")), legacy);
+    assert!(fixture.new_bundle().join("SKILL.md").is_file());
+    fixture.deploy(false, true, false, None).unwrap();
+    assert!(!fixture.old().exists());
+}
+
+#[test]
+fn codex_migration_dry_run_and_partial_selection_preserve_target() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    let before = tree_bytes(fixture.target.path());
+    fixture.deploy(false, true, true, None).unwrap();
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+    assert!(!fixture.target.path().join(".agents").exists());
+    let error = fixture
+        .deploy(false, true, false, Some("skills/Alpha/guide.md"))
+        .unwrap_err();
+    assert_eq!(error.code(), "CSI005_MIGRATION_CONFLICT");
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+}
+
+#[test]
+fn codex_shared_root_refuses_multiple_selected_writers_before_target_creation() {
+    let fixture = CodexSkillFixture::new();
+    fs::create_dir_all(fixture.module.path().join("build/agentskills/skills")).unwrap();
+    let target = fixture.target.path().join("fresh-target");
+    let error = execute(
+        fixture.module.path().to_str().unwrap(),
+        Some(target.to_str().unwrap()),
+        &["codex".into(), "agentskills".into()],
+        false,
+        true,
+        false,
+        false,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "deploy.competing_writers");
+    assert!(!target.exists());
+}
+
+#[test]
+fn codex_shared_root_refuses_a_different_recorded_writer() {
+    let fixture = CodexSkillFixture::new();
+    fixture.deploy(false, true, false, None).unwrap();
+    fs::create_dir_all(fixture.module.path().join("build/agentskills/skills")).unwrap();
+    let before = tree_bytes(fixture.target.path());
+    let error = execute(
+        fixture.module.path().to_str().unwrap(),
+        Some(fixture.target.path().to_str().unwrap()),
+        &["agentskills".into()],
+        false,
+        true,
+        false,
+        false,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "deploy.competing_writers");
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+}
+
+#[test]
+fn codex_and_agentskills_distinct_roots_coexist_across_two_installs() {
+    for (codex_fallback, codex_root, shared_root) in [
+        (".codex", ".agents", ".agents-view"),
+        (".private-codex", ".private-skills", ".agents"),
+    ] {
+        let fixture = CodexSkillFixture::new();
+        fs::write(
+            fixture.module.path().join("config.yaml"),
+            format!(
+                "providers:\n  codex:\n    target:\n      default: {codex_fallback}\n      skills: {codex_root}\n  agentskills:\n    enabled: true\n    target: {shared_root}\n"
+            ),
+        )
+        .unwrap();
+        let file = fixture
+            .module
+            .path()
+            .join("build/agentskills/skills/Alpha/SKILL.md");
+        let body = "---\nname: Alpha\ndescription: Shared provider skill.\n---\nShared content.\n";
+        write_provenance_fixture(
+            &file,
+            "agentskills/skills/Alpha/SKILL.md",
+            body,
+            "https://github.com/example/module",
+        );
+        let mut first = None;
+        for requested in [["codex", "agentskills"], ["agentskills", "codex"]] {
+            let result = execute(
+                fixture.module.path().to_str().unwrap(),
+                Some(fixture.target.path().to_str().unwrap()),
+                &requested.map(String::from),
+                false,
+                true,
+                false,
+                false,
+                None,
+            )
+            .unwrap();
+            if let Some(before) = &first {
+                assert!(result.installed.is_empty());
+                assert!(result.pruned.is_empty());
+                assert_eq!(&tree_bytes(fixture.target.path()), before);
+            } else {
+                assert_eq!(result.installed.len(), 5);
+                first = Some(tree_bytes(fixture.target.path()));
+            }
+        }
+        for (provider, root, count) in [("codex", codex_root, 4), ("agentskills", shared_root, 1)] {
+            let root = fixture.target.path().join(root);
+            let entries = load_deployed_manifest(&root).unwrap();
+            assert_eq!(entries.len(), count);
+            for (key, entry) in entries {
+                assert_eq!(
+                    entry.fingerprint,
+                    manifest::content_sha256_bytes(&fs::read(root.join(&key)).unwrap())
+                );
+                let provenance =
+                    manifest::provenance::read(&root.join(entry.provenance.unwrap())).unwrap();
+                assert_eq!(
+                    provenance.provenance.subject[0].name,
+                    format!("{provider}/{key}")
+                );
+            }
+        }
+        assert_eq!(
+            fs::read_to_string(
+                fixture
+                    .target
+                    .path()
+                    .join(shared_root)
+                    .join("skills/Alpha/SKILL.md")
+            )
+            .unwrap(),
+            body
+        );
+        assert_ne!(
+            fs::read(
+                fixture
+                    .target
+                    .path()
+                    .join(codex_root)
+                    .join("skills/Alpha/SKILL.md")
+            )
+            .unwrap(),
+            body.as_bytes()
+        );
+    }
+}
+
+fn write_provenance_fixture(file: &Path, subject: &str, body: &str, source: &str) {
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(file, body).unwrap();
+    let sidecar = manifest::sidecar_path(file);
+    fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+    fs::write(
+        sidecar,
+        manifest::generate_statement(
+            subject,
+            &manifest::content_sha256(body),
+            &[],
+            "rune-cli",
+            "https://runedeck.dev/assemble/v1",
+            "1.0.0",
+            source,
+        ),
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_migration_preserves_relative_links_and_executable_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = CodexSkillFixture::new();
+    fixture.content("scripts/check.sh", b"#!/bin/sh\nexit 0\n");
+    fs::set_permissions(
+        fixture.build().join("scripts/check.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    symlink("guide.md", fixture.build().join("guide-link.md")).unwrap();
+    fixture.sidecar("guide-link.md");
+    symlink("assets", fixture.build().join("asset-link")).unwrap();
+    fixture.sidecar("asset-link");
+    fixture.install_legacy();
+    fixture.deploy(false, true, false, None).unwrap();
+    assert_eq!(
+        fs::read_link(fixture.new_bundle().join("guide-link.md")).unwrap(),
+        Path::new("guide.md")
+    );
+    assert_eq!(
+        fs::read_link(fixture.new_bundle().join("asset-link")).unwrap(),
+        Path::new("assets")
+    );
+    assert_eq!(
+        fs::metadata(fixture.new_bundle().join("scripts/check.sh"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111,
+        0o111
+    );
+    let entries = load_deployed_manifest(&fixture.target.path().join(".agents")).unwrap();
+    assert_eq!(
+        entries["skills/Alpha/guide-link.md"].fingerprint,
+        manifest::content_sha256("guide.md")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_invalid_links_fail_before_bundle_writes() {
+    for cyclic in [false, true] {
+        let fixture = CodexSkillFixture::new();
+        let destination = if cyclic {
+            "bad-link"
+        } else {
+            "../../../../outside"
+        };
+        symlink(destination, fixture.build().join("bad-link")).unwrap();
+        fixture.sidecar("bad-link");
+        let before = tree_bytes(fixture.target.path());
+        let error = fixture.deploy(false, true, false, None).unwrap_err();
+        assert_eq!(error.code(), "CSI005_MIGRATION_CONFLICT");
+        assert_eq!(tree_bytes(fixture.target.path()), before);
+        assert!(!fixture.new_bundle().exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_migration_restores_legacy_bundle_when_manifest_update_fails() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    fixture.deploy(false, false, false, None).unwrap();
+    let providers = config::load_providers("").unwrap();
+    let plan = migration::MigrationPlan::prepare(
+        fixture.module.path(),
+        Some(fixture.target.path().to_str().unwrap()),
+        providers.get("codex"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let manifest_file = fixture.target.path().join(".codex/.manifest");
+    let saved = fixture.target.path().join(".codex/manifest-backup");
+    fs::rename(&manifest_file, &saved).unwrap();
+    symlink("manifest-backup", &manifest_file).unwrap();
+    let original = tree_bytes(&fixture.old());
+    let error = plan.finish(&mut ActionResult::new()).unwrap_err();
+    assert!(error.message().contains("symlink"));
+    assert_eq!(tree_bytes(&fixture.old()), original);
+    assert_eq!(fs::read(&manifest_file).unwrap(), fs::read(&saved).unwrap());
+    assert!(fixture.new_bundle().join("SKILL.md").is_file());
+    fs::remove_file(&manifest_file).unwrap();
+    fs::rename(saved, manifest_file).unwrap();
+    assert_migration_retry(&fixture);
+}
+
+#[test]
+fn codex_migration_keeps_legacy_when_replacement_changes_after_preflight() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    fixture.deploy(false, false, false, None).unwrap();
+    let providers = config::load_providers("").unwrap();
+    let plan = migration::MigrationPlan::prepare(
+        fixture.module.path(),
+        Some(fixture.target.path().to_str().unwrap()),
+        providers.get("codex"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    fs::write(fixture.new_bundle().join("guide.md"), "Concurrent edit.\n").unwrap();
+    let error = plan.finish(&mut ActionResult::new()).unwrap_err();
+    assert_eq!(error.code(), "CSI005_MIGRATION_CONFLICT");
+    assert!(fixture.old().join("SKILL.md").is_file());
+    assert!(!fixture.target.path().join(".codex/.trash").exists());
+    fs::copy(
+        fixture.build().join("guide.md"),
+        fixture.new_bundle().join("guide.md"),
+    )
+    .unwrap();
+    assert_migration_retry(&fixture);
+}
+
+fn assert_migration_retry(fixture: &CodexSkillFixture) {
+    let result = fixture.deploy(false, true, false, None).unwrap();
+    assert_eq!(result.pruned.len(), 1);
+    assert!(!fixture.old().exists());
+    assert_eq!(
+        manifest::bundle::inspect_bundle(&fixture.new_bundle()).digest,
+        manifest::bundle::inspect_bundle(&fixture.build()).digest
+    );
+    assert_eq!(
+        load_deployed_manifest(&fixture.target.path().join(".agents"))
+            .unwrap()
+            .keys()
+            .filter(|key| key.starts_with("skills/Alpha/"))
+            .count(),
+        4
+    );
+    assert!(
+        load_deployed_manifest(&fixture.target.path().join(".codex"))
+            .unwrap()
+            .is_empty()
+    );
+    let before = tree_bytes(fixture.target.path());
+    let repeated = fixture.deploy(false, true, false, None).unwrap();
+    assert!(repeated.installed.is_empty());
+    assert!(repeated.pruned.is_empty());
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+}
+
+#[test]
+fn codex_migration_recovers_failed_copy_and_retries_without_foreign_loss() {
+    for occupied in [false, true] {
+        let fixture = CodexSkillFixture::new();
+        fixture.install_legacy();
+        if occupied {
+            fixture.deploy(false, false, false, None).unwrap();
+        }
+        let root = fixture.target.path().join(".agents");
+        fs::create_dir_all(root.join("skills/Foreign")).unwrap();
+        fs::write(
+            root.join("skills/Foreign/notes.txt"),
+            "Keep foreign content.\n",
+        )
+        .unwrap();
+        fixture.content(
+            "SKILL.md",
+            b"---\nname: Alpha\ndescription: Changed skill.\n---\nUse [guide](guide.md).\n",
+        );
+        let providers = config::load_providers("").unwrap();
+        let plan = migration::MigrationPlan::prepare(
+            fixture.module.path(),
+            Some(fixture.target.path().to_str().unwrap()),
+            providers.get("codex"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let recovery = plan.begin_recovery().unwrap().unwrap();
+        let mut unrelated = load_deployed_manifest(&root).unwrap();
+        let notes = "Keep the new unrelated claim.\n";
+        let foreign_provenance = "skills/Foreign/.provenance/notes.txt.yaml";
+        unrelated.insert(
+            "skills/Foreign/notes.txt".into(),
+            manifest::ManifestEntry {
+                fingerprint: manifest::content_sha256(notes),
+                provenance: Some(foreign_provenance.into()),
+            },
+        );
+        write_provenance_fixture(
+            &root.join("skills/Foreign/notes.txt"),
+            "codex/skills/Foreign/notes.txt",
+            notes,
+            "https://github.com/foreign/module",
+        );
+        write_manifest(&root, &unrelated).unwrap();
+        let before = tree_bytes(&root);
+        let blocker = fixture.new_bundle().join(".provenance/SKILL.md.yaml");
+        if occupied {
+            fs::remove_file(&blocker).unwrap();
+        }
+        fs::create_dir_all(&blocker).unwrap();
+        fs::write(
+            fixture.new_bundle().join("notes.txt"),
+            "Concurrent foreign addition.\n",
+        )
+        .unwrap();
+        let mut entries = load_deployed_manifest(&root).unwrap();
+        let error = deploy_provider_kind_files(
+            &fixture.module.path().join("build/codex/skills"),
+            rune::provider::ContentKind::Skills,
+            &root,
+            &mut entries,
+            &mut HashSet::new(),
+            &mut ActionResult::new(),
+            "codex",
+            false,
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.message().contains("cannot copy"));
+        drop(recovery);
+        assert_eq!(tree_bytes(&root), before);
+        let retained = collect_files_recursive(fixture.target.path()).unwrap();
+        let saved = retained
+            .iter()
+            .find(|path| path.ends_with("failed/skills/Alpha/notes.txt"))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(saved).unwrap(),
+            "Concurrent foreign addition.\n"
+        );
+        assert!(fixture.old().join("SKILL.md").is_file());
+        assert_migration_retry(&fixture);
+        assert_eq!(
+            fs::read_to_string(saved).unwrap(),
+            "Concurrent foreign addition.\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("skills/Foreign/notes.txt")).unwrap(),
+            notes
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_migration_public_failure_restores_destination_and_retries() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    let manifest_file = fixture.target.path().join(".codex/.manifest");
+    let saved = fixture.target.path().join(".codex/manifest-backup");
+    fs::rename(&manifest_file, &saved).unwrap();
+    symlink("manifest-backup", &manifest_file).unwrap();
+    let error = fixture.deploy(false, true, false, None).unwrap_err();
+    assert!(error.message().contains("symlink"));
+    assert!(!fixture.new_bundle().exists());
+    assert!(fixture.old().join("SKILL.md").is_file());
+    assert!(
+        load_deployed_manifest(&fixture.target.path().join(".agents"))
+            .unwrap()
+            .is_empty()
+    );
+    fs::remove_file(&manifest_file).unwrap();
+    fs::rename(saved, manifest_file).unwrap();
+    assert_migration_retry(&fixture);
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_migration_recovery_preserves_an_external_manifest_after_root_replacement() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    fixture.deploy(false, false, false, None).unwrap();
+    let providers = config::load_providers("").unwrap();
+    let plan = migration::MigrationPlan::prepare(
+        fixture.module.path(),
+        Some(fixture.target.path().to_str().unwrap()),
+        providers.get("codex"),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let recovery = plan.begin_recovery().unwrap().unwrap();
+    let root = fixture.target.path().join(".agents");
+    let relocated = fixture.target.path().join("saved-agents");
+    fs::rename(&root, &relocated).unwrap();
+    let external = TempDir::new().unwrap();
+    let entries = HashMap::from([(
+        "skills/Alpha/SKILL.md".into(),
+        manifest::ManifestEntry {
+            fingerprint: "foreign fingerprint".into(),
+            provenance: None,
+        },
+    )]);
+    write_manifest(external.path(), &entries).unwrap();
+    let before = tree_bytes(external.path());
+    symlink(external.path(), &root).unwrap();
+    drop(recovery);
+    assert_eq!(tree_bytes(external.path()), before);
+    assert!(root.symlink_metadata().unwrap().is_symlink());
+    fs::remove_file(&root).unwrap();
+    fs::rename(relocated, root).unwrap();
+    assert_migration_retry(&fixture);
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_migration_preserves_replacement_root_links_before_writes() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    fixture.deploy(false, false, false, None).unwrap();
+    let referent = fixture.target.path().join(".agents/retained-alpha");
+    fs::rename(fixture.new_bundle(), &referent).unwrap();
+    symlink("../retained-alpha", fixture.new_bundle()).unwrap();
+    fixture.content("guide.md", b"Updated guide.\n");
+    let before = tree_bytes(fixture.target.path());
+    let error = fixture.deploy(false, true, false, None).unwrap_err();
+    assert_eq!(error.code(), "CSI005_MIGRATION_CONFLICT");
+    assert!(error.message().contains("symbolic link"));
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+}
+
+#[test]
+fn failed_provenance_copy_does_not_claim_a_complete_replacement() {
+    let fixture = CodexSkillFixture::new();
+    fixture.install_legacy();
+    fs::create_dir_all(fixture.new_bundle().join(".provenance/SKILL.md.yaml")).unwrap();
+    let mut entries = HashMap::new();
+    let error = deploy_provider_kind_files(
+        &fixture.module.path().join("build/codex/skills"),
+        rune::provider::ContentKind::Skills,
+        &fixture.target.path().join(".agents"),
+        &mut entries,
+        &mut HashSet::new(),
+        &mut ActionResult::new(),
+        "codex",
+        false,
+        false,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.message().contains("cannot copy"));
+    assert!(entries.is_empty());
+    assert!(fixture.old().join("SKILL.md").is_file());
+}
+
+fn record_build_snapshot(fixture: &CodexSkillFixture) {
+    use manifest::source_snapshot::{self, SOURCE_SNAPSHOT_PATH, SourceSnapshotRecord};
+    let root = fixture.module.path().join("build/codex");
+    let inputs = crate::cli::assemble::snapshot::source_inputs(fixture.module.path()).unwrap();
+    let record = SourceSnapshotRecord::new(
+        source_snapshot::inspect(&inputs).unwrap(),
+        source_snapshot::selected_skill_bundles(&root).unwrap(),
+    );
+    let file = root.join(SOURCE_SNAPSHOT_PATH);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(file, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+}
+
+#[test]
+fn source_snapshot_deploys_only_after_complete_install_and_stays_outside_manifest() {
+    use manifest::source_snapshot::SOURCE_SNAPSHOT_PATH;
+    let fixture = CodexSkillFixture::new();
+    record_build_snapshot(&fixture);
+    fixture.deploy(false, true, false, None).unwrap();
+    let root = fixture.target.path().join(".agents");
+    let record = evidence::read_snapshot(&root).unwrap().unwrap();
+    evidence::verify_installed_snapshot(&root, "codex", &record).unwrap();
+    assert_eq!(record.selected_skills.len(), 1);
+    assert!(
+        !load_deployed_manifest(&root)
+            .unwrap()
+            .contains_key(SOURCE_SNAPSHOT_PATH)
+    );
+    let before = tree_bytes(fixture.target.path());
+    fixture.deploy(false, true, false, None).unwrap();
+    assert_eq!(tree_bytes(fixture.target.path()), before);
+    fixture.deploy(false, false, false, None).unwrap();
+    assert!(!root.join(SOURCE_SNAPSHOT_PATH).exists());
+}
+
+#[test]
+fn changed_source_or_omitted_selected_bundle_cannot_receive_current_snapshot() {
+    use manifest::source_snapshot::SOURCE_SNAPSHOT_PATH;
+    for changed_source in [false, true] {
+        let fixture = CodexSkillFixture::new();
+        record_build_snapshot(&fixture);
+        if changed_source {
+            fs::write(
+                fixture.module.path().join("config.yaml"),
+                "model-change: true\n",
+            )
+            .unwrap();
+        } else {
+            fs::remove_dir_all(fixture.build()).unwrap();
+        }
+        let error = fixture.deploy(false, true, false, None).unwrap_err();
+        assert_eq!(error.code(), "CSI002_INCOMPLETE_IDENTITY");
+        assert!(
+            !fixture
+                .target
+                .path()
+                .join(".agents")
+                .join(SOURCE_SNAPSHOT_PATH)
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn modified_file_keeps_install_semantics_but_invalidates_source_snapshot() {
+    let fixture = CodexSkillFixture::new();
+    record_build_snapshot(&fixture);
+    fixture.deploy(false, true, false, None).unwrap();
+    fs::write(fixture.new_bundle().join("guide.md"), "Local edit.\n").unwrap();
+    let result = fixture.deploy(false, true, false, None).unwrap();
+    assert!(
+        result
+            .skipped
+            .iter()
+            .any(|skip| matches!(skip.reason, SkipReason::UserModified))
+    );
+    assert!(
+        evidence::read_snapshot(&fixture.target.path().join(".agents"))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.new_bundle().join("guide.md")).unwrap(),
+        "Local edit.\n"
+    );
 }

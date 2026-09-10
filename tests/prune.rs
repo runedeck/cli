@@ -267,7 +267,7 @@ fn two_pass_prune_removes_skill_directory_gemini() {
 
 #[test]
 fn two_pass_prune_removes_skill_directory_codex() {
-    run_two_pass_prune_for_provider(".codex");
+    run_two_pass_prune_for_provider(".agents");
 }
 
 #[test]

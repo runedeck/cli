@@ -466,6 +466,13 @@ fn install_deploys_skill_to_agentskills_provider() {
         .path()
         .join(".agents/skills/agent-skill/SKILL.md");
     assert!(deployed.is_file(), "expected {}", deployed.display());
+    assert!(!module_directory.path().join("build/codex").exists());
+    assert!(
+        !target_directory
+            .path()
+            .join(".agents/skills/AgentSkill")
+            .exists()
+    );
 }
 
 // --- Manifest tests ---

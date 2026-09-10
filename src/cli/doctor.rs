@@ -9,6 +9,9 @@ const MANAGED_DIRECTORIES: &[&str] = &["agents", "skills", "rules", "hooks"];
 const MANIFEST_MISSING_CODE: &str = "doctor.manifest_missing";
 const MANIFEST_CORRUPT_CODE: &str = "doctor.manifest_corrupt";
 
+mod skills;
+pub use skills::SkillOptions;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum IntegrityStatus {
@@ -42,9 +45,21 @@ pub(crate) struct RepairAction {
 pub(crate) struct DoctorReport {
     pub(crate) targets: Vec<TargetReport>,
     pub(crate) repairs: Vec<RepairAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) skill_readiness: Option<rune::skill_readiness::SkillReadiness>,
 }
 
 pub fn execute(target: &str, verify: bool, repair: bool, json: bool) -> Result<i32, Error> {
+    execute_with_skills(target, verify, repair, json, &SkillOptions::default())
+}
+
+pub fn execute_with_skills(
+    target: &str,
+    verify: bool,
+    repair: bool,
+    json: bool,
+    skill_options: &SkillOptions,
+) -> Result<i32, Error> {
     let source_root = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -58,7 +73,27 @@ pub fn execute(target: &str, verify: bool, repair: bool, json: bool) -> Result<i
     } else {
         None
     };
-    let report = inspect_and_repair(Path::new(target), &source_root, repair)?;
+    let mut report = if skill_options.enabled {
+        // Strict skill inventory also works before the first deployment.
+        match inspect_and_repair(Path::new(target), &source_root, false) {
+            Ok(report) => report,
+            Err(error) if error.code() == MANIFEST_MISSING_CODE => DoctorReport {
+                targets: Vec::new(),
+                repairs: Vec::new(),
+                skill_readiness: None,
+            },
+            Err(error) => return Err(error),
+        }
+    } else {
+        inspect_and_repair(Path::new(target), &source_root, repair)?
+    };
+    if skill_options.enabled {
+        report.skill_readiness = Some(skills::inspect(
+            Path::new(target),
+            &source_root,
+            skill_options,
+        )?);
+    }
     if json {
         let json = serde_json::to_string_pretty(&report).map_err(|error| {
             Error::new(
@@ -112,10 +147,21 @@ fn inspect_and_repair(
     Ok(DoctorReport {
         targets: reports,
         repairs,
+        skill_readiness: None,
     })
 }
 
 fn exit_status(report: &DoctorReport, verify: bool, repair: bool) -> i32 {
+    if let Some(readiness) = &report.skill_readiness {
+        let invalid = report
+            .targets
+            .iter()
+            .flat_map(|target| &target.findings)
+            .any(|finding| finding.status != IntegrityStatus::Ok);
+        if !readiness.accepted || invalid {
+            return 1;
+        }
+    }
     let broken = report
         .targets
         .iter()
@@ -647,6 +693,20 @@ fn prune_empty_parents(start: Option<&Path>, stop: &Path) {
 }
 
 fn print_human(report: &DoctorReport, repaired: bool) {
+    if let Some(readiness) = &report.skill_readiness {
+        println!(
+            "Skill inventory: {}",
+            if readiness.static_valid {
+                "valid"
+            } else {
+                "failed"
+            }
+        );
+        println!("Native discovery: {}", readiness.native_discovery);
+        for finding in &readiness.findings {
+            println!("{}: {}", finding.code, finding.message);
+        }
+    }
     let sheet = crate::cli::style::Sheet::detect(false);
     if repaired && !report.repairs.is_empty() {
         println!(
@@ -816,6 +876,11 @@ mod tests {
         let source = root.path().join("source");
         let target = root.path().join("target");
         fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("config.yaml"),
+            "providers:\n  codex:\n    enabled: false\n  agentskills:\n    enabled: true\n",
+        )
+        .unwrap();
         fs::create_dir_all(target.join(".agents")).unwrap();
         fs::write(target.join(".agents/.manifest"), "{}\n").unwrap();
 
@@ -922,6 +987,7 @@ mod tests {
     #[test]
     fn verify_fails_only_for_missing_or_orphan_findings() {
         let report = DoctorReport {
+            skill_readiness: None,
             targets: vec![TargetReport {
                 provider: "claude".to_string(),
                 target: "target".to_string(),
@@ -935,6 +1001,7 @@ mod tests {
         assert_eq!(exit_status(&report, true, false), 0);
 
         let broken = DoctorReport {
+            skill_readiness: None,
             targets: vec![TargetReport {
                 provider: "claude".to_string(),
                 target: "target".to_string(),

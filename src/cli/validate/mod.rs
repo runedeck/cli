@@ -3,6 +3,7 @@ mod mdschema_tool;
 mod plugin;
 mod repository;
 mod schema;
+pub(crate) mod skill_layers;
 pub(crate) mod templates;
 mod tools;
 
