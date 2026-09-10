@@ -1,6 +1,7 @@
 ---
 status: proposed
 ---
+
 # OpenSpec Root Selection
 
 ## Why

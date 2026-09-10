@@ -46,7 +46,7 @@ Tests that validate markdown processing need readable test data. Inline string l
 
 Test data lives as real files in `tests/fixtures/`, loaded via `include_str!`:
 
-```
+```text
 tests/
     fixtures/
         input/          # source markdown, hook JSON payloads

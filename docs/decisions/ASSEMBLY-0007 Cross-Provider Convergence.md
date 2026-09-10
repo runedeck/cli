@@ -25,13 +25,13 @@ upstream: []
 
 ## Context and Problem Statement
 
-The AI coding tool ecosystem is converging on shared conventions. The Agentic AI Foundation (Linux Foundation, co-founded by Anthropic, OpenAI, Block, Dec 2025) governs the AGENTS.md standard and MCP. The Agent Skills spec at agentskills.io defines the canonical SKILL.md format, adopted by Claude Code and Gemini CLI. Codex and Gemini already read `.agents/skills/`. Claude Code has open issues requesting `.agents/` support but hasn't shipped it yet.
+The AI coding tool ecosystem is converging on shared conventions. The Agentic AI Foundation (Linux Foundation, co-founded by Anthropic, OpenAI, Block, Dec 2025) governs the AGENTS.md standard and MCP. The Agent Skills spec at agentskills.io defines the canonical SKILL.md format, adopted by Claude Code and Gemini CLI. Codex and Gemini already read `.agents/skills/`. Claude Code has open issues requesting `.agents/` support but has not shipped it yet.
 
 This convergence changes what rune-cli needs to do over time.
 
 ## Decision Drivers
 
-- `.agents/skills/SKILL.md` is the universal skill format; rune deploys skills as `SKILL.md` for every provider, Codex included
+- `.agents/skills/SKILL.md` is the universal skill format. Rune deploys skills as `SKILL.md` for every provider, Codex included
 - Provider-specific formatting (TOML for Codex agents, kebab-case for Gemini) is transitional and applies to agents only, never skills or rules
 - rune-cli's deployment layer should shrink as providers converge
 - Assembly and validation are the durable capabilities

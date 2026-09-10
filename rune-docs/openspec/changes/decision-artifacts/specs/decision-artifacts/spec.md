@@ -64,7 +64,7 @@ Each published ADR MUST receive the next identifier for its declared prefix, use
 
 An archive that does not publish decisions MUST retain them inside the archived change. Reconciliation MUST validate and publish pending drafts in the same accepted record shape as decision-aware archive.
 
-The archived source path and digest MUST identify publication. A matching path and digest MUST be a no-op; a matching path with a different digest MUST fail closed.
+The archived source path and digest MUST identify publication. A matching path and digest MUST be a no-op. A matching path with a different digest MUST fail closed.
 
 #### Scenario: Reconcile pending decisions
 

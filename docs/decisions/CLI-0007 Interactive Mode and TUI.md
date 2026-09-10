@@ -50,6 +50,7 @@ Deferred to a future release. The `--interactive` flag was removed from v0.1.0 t
 ### Phase 2: TUI
 
 A `rune tui` subcommand providing:
+
 - Build output browser (tree view of build/ per provider)
 - Manifest diff (deployed vs built, highlighting Stale/Modified)
 - Provider picker (checkbox selection for which providers to deploy)

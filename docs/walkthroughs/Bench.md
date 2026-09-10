@@ -53,7 +53,7 @@ rune bench report --suite tier1-sample --version demo
 
 Expected: results land under `bench/results/<suiteId>/<version>/` in the bench
 workspace as `test-results-*.json`, `test-results-*.md`, and `summary-*.json`,
-byte-compatible with the bun harness; either runner resumes from the other's
+byte-compatible with the bun harness. Either runner resumes from the other's
 cache. A private-tier suite routes its results into the private checkout
 instead.
 
@@ -65,7 +65,7 @@ rune bench run --suite tier1-sample --models qwen2.5-coder-7b --runs 1 --version
 
 Expected: doctor-style readiness first (a downed Ollama fails fast), then live
 scoring. CLI-harness models (`claude-cli`, `codex-cli`, `agy-cli`, `grok-cli`,
-`opencode-cli`) run the installed CLIs headlessly with the user's own auth;
+`opencode-cli`) run the installed CLIs headlessly with the user's own auth.
 enable them in models.yaml and run outside any command sandbox.
 
 ## Audit and dashboard
@@ -76,7 +76,7 @@ rune bench audit --suite tier1-world   # one suite
 ```
 
 Expected: failures when an answer does not self-score or a negative is a
-substring of an answer; warnings for tokens under four characters (substring
+substring of an answer. Warnings for tokens under four characters (substring
 false-positive risk). Judged suites are skipped.
 
 ```sh

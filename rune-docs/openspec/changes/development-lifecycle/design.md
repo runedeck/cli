@@ -70,7 +70,7 @@ specification
     -> deployment
 ```
 
-Validation success permits an approval question; it never answers one. Plan approval does not authorize implementation publication, pull-request creation does not authorize merge, and merge approval does not authorize a separate release or installation.
+Validation success permits an approval question. It never answers one. Plan approval does not authorize implementation publication, pull-request creation does not authorize merge, and merge approval does not authorize a separate release or installation.
 
 A decision that changes accepted behavior returns the lifecycle to specification review. A code or test finding returns it to implementation. Pull-request feedback returns it to the affected phase rather than being patched outside the artifact chain.
 
@@ -88,7 +88,7 @@ On resume, it validates completed phases in order and starts at the earliest inc
 
 ## Risks / Trade-offs
 
-- A tasks checkbox does not bind approval to a content digest. Editing tools clear dependent checkpoints; manual edits require review discipline.
+- A tasks checkbox does not bind approval to a content digest. Editing tools clear dependent checkpoints. Manual edits require review discipline.
 - A cross-harness interview cannot guarantee identical presentation. The behavioral contract requires equivalent questions and outcomes, not identical UI.
 - One coordinating skill can grow too broad. Phase mechanics stay in focused skills and commands, with this skill limited to routing and approvals.
 - Deployment evidence differs by destination. Each integration defines what published availability means and how it is verified.

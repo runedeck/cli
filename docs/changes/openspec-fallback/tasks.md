@@ -6,14 +6,14 @@
 
 ## 2. Doctor cross-check
 
-- [x] 2.1 `openspec_cross_check`: run `openspec validate --all --no-interactive` on openspec roots when the binary exists; failures become one advisory warning finding
+- [x] 2.1 `openspec_cross_check`: run `openspec validate --all --no-interactive` on openspec roots when the binary exists. Failures become one advisory warning finding
 - [x] 2.2 Verify the warning renders on a failing tree and the exit code stays 0
 
 ## 3. Safety hardening
 
-- [x] 3.1 Validator subprocess uses a bounded deadline with kill-on-expiry; a hung `openspec` becomes one advisory warning
-- [x] 3.2 Unreadable `config.yaml` skips the offer instead of reading as unset; a symlinked `config.yaml` refuses the write
-- [x] 3.3 EOF and unrecognized prompt input record nothing; only an explicit answer persists
+- [x] 3.1 Validator subprocess uses a bounded deadline with kill-on-expiry. A hung `openspec` becomes one advisory warning
+- [x] 3.2 Unreadable `config.yaml` skips the offer instead of reading as unset. A symlinked `config.yaml` refuses the write
+- [x] 3.3 EOF and unrecognized prompt input record nothing. Only an explicit answer persists
 - [x] 3.4 Conversion is a true move: symlinked mapping roots refuse, and the source tree is removed once every copy lands
 
 ## 4. Verification

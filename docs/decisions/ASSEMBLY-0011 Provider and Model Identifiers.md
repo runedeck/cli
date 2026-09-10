@@ -70,6 +70,7 @@ opencode:                       # uses provider models, no own identifiers
 ### Validation
 
 During `rune assemble` and `rune validate`, every qualifier directory name is checked against `models.yaml`:
+
 - Top-level qualifiers must match a provider key or `user`
 - Nested qualifiers must match a model identifier for that provider
 - Unknown names produce an error with the closest match suggestion
@@ -87,6 +88,6 @@ When a provider releases a new model, add it to `models.yaml`. No code change, n
 
 ## More Information
 
-[1]: https://docs.anthropic.com/en/docs/about-claude/models "Anthropic model identifiers"
-[2]: https://developers.openai.com/docs/models "OpenAI model identifiers"
-[3]: https://ai.google.dev/gemini-api/docs/models "Google Gemini model identifiers"
+- [Anthropic model identifiers](https://docs.anthropic.com/en/docs/about-claude/models)
+- [OpenAI model identifiers](https://developers.openai.com/docs/models)
+- [Google Gemini model identifiers](https://ai.google.dev/gemini-api/docs/models)

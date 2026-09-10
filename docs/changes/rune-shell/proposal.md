@@ -1,6 +1,7 @@
 ---
 status: proposed
 ---
+
 # RuneShell
 
 ## Why
@@ -13,9 +14,9 @@ Agent Skills leaves the Markdown body unrestricted, so this structure is a Runed
 
 - Add the `RuneShell` rule rune as the source of truth for the Stable shell convention.
 - Make canonical skill directories, frontmatter names, and H1 identifiers equal lowercase kebab-case values.
-- Limit canonical top-level frontmatter to Agent Skills fields; provider transforms introduce provider-specific fields.
+- Limit canonical top-level frontmatter to Agent Skills fields. Provider transforms introduce provider-specific fields.
 - Require one H1 and the ordered H2 vocabulary `Prerequisites`, `Constraints`, `Instructions`, `Verification`, `Troubleshooting`, and `References`.
-- Require `Instructions`; keep the other H2 sections optional.
+- Require `Instructions`. Keep the other H2 sections optional.
 - Permit task-specific H3 headings beneath `Constraints`, `Instructions`, `Verification`, and `Troubleshooting`.
 - Warn when `Instructions` contains more than four H3 headings without failing validation.
 - Use standalone `mdschema` for strict Stable shell validation while Rune retains partial fallback checks.

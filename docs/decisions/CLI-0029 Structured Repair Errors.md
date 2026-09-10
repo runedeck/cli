@@ -29,7 +29,7 @@ upstream: []
 Rune errors carry a kind and a message. The CLI prints one `fatal:` line.
 Some messages embed repair advice, most do not, and JSON consumers cannot match errors reliably.
 [Herdr][HERDR] builds each error with a stable code and the exact command that repairs the state,
-for example "no herdr server is running at PATH; run `herdr` to start or attach it".
+for example "no herdr server is running at PATH. Run `herdr` to start or attach it".
 
 ## Decision Drivers
 

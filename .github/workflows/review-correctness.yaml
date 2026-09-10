@@ -166,18 +166,39 @@ jobs:
                   # regain their whole hold when the owner withdraws the
                   # acceptance.
                   if ! printf '%s\n' "$labels" | grep -qx 'ignore:runeseer'; then
-                      acceptance_ids=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
+                      # Under skip:runeseer the spec has this check clear no
+                      # matter what, so a dismissal fault there degrades to a
+                      # named warning instead of reddening the check the
+                      # override must release.
+                      lenient=0
+                      printf '%s\n' "$labels" | grep -qx 'skip:runeseer' && lenient=1
+                      dismissal_fault() {
+                          if [ "$lenient" = "1" ]; then
+                              echo "warning: $1; a stale acceptance approval may stand while skip:runeseer clears this check."
+                              return 0
+                          fi
+                          echo "$1; rerun the check"
+                          exit 1
+                      }
+                      if acceptance_ids=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews?per_page=100" \
                           --jq '[.[] | select(.user.login == "runeseer[bot]" and .state == "APPROVED") | select((.body // "") | contains("ignore:runeseer acceptance")) | .id]' \
-                          | jq -s -r 'add // [] | .[]') \
-                          || { echo "could not read the pull request reviews; rerun the check"; exit 1; }
-                      for review_id in $acceptance_ids; do
-                          [ -n "$RUNESEER_TOKEN" ] \
-                              || { echo "acceptance approval $review_id stands after the override's withdrawal, but the app token was unavailable to dismiss it; rerun the check"; exit 1; }
-                          GH_TOKEN="$RUNESEER_TOKEN" gh api -X PUT "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/$review_id/dismissals" \
-                              -f message="The owner withdrew ignore:runeseer; the acceptance no longer holds this head." \
-                              >/dev/null && echo "dismissed acceptance approval $review_id after the override's withdrawal." \
-                              || { echo "could not dismiss acceptance approval $review_id; rerun the check"; exit 1; }
-                      done
+                          | jq -s -r 'add // [] | .[]'); then
+                          for review_id in $acceptance_ids; do
+                              if [ -z "$RUNESEER_TOKEN" ]; then
+                                  dismissal_fault "acceptance approval $review_id stands after the override's withdrawal, but the app token was unavailable to dismiss it"
+                                  continue
+                              fi
+                              if GH_TOKEN="$RUNESEER_TOKEN" gh api -X PUT "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/$review_id/dismissals" \
+                                  -f message="The owner withdrew ignore:runeseer; the acceptance no longer holds this head." \
+                                  >/dev/null; then
+                                  echo "dismissed acceptance approval $review_id after the override's withdrawal."
+                              else
+                                  dismissal_fault "could not dismiss acceptance approval $review_id"
+                              fi
+                          done
+                      else
+                          dismissal_fault "could not read the pull request reviews"
+                      fi
                   fi
                   # skip: means the lane is out of scope for this pull request,
                   # so it clears whatever else happened.

@@ -2,10 +2,10 @@ name: Attestations
 
 # Deterministic attestation checks: every commit answers who wrote it,
 # and machinery changes carry their specification or the owner's
-# explicit waiver. Label events re-evaluate the spec gate, so applying
-# spec:none recomputes the check without a push. pull_request_target
-# keeps both checks base-defined; the head enters only as fetched
-# history and file listings, never as executed code.
+# recorded allowed defect. Label events re-evaluate the spec gate, so
+# applying ignore:spec recomputes the check without a push.
+# pull_request_target keeps both checks base-defined; the head enters
+# only as fetched history and file listings, never as executed code.
 on:
     pull_request_target:
         types: [opened, reopened, synchronize, labeled, unlabeled]
@@ -24,7 +24,8 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 5
         steps:
-            # The trusted base enters the worktree. The fetched head supplies commit metadata only.
+            # The trusted base enters the worktree. The fetched head supplies
+            # commit metadata only.
             # nosemgrep: yaml.github-actions.security.pull-request-target-code-checkout.pull-request-target-code-checkout
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
@@ -39,7 +40,7 @@ jobs:
                   PR_NUMBER: ${{ github.event.pull_request.number }}
                   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
               run: |
-                  set -o pipefail
+                  set -euo pipefail
                   git fetch --quiet origin "pull/$PR_NUMBER/head"
                   checked_out=$(git rev-parse HEAD) \
                       || { echo "could not resolve the checked-out base"; exit 1; }
@@ -67,8 +68,8 @@ jobs:
                   files=$(gh api --paginate "repos/${{ github.repository }}/pulls/$PR_NUMBER/files?per_page=100" \
                       --jq '[.[] | .filename, (.previous_filename // empty)]' | jq -s -r 'add // [] | .[]') \
                       || { echo "could not read the changed files; rerun the check"; exit 1; }
-                  protected='^(\.github/workflows/|\.githooks/|templates/|schemas/|\.macroscope/)|^(\.pre-commit-config\.yaml|\.gitleaks\.toml|authors\.yaml|scripts/check-authorship|scripts/author-identity\.py)$'
-                  spec_tree='^docs/(specs|openspec)/'
+                  protected='^(\.github/workflows/|\.githooks/|templates/|schemas/|\.macroscope/|\.vale/|scripts/)|^(\.pre-commit-config\.yaml|\.gitleaks\.toml|\.vale\.ini|\.rumdl\.toml|typos\.toml|\.github/zizmor\.yml|\.ceremony-divergences\.yaml|authors\.yaml)$'
+                  spec_tree='^docs/(specs|openspec)/|^docs/changes/[^/]+/specs/[^/]+/spec\.md$'
                   touched=$(printf '%s\n' "$files" | grep -E "$protected" || true)
                   if [ -z "$touched" ]; then
                       echo "no protected paths touched; no specification is required."
@@ -81,16 +82,16 @@ jobs:
                   labels=$(gh api --paginate "repos/${{ github.repository }}/issues/$PR_NUMBER/labels?per_page=100" \
                       --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
                       || { echo "could not read the live labels; rerun the check"; exit 1; }
-                  if printf '%s\n' "$labels" | grep -qx 'spec:none'; then
+                  if printf '%s\n' "$labels" | grep -qx 'ignore:spec'; then
                       body=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.body // ""') \
                           || { echo "could not read the pull request body; rerun the check"; exit 1; }
-                      if printf '%s\n' "$body" | grep -qE '^spec:none: .+'; then
-                          echo "spec:none waiver present with its reason."
+                      if printf '%s\n' "$body" | grep -qE '^ignore:spec: .+'; then
+                          echo "ignore:spec allowed defect present with its reason."
                           exit 0
                       fi
-                      echo "spec:none is applied but the body carries no 'spec:none: <reason>' line."
+                      echo "ignore:spec is applied but the body carries no 'ignore:spec: <reason>' line."
                       exit 1
                   fi
-                  echo "these protected paths change without a specification or a spec:none waiver:"
+                  echo "these protected paths change without a specification or an ignore:spec allowed defect:"
                   printf '%s\n' "$touched"
                   exit 1

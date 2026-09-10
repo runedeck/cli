@@ -24,7 +24,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-CLI operations (install, assemble, validate, copy) touch multiple files across multiple providers. Every operation needs to report what happened — what succeeded, what was skipped, and what failed — in a structured way that's both human-readable and machine-parseable. This applies everywhere, not just install.
+CLI operations (install, assemble, validate, copy) touch multiple files across multiple providers. Every operation needs to report what happened — what succeeded, what was skipped, and what failed — in a structured way that is both human-readable and machine-parseable. This applies everywhere, not just install.
 
 ## Considered Options
 

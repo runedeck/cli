@@ -46,7 +46,7 @@ upstream: []
 
 Extend `rune copy` with provenance generation. Sidecars are written to `.provenance/` directories in the **target module's source tree**:
 
-```
+```text
 target-module/
     rules/
         KeepChangelog.md
@@ -59,7 +59,7 @@ target-module/
                 KeepChangelog.yaml      ← assembly provenance (gitignored)
 ```
 
-Copy provenance uses `buildType: https://github.com/N4M3Z/rune-cli/copy/v1` to distinguish from `assemble/v1`. The `resolvedDependencies` URI is the source file's relative path; `externalParameters.source` is the source module's repository URI from `module.yaml`.
+Copy provenance uses `buildType: https://github.com/N4M3Z/rune-cli/copy/v1` to distinguish from `assemble/v1`. The `resolvedDependencies` URI is the source file's relative path. `externalParameters.source` is the source module's repository URI from `module.yaml`.
 
 The copy command loads the source module's `module.yaml` to resolve its repository URI. If no `module.yaml` exists, provenance is skipped (preserving the zero-dependency fallback behavior from ASSEMBLY-0009).
 

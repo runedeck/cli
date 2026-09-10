@@ -1,0 +1,26 @@
+# typos configuration. KEYS holds base64 key material. Sidecars and
+# third-party notices are not this repository's prose.
+[files]
+extend-exclude = [
+    "KEYS",
+    ".provenance",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".opencode",
+    "**/THIRD_PARTY_NOTICES.md",
+    # Vendored minified dashboard assets and signing fixtures are not prose.
+    "static/dashboard/vendor",
+    "src/cli/sign/fixtures",
+]
+
+[default]
+# Mermaid node identifiers such as BA in fenced diagrams, hex object ids,
+# and the wrap-test fragment in the comment panel tests.
+extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\"", "[0-9a-f]{12,}", "\" worl\""]
+
+[default.extend-words]
+# The TUI crate and the skateboarding fixture are spelled as upstream spells them.
+ratatui = "ratatui"
+tre = "tre"
+unparseable = "unparseable"

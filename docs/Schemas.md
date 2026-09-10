@@ -34,7 +34,7 @@ A file of the same name on disk beside the artifact wins over the embedded copy.
 The Stable shell is compiled in by `src/cli/validate/templates.rs` through
 `embedded_mdschema(kind)`:
 
-- `schemas/skill.mdschema` — the canonical Stable shell; see below.
+- `schemas/skill.mdschema` — the canonical Stable shell. See below.
 
 The remaining schemas are deployed into a scaffolded module and compiled in by
 `src/cli/validate/templates.rs`:
@@ -46,7 +46,7 @@ The remaining schemas are deployed into a scaffolded module and compiled in by
 - `templates/init/docs/decisions/.mdschema`
 
 Not deployed, and not reached by `rune validate` either. `validate` structure-checks
-`agents/`, `rules/`, `docs/decisions/`, and each `skills/*` directory; `README.md` and
+`agents/`, `rules/`, `docs/decisions/`, and each `skills/*` directory. `README.md` and
 `CONTRIBUTING.md` are only checked for existence. These two are applied by
 `scripts/validate.sh`, which runs the standalone binary over the repository's own
 documents:

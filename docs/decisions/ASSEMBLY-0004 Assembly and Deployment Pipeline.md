@@ -46,7 +46,7 @@ Skills, agents, and rules are authored as markdown with YAML frontmatter. Each A
 
 A two-stage pipeline with an intermediate `build/` directory:
 
-```
+```text
 source/         -->    assemble    -->    build/          -->    provider dirs
 (authored)             (transform)                  (assembled)           (deployed)
 ```
@@ -67,7 +67,7 @@ Output structure:
 
 Source (repository — qualifier directories for variant resolution):
 
-```
+```text
 repository/
     rules/
         MyRule.md                                   base (provider-agnostic)
@@ -95,7 +95,7 @@ Resolution precedence (highest first): `user/` > `provider/model/` > `provider/`
 
 This applies uniformly to all content kinds including skill companions. Subdirectories are flattened at assembly — the prefix is stripped from the output path:
 
-```
+```text
 SOURCE                               ASSEMBLED (build/claude/)           DEPLOYED (.claude/)
 ────────────────────────────         ────────────────────────────        ────────────────────────────
 skills/ArchitectureDecision/         skills/ArchitectureDecision/        skills/ArchitectureDecision/
@@ -109,7 +109,7 @@ skills/ArchitectureDecision/         skills/ArchitectureDecision/        skills/
 
 When a file exists both at the root and in `user/`, the `user/` version wins (override):
 
-```
+```text
 SOURCE                               ASSEMBLED (build/claude/)
 ────────────────────────────         ────────────────────────────
 skills/MySkill/                      skills/MySkill/
@@ -121,7 +121,7 @@ skills/MySkill/                      skills/MySkill/
 
 Assembled output (variants resolved, frontmatter stripped, ready to deploy):
 
-```
+```text
 build/
     claude/
         rules/MyRule.md                             assembled
@@ -150,7 +150,7 @@ If rulesync is available, it handles deployment to 21+ providers. If not, a mini
 
 ### Example: Rule with variant
 
-```
+```text
 rules/UseRTK.md                rules/user/UseRTK.md           build/rules/UseRTK.md
 (base)                         (user variant)                  (assembled)
 ┌────────────────────┐         ┌────────────────────┐          ┌────────────────────┐
@@ -167,7 +167,7 @@ rules/UseRTK.md                rules/user/UseRTK.md           build/rules/UseRTK
 
 ### Example: Agent per provider
 
-```
+```text
 agents/SecurityArchitect.md       build/claude/agents/SecurityArchitect.md    (YAML frontmatter)
 (source)                          build/gemini/agents/security-architect.md   (kebab + tool remap)
                                   build/codex/agents/SecurityArchitect.toml   (TOML format)
