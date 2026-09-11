@@ -47,6 +47,9 @@ impl Fixture {
         fixture
     }
     fn install(&self) {
+        self.install_with(&[]);
+    }
+    fn install_with(&self, extra_args: &[&str]) {
         Command::cargo_bin("rune")
             .unwrap()
             .args([
@@ -58,6 +61,7 @@ impl Fixture {
                 "--target",
                 self.target.path().to_str().unwrap(),
             ])
+            .args(extra_args)
             .assert()
             .success();
     }
@@ -78,6 +82,41 @@ impl Fixture {
 fn write(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
+}
+
+fn assert_duplicate_paths(report: &SkillReadiness, name: &str, paths: &[PathBuf]) {
+    let duplicates: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "CSI001_DUPLICATE_NAME")
+        .collect();
+    assert_eq!(duplicates.len(), 1, "{report:#?}");
+    assert_eq!(duplicates[0].identity.as_deref(), Some(name));
+    let mut expected: Vec<_> = paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    expected.sort();
+    assert_eq!(duplicates[0].paths, expected, "{report:#?}");
+    assert!(!report.static_valid);
+    assert!(!report.accepted);
+}
+
+fn assert_stale_source_path(report: &serde_json::Value, snapshot: &Path) {
+    assert_eq!(report["source_verification"], "unverified", "{report}");
+    assert_eq!(report["accepted"], false);
+    let findings: Vec<_> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["paths"] == serde_json::json!([snapshot]))
+        .collect();
+    assert_eq!(findings.len(), 1, "{report}");
+    assert_eq!(findings[0]["code"], "CSI002_INCOMPLETE_IDENTITY");
+    assert_eq!(
+        findings[0]["message"],
+        "deployed source selection or build configuration is stale"
+    );
 }
 
 #[test]
@@ -181,11 +220,13 @@ fn equal_duplicate_names_are_ambiguous() {
     roots.reverse();
     let second = skill_readiness::inspect(temp.path(), &roots, "config".into());
     assert_eq!(first, second);
-    assert!(
-        first
-            .findings
-            .iter()
-            .any(|finding| finding.code == "CSI001_DUPLICATE_NAME" && finding.paths.len() == 2)
+    assert_duplicate_paths(
+        &first,
+        "IdentityCanary",
+        &[
+            temp.path().join("one/Alpha/SKILL.md"),
+            temp.path().join("two/Alpha/SKILL.md"),
+        ],
     );
 }
 
@@ -211,11 +252,10 @@ fn declared_names_control_divergent_and_distinct_candidates() {
         ambiguous,
         skill_readiness::inspect(temp.path(), &reversed, "config".into())
     );
-    assert!(
-        ambiguous
-            .findings
-            .iter()
-            .any(|finding| finding.code == "CSI001_DUPLICATE_NAME")
+    assert_duplicate_paths(
+        &ambiguous,
+        "Alpha",
+        &[roots[0].0.join("FolderA/SKILL.md"), second.clone()],
     );
     assert!(!ambiguous.static_valid);
     write(
@@ -244,20 +284,7 @@ fn declared_names_control_divergent_and_distinct_candidates() {
 fn no_prune_install_remains_unverified_until_complete_install() {
     let fixture = Fixture::new();
     fixture.install();
-    Command::cargo_bin("rune")
-        .unwrap()
-        .args([
-            "install",
-            "--provider",
-            "codex",
-            "--no-prune",
-            "--source",
-            fixture.source.path().to_str().unwrap(),
-            "--target",
-            fixture.target.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
+    fixture.install_with(&["--no-prune"]);
     let check = || {
         let output = Command::cargo_bin("rune")
             .unwrap()
@@ -291,6 +318,89 @@ fn no_prune_install_remains_unverified_until_complete_install() {
     let completed = check();
     assert_eq!(completed["source_verification"], "verified", "{completed}");
     assert_eq!(completed["accepted"], false);
+}
+
+#[test]
+fn retained_legacy_copy_blocks_unique_readiness_until_migration_completes() {
+    let fixture = Fixture::new();
+    let configuration = fixture.source.path().join("config.yaml");
+    write(
+        &configuration,
+        b"providers:\n  codex:\n    target: .codex\n",
+    );
+    fixture.install();
+    let legacy = fixture.target.path().join(".codex/skills/IdentityCanary");
+    let legacy_manifest = fixture.target.path().join(".codex/.manifest");
+    let preserved = [
+        legacy.join("SKILL.md"),
+        legacy.join(".provenance/SKILL.md.yaml"),
+        legacy_manifest.clone(),
+    ]
+    .map(|path| {
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    });
+    let roots = [
+        (
+            fixture.target.path().join(".agents/skills"),
+            "repository".into(),
+        ),
+        (fixture.target.path().join(".codex/skills"), "legacy".into()),
+    ];
+    let inspect =
+        || skill_readiness::inspect(fixture.target.path(), &roots, "migration fixture".into());
+    let initial = inspect();
+    assert!(initial.static_valid, "{initial:#?}");
+    assert_eq!(initial.skills.len(), 1);
+    assert_eq!(
+        initial.skills[0].path,
+        legacy.join("SKILL.md").display().to_string()
+    );
+
+    fs::remove_file(configuration).unwrap();
+    fixture.install_with(&["--no-prune"]);
+    for (path, bytes) in &preserved {
+        assert_eq!(&fs::read(path).unwrap(), bytes, "{}", path.display());
+    }
+    let retained = inspect();
+    assert!(!retained.static_valid);
+    assert!(!retained.accepted);
+    assert_eq!(retained.skills.len(), 2);
+    let duplicates: Vec<_> = retained
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "CSI001_DUPLICATE_NAME")
+        .collect();
+    assert_eq!(duplicates.len(), 1, "{retained:#?}");
+    assert_eq!(duplicates[0].identity.as_deref(), Some("IdentityCanary"));
+    let mut expected_paths = vec![
+        legacy.join("SKILL.md").display().to_string(),
+        fixture.skill().join("SKILL.md").display().to_string(),
+    ];
+    expected_paths.sort();
+    assert_eq!(duplicates[0].paths, expected_paths);
+    assert_eq!(
+        retained.skills[0].bundle.digest,
+        retained.skills[1].bundle.digest
+    );
+
+    fixture.install();
+    let completed = inspect();
+    assert!(!legacy.exists());
+    assert!(
+        manifest::read(&fs::read_to_string(legacy_manifest).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(completed.static_valid, "{completed:#?}");
+    assert!(completed.findings.is_empty());
+    assert_eq!(completed.skills.len(), 1);
+    assert_eq!(
+        completed.skills[0].path,
+        fixture.skill().join("SKILL.md").display().to_string()
+    );
+    assert_eq!(completed.native_discovery, "unverified");
+    assert!(!completed.accepted);
 }
 
 #[cfg(unix)]
@@ -353,25 +463,51 @@ fn declared_name_controls_duplicate_detection() {
         &[(temp.path().to_path_buf(), "test".into())],
         "config".into(),
     );
-    assert!(
-        report
-            .findings
-            .iter()
-            .any(|finding| finding.code == "CSI001_DUPLICATE_NAME")
+    assert_duplicate_paths(
+        &report,
+        "IdentityCanary",
+        &[
+            temp.path().join("Alpha/SKILL.md"),
+            temp.path().join("OldAlpha/SKILL.md"),
+        ],
     );
 }
 
 #[test]
 fn incomplete_scope_cannot_pass() {
-    let temp = tempfile::tempdir().unwrap();
-    write(&temp.path().join("not-a-directory"), b"file");
+    let fixture = Fixture::new();
+    fixture.install();
+    let complete = fixture.report();
+    assert!(complete.static_valid, "{complete:#?}");
+    let unavailable = fixture.target.path().join("not-a-directory");
+    write(&unavailable, b"file");
     let report = skill_readiness::inspect(
-        temp.path(),
-        &[(temp.path().join("not-a-directory"), "test".into())],
+        fixture.target.path(),
+        &[
+            (
+                fixture.target.path().join(".agents/skills"),
+                "repository".into(),
+            ),
+            (unavailable.clone(), "test".into()),
+        ],
         "config".into(),
     );
     assert!(!report.static_valid);
-    assert!(report.roots.iter().any(|root| root.state == "unavailable"));
+    assert!(!report.accepted);
+    assert_eq!(report.skills, complete.skills);
+    assert_eq!(report.findings.len(), 1, "{report:#?}");
+    assert_eq!(report.findings[0].code, "CSI002_INCOMPLETE_IDENTITY");
+    assert_eq!(
+        report.findings[0].paths,
+        [unavailable.display().to_string()]
+    );
+    let unavailable_roots: Vec<_> = report
+        .roots
+        .iter()
+        .filter(|root| root.state == "unavailable")
+        .collect();
+    assert_eq!(unavailable_roots.len(), 1);
+    assert_eq!(unavailable_roots[0].path, unavailable.display().to_string());
 }
 
 #[test]
@@ -382,14 +518,25 @@ fn missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill() {
         b"---\nname: Other\ndescription: Other skill\n---\nHarmless.\n",
     );
     fixture.install();
-    fs::remove_dir_all(fixture.target.path().join(".agents/skills/Other")).unwrap();
+    let complete = fixture.report();
+    assert!(complete.static_valid, "{complete:#?}");
+    assert_eq!(complete.skills.len(), 2);
+    let missing = fixture.target.path().join(".agents/skills/Other/SKILL.md");
+    fs::remove_dir_all(missing.parent().unwrap()).unwrap();
     let report = fixture.report();
     assert!(!report.static_valid);
-    assert!(
-        report
-            .findings
-            .iter()
-            .any(|finding| finding.message == "managed skill entrypoint is missing")
+    assert!(!report.accepted);
+    assert_eq!(report.findings.len(), 1, "{report:#?}");
+    assert_eq!(report.findings[0].code, "CSI002_INCOMPLETE_IDENTITY");
+    assert_eq!(report.findings[0].paths, [missing.display().to_string()]);
+    assert_eq!(
+        report.findings[0].message,
+        "managed skill entrypoint is missing"
+    );
+    assert_eq!(report.skills.len(), 1);
+    assert_eq!(
+        report.skills[0].declared_name.as_deref(),
+        Some("IdentityCanary")
     );
 }
 
@@ -592,6 +739,13 @@ fn current_source_changes_invalidate_deployed_selection() {
             .clone();
         serde_json::from_slice::<serde_json::Value>(&output).unwrap()["skill_readiness"].clone()
     };
+    let snapshot = fixture
+        .target
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".agents")
+        .join(manifest::source_snapshot::SOURCE_SNAPSHOT_PATH);
     let initial = check();
     assert_eq!(initial["source_verification"], "verified", "{initial}");
     write(
@@ -602,23 +756,16 @@ fn current_source_changes_invalidate_deployed_selection() {
         b"A new selected companion.\n",
     );
     let changed = check();
-    assert_eq!(changed["source_verification"], "unverified");
-    assert!(
-        changed["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|finding| finding["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("stale")))
-    );
+    assert_stale_source_path(&changed, &snapshot);
     fixture.install();
     assert_eq!(check()["source_verification"], "verified");
     write(
         &fixture.source.path().join("skills/NewSelection/SKILL.md"),
         b"---\nname: NewSelection\ndescription: Newly selected skill\n---\nHarmless.\n",
     );
-    assert_eq!(check()["source_verification"], "unverified");
+    assert_stale_source_path(&check(), &snapshot);
+    fixture.install();
+    assert_eq!(check()["source_verification"], "verified");
 }
 
 #[cfg(unix)]

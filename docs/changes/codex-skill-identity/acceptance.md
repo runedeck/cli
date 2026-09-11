@@ -64,6 +64,9 @@ Keep these 18 named cases identifiable even if existing helpers supply most of t
 
 This table maps the contract to current test assertions. Execution results remain separate in
 [validation](validation.md).
+The completed full-suite and publication results apply to signed revision `7412b6acf037420129c8ac45759d4c75af0e96af`.
+Later focused assertion results are identified separately in the [validation record](validation.md#follow-up-assertion-checks).
+They do not inherit that revision's publication or CI result.
 
 The prefixes identify these files:
 
@@ -74,31 +77,42 @@ The prefixes identify these files:
 - `A`: [assembly unit controls](../../../src/assemble/tests.rs).
 - `N`: [raw native protocol controls](../../../src/skill_readiness/native/tests.rs).
 - `P`: [native adapter controls](../../../scripts/test_check_codex_skill_discovery.py).
+- `Q`: [artifact runner controls](../../../scripts/test_run_artifact_checks.py).
+- `F`: [filesystem alias integration](../../../tests/codex_skill_aliases.rs).
 
 | ID | Implemented tests | Remaining contract evidence |
 | --- | --- | --- |
-| T01 | `I::codex_default_skills_use_by_kind_target`, `D::codex_defaults_use_shared_skills_and_keep_identity_fields`; existing `install_generates_valid_codex_toml_with_effort` in `tests/deploy.rs` | Final candidate execution |
-| T02 | `I::explicit_skill_target_is_preserved`; existing `install_routes_content_kinds_to_target_map_roots` in `tests/deploy.rs` | Final candidate execution |
-| T03 | `I::equal_duplicate_names_are_ambiguous`, `P::test_catalog_preserves_equal_name_duplicates`, `P::test_catalog_is_sorted_without_selecting_a_winner` | Final candidate execution |
-| T04 | `I::declared_name_controls_duplicate_detection`, `I::declared_names_control_divergent_and_distinct_candidates`; both duplicate fixtures check reversed-root ordering | Finish exact affected-path assertions |
-| T05 | `I::incomplete_scope_cannot_pass`, `I::missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill`, `I::current_source_changes_invalidate_deployed_selection` | Complete exact code/path assertions for each unavailable-scope control |
-| T06 | `I::bundle_digest_covers_companions_and_entry_types`; `B::companion_bytes_paths_and_binary_changes_invalidate_identity`, `B::executable_bits_are_part_of_the_bundle_identity`, `B::contained_symlink_target_and_entry_type_change_identity`, `B::provenance_content_and_timestamps_do_not_change_identity` | Final candidate execution |
-| T07 | `I::complete_selected_bundle_deploys`, `M::codex_selected_companions_remain_runnable_and_excluded_bundles_stay_absent` | Final candidate execution |
-| T08 | `I::portable_metadata_survives_codex_assembly`, `M::codex_assembly_preserves_absent_optional_metadata`, `M::codex_variant_replaces_nested_metadata_without_superseded_keys` | Final candidate execution |
-| T09 | `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force` | Complete affected-path assertions for ownership refusals |
-| T10 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::codex_migration_preserves_yaml_that_looks_like_provenance` | Complete affected-path assertions for foreign-content refusals |
-| T11 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::modified_file_keeps_install_semantics_but_invalidates_source_snapshot` | The edit fixture covers a companion; add the corresponding entrypoint and affected-path controls |
-| T12 | `D::codex_migration_no_prune_keeps_legacy_claims_and_then_resumes`, `I::no_prune_install_remains_unverified_until_complete_install` | Directly assert duplicate readiness before and after the legacy-copy transition |
-| T13 | `I::second_install_is_identity_stable`, `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::source_snapshot_deploys_only_after_complete_install_and_stays_outside_manifest` | Final serialized execution with stable source and executable bytes |
-| T14 | `D::codex_migration_public_failure_restores_destination_and_retries`, `D::codex_migration_recovers_failed_copy_and_retries_without_foreign_loss`, `D::codex_migration_restores_legacy_bundle_when_manifest_update_fails`, `D::codex_migration_keeps_legacy_when_replacement_changes_after_preflight` | Focused controls passed; final serialized suite pending |
-| T15 | `D::codex_and_agentskills_distinct_roots_coexist_across_two_installs`, `D::codex_shared_root_refuses_multiple_selected_writers_before_target_creation`, `D::codex_shared_root_refuses_a_different_recorded_writer` | Both distinct-root configurations passed; final serialized suite pending |
-| T16 | `I::modified_doctor_finding_overrides_zero_exit` | Final candidate execution |
-| T17 | `I::missing_skipped_or_stale_results_fail`, `N::empty_or_malformed_records_cannot_pass_native_validation`, `P::test_missing_executable_records_failure_without_skipped_success` | Trusted external-runner and zero-discovered-test controls remain unproven |
-| T18 | `I::case_aliases_and_symlinks_are_accounted_for`; `B::case_collision_detection_does_not_depend_on_host_filesystem`, `B::contained_directory_aliases_preserve_local_references`, `B::escaping_dangling_and_cyclic_symlinks_are_rejected` | Final Linux/macOS jobs and native duplicate-through-alias observation |
+| T01 | `I::codex_default_skills_use_by_kind_target`, `D::codex_defaults_use_shared_skills_and_keep_identity_fields`; existing `install_generates_valid_codex_toml_with_effort` in `tests/deploy.rs` | Execution passed at `7412b6a` |
+| T02 | `I::explicit_skill_target_is_preserved`; existing `install_routes_content_kinds_to_target_map_roots` in `tests/deploy.rs` | Execution passed at `7412b6a` |
+| T03 | `I::equal_duplicate_names_are_ambiguous`, `P::test_catalog_preserves_equal_name_duplicates`, `P::test_catalog_is_sorted_without_selecting_a_winner` | Execution passed at `7412b6a` |
+| T04 | `I::declared_name_controls_duplicate_detection`, `I::declared_names_control_divergent_and_distinct_candidates`; both duplicate fixtures check reversed-root ordering and exact affected paths | Strengthened assertions passed in the later 18-test identity run; next publication gate pending |
+| T05 | `I::incomplete_scope_cannot_pass`, `I::missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill`, `I::current_source_changes_invalidate_deployed_selection` | Exact scope-finding and path assertions passed in the later 18-test identity run; next publication gate pending |
+| T06 | `I::bundle_digest_covers_companions_and_entry_types`; `B::companion_bytes_paths_and_binary_changes_invalidate_identity`, `B::executable_bits_are_part_of_the_bundle_identity`, `B::contained_symlink_target_and_entry_type_change_identity`, `B::provenance_content_and_timestamps_do_not_change_identity` | Execution passed at `7412b6a` |
+| T07 | `I::complete_selected_bundle_deploys`, `M::codex_selected_companions_remain_runnable_and_excluded_bundles_stay_absent` | Execution passed at `7412b6a` |
+| T08 | `I::portable_metadata_survives_codex_assembly`, `M::codex_assembly_preserves_absent_optional_metadata`, `M::codex_variant_replaces_nested_metadata_without_superseded_keys` | Execution passed at `7412b6a` |
+| T09 | `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force` | Exact ownership-refusal paths passed in the later 12-test migration run; next publication gate pending |
+| T10 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::codex_migration_preserves_yaml_that_looks_like_provenance` | Foreign-content preservation and exact refusal paths passed in the later migration run; next publication gate pending |
+| T11 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::modified_file_keeps_install_semantics_but_invalidates_source_snapshot` | Both entrypoint and companion edits, with exact affected paths, passed in the later migration run; next publication gate pending |
+| T12 | `D::codex_migration_no_prune_keeps_legacy_claims_and_then_resumes`, `I::no_prune_install_remains_unverified_until_complete_install`, `I::retained_legacy_copy_blocks_unique_readiness_until_migration_completes` | Duplicate identity and exact paths before migration, then one clean candidate after migration, passed in the later identity run; next publication gate pending |
+| T13 | `I::second_install_is_identity_stable`, `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::source_snapshot_deploys_only_after_complete_install_and_stays_outside_manifest` | Serialized execution passed at `7412b6a` |
+| T14 | `D::codex_migration_public_failure_restores_destination_and_retries`, `D::codex_migration_recovers_failed_copy_and_retries_without_foreign_loss`, `D::codex_migration_restores_legacy_bundle_when_manifest_update_fails`, `D::codex_migration_keeps_legacy_when_replacement_changes_after_preflight` | Full serialized suite passed at `7412b6a` |
+| T15 | `D::codex_and_agentskills_distinct_roots_coexist_across_two_installs`, `D::codex_shared_root_refuses_multiple_selected_writers_before_target_creation`, `D::codex_shared_root_refuses_a_different_recorded_writer` | Both configurations and the full serialized suite passed at `7412b6a` |
+| T16 | `I::modified_doctor_finding_overrides_zero_exit` | Execution passed at `7412b6a` |
+| T17 | `I::missing_skipped_or_stale_results_fail`, `N::empty_or_malformed_records_cannot_pass_native_validation`, `P::test_missing_executable_records_failure_without_skipped_success`; `Q::test_zero_tests_fail_despite_success_exit`, `Q::test_unittest_skip_cannot_pass`, `Q::test_missing_executable_fails_freeze`, `Q::test_pins_cannot_be_replaced_by_candidate_hashes` | Count, skip, and stale-pin controls passed; trusted external-runner isolation remains unproven |
+| T18 | `I::case_aliases_and_symlinks_are_accounted_for`; `B::case_collision_detection_does_not_depend_on_host_filesystem`, `B::contained_directory_aliases_preserve_local_references`, `B::escaping_dangling_and_cyclic_symlinks_are_rejected`; `F::sibling_directory_aliases_remain_distinct_without_native_evidence`, `F::distinct_physical_same_name_skills_remain_duplicates` | Earlier platform checks and the two later static alias tests passed. A native directory alias emitted no duplicate; duplicate-through-alias rejection remains unproven |
 
-The [skill-readiness workflow](../../../.github/workflows/skill-readiness.yaml) adds Linux and macOS jobs for both
-integration targets and the Python adapter controls.
-Its definition does not establish a completed platform run.
+The current [skill-readiness workflow](../../../.github/workflows/skill-readiness.yaml) declares six integration targets,
+including `codex_skill_aliases`, and 35 required Python controls on Linux and macOS.
+Its revised matrix still requires execution at the next published head.
+The earlier five-target matrix passed in [run 34571451799](https://github.com/runedeck/cli/actions/runs/34571451799)
+at `7412b6a`. Each job passed 40 Rust integration tests and all 35 Python controls without failures or skips.
+The macOS identity test includes the required case-insensitive filesystem probe.
+The standalone probe added after this tested head still requires a new workflow run.
+The later [alias catalog observation](validation.md#directory-alias-catalog-observation) records one enabled real-path
+entry and no second alias entry. It does not establish a duplicate rejection or native companion access.
+The static alias controls preserve logical candidate paths, as required by the
+[discovery design](design.md#keep-the-scope-explicit).
+They do not infer native equivalence from canonical paths or equal bundle digests.
 The finding codes and required assertions above remain acceptance requirements.
 The table does not convert missing controls into passing checks.
 
@@ -204,7 +218,7 @@ The CLI invalid cases now assert relevant codes, tokens, and paths.
 The model-layer integration case also asserts the actual assembled body without cumulative provider text.
 Earlier focused integration targets passed before the consistency corrections.
 The new configuration/input controls pass their focused integration run.
-The final immutable publication check remains pending in this record.
+The immutable publication check passed at `7412b6a`; later changes require a new check.
 
 Run the source gate against the existing deck and report its baseline findings separately.
 The expanded content PR resolves SafetyFirst, the five measured baseline skills, and affected authoring guidance.
@@ -266,6 +280,12 @@ Record the selected source identities, bundle digests, catalog entries, file-acc
 Bind the native record to the same deployed snapshot checked by the static verifier.
 The record distinguishes static status, native status, and overall acceptance.
 Native unavailability preserves static results but prevents an overall ready verdict.
+
+The later [selection catalog observations](validation.md#selected-workshop-and-deck-catalogs) contain every expected
+Workshop and Codex-selected Deck path, enabled, with no missing or extra workspace entries.
+They also retain same-name enabled user copies: three Workshop names and nine Deck names.
+Those duplicates block uniqueness. No representative invocation or companion-access evidence was collected.
+N01 and N02 therefore remain incomplete despite complete visibility of their selected paths.
 
 ## Execution commands
 

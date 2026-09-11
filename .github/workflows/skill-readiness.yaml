@@ -22,6 +22,21 @@ jobs:
               with:
                   persist-credentials: false
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+            - name: Verify case-insensitive acceptance filesystem
+              if: runner.os == 'macOS'
+              run: |
+                  python3 - <<'PYPROBE'
+                  import pathlib
+                  import tempfile
+                  with tempfile.TemporaryDirectory() as directory:
+                      root = pathlib.Path(directory)
+                      original = root / "skill-case-probe"
+                      alias = root / "SKILL-CASE-PROBE"
+                      original.write_text("case probe", encoding="utf-8")
+                      if not alias.exists() or not original.samefile(alias):
+                          raise SystemExit("Acceptance requires a case-insensitive temporary filesystem")
+                  print("case_insensitive_temporary_filesystem=true")
+                  PYPROBE
             - name: Required evidence controls
               run: |
                   python3 - <<'PYTEST'
@@ -38,4 +53,4 @@ jobs:
                       raise SystemExit("Required evidence tests failed, skipped, or did not execute")
                   PYTEST
             - name: Skill identity contract
-              run: cargo test --all-features --test codex_skill_identity --test codex_skill_metadata --test codex_skill_portability --test skill_layers --test skill_layer_config
+              run: cargo test --all-features --test codex_skill_identity --test codex_skill_aliases --test codex_skill_metadata --test codex_skill_portability --test skill_layers --test skill_layer_config

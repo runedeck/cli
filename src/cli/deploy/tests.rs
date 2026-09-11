@@ -544,6 +544,8 @@ fn codex_migration_moves_complete_bundle_and_repeats_without_changes() {
     let old = tree_bytes(&fixture.old());
     let result = fixture.deploy(false, true, false, None).unwrap();
     assert_eq!(result.pruned.len(), 1);
+    assert_eq!(result.pruned[0].target, fixture.old().display().to_string());
+    assert_eq!(result.pruned[0].provider, "codex");
     assert!(!fixture.old().exists());
     assert_eq!(tree_bytes(&fixture.new_bundle()), old);
     assert_eq!(
@@ -637,54 +639,102 @@ fn legacy_build_layout_requires_reassembly_before_target_writes() {
 fn codex_migration_preserves_conflicts_before_any_content_write_even_with_force() {
     for scenario in [
         "edit",
+        "entrypoint-edit",
         "extra",
         "empty-directory",
         "unknown",
+        "invalid-sidecar",
+        "missing-manifest",
         "bad-source",
         "foreign",
         "missing-source",
     ] {
-        let fixture = CodexSkillFixture::new();
-        fixture.install_legacy();
-        match scenario {
-            "edit" => fs::write(fixture.old().join("guide.md"), "Local edit.\n").unwrap(),
-            "extra" => fs::write(fixture.old().join("notes.txt"), "Local notes.\n").unwrap(),
-            "empty-directory" => fs::create_dir(fixture.old().join("notes")).unwrap(),
-            "unknown" => fs::remove_file(fixture.old().join(".provenance/guide.md.yaml")).unwrap(),
-            "bad-source" => {
-                let file = fixture.old().join(".provenance/guide.md.yaml");
-                let current = fs::read_to_string(&file).unwrap();
-                fs::write(
-                    file,
-                    current.replace(
-                        "https://github.com/example/module",
-                        "https://github.com/foreign/module",
-                    ),
-                )
-                .unwrap();
+        for force in [false, true] {
+            let fixture = CodexSkillFixture::new();
+            fixture.install_legacy();
+            let affected = introduce_migration_conflict(&fixture, scenario);
+            let before = tree_bytes(fixture.target.path());
+            let error = fixture
+                .deploy(force, true, false, None)
+                .expect_err(scenario);
+            assert_eq!(
+                error.code(),
+                "CSI005_MIGRATION_CONFLICT",
+                "{scenario}, force={force}: {error}"
+            );
+            assert!(
+                error
+                    .message()
+                    .starts_with(&format!("Codex skill migration: {}: ", affected.display())),
+                "{scenario}, force={force}: {error}"
+            );
+            assert_eq!(tree_bytes(fixture.target.path()), before, "{scenario}");
+            assert!(fixture.old().is_dir(), "{scenario}");
+            assert!(
+                !fixture.target.path().join(".codex/.trash").exists(),
+                "{scenario}"
+            );
+            if scenario == "empty-directory" {
+                assert!(affected.is_dir());
+                assert_eq!(fs::read_dir(affected).unwrap().count(), 0);
             }
-            "foreign" => {
-                fs::create_dir_all(fixture.new_bundle()).unwrap();
-                fs::write(fixture.new_bundle().join("SKILL.md"), "Foreign skill.\n").unwrap();
-            }
-            "missing-source" => {
-                fs::remove_file(fixture.build().join(".provenance/guide.md.yaml")).unwrap();
-            }
-            _ => unreachable!(),
         }
-        let before = tree_bytes(fixture.target.path());
-        let error = fixture.deploy(true, true, false, None).expect_err(scenario);
-        assert_eq!(
-            error.code(),
-            "CSI005_MIGRATION_CONFLICT",
-            "{scenario}: {error}"
-        );
-        assert_eq!(tree_bytes(fixture.target.path()), before, "{scenario}");
-        assert!(fixture.old().is_dir(), "{scenario}");
-        assert!(
-            !fixture.target.path().join(".codex/.trash").exists(),
-            "{scenario}"
-        );
+    }
+}
+
+fn introduce_migration_conflict(fixture: &CodexSkillFixture, scenario: &str) -> PathBuf {
+    let sidecar = fixture.old().join(".provenance/guide.md.yaml");
+    match scenario {
+        "edit" | "entrypoint-edit" | "extra" => {
+            let relative = match scenario {
+                "edit" => "guide.md",
+                "entrypoint-edit" => "SKILL.md",
+                _ => "notes.txt",
+            };
+            let file = fixture.old().join(relative);
+            fs::write(&file, "Local content must remain unchanged.\n").unwrap();
+            file
+        }
+        "empty-directory" => {
+            let directory = fixture.old().join("notes");
+            fs::create_dir(&directory).unwrap();
+            directory
+        }
+        "unknown" => {
+            fs::remove_file(&sidecar).unwrap();
+            sidecar
+        }
+        "invalid-sidecar" => {
+            fs::write(&sidecar, "invalid: [\n").unwrap();
+            sidecar
+        }
+        "missing-manifest" => {
+            fs::remove_file(fixture.target.path().join(".codex/.manifest")).unwrap();
+            fixture.old()
+        }
+        "bad-source" => {
+            let current = fs::read_to_string(&sidecar).unwrap();
+            fs::write(
+                sidecar,
+                current.replace(
+                    "https://github.com/example/module",
+                    "https://github.com/foreign/module",
+                ),
+            )
+            .unwrap();
+            fixture.old().join("guide.md")
+        }
+        "foreign" => {
+            fs::create_dir_all(fixture.new_bundle()).unwrap();
+            fs::write(fixture.new_bundle().join("SKILL.md"), "Foreign skill.\n").unwrap();
+            fixture.new_bundle()
+        }
+        "missing-source" => {
+            let source = fixture.build().join(".provenance/guide.md.yaml");
+            fs::remove_file(&source).unwrap();
+            source
+        }
+        _ => unreachable!(),
     }
 }
 

@@ -5,6 +5,8 @@ Final acceptance and maintainer integration remain open.
 The [acceptance map](acceptance.md#implemented-test-map) identifies the implemented controls and remaining evidence
 gaps.
 The [validation record](validation.md) separates focused results from final checks and native evidence.
+Publication and platform results below apply to signed revision `7412b6acf037420129c8ac45759d4c75af0e96af`.
+Later edits require their own validation and publication checks.
 
 ## 1. Freeze the integration contract
 
@@ -18,10 +20,12 @@ The [validation record](validation.md) separates focused results from final chec
 
 - [x] 2.1 Add and map deterministic controls for placement, bundles, metadata, ownership, migration, source freshness,
   and native evidence parsing.
-- [ ] 2.2 Complete the remaining T01–T18 controls and required platform/native observations listed in the acceptance
+- [ ] 2.2 Complete the remaining T01–T18 assertion controls and native observations listed in the acceptance
   map.
 - [ ] 2.3 Freeze checker and fixture revisions outside future candidate write scopes and verify external runner
   completeness.
+- [x] 2.4 Strengthen T04/T05 exact finding and affected-path assertions and pass the 18-test identity suite.
+- [x] 2.5 Execute the two new static alias controls and record their results separately from `7412b6a`.
 
 Repository tests remain editable review artifacts. Their existence does not prove independent runner integrity.
 
@@ -59,17 +63,25 @@ Repository tests remain editable review artifacts. Their existence does not prov
 - [x] 5.2 Preserve local edits, foreign destinations, untracked content, and retained legacy copies.
 - [x] 5.3 Add repeat-installation, migration recovery, and competing-writer controls through the existing writer.
 - [x] 5.4 Verify T14 public retry and T15 two-install coexistence through the focused 54-test deployment suite.
+- [x] 5.5 Strengthen T09–T12 affected-path, edited-entrypoint, and retained-duplicate controls; pass the 12 migration
+  and 18 identity tests.
 
 ## 6. Verify integration and native discovery
 
-- [ ] 6.1 Repeat local checks and independent review after the layer gate changes, then run the exact-commit
-  publication gate.
-- [ ] 6.2 Finish the required Linux/macOS matrix and T18 case-insensitive and native-alias evidence without silent
-  skips.
-- [ ] 6.3 Record N01 and N02 native catalog and companion-access evidence for the checked disposable snapshots.
+- [x] 6.1 Repeat local checks and independent review after the layer gate changes, then pass the exact-commit
+  publication gate for `7412b6a`.
+- [x] 6.2 Pass the Linux/macOS matrix and T18 case-insensitive filesystem probe at `7412b6a` in
+  [Skill readiness run 34571451799](https://github.com/runedeck/cli/actions/runs/34571451799).
+- [ ] 6.3 Complete N01/N02 invocation and companion-access evidence and resolve observed same-name user-root ambiguity.
 - [x] 6.4 Record N03: the native catalog retains both same-name canaries, and static inspection reports
   `CSI001_DUPLICATE_NAME`.
 - [x] 6.5 Resolve material findings from independent review of the expanded candidate.
+- [ ] 6.6 Complete T18's native duplicate-through-alias rejection evidence; the observed alias emitted no duplicate.
+- [ ] 6.7 Run the revised six-target workflow and standalone macOS filesystem probe at their next published head.
+- [x] 6.8 Record the bounded directory-alias catalog observation without inferring internal deduplication or invocation.
+- [ ] 6.9 Pass the immutable publication gate for the follow-up assertions, alias controls, and workflow changes.
+- [x] 6.10 Record all four selected Workshop skills in the native catalog and preserve the observed duplicate-name scope.
+- [x] 6.11 Record all 13 Codex-selected Deck skills in the native catalog and preserve the nine same-name user copies.
 
 Passing checks does not authorize commit, publication, or deployment.
 Missing native evidence keeps its tasks incomplete even when every static check passes.
