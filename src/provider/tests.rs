@@ -17,6 +17,65 @@ const INSTALLED_DEFAULTS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/defaults.yaml"));
 
 #[test]
+fn provider_alias_wins_over_a_shared_target_path() {
+    let providers = load_providers(INSTALLED_DEFAULTS).unwrap();
+    assert_eq!(
+        resolve_requested_names(&providers, &["agents".into()]).unwrap(),
+        ["agentskills"]
+    );
+    assert_eq!(
+        resolve_requested_names(&providers, &["codex".into()]).unwrap(),
+        ["codex"]
+    );
+}
+
+#[test]
+fn shared_target_selector_is_rejected_without_a_unique_identity() {
+    let providers = load_providers(INSTALLED_DEFAULTS).unwrap();
+    let error = resolve_requested_names(&providers, &[".agents".into()]).unwrap_err();
+    assert_eq!(
+        error,
+        "ambiguous provider '.agents': agentskills, codex. Use an exact provider name"
+    );
+}
+
+#[test]
+fn exact_provider_name_wins_over_another_providers_alias() {
+    let mut providers = load_providers(INSTALLED_DEFAULTS).unwrap();
+    providers.get_mut("claude").unwrap().aliases = Some(vec!["codex".into()]);
+    assert_eq!(
+        resolve_requested_names(&providers, &["codex".into()]).unwrap(),
+        ["codex"]
+    );
+}
+
+#[test]
+fn duplicate_aliases_fail_with_sorted_candidates() {
+    let mut providers = load_providers(INSTALLED_DEFAULTS).unwrap();
+    for name in ["codex", "claude"] {
+        providers.get_mut(name).unwrap().aliases = Some(vec!["shared".into()]);
+    }
+    assert_eq!(
+        resolve_requested_names(&providers, &["shared".into()]).unwrap_err(),
+        "ambiguous provider 'shared': claude, codex. Use an exact provider name"
+    );
+}
+
+#[test]
+fn provider_selectors_deduplicate_names_and_keep_unknown_diagnostics() {
+    let providers = load_providers(INSTALLED_DEFAULTS).unwrap();
+    assert_eq!(
+        resolve_requested_names(&providers, &["agentskills".into(), "agents".into()]).unwrap(),
+        ["agentskills"]
+    );
+    let error = resolve_requested_names(&providers, &["missing".into()]).unwrap_err();
+    assert_eq!(
+        error,
+        "unknown provider(s): missing. Available: agentskills, claude, codex, gemini, opencode"
+    );
+}
+
+#[test]
 fn load_providers_parses_all_providers() {
     let providers = load_providers(DEFAULTS).unwrap();
 

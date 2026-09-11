@@ -87,7 +87,8 @@ jobs:
             - name: Install tools
               run: |
                   chmod +x /usr/local/bin/rune
-                  pip install semgrep
+                  source scripts/tool-versions
+                  pip install semgrep "ruff==$RUFF_VERSION"
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
                   sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
@@ -121,7 +122,8 @@ jobs:
 
             - name: Install validation tools
               run: |
-                  pip install semgrep
+                  source scripts/tool-versions
+                  pip install semgrep "ruff==$RUFF_VERSION"
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
                   curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
                   sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"

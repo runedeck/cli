@@ -1,6 +1,7 @@
 use regex::Regex;
 use rune::error::{Error, ErrorKind};
 use rune::manifest;
+use rune::manifest::bundle::is_build_sidecar;
 use rune::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -9,6 +10,9 @@ use std::sync::OnceLock;
 
 use crate::cli::config;
 
+pub(crate) mod evidence;
+mod migration;
+mod recovery;
 pub mod wiring;
 
 /// Copy assembled files from build/ to provider target directories.
@@ -43,6 +47,7 @@ pub fn execute(
 
     let merged_config = config::load_merged_config(module_root)?;
     let mut providers = config::load_providers(&merged_config)?;
+    let known_providers: HashSet<String> = providers.keys().cloned().collect();
 
     if requested_providers.is_empty() {
         providers.retain(|_, provider| provider.enabled);
@@ -87,6 +92,16 @@ pub fn execute(
     // of deploying rules to each provider's rules directory.
     let wire_rules = !dry_run && effective_target.is_none_or(is_home_target);
 
+    migration::check_build_layout(module_root, &providers)?;
+    migration::check_writers(
+        module_root,
+        effective_target,
+        &providers,
+        &known_providers,
+        only,
+        force,
+    )?;
+
     // One writer per target: concurrent deploys interleave manifest and tree
     // writes with no way to reconcile afterwards.
     let _target_lock = if dry_run {
@@ -95,6 +110,30 @@ pub fn execute(
         Some(config::lock_target(Path::new(
             effective_target.unwrap_or("."),
         ))?)
+    };
+    // Preflight under the target lock so another Rune writer cannot invalidate it.
+    migration::check_writers(
+        module_root,
+        effective_target,
+        &providers,
+        &known_providers,
+        only,
+        force,
+    )?;
+    let migration = migration::MigrationPlan::prepare(
+        module_root,
+        effective_target,
+        providers.get("codex"),
+        only,
+    )?;
+    let recovery = if dry_run {
+        None
+    } else {
+        migration
+            .as_ref()
+            .map(migration::MigrationPlan::begin_recovery)
+            .transpose()?
+            .flatten()
     };
 
     for (provider_name, provider_config) in &providers {
@@ -164,6 +203,7 @@ pub fn execute(
                 &mut result,
                 provider_name,
                 force,
+                dry_run,
                 only,
             )?;
         }
@@ -185,6 +225,10 @@ pub fn execute(
 
         for (target_base, mut existing_manifest) in manifests {
             let mut deployed_keys = deployed_by_root.remove(&target_base).unwrap_or_default();
+            // Whole legacy skills are retired only after the replacement succeeds.
+            if let Some(plan) = &migration {
+                plan.protect_legacy(&target_base, &existing_manifest, &mut deployed_keys);
+            }
             if prune {
                 prune_stale_files(
                     &target_base,
@@ -199,7 +243,8 @@ pub fn execute(
                     dry_run,
                 );
             }
-            if let Some((plugin_name, plugin_base)) = &plugin_scaffold
+            if !dry_run
+                && let Some((plugin_name, plugin_base)) = &plugin_scaffold
                 && *plugin_base == target_base
             {
                 deploy_plugin_scaffolding(
@@ -217,7 +262,10 @@ pub fn execute(
             // Harnesses without a rules directory get their rules inlined
             // into their own instruction file. Home-scope installs only: a
             // repo's AGENTS.md belongs to the repo, not to install.
-            if wire_rules {
+            if wire_rules
+                && target_base
+                    == resolve_target_base(provider_config.default_target(), effective_target)
+            {
                 wire_harness_rules(
                     provider_config,
                     &build_provider_dir,
@@ -226,8 +274,31 @@ pub fn execute(
                     &mut result,
                 )?;
             }
-            write_manifest(&target_base, &existing_manifest)?;
+            if !dry_run {
+                write_manifest(&target_base, &existing_manifest)?;
+            }
         }
+    }
+
+    if prune
+        && !dry_run
+        && let Some(plan) = migration
+    {
+        plan.finish(&mut result)?;
+    }
+
+    if let Some(recovery) = recovery {
+        recovery.commit();
+    }
+
+    if !dry_run {
+        evidence::record_completed_install(
+            module_root,
+            effective_target,
+            &providers,
+            prune,
+            &mut result,
+        )?;
     }
 
     Ok(result)
@@ -341,6 +412,20 @@ fn resolve_target_base(target_root: &str, effective_target: Option<&str>) -> Pat
     }
 }
 
+fn canonical_metadata_path(path: &Path, root: &Path) -> Result<(), Error> {
+    if !migration::canonical_target(path)?.starts_with(migration::canonical_target(root)?) {
+        return Err(Error::new(
+            ErrorKind::Validate,
+            format!(
+                "metadata path {} escapes its deployment root",
+                path.display()
+            ),
+        )
+        .with_code("CSI002_INCOMPLETE_IDENTITY"));
+    }
+    Ok(())
+}
+
 /// Whether a manifest key falls under an `--only` prefix. A prefix ending in
 /// `/` or `.` matches literally; a bare prefix (`skills/Alpha`) matches only
 /// at a path or extension boundary, so `skills/AlphaOther/` stays untouched.
@@ -368,7 +453,11 @@ fn normalize_only(value: &str) -> String {
 }
 
 /// Deploy one content kind for a single provider.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::fn_params_excessive_bools
+)]
 fn deploy_provider_kind_files(
     kind_dir: &Path,
     kind: rune::provider::ContentKind,
@@ -378,13 +467,14 @@ fn deploy_provider_kind_files(
     result: &mut ActionResult,
     provider_name: &str,
     force: bool,
+    dry_run: bool,
     only: Option<&str>,
 ) -> Result<(), Error> {
     let files = collect_files_recursive(kind_dir)?;
 
     for build_path in files {
         if kind != rune::provider::ContentKind::Hooks
-            && build_path.extension().unwrap_or_default() == "yaml"
+            && is_build_sidecar(build_path.strip_prefix(kind_dir).unwrap_or(&build_path))
         {
             continue;
         }
@@ -403,7 +493,7 @@ fn deploy_provider_kind_files(
 
         // Bytes end-to-end: binary passthrough assets deploy with the same
         // state machine as text, hashed over their raw bytes.
-        let build_bytes = fs::read(&build_path).map_err(|e| {
+        let build_bytes = deployed_bytes(&build_path).map_err(|e| {
             Error::new(
                 ErrorKind::Io,
                 format!("cannot read {}: {e}", build_path.display()),
@@ -412,31 +502,46 @@ fn deploy_provider_kind_files(
         let build_fingerprint = manifest::content_sha256_bytes(&build_bytes);
         let provenance_relative = manifest::provenance_path(&manifest_key);
         let sidecar_source = manifest::sidecar_path(&build_path);
-        let has_provenance = sidecar_source.is_file()
+        let has_provenance = sidecar_source
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.is_file())
             && sidecar_source != build_path
             && kind != rune::provider::ContentKind::Hooks;
 
-        let target_bytes = fs::read(&target_path).ok();
-        let status = manifest::status_bytes(
+        if fs::symlink_metadata(&build_path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            let bundle = build_path
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| ancestor.starts_with(kind_dir))
+                .find(|ancestor| ancestor.join("SKILL.md").is_file())
+                .unwrap_or(kind_dir);
+            manifest::bundle::contained_symlink_target(bundle, &build_path)
+                .map_err(|problem| Error::new(ErrorKind::Validate, problem.message))?;
+        }
+        let target_bytes = deployed_bytes(&target_path).ok();
+        let mut status = manifest::status_bytes(
             target_bytes.as_deref(),
             new_manifest.get(&manifest_key),
             &build_fingerprint,
         );
+        if status == manifest::FileStatus::Unchanged
+            && !same_entry_semantics(&build_path, &target_path)
+        {
+            status = manifest::FileStatus::Modified;
+        }
 
         match status {
             manifest::FileStatus::New | manifest::FileStatus::Stale => {
-                ensure_destination_within(&target_path, target_base)?;
-                copy_file(&build_path, &target_path)?;
+                if !dry_run {
+                    ensure_destination_within(&target_path, target_base)?;
+                    copy_file(&build_path, &target_path)?;
+                }
                 // Provenance travels only with content that actually
                 // installed; a skipped modified file keeps its old sidecar.
-                if has_provenance {
+                if has_provenance && !dry_run {
                     let provenance_target = target_base.join(&provenance_relative);
-                    if let Err(error) = copy_file(&sidecar_source, &provenance_target) {
-                        eprintln!(
-                            "warning: sidecar copy failed for {}: {error}",
-                            provenance_target.display()
-                        );
-                    }
+                    ensure_destination_within(&provenance_target, target_base)?;
+                    copy_file(&sidecar_source, &provenance_target)?;
                 }
                 new_manifest.insert(
                     manifest_key,
@@ -467,10 +572,13 @@ fn deploy_provider_kind_files(
             }
             manifest::FileStatus::Modified => {
                 if force {
-                    ensure_destination_within(&target_path, target_base)?;
-                    copy_file(&build_path, &target_path)?;
-                    if has_provenance {
+                    if !dry_run {
+                        ensure_destination_within(&target_path, target_base)?;
+                        copy_file(&build_path, &target_path)?;
+                    }
+                    if has_provenance && !dry_run {
                         let provenance_target = target_base.join(&provenance_relative);
+                        ensure_destination_within(&provenance_target, target_base)?;
                         copy_file(&sidecar_source, &provenance_target)?;
                     }
                     new_manifest.insert(
@@ -837,11 +945,11 @@ fn prune_stale_files(
         // to keep. Bytes-based so a locally modified (or non-UTF-8) binary is
         // protected too. --force overrides both deploy and prune protection.
         if !force
-            && stale_path.is_file()
+            && fs::symlink_metadata(&stale_path).is_ok()
             && let Some(expected) = existing_manifest
                 .get(stale_key)
                 .map(|entry| entry.fingerprint.clone())
-            && let Ok(current) = fs::read(&stale_path)
+            && let Ok(current) = deployed_bytes(&stale_path)
             && manifest::content_sha256_bytes(&current) != expected
         {
             eprintln!(
@@ -872,7 +980,7 @@ fn prune_stale_files(
             continue;
         }
 
-        if stale_path.is_file() {
+        if fs::symlink_metadata(&stale_path).is_ok() {
             if let Err(error) = fs::rename(&stale_path, &trash_dest) {
                 eprintln!(
                     "warning: cannot quarantine {}: {error}",
@@ -935,47 +1043,21 @@ fn prune_stale_files(
 }
 
 /// Keep only the provider entries the user requested. Each requested name is
-/// matched against provider keys, target directories, and aliases (the same
-/// rules `ProviderConfig::matches_target` uses elsewhere). Unknown names
-/// produce a single error listing all available choices.
+/// resolved by provider key, explicit alias, then unambiguous target directory.
+/// Unknown names produce a single error listing all available choices.
 fn filter_requested_providers(
     providers: &HashMap<String, rune::provider::ProviderConfig>,
     requested: &[String],
 ) -> Result<HashMap<String, rune::provider::ProviderConfig>, Error> {
-    let mut matched: HashMap<String, rune::provider::ProviderConfig> = HashMap::new();
-    let mut unknown: Vec<String> = Vec::new();
-
-    for requested_name in requested {
-        let hit = providers
-            .iter()
-            .find(|(key, config)| config.matches_target(requested_name, key));
-
-        match hit {
-            Some((key, config)) => {
-                matched.entry(key.clone()).or_insert_with(|| config.clone());
-            }
-            None => unknown.push(requested_name.clone()),
-        }
-    }
-
-    if !unknown.is_empty() {
-        let mut available: Vec<&String> = providers.keys().collect();
-        available.sort();
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!(
-                "unknown provider(s): {}. Available: {}",
-                unknown.join(", "),
-                available
-                    .into_iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ));
-    }
-
-    Ok(matched)
+    let names =
+        rune::provider::resolve_requested_names(providers, requested).map_err(Error::config)?;
+    Ok(names
+        .into_iter()
+        .map(|name| {
+            let config = providers[&name].clone();
+            (name, config)
+        })
+        .collect())
 }
 
 /// Refuse to operate on a path that isn't a rune source root or a consumer
@@ -1005,26 +1087,8 @@ fn require_module_root(module_root: &Path) -> Result<(), Error> {
 /// Containment is checked against the deepest existing ancestor BEFORE any
 /// directory is created, so an escaping path never mutates the filesystem.
 fn validate_target_boundary(target_path: &Path, base_directory: &Path) -> Result<(), Error> {
-    ensure_destination_within(&target_path.join("probe"), base_directory)?;
-    fs::create_dir_all(target_path).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot create {}: {error}", target_path.display()),
-        )
-    })?;
-
-    let resolved_target = target_path.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", target_path.display()),
-        )
-    })?;
-    let resolved_base = base_directory.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", base_directory.display()),
-        )
-    })?;
+    let resolved_target = migration::canonical_target(target_path)?;
+    let resolved_base = migration::canonical_target(base_directory)?;
 
     if !resolved_target.starts_with(&resolved_base) {
         return Err(Error::new(
@@ -1110,6 +1174,13 @@ fn write_manifest(
     })?;
 
     let manifest_path = target_base.join(".manifest");
+    if !manifest_path
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.is_symlink())
+        && fs::read_to_string(&manifest_path).is_ok_and(|current| current == yaml)
+    {
+        return Ok(());
+    }
     config::write_atomic(&manifest_path, &yaml)
 }
 
@@ -1163,6 +1234,26 @@ fn copy_file(source: &Path, target: &Path) -> Result<(), Error> {
             )
         })?;
     }
+    if fs::symlink_metadata(source).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        let link =
+            fs::read_link(source).map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+        if fs::symlink_metadata(target).is_ok() {
+            fs::remove_file(target)
+                .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(link, target)
+            .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+        #[cfg(not(unix))]
+        return Err(Error::new(
+            ErrorKind::Validate,
+            "symbolic link deployment is unsupported on this platform",
+        ));
+        return Ok(());
+    }
+    if fs::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        fs::remove_file(target).map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+    }
     fs::copy(source, target).map_err(|e| {
         Error::new(
             ErrorKind::Io,
@@ -1188,14 +1279,46 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>, Error>
             entry.map_err(|e| Error::new(ErrorKind::Io, format!("directory entry error: {e}")))?;
 
         let path = entry.path();
-        if path.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?
+            .is_dir()
+        {
             files.extend(collect_files_recursive(&path)?);
         } else {
             files.push(path);
         }
     }
 
+    files.sort();
     Ok(files)
+}
+
+fn deployed_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        Ok(fs::read_link(path)?.as_os_str().as_encoded_bytes().to_vec())
+    } else {
+        fs::read(path)
+    }
+}
+
+fn same_entry_semantics(left: &Path, right: &Path) -> bool {
+    let (Ok(left), Ok(right)) = (fs::symlink_metadata(left), fs::symlink_metadata(right)) else {
+        return false;
+    };
+    if left.file_type().is_symlink() != right.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if !left.file_type().is_symlink()
+            && left.permissions().mode() & 0o111 != right.permissions().mode() & 0o111
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Check if a stale manifest entry was installed by the current module.

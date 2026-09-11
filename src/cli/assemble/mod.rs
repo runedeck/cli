@@ -1,7 +1,111 @@
+mod evidence;
 mod output;
 mod pipeline;
 mod provenance;
+pub(crate) mod snapshot;
 pub mod sources;
+
+#[cfg(all(test, unix))]
+mod skill_symlink_emission_tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("module.yaml"),
+            "name: bundle-test\nversion: 0.1.0\ndescription: test\nevents: []\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("defaults.yaml"), "").unwrap();
+        fs::create_dir_all(root.path().join("skills/Alpha/refs")).unwrap();
+        fs::write(
+            root.path().join("skills/Alpha/SKILL.md"),
+            "---\nname: Alpha\ndescription: test\n---\n# Alpha\n[reference](Alias.md)\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("skills/Alpha/refs/Reference.md"),
+            "Reference\n",
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn assembled_skill_preserves_contained_symlink_and_provenance() {
+        let root = fixture();
+        symlink(
+            "refs/Reference.md",
+            root.path().join("skills/Alpha/Alias.md"),
+        )
+        .unwrap();
+        execute_with_options(root.path().to_str().unwrap(), &["codex".to_string()], None).unwrap();
+        let bundle = root.path().join("build/codex/skills/Alpha");
+        assert_eq!(
+            fs::read_link(bundle.join("Alias.md")).unwrap(),
+            Path::new("refs/Reference.md")
+        );
+        assert!(bundle.join(".provenance/Alias.md.yaml").is_file());
+        let report = rune::manifest::bundle::inspect_bundle(&bundle);
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        assert_eq!(
+            report
+                .entries
+                .iter()
+                .filter(|entry| entry.kind == rune::manifest::bundle::BundleEntryKind::Symlink)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn cyclic_directory_link_cannot_replace_previous_build() {
+        let root = fixture();
+        let previous = root.path().join("build/previous");
+        fs::create_dir_all(previous.parent().unwrap()).unwrap();
+        fs::write(&previous, "last good build").unwrap();
+        symlink(".", root.path().join("skills/Alpha/Cycle")).unwrap();
+        let error =
+            execute_with_options(root.path().to_str().unwrap(), &["codex".to_string()], None)
+                .unwrap_err();
+        assert!(error.to_string().contains("traversal cycle"), "{error}");
+        assert_eq!(fs::read_to_string(previous).unwrap(), "last good build");
+    }
+
+    #[test]
+    fn output_case_alias_is_rejected_before_write() {
+        let existing =
+            std::collections::HashMap::from([("skills/Alpha/refs/a.md".into(), "one".into())]);
+        assert!(check_case_collision("skills/alpha/refs/b.md", &existing).is_err());
+        assert!(check_case_collision("skills/Alpha/refs/b.md", &existing).is_ok());
+    }
+
+    #[test]
+    fn authored_yaml_never_collides_with_generated_provenance() {
+        let root = fixture();
+        let skill = root.path().join("skills/Alpha");
+        fs::write(skill.join("data"), "authored data").unwrap();
+        fs::write(skill.join("data.yaml"), "authored: keep-me").unwrap();
+        // Make the entrypoint's existing reference valid in this fixture.
+        fs::write(skill.join("Alias.md"), "Reference\n").unwrap();
+        for _ in 0..2 {
+            execute_with_options(root.path().to_str().unwrap(), &["codex".into()], None).unwrap();
+            let bundle = root.path().join("build/codex/skills/Alpha");
+            assert_eq!(
+                fs::read_to_string(bundle.join("data")).unwrap(),
+                "authored data"
+            );
+            assert_eq!(
+                fs::read_to_string(bundle.join("data.yaml")).unwrap(),
+                "authored: keep-me"
+            );
+            assert!(bundle.join(".provenance/data.yaml").is_file());
+            assert!(bundle.join(".provenance/data.yaml.yaml").is_file());
+        }
+    }
+}
 
 use rune::error::Error;
 use rune::result::{ActionResult, DeployedFile};
@@ -28,11 +132,11 @@ use crate::cli::config;
 /// ```text
 /// module/build/
 ///   claude/agents/SecurityArchitect.md
-///   claude/agents/SecurityArchitect.yaml
+///   claude/agents/.provenance/SecurityArchitect.md.yaml
 ///   claude/rules/MyRule.md
-///   claude/rules/MyRule.yaml
+///   claude/rules/.provenance/MyRule.md.yaml
 ///   gemini/agents/security-architect.md  (with remapped tools)
-///   gemini/agents/security-architect.yaml
+///   gemini/agents/.provenance/security-architect.md.yaml
 /// ```
 /// Assemble, selecting model variants with `model_override` (the `--model`
 /// flag) in place of each provider's configured default model.
@@ -66,19 +170,32 @@ pub fn execute_with_options(
 
     let merged_config = config::load_merged_config(module_root)?;
     let providers = config::load_providers(&merged_config)?;
+    let requested_providers = rune::provider::resolve_requested_names(
+        &providers,
+        requested_providers,
+    )
+    .map_err(|message| {
+        Error::config(message)
+            .with_code("provider.unknown")
+            .with_fix_command(format!(
+                "cd {} && rune provider",
+                crate::cli::shell_quote(&crate::cli::resolved_path(module_root).to_string_lossy())
+            ))
+    })?;
     let remap_content = config::load_remap_tools(module_root)?;
     let models = config::load_models(module_root);
     let source_uri = config::load_source_uri(module_root);
     let provider_names: Vec<String> = providers.keys().cloned().collect();
     let valid_qualifiers = sources::build_valid_qualifiers(&provider_names, &models);
-    let mut provider_toggles = crate::cli::dotrune::toggle::ToggleMap::default();
-    let source_files = if let Some(manifest) = crate::cli::dotrune::load(module_root)? {
-        provider_toggles = crate::cli::dotrune::toggle::toggle_map(&manifest);
-        crate::cli::dotrune::resolve_sources(&manifest, module_root, &valid_qualifiers)?
-    } else {
-        sources::collect(module_root, &valid_qualifiers)?
-    };
-
+    let (source_snapshot, source_files, provider_toggles) =
+        evidence::collect_sources(module_root, &valid_qualifiers, model_override)?;
+    evidence::verify_configuration(
+        module_root,
+        &merged_config,
+        remap_content.as_ref(),
+        &models,
+        &source_uri,
+    )?;
     let build_dir = module_root.join("build");
 
     // Assembly writes into a staging tree and swaps it in only after every
@@ -97,7 +214,7 @@ pub fn execute_with_options(
     let assembled: Result<(), Error> = assemble_providers(
         &providers,
         &provider_toggles,
-        requested_providers,
+        &requested_providers,
         &staging_dir,
         module_root,
         model_override,
@@ -106,47 +223,26 @@ pub fn execute_with_options(
         &source_uri,
         &source_files,
         &mut result,
-    );
+    )
+    .and_then(|()| {
+        if evidence::capture(module_root, model_override)? != source_snapshot {
+            return Err(evidence::source_changed());
+        }
+        evidence::record(
+            &staging_dir,
+            &source_snapshot,
+            &providers,
+            &requested_providers,
+            model_override,
+            &mut result,
+        )
+    });
     if let Err(error) = assembled {
         let _ = std::fs::remove_dir_all(&staging_dir);
         return Err(error);
     }
 
-    // Nothing assembled (empty module, or every provider filtered out): keep
-    // the start-clean contract by clearing the previous build and stop.
-    if !staging_dir.exists() {
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir).map_err(|e| {
-                rune::error::Error::new(
-                    rune::error::ErrorKind::Io,
-                    format!("cannot clean build directory: {e}"),
-                )
-            })?;
-        }
-        return Ok(result);
-    }
-
-    let retired_dir = module_root.join(format!(".build-retired-{}", std::process::id()));
-    if build_dir.exists() {
-        std::fs::rename(&build_dir, &retired_dir).map_err(|e| {
-            rune::error::Error::new(
-                rune::error::ErrorKind::Io,
-                format!("cannot retire previous build directory: {e}"),
-            )
-        })?;
-    }
-    if let Err(e) = std::fs::rename(&staging_dir, &build_dir) {
-        // Put the previous build back so a failed swap never leaves no build.
-        if retired_dir.exists() {
-            let _ = std::fs::rename(&retired_dir, &build_dir);
-        }
-        let _ = std::fs::remove_dir_all(&staging_dir);
-        return Err(rune::error::Error::new(
-            rune::error::ErrorKind::Io,
-            format!("cannot activate new build directory: {e}"),
-        ));
-    }
-    let _ = std::fs::remove_dir_all(&retired_dir);
+    output::activate_build(module_root, &staging_dir, &build_dir)?;
 
     Ok(result)
 }
@@ -169,7 +265,7 @@ fn assemble_providers(
         if !requested_providers.is_empty()
             && !requested_providers
                 .iter()
-                .any(|requested| provider_config.matches_target(requested, provider_name))
+                .any(|requested| requested == provider_name)
         {
             continue;
         }
@@ -222,6 +318,7 @@ fn assemble_providers(
                 result.installed.push(deployed);
             }
         }
+        validate_skill_bundle_paths(&provider_build_dir)?;
     }
 
     Ok(())
@@ -290,6 +387,20 @@ fn assemble_source_for_provider(
 
     if !source_matches_provider_target(source, provider_name, provider_config) {
         return Ok(None);
+    }
+
+    if source.passthrough
+        && std::fs::symlink_metadata(&source.full_path).is_ok_and(|metadata| metadata.is_symlink())
+    {
+        return assemble_symlink_passthrough(
+            source,
+            provider_name,
+            provider_build_dir,
+            tool_mappings,
+            assembly_rules,
+            source_uri,
+            deploy_paths,
+        );
     }
 
     // Binary passthrough assets copy byte-for-byte: no variants, no text
@@ -364,6 +475,16 @@ fn assemble_source_for_provider(
             assembled.clone()
         };
         (content, format!("{deck}/{relative_within_kind}"))
+    } else if source.passthrough {
+        let (_, filename) = rune::transform::apply_rules(
+            "",
+            relative_within_kind,
+            assembly_rules,
+            tool_mappings,
+            source.kind.as_str(),
+        )
+        .map_err(|message| Error::new(rune::error::ErrorKind::Validate, message))?;
+        (assembled.clone(), filename)
     } else {
         rune::transform::apply_rules(
             &assembled,
@@ -387,6 +508,7 @@ fn assemble_source_for_provider(
         .join(source.kind.as_str())
         .join(&transformed_filename);
     let deploy_relative = format!("{}/{transformed_filename}", source.kind);
+    check_case_collision(&deploy_relative, deploy_paths)?;
     let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
     if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
         return Err(rune::error::Error::new(
@@ -398,7 +520,11 @@ fn assemble_source_for_provider(
     }
     let manifest_key = format!("{}/{}/{}", provider_name, source.kind, transformed_filename);
 
-    output::write_file(&output_path, &assembled)?;
+    if source.passthrough || is_hook {
+        output::write_file_bytes(&output_path, assembled.as_bytes())?;
+    } else {
+        output::write_file(&output_path, &assembled)?;
+    }
     if is_hook || source.passthrough {
         preserve_executable_bit(source, &output_path)?;
     }
@@ -445,6 +571,7 @@ fn assemble_binary_passthrough(
         .join(source.kind.as_str())
         .join(&transformed_filename);
     let deploy_relative = format!("{}/{transformed_filename}", source.kind);
+    check_case_collision(&deploy_relative, deploy_paths)?;
     let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
     if let Some(existing_id) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
         return Err(rune::error::Error::new(
@@ -467,6 +594,142 @@ fn assemble_binary_passthrough(
         target: output_path.to_string_lossy().to_string(),
         provider: provider_name.to_string(),
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assemble_symlink_passthrough(
+    source: &sources::SourceFile,
+    provider_name: &str,
+    provider_build_dir: &Path,
+    tool_mappings: &std::collections::HashMap<String, String>,
+    assembly_rules: &[rune::provider::AssemblyRule],
+    source_uri: &str,
+    deploy_paths: &mut std::collections::HashMap<String, String>,
+) -> Result<Option<DeployedFile>, Error> {
+    let relative = source
+        .relative_path
+        .strip_prefix("skills/")
+        .unwrap_or(&source.relative_path);
+    let (_, filename) =
+        rune::transform::apply_rules("", relative, assembly_rules, tool_mappings, "skills")
+            .map_err(|error| Error::new(rune::error::ErrorKind::Validate, error))?;
+    let deploy_relative = format!("skills/{filename}");
+    check_case_collision(&deploy_relative, deploy_paths)?;
+    let rune_id = source.rune_id.as_deref().unwrap_or(&source.relative_path);
+    if let Some(previous) = deploy_paths.insert(deploy_relative.clone(), rune_id.to_string()) {
+        return Err(Error::new(
+            rune::error::ErrorKind::Config,
+            format!(
+                "deploy-path collision for provider '{provider_name}' at {deploy_relative}: {previous} and {rune_id}"
+            ),
+        ));
+    }
+    let output_path = provider_build_dir.join(&deploy_relative);
+    let target = std::fs::read_link(&source.full_path).map_err(|error| {
+        Error::new(
+            rune::error::ErrorKind::Io,
+            format!("cannot read link {}: {error}", source.full_path),
+        )
+    })?;
+    let target_text = target.to_str().ok_or_else(|| {
+        Error::new(
+            rune::error::ErrorKind::Validate,
+            "symlink targets must be valid UTF-8",
+        )
+    })?;
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| Error::new(rune::error::ErrorKind::Io, error.to_string()))?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &output_path).map_err(|error| {
+        Error::new(
+            rune::error::ErrorKind::Io,
+            format!("cannot create link {}: {error}", output_path.display()),
+        )
+    })?;
+    #[cfg(not(unix))]
+    return Err(Error::new(
+        rune::error::ErrorKind::Validate,
+        "skill symlink assembly requires a supported Unix filesystem",
+    ));
+
+    let statement = provenance::build_statement_bytes(
+        &format!("{provider_name}/{deploy_relative}"),
+        target_text.as_bytes(),
+        source,
+        source_uri,
+    );
+    provenance::write_sidecar(&output_path, &statement)?;
+    Ok(Some(DeployedFile {
+        source: source.relative_path.clone(),
+        target: output_path.to_string_lossy().into_owned(),
+        provider: provider_name.to_string(),
+    }))
+}
+
+fn check_case_collision(
+    path: &str,
+    deployed: &std::collections::HashMap<String, String>,
+) -> Result<(), Error> {
+    for previous in deployed.keys() {
+        for (left, right) in path.split('/').zip(previous.split('/')) {
+            if left.to_lowercase() != right.to_lowercase() {
+                break;
+            }
+            if left != right {
+                return Err(Error::new(
+                    rune::error::ErrorKind::Config,
+                    format!("deploy-path case collision: {previous} and {path}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_skill_bundle_paths(provider_build_dir: &Path) -> Result<(), Error> {
+    use rune::manifest::bundle::{BundleProblemKind, inspect_bundle};
+
+    let skills = provider_build_dir.join("skills");
+    if !skills.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&skills)
+        .map_err(|error| Error::new(rune::error::ErrorKind::Io, error.to_string()))?
+    {
+        let entry =
+            entry.map_err(|error| Error::new(rune::error::ErrorKind::Io, error.to_string()))?;
+        if !entry
+            .file_type()
+            .map_err(|error| Error::new(rune::error::ErrorKind::Io, error.to_string()))?
+            .is_dir()
+        {
+            continue;
+        }
+        // Reference acceptance is a separate read-only check. Assembly rejects unsafe
+        // paths and links before it activates the staged build.
+        let inspection = inspect_bundle(&entry.path());
+        if let Some(problem) = inspection.problems.iter().find(|problem| {
+            !matches!(
+                problem.kind,
+                BundleProblemKind::BrokenReference
+                    | BundleProblemKind::EscapingReference
+                    | BundleProblemKind::MissingEntrypoint
+            )
+        }) {
+            return Err(Error::new(
+                rune::error::ErrorKind::Validate,
+                format!(
+                    "invalid skill bundle {} at {}: {}",
+                    entry.path().display(),
+                    problem.path,
+                    problem.message
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn hook_deck(source: &sources::SourceFile) -> Result<&str, Error> {

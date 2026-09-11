@@ -149,7 +149,10 @@
             "skills": [
               "name",
               "description",
-              "version"
+              "version",
+              "license",
+              "compatibility",
+              "metadata"
             ]
           },
           "model": "gpt-5.5",
@@ -165,7 +168,12 @@
             ]
           },
           "plugin": null,
-          "target": ".codex"
+          "target": {
+            "agents": null,
+            "default": ".codex",
+            "rules": null,
+            "skills": ".agents"
+          }
         },
         "gemini": {
           "aliases": [

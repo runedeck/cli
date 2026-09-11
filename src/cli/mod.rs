@@ -121,6 +121,41 @@ enum Command {
         /// Restore missing managed files and quarantine managed-directory orphans.
         #[arg(long)]
         repair: bool,
+
+        /// Check complete Codex skill identities. Native evidence is required for acceptance.
+        #[arg(long, conflicts_with = "repair")]
+        skill_readiness: bool,
+
+        /// Complete native skills/list catalog, reduced to name, path, and enabled fields.
+        #[arg(long, value_name = "JSON", requires = "skill_readiness")]
+        skill_catalog: Option<std::path::PathBuf>,
+
+        /// Model qualifier used by the source build, when explicitly overridden.
+        #[arg(long, value_name = "MODEL", requires = "skill_readiness")]
+        skill_model: Option<String>,
+
+        /// Native evidence record from a fresh, independently observed Codex session.
+        #[arg(
+            long,
+            value_name = "JSON",
+            requires = "skill_readiness",
+            requires = "skill_transcript",
+            requires = "skill_catalog"
+        )]
+        skill_evidence: Option<std::path::PathBuf>,
+
+        /// Tool and catalog evidence transcript associated with --skill-evidence.
+        #[arg(
+            long,
+            value_name = "JSONL",
+            requires = "skill_evidence",
+            requires = "skill_raw_transcript"
+        )]
+        skill_transcript: Option<std::path::PathBuf>,
+
+        /// Raw Codex protocol envelopes that support the normalized transcript.
+        #[arg(long, value_name = "JSONL", requires = "skill_evidence")]
+        skill_raw_transcript: Option<std::path::PathBuf>,
     },
 
     /// Launch the terminal dashboard
@@ -502,6 +537,10 @@ enum Command {
         /// Validate a directory that carries no deck.yaml or module.yaml marker.
         #[arg(long)]
         force: bool,
+
+        /// Check generic, harness, and model skill layers without external tools.
+        #[arg(long, conflicts_with_all = ["scan", "force"])]
+        skill_layers: bool,
     },
 
     /// Show provenance information for a deployed file or directory
@@ -1276,9 +1315,32 @@ pub fn run() -> i32 {
             target,
             verify,
             repair,
+            skill_readiness,
+            skill_catalog,
+            skill_model,
+            skill_evidence,
+            skill_transcript,
+            skill_raw_transcript,
         } => {
             return exit_code(
-                doctor::execute(&target, verify, repair, args.json),
+                if skill_readiness {
+                    doctor::execute_with_skills(
+                        &target,
+                        verify,
+                        repair,
+                        args.json,
+                        &doctor::SkillOptions {
+                            enabled: true,
+                            catalog: skill_catalog,
+                            evidence: skill_evidence,
+                            transcript: skill_transcript,
+                            raw_transcript: skill_raw_transcript,
+                            model: skill_model,
+                        },
+                    )
+                } else {
+                    doctor::execute(&target, verify, repair, args.json)
+                },
                 args.json,
             );
         }
@@ -1517,9 +1579,14 @@ pub fn run() -> i32 {
             source,
             scan,
             force,
+            skill_layers,
         } => {
             return exit_code(
-                validate::execute(&source, args.json, scan, force),
+                if skill_layers {
+                    validate::skill_layers::execute(&source, args.json)
+                } else {
+                    validate::execute(&source, args.json, scan, force)
+                },
                 args.json,
             );
         }

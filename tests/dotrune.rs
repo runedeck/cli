@@ -202,7 +202,7 @@ fn dotrune_deploys_requested_artifacts_across_providers() {
     assert!(
         consumer
             .path()
-            .join(".codex/skills/AlphaSkill/SKILL.md")
+            .join(".agents/skills/AlphaSkill/SKILL.md")
             .is_file(),
         "codex: AlphaSkill must deploy as SKILL.md"
     );
@@ -621,7 +621,7 @@ fn target_provider_selection_overrides_deck_and_deck_entry_defaults() {
     assert!(
         consumer
             .path()
-            .join(".codex/skills/OnlyScience/SKILL.md")
+            .join(".agents/skills/OnlyScience/SKILL.md")
             .is_file()
     );
     assert!(!consumer.path().join(".gemini/skills/OnlyScience").exists());
