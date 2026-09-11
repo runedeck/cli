@@ -80,4 +80,4 @@ Existing reviewed trees SHALL remain deployable from reviewed adopt sidecars. Ru
 
 **Reason**: Per-block review data is workflow state and duplicates the reviewed adopt sidecar authority.
 
-**Migration**: Existing reviewed sidecars remain deployable; inspect and remove or archive legacy ledgers explicitly after confirming the sidecars.
+**Migration**: Existing reviewed sidecars remain deployable. Inspect and remove or archive legacy ledgers explicitly after confirming the sidecars.

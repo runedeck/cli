@@ -40,8 +40,8 @@ plugins with a manifest that declares actions and event hooks.
 
 1. **Keep bare dispatch** — no declarations, no events.
 2. **Manifest plus a post-install event** — a `plugin.yaml` beside each plugin declares name,
-   description, executable, and subscribed events; rune fires `post-install`.
-3. **Full plugin marketplace** — discovery, installation, and versioning of plugins; premature
+   description, executable, and subscribed events. Rune fires `post-install`.
+3. **Full plugin marketplace** — discovery, installation, and versioning of plugins. Premature
    before the manifest layer exists.
 
 ## Decision Outcome
@@ -57,7 +57,7 @@ Marketplace listing arrives later through the CLI-0033 topic pattern.
 
 - [+] Plugins become visible, declared, and event-driven
 - [+] The dispatch surface of CLI-0015 stays unchanged
-- [-] One event only in this change; a richer event set needs its own review
-- [-] Manifested plugins run with the user's permissions; listing is not endorsement
+- [-] One event only in this change. A richer event set needs its own review
+- [-] Manifested plugins run with the user's permissions. Listing is not endorsement
 
 [HERDR]: https://github.com/herdrdev/herdr

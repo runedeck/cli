@@ -39,11 +39,11 @@ checksum and a manager-aware update command.
 
 ## Considered Options
 
-1. **Documentation only** — per-manager instructions; the fresh-machine story stays manual.
+1. **Documentation only** — per-manager instructions. The fresh-machine story stays manual.
 2. **Installer script plus manager-aware update** — a repository script installs verified
-   release binaries; `rune update` replaces only direct installs and defers to the manager
+   release binaries. `rune update` replaces only direct installs and defers to the manager
    otherwise.
-3. **Full self-update with channels** — herdr's complete model; needs a release-manifest policy
+3. **Full self-update with channels** — herdr's complete model. Needs a release-manifest policy
    rune does not have yet.
 
 ## Decision Outcome

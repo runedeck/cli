@@ -52,4 +52,3 @@ Each sync ends with the full check suite. Newer upstream commits that land mid-p
 - Staged commits keep ports reviewable and bisectable
 - Deck-first conflict resolution prevents semantic regression but may delay or reshape upstream features that assume predecessor behavior
 - Mid-port upstream arrivals wait in queue, which avoids thrash but can leave rune briefly behind the predecessor tip
-

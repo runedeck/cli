@@ -36,14 +36,14 @@ The [CLI-0012 Rune Dashboard](CLI-0012%20Rune%20Dashboard.md) serves local artif
 ## Considered Options
 
 1. **Loopback bind only.** Necessary but insufficient: DNS rebinding lets a malicious page resolve a hostname to `127.0.0.1` and reach the server from the victim's browser.
-2. **Loopback bind plus a Host-header allowlist.** Browsers always send `Host`; rejecting non-loopback host names defeats DNS rebinding.
+2. **Loopback bind plus a Host-header allowlist.** Browsers always send `Host`. Rejecting non-loopback host names defeats DNS rebinding.
 3. **Auth tokens or a login.** Heavier than warranted for a single-user local dev tool, and still needs the path and write protections.
 
 ## Decision Outcome
 
 The dashboard is read-only and loopback-confined, with three independent protections.
 
-- **No on-disk mutation, no network in handlers.** The dashboard never writes to disk; deploy-from-dashboard is deferred to a later, explicitly authorized effort. The only non-GET endpoint, `/refresh`, re-scans local state and is a `POST`, so a cross-origin `GET` (an `<img>` or link) cannot trigger it. Scanning resolves watchlist git entries from the local cache only and never clones or fetches inside a request handler, so no crafted request can drive network I/O.
+- **No on-disk mutation, no network in handlers.** The dashboard never writes to disk. Deploy-from-dashboard is deferred to a later, explicitly authorized effort. The only non-GET endpoint, `/refresh`, re-scans local state and is a `POST`, so a cross-origin `GET` (an `<img>` or link) cannot trigger it. Scanning resolves watchlist git entries from the local cache only and never clones or fetches inside a request handler, so no crafted request can drive network I/O.
 - **Loopback bind plus Host guard.** The server binds a loopback address, and a middleware rejects any request whose `Host` header is not a loopback name (`127.0.0.1`, `localhost`, `rune.localhost`, `::1`). This blocks DNS-rebinding access even when the socket is reachable.
 - **Index-based detail routing.** Detail routes for config, settings, schemas, and hooks carry a numeric position into a server-derived, deterministically ordered list (for example `/config/{index}`, `/settings/{harness}/{index}`), never a filesystem path. A URL segment therefore can never become a path-traversal component. The list order is stable across requests (sorted), and the index is bounds-checked, returning 404 on a stale or out-of-range value. The few routes that do accept a path (the deployed-file viewer) canonicalize the path and assert it stays within the allowed provider directory before reading.
 - **Allowlisted read surfaces and scheme-guarded links.** The settings and config views serve only an allowlisted set of filenames, never the full contents of `~/.config/rune` or local and MCP config files that may carry secrets. Outbound links built from a module's `repository` or a sidecar `source` are rendered only when they are `http(s)` URLs, so a `javascript:` value cannot become a clickable link.
@@ -51,10 +51,10 @@ The dashboard is read-only and loopback-confined, with three independent protect
 ## Consequences
 
 - DNS rebinding is rejected by the Host guard, so a remote page cannot read local content.
-- Detail routes carry positions, not paths, so arbitrary-file reads are structurally impossible; the one path-accepting route canonicalizes and confines the path.
+- Detail routes carry positions, not paths, so arbitrary-file reads are structurally impossible. The one path-accepting route canonicalizes and confines the path.
 - There are no on-disk writes, and the single `POST` (`/refresh`) only re-scans local state without network access, so a crafted request cannot mutate state or drive fetches.
 - The settings and config views are allowlisted, so secrets and private per-artifact config under `~/.config/rune` are not served.
-- Index routes are sensitive to list order, mitigated by deterministic sorting and bounds-checking; a follow-up could promote the index to a stable key if the lists ever churn between requests.
+- Index routes are sensitive to list order, mitigated by deterministic sorting and bounds-checking. A follow-up could promote the index to a stable key if the lists ever churn between requests.
 - Deploy-from-dashboard is unavailable until a separate, explicitly authorized effort adds it.
 
 ## More Information

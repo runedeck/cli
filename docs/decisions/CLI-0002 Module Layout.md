@@ -44,7 +44,7 @@ rune-cli assembles, validates, and deploys markdown content for AI coding tools.
 
 Library modules plus CLI handlers:
 
-```
+```text
 src/
     lib.rs              lib crate root (re-exports all library modules)
     main.rs             binary entry point
@@ -95,7 +95,7 @@ Three modules stay past the line because each is one Rust item that cannot
 be divided without changing what it describes:
 
 - `src/cli/mod.rs` is the `Command` enum. Its variants are the command-line
-  surface; splitting the enum would split the CLI.
+  surface. Splitting the enum would split the CLI.
 - `src/tui/app.rs` is the `App` struct and the methods that build one. Its
   fields are the terminal's whole state, and they are read from every
   facet.
@@ -126,6 +126,7 @@ Everything else in the tree is under the line.
 ### Validation details
 
 `validate` supports two schema formats:
+
 - `.mdschema` — structural validation (headings, sections, required content) per CORE-0005
 - YAML Schema — frontmatter field validation per ASSEMBLY-0006
 
@@ -141,20 +142,20 @@ Everything else in the tree is under the line.
 | `rune assemble`    | source → `build/` (assembly only, inspect before deploy)              |
 | `rune deploy`      | `build/` → provider dirs with manifest tracking and provenance        |
 | `rune validate`    | structure + mdschema + external tools (shellcheck, cargo, tsc, gitleaks) |
-| `rune drift`       | compare source/upstream or verify manifest-scoped provider deployments; with no scope flag, discover manifest-bearing `.claude`, `.codex`, `.gemini`, and `.opencode` targets in the current directory |
+| `rune drift`       | compare source/upstream or verify manifest-scoped provider deployments. With no scope flag, discover manifest-bearing `.claude`, `.codex`, `.gemini`, and `.opencode` targets in the current directory |
 | `rune provenance`  | show source chain for a deployed file or scan a directory             |
 | `rune copy`        | raw source → target directory (no assembly, no transforms)            |
 | `rune release`     | assemble + package as tarballs (+ optional `--embed`)                 |
 
 ### Growth rule
 
-If a module exceeds ~300 lines, split it into internal files within the module directory. If two modules always import each other, merge them. If a module has zero tests, it's probably doing too little — absorb it.
+If a module exceeds ~300 lines, split it into internal files within the module directory. If two modules always import each other, merge them. If a module has zero tests, it is probably doing too little — absorb it.
 
 ### Internal split pattern
 
 When a module grows, add sibling files inside the module directory. `mod.rs` owns the public API and re-exports. Internal files use `pub(super)` — visible within the module, not exported to the crate.
 
-```
+```text
 assemble/
     mod.rs          pub API: assemble(source, variants, provider) → output
     strip.rs        strip_frontmatter, strip_refs
@@ -174,7 +175,7 @@ pub use strip::strip_frontmatter;
 pub use merge::assemble;
 ```
 
-Each internal file is focused — one concern, one file. The module boundary doesn't change; only the internal structure grows.
+Each internal file is focused — one concern, one file. The module boundary does not change. Only the internal structure grows.
 
 ## Consequences
 

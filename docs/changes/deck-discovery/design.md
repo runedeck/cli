@@ -12,10 +12,10 @@ or executes anything it lists.
   parsing, table and JSON rendering.
 - Response parsing is a pure function over the response body, unit-tested with a fixture.
 - Failures carry `discover.feed_unreachable` or `discover.feed_invalid` with a curl diagnosis
-  fix command; a rate-limit response names the wait.
+  fix command. A rate-limit response names the wait.
 
 ## Risks
 
-- Unauthenticated search is rate-limited; the error path names the limit instead of retrying.
-- Topic listings are unmoderated; the output labels them as community decks, not endorsements.
-- The live endpoint is not tested in CI; the parser is.
+- Unauthenticated search is rate-limited. The error path names the limit instead of retrying.
+- Topic listings are unmoderated. The output labels them as community decks, not endorsements.
+- The live endpoint is not tested in CI. The parser is.

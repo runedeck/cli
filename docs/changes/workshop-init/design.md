@@ -2,16 +2,16 @@
 
 ## Approach
 
-`rune init` absorbs the workshop scaffolder as a mode of the existing command rather than a new command: workshop mode is the default when the destination resolves under the configured workshop root (default `~/Agents`), and available anywhere via `--workshop`. Each integration is a separate idempotent step with `--dry-run`; the rejected alternative was one monolithic scaffold call, which couples VCS, vault, and deploy failures and cannot roll back.
+`rune init` absorbs the workshop scaffolder as a mode of the existing command rather than a new command: workshop mode is the default when the destination resolves under the configured workshop root (default `~/Agents`), and available anywhere via `--workshop`. Each integration is a separate idempotent step with `--dry-run`. The rejected alternative was one monolithic scaffold call, which couples VCS, vault, and deploy failures and cannot roll back.
 
 ## Structure
 
 - Steps, each skippable and re-runnable: layout (private/public/assets), git init, jj colocate (only when jj is installed), entire hooks (only when entire is installed, and only with consent), commit/push hooks, `.rune` with `dirs:`, vault mount (explicit canonicalized association, never inside provider-managed trees).
-- No automatic commit; init prints the suggested first commit instead.
+- No automatic commit. Init prints the suggested first commit instead.
 - Satellites behind explicit flags: `--vault` (folder note), `--data` (data dir), `--remote` (private GitHub remote).
-- `.rune` schema v2: `dirs:` entries `{path, role, access, required}`; committed paths are normalized relative paths resolved from the `.rune` file; absolute and `~` paths belong in gitignored `.rune.local`. The v1 reader stays; v2 is written only when `dirs:` is used. No recursive aggregation of nested `.rune` files.
+- `.rune` schema v2: `dirs:` entries `{path, role, access, required}`. Committed paths are normalized relative paths resolved from the `.rune` file. Absolute and `~` paths belong in gitignored `.rune.local`. The v1 reader stays. V2 is written only when `dirs:` is used. No recursive aggregation of nested `.rune` files.
 - The VCS spine (`jj` + `entire`) outside workshop mode is opt-in via `--spine`, gated on tool presence.
-- Rollback: init records created paths in its plan output; a failed run prints exactly what was created.
+- Rollback: init records created paths in its plan output. A failed run prints exactly what was created.
 
 ## Risks
 

@@ -1,12 +1,12 @@
 # ADR Walkthrough
 
-Design spec and future review session for `rune adr` (not yet implemented; this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todo-adr/design.md.
+Design spec and future review session for `rune adr` (not yet implemented, this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todo-adr/design.md.
 
 ## Format
 
-The forge ADR schema (frontmatter: title, description, type, category, tags, status, created, updated, author, project, related, responsible, accountable, consulted, informed, upstream; sections: Context and Problem Statement, Considered Options, Decision Outcome, Consequences) is the default. MADR and Nygard are configurable alternatives sharing the same lifecycle.
+The forge ADR schema (frontmatter: title, description, type, category, tags, status, created, updated, author, project, related, responsible, accountable, consulted, informed, upstream, sections: Context and Problem Statement, Considered Options, Decision Outcome, Consequences) is the default. MADR and Nygard are configurable alternatives sharing the same lifecycle.
 
-Ids are prefix + zero-padded sequence per prefix: `CLI-0021`, `ARCH-0003`. The prefix set is repo config (`adr.prefixes`); unknown prefixes are rejected with the configured list in the error.
+Ids are prefix + zero-padded sequence per prefix: `CLI-0021`, `ARCH-0003`. The prefix set is repo config (`adr.prefixes`). Unknown prefixes are rejected with the configured list in the error.
 
 ## Planned surface
 

@@ -44,6 +44,7 @@ rulesync [1] defines a mature set of deployment rules for 21+ AI coding provider
 Adopt rulesync's deployment conventions for how files are placed into provider directories. Copy their target definitions, feature routing, and directory layout rules. Acknowledge the source explicitly.
 
 What we adopt:
+
 - Target naming (`claudecode`, `geminicli`, `codexcli`, `opencode`)
 - Directory layouts per target (`.claude/skills/`, `.gemini/skills/`, etc.)
 - Feature types (rules, skills, commands, subagents, hooks)
@@ -51,6 +52,7 @@ What we adopt:
 - Scope tiers (project → user → global)
 
 What we keep as our own:
+
 - Content assembly (frontmatter stripping, variant merging, ref removal)
 - Provenance tracking
 - Manifest-based deployment tracking

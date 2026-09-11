@@ -35,7 +35,8 @@ scan_tracked_files() {
     local scan_failed=false
 
     if ! command -v gitleaks >/dev/null 2>&1; then
-        echo "  ⚠  gitleaks is required for the tracked-file scan" >&2
+        echo "  error: gitleaks is required for the tracked-file scan" >&2
+        echo "         run: make install" >&2
         return 1
     fi
 
@@ -97,7 +98,7 @@ elif [ "$all_files" = "true" ]; then
 elif command -v gitleaks >/dev/null 2>&1; then
     gitleaks git --staged --pre-commit --no-banner
 else
-    echo "  ⚠  neither prek nor gitleaks found — commit checks cannot run" >&2
-    echo "     install: brew install prek gitleaks" >&2
+    echo "  error: neither prek nor gitleaks is available; commit checks cannot run" >&2
+    echo "         run: make install" >&2
     exit 1
 fi

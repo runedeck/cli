@@ -48,7 +48,7 @@ Chosen option: **Option 2**, because a single typed config gives the minimal Rus
 
 Rune reads `~/.config/rune/config.yaml` into typed structs. The top-level config denies unknown fields so mistakes fail loudly, while reserved `launch` and `watch` sections remain parse-tolerant for future use. The top-level `deck` key supplies the default source for `rune add` and is set with `rune config set deck <path-or-url>`. Runtime accessors resolve `RUNE_*` environment variables first, config file values second, and built-in defaults last. Path-like ontology values expand a leading `~/` after resolution.
 
-If `config.yaml` is absent, every key resolves from environment variables and built-in defaults; no other file is consulted.
+If `config.yaml` is absent, every key resolves from environment variables and built-in defaults. No other file is consulted.
 
 ## Consequences
 
@@ -56,7 +56,7 @@ If `config.yaml` is absent, every key resolves from environment variables and bu
 - `RUNE_DECK` overrides the configured deck without editing the user config.
 - `rune exec` and external dispatch inject the same `RUNE_*` values into child processes.
 - Unknown top-level keys in `config.yaml` are errors, which prevents silent misspellings.
-- Capability remains in scripts; Rust only loads config and reports resolved facts.
+- Capability remains in scripts. Rust only loads config and reports resolved facts.
 
 ## More Information
 

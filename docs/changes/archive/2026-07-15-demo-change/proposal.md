@@ -2,6 +2,7 @@
 adr: "docs/decisions/ADR-XXXX.md"
 status: abandoned
 ---
+
 # Demo Change
 
 ## Why

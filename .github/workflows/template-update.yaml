@@ -43,6 +43,9 @@ jobs:
                   latest=$(printf '%s' "$result" | jq -r '.latest_version')
                   target=$latest
                   recorded_source=$(grep -E '^_src_path:' answers.yaml | sed 's/^_src_path:[[:space:]]*//')
+                  recorded_commit=$(grep -E '^_commit:' answers.yaml | sed 's/^_commit:[[:space:]]*//')
+                  fetch_url=$recorded_source
+                  case "$fetch_url" in gh:*) fetch_url="https://github.com/${fetch_url#gh:}" ;; esac
 
                   if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
                       printf '%s' "$DISPATCH_TEMPLATE" \
@@ -63,19 +66,48 @@ jobs:
                   fi
 
                   # Copier reports bare versions while release tags may carry a
-                  # v prefix; the template's own tag list settles the form, and
-                  # a target that matches no tag never reaches an update.
+                  # v prefix; the template's own tag list settles the form. A
+                  # template with no tag past the recorded pin reports a
+                  # post-release version (0.0.0.postN+sha): the target is then
+                  # the commit of skeleton main, and the update pins that commit.
                   if [ "$update" = "true" ]; then
-                      fetch_url=$recorded_source
-                      case "$fetch_url" in gh:*) fetch_url="https://github.com/${fetch_url#gh:}" ;; esac
-                      bare=${target#v}
-                      listing=$(git ls-remote --tags "$fetch_url" "refs/tags/v$bare" "refs/tags/$bare") \
-                          || { echo "could not list release tags on $recorded_source"; exit 1; }
-                      resolved=$(printf '%s\n' "$listing" \
-                          | grep -v '\^{}' | head -n 1 | sed 's|.*refs/tags/||')
-                      [ -n "$resolved" ] \
-                          || { echo "no release tag for $target on $recorded_source"; exit 1; }
+                      case "$target" in
+                          *.post*+*)
+                              resolved=$(git ls-remote "$fetch_url" refs/heads/main | cut -f1) \
+                                  || { echo "could not read main on $recorded_source"; exit 1; }
+                              [ -n "$resolved" ] \
+                                  || { echo "no main branch on $recorded_source"; exit 1; }
+                              ;;
+                          *)
+                              bare=${target#v}
+                              listing=$(git ls-remote --tags "$fetch_url" "refs/tags/v$bare" "refs/tags/$bare") \
+                                  || { echo "could not list release tags on $recorded_source"; exit 1; }
+                              resolved=$(printf '%s\n' "$listing" \
+                                  | grep -v '\^{}' | head -n 1 | sed 's|.*refs/tags/||')
+                              [ -n "$resolved" ] \
+                                  || { echo "no release tag for $target on $recorded_source"; exit 1; }
+                              ;;
+                      esac
                       target=$resolved
+                  fi
+
+                  # Copier compares tags only. A consumer pinned to a commit
+                  # past the latest tag (a `v0.1.0-3-gabc1234` describe string
+                  # or a bare hash) sees no tag update while skeleton main
+                  # moves on, so main is compared by hand.
+                  if [ "$update" != "true" ] && [ "${{ github.event_name }}" != "repository_dispatch" ]; then
+                      case "$recorded_commit" in
+                          *-g[0-9a-f]*) pinned_hash=${recorded_commit##*-g} ;;
+                          *) pinned_hash=$recorded_commit ;;
+                      esac
+                      if printf '%s' "$pinned_hash" | grep -Eq '^[0-9a-f]{7,40}$'; then
+                          main_sha=$(git ls-remote "$fetch_url" refs/heads/main | cut -f1) \
+                              || { echo "could not read main on $recorded_source"; exit 1; }
+                          case "$main_sha" in
+                              "$pinned_hash"*) ;;
+                              *) update=true; target=$main_sha ;;
+                          esac
+                      fi
                   fi
 
                   printf '%s\n' "update=$update" "tag=$target" \
@@ -84,24 +116,11 @@ jobs:
             - id: existing
               name: Find an open update
               if: steps.detect.outputs.update == 'true'
-              env:
-                  GH_TOKEN: ${{ github.token }}
-                  # The tag reaches the shell as data, never by expression
-                  # interpolation into the script body.
-                  TARGET_TAG: ${{ steps.detect.outputs.tag }}
               run: |
-                  # Dispatch carries the release tag (v0.2.0) while Copier's
-                  # check reports the bare version (0.2.0); both branch forms
-                  # must count as the same open update.
-                  # The tag reaches jq as an argument, never by splicing into
-                  # the program text. pipefail keeps a failed pull request
-                  # read from passing as no-open-update.
-                  set -o pipefail
-                  bare=${TARGET_TAG#v}
-                  url=$(gh pr list --state open --limit 1000 --json headRefName,url \
-                      | jq -r --arg bare "$bare" '[.[] | select((.headRefName | startswith("template-update/v" + $bare)) or (.headRefName | startswith("template-update/" + $bare)))][0].url // ""')
-                  printf '%s\n' "url=$url" | tee -a "$GITHUB_OUTPUT" >/dev/null
-                  [ -z "$url" ] || echo "an update pull request is already open: $url"
+                  # Updates publish as a patch artifact and a run summary; the
+                  # owner applies the patch and pushes. Nothing opens a pull
+                  # request, so there is no open update to look for.
+                  printf 'url=\n' >> "$GITHUB_OUTPUT"
 
             - id: apply
               name: Apply template release
@@ -149,7 +168,8 @@ jobs:
             - name: Validate updated repository
               if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
               env:
-                  RUFF_NO_CACHE: "1"
+                  RUFF_NO_CACHE: "true"
+                  REQUIRE_GATES: "1"
               run: make validate
 
             - name: Build update patch
@@ -164,50 +184,29 @@ jobs:
                   fi
                   git diff --cached --binary --output=template-update.patch
 
-            - id: credentials
-              name: Detect publication credentials
-              if: steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
-              env:
-                  TEMPLATE_APP_ID: ${{ secrets.TEMPLATE_APP_ID || secrets.RUNEWRIGHT_APP_ID }}
-                  TEMPLATE_APP_KEY: ${{ secrets.TEMPLATE_APP_KEY || secrets.RUNEWRIGHT_APP_KEY }}
-              run: |
-                  configured=false
-                  if [ -n "$TEMPLATE_APP_ID" ] && [ -n "$TEMPLATE_APP_KEY" ]; then
-                      configured=true
-                  fi
-                  printf 'configured=%s\n' "$configured" >> "$GITHUB_OUTPUT"
-
-            - id: publisher
-              name: Mint publication token
-              if: steps.credentials.outputs.configured == 'true'
-              uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-              with:
-                  app-id: ${{ secrets.TEMPLATE_APP_ID || secrets.RUNEWRIGHT_APP_ID }}
-                  private-key: ${{ secrets.TEMPLATE_APP_KEY || secrets.RUNEWRIGHT_APP_KEY }}
-
-            - name: Upload update artifact
-              if: steps.publisher.outputs.token == '' && steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+            - name: Upload update patch
+              if: steps.detect.outputs.update == 'true'
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
                   name: template-update-${{ github.run_id }}
                   path: template-update.patch
                   if-no-files-found: error
 
-            - name: Publish update pull request
-              if: steps.publisher.outputs.token != '' && steps.detect.outputs.update == 'true' && steps.existing.outputs.url == ''
+            # The summary is the handoff: the owner downloads the patch,
+            # applies it in a jj workspace, validates, and pushes. Skeleton
+            # propagation never opens a pull request per consumer.
+            - name: Summarize the update
+              if: steps.detect.outputs.update == 'true'
               env:
-                  GH_TOKEN: ${{ steps.publisher.outputs.token }}
-                  TARGET_TAG: ${{ steps.detect.outputs.tag }}
+                  TARGET_REF: ${{ steps.detect.outputs.tag }}
+                  RUN_ID: ${{ github.run_id }}
               run: |
-                  branch="template-update/${TARGET_TAG}-${{ github.run_id }}"
-                  git config user.name "template-update[bot]"
-                  git config user.email "template-update[bot]@users.noreply.github.com"
-                  git switch -c "$branch"
-                  git commit -m "chore: update ceremony template"
-                  gh auth setup-git
-                  git push --set-upstream origin "$branch"
-                  gh pr create \
-                      --base main \
-                      --head "$branch" \
-                      --title "chore: update ceremony template" \
-                      --body $'Apply the released ceremony template while preserving repository-local changes.\n\n## Plan\n\nReview Copier’s three-way update instead of replacing downstream files from the template.\n\n## Changes\n\n- **Template metadata** `answers.yaml`: record the released template revision.\n- **Generated files**: apply the released ceremony changes and retain downstream edits.\n\n## Testing\n\n- [x] `make validate`\n\n## Release Notes\n\n- N/A'
+                  # shellcheck disable=SC2016 # backticks are Markdown, not expansion
+                  {
+                      printf '## Template update ready\n\n'
+                      printf 'Target: `%s`\n\n' "$TARGET_REF"
+                      printf 'Changed files:\n\n```\n'
+                      git diff --cached --stat
+                      printf '```\n\nApply: download the `template-update-%s` artifact, then\n\n' "$RUN_ID"
+                      printf '```sh\ngit apply --index template-update.patch\nmake validate\n```\n'
+                  } >> "$GITHUB_STEP_SUMMARY"

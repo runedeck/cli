@@ -1,17 +1,17 @@
 # Todo Walkthrough
 
-Design spec and future review session for `rune todo` (not yet implemented; this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todo-adr/design.md.
+Design spec and future review session for `rune todo` (not yet implemented, this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todo-adr/design.md.
 
 ## Format
 
 `TODO.txt` at the repo root, strict todo.txt syntax, is canonical:
 
-```
+```text
 (A) 2026-07-18 fix consumer validate +rune @cli due:2026-07-20
 x 2026-07-18 2026-07-17 ship v0.5.0 +release
 ```
 
-Priority `(A)`, creation and completion dates, `+project`, `@context`, `key:value` extensions. The Obsidian Tasks transform maps these to checkbox markdown (`- [ ] task 📅 date ⏫`) and back; unknown fields survive round-trips; lossy mappings warn naming the field.
+Priority `(A)`, creation and completion dates, `+project`, `@context`, `key:value` extensions. The Obsidian Tasks transform maps these to checkbox markdown (`- [ ] task 📅 date ⏫`) and back. Unknown fields survive round-trips. Lossy mappings warn naming the field.
 
 ## Planned surface
 

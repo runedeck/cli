@@ -13,12 +13,12 @@ policy that does not exist yet. Verification happens before installation on both
   checksum files.
 - `src/cli/update_check.rs` grows the update path: install-manager detection from the binary
   path, release download, SHA-256 verification, temp-file write, atomic rename.
-- Manager detection and checksum verification are pure functions, unit-tested; the live
+- Manager detection and checksum verification are pure functions, unit-tested. The live
   download is not exercised in CI.
 
 ## Risks
 
-- The updater trusts the GitHub release feed for version discovery; the checksum bounds what
+- The updater trusts the GitHub release feed for version discovery. The checksum bounds what
   it will install.
-- Replacing a running binary relies on rename semantics; Windows keeps the manual path.
+- Replacing a running binary relies on rename semantics. Windows keeps the manual path.
 - A Homebrew-managed binary is never touched.
