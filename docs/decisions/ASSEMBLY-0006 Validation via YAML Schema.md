@@ -47,7 +47,7 @@ Ship JSON Schema files per content type, authored as YAML (YAML is a superset of
 
 ### Schema files
 
-```
+```text
 schemas/
     agent.schema.yaml
     skill.schema.yaml
@@ -74,7 +74,7 @@ properties:
 
 ### Validation chain
 
-```
+```text
 rune validate .
     │
     ├── frontmatter:  rune yaml / yq  →  check-jsonschema --schemafile schemas/agent.schema.json

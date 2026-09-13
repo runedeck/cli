@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Git exports repository variables into hooks.
-# Prek and Cargo tests must not inherit them.
-# Otherwise, child Git commands target this repository instead of test repositories.
+# Git exports repository variables into hooks. Child git commands in prek
+# hooks and test suites must not inherit them, or they target this
+# repository instead of the fixture repositories they create.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 
 zero=0000000000000000000000000000000000000000
@@ -23,7 +23,8 @@ check_range() {
     local to_revision=$2
 
     if [ -z "$from_revision" ] && command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
-        GITLEAKS_PUSH_TO_REF="$to_revision" prek run --stage pre-push --all-files
+        PRE_COMMIT_TO_REF="$to_revision" GITLEAKS_PUSH_TO_REF="$to_revision" \
+            prek run --stage pre-push --all-files
     elif [ -z "$from_revision" ] && command -v gitleaks >/dev/null 2>&1; then
         gitleaks git --no-banner --log-opts "$to_revision"
     elif command -v prek >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
@@ -31,8 +32,8 @@ check_range() {
     elif command -v gitleaks >/dev/null 2>&1; then
         gitleaks git --no-banner --log-opts "$from_revision..$to_revision"
     else
-        echo "  ⚠  neither prek nor gitleaks found — push checks cannot run" >&2
-        echo "     install: brew install prek gitleaks" >&2
+        echo "  error: neither prek nor gitleaks is available; push checks cannot run" >&2
+        echo "         run: make install" >&2
         return 1
     fi
 }

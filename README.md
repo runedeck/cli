@@ -6,9 +6,9 @@ Skills, agents, and rules are authored once as markdown with YAML frontmatter. r
 
 ## Why not just copy files?
 
-Copying works until instructions drift. rune-cli adds three things raw copying can't:
+Copying works until instructions drift. rune-cli adds three things raw copying cannot:
 
-- **Assembly** — strips frontmatter, resolves `user/` overrides, applies provider-specific transforms (kebab-case, tool remapping). The deployed file is clean; the source keeps its metadata.
+- **Assembly** — strips frontmatter, resolves `user/` overrides, applies provider-specific transforms (kebab-case, tool remapping). The deployed file is clean. The source keeps its metadata.
 - **Provenance** — each deployed file has an [in-toto/SLSA][6] record of what sources produced it. When something breaks, you can trace which source file and which override combined to produce the deployed instruction.
 - **Manifest tracking** — `.manifest` at each target records what was deployed and when. Detects user modifications, skips unchanged files, prunes orphans from renamed sources.
 
@@ -22,7 +22,7 @@ The `user/` subdirectory lets individuals customize without polluting upstream (
 
 **Install** — Runs assemble + deploy in one step.
 
-**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available. Strict structural checking needs the standalone `mdschema` binary (`brew install jackchuka/tap/mdschema`); without it, section order, unexpected sections, permitted heading placement, and heading uniqueness go unchecked, and optional sections are skipped entirely.
+**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available. Strict structural checking needs the standalone `mdschema` binary (`brew install jackchuka/tap/mdschema`). Without it, section order, unexpected sections, permitted heading placement, and heading uniqueness go unchecked, and optional sections are skipped entirely.
 
 **Drift** — Compares a rune source against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
 
@@ -105,7 +105,7 @@ When a file exists in both `user/` and root, `user/` wins. Files only in `user/`
 
 ## Providers
 
-Provider conventions are config-driven via `defaults.yaml` (optional; falls back to embedded defaults if missing):
+Provider conventions are config-driven via `defaults.yaml` (optional, falls back to embedded defaults if missing):
 
 ```yaml
 providers:
@@ -134,7 +134,7 @@ providers:
 ```
 
 `target` may also be a map when a provider needs different roots for different
-content kinds. Missing kinds fall back to `default`; unknown keys are rejected:
+content kinds. Missing kinds fall back to `default`. Unknown keys are rejected:
 
 ```yaml
 providers:
@@ -175,7 +175,7 @@ skeleton repository. It substitutes `${NAME}`, `${TITLE}`, `${OWNER}`, and
 and never overwrites an existing destination file. The skeleton resolves in
 this order: `--skeleton`, `RUNE_SKELETON`, the `skeleton` config key, then
 `~/Developer/N4M3Z/skeleton`. Bare names and `<owner>/<name>` slugs resolve
-under `RUNE_TARGETS` (or the configured targets root); explicit existing
+under `RUNE_TARGETS` (or the configured targets root). Explicit existing
 directories are scaffolded in place. Add `--bind` to bind the new repository
 during initialization.
 
@@ -216,7 +216,7 @@ integration as the fallback.
 
 Rune adopts the OpenSpec standard as house canon without depending on the
 OpenSpec tool. Current-truth capability specifications live at
-`docs/specs/<capability>/spec.md`; proposed work lives at
+`docs/specs/<capability>/spec.md`. Proposed work lives at
 `docs/changes/<change-id>/`, and completed work moves to the dated archive
 under `docs/changes/archive/`. There is deliberately no `openspec/` directory
 and Rune does not generate harness-specific skill files for this workflow.
@@ -252,7 +252,7 @@ restating it in prose.
 ADRs remain canonical for *why* a direction was chosen. `proposal.md` links
 the relevant ADR, and optional `design.md` cites it rather than repeating its
 rationale. Normal archive requires every task to be checked and merges the
-delta into current truth; `-y` overrides an incomplete checklist with a
+delta into current truth. `-y` overrides an incomplete checklist with a
 warning. Work that will not ship must still end explicitly:
 
 ```sh

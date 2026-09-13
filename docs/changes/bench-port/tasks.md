@@ -1,11 +1,11 @@
 ## 1. QA pipeline (parity core)
 
-- [x] 1.1 `suite.rs`: serde types, validation, suiteId derivation; tests ported from suite.test.ts
+- [x] 1.1 `suite.rs`: serde types, validation, suiteId derivation. Tests ported from suite.test.ts
 - [x] 1.2 `scoring.rs`: is_correct with the 11 upstream cases
-- [x] 1.3 `cache.rs`: signature, SHA-1 hash, cache write, gather/resume, mismatch guards; tests from cache.test.ts
-- [x] 1.4 `registry.rs`: models.yaml parsing, hard errors, env expansion; tests from registry.test.ts
-- [x] 1.5 `report.rs`: results/markdown/summary outputs; tests from report.test.ts
-- [x] 1.6 `run.rs`: plan, reuse, worker pool, timeout; tests from run.test.ts
+- [x] 1.3 `cache.rs`: signature, SHA-1 hash, cache write, gather/resume, mismatch guards. Tests from cache.test.ts
+- [x] 1.4 `registry.rs`: models.yaml parsing, hard errors, env expansion. Tests from registry.test.ts
+- [x] 1.5 `report.rs`: results/markdown/summary outputs. Tests from report.test.ts
+- [x] 1.6 `run.rs`: plan, reuse, worker pool, timeout. Tests from run.test.ts
 - [x] 1.7 Providers: echo, ollama, openai-compatible, claude/codex/agy/grok/opencode CLI
 
 ## 2. Command surface
@@ -13,7 +13,7 @@
 - [x] 2.1 `rune bench run|report|list` wired into clap with suite-name resolution over tiers
 - [x] 2.2 Bench workspace resolution: bench.root config + discovery, suites/{,user/,private/} tiers, private results routing
 - [x] 2.3 `rune bench doctor`: workspace, registry, provider readiness
-- [x] 2.4 `rune bench audit`: self-score, negative collisions, short tokens; judged suites skipped
+- [x] 2.4 `rune bench audit`: self-score, negative collisions, short tokens. Judged suites skipped
 
 ## 3. Judged suites and dashboard
 

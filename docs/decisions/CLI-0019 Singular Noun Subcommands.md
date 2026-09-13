@@ -47,14 +47,14 @@ Chosen option: **Option 3.**
 - **Noun namespaces are singular**: `rune skill`, `rune agent`, `rune rule`, `rune hook`, `rune target`, `rune spec`, matching git (`git remote add`, `git stash`), gh (`gh repo`, `gh pr`, and `gh skill` in this exact domain), docker management commands (`docker container create`), terraform (`terraform workspace`), npm noun groups (`npm config`, `npm team`), and crex (`crex template`).
 - **Plural forms are hidden aliases** (`rune skills add`, `rune completions`), following kubectl, which accepts singular, plural, and short names — every CRD defines `names.singular` as "an alias on the CLI" ([CRD docs][K8SCRD]), and a core maintainer called REST pluralization "mostly human conceit" ([issue 18622][K8S18622]). Help, docs, and completions teach only the singular form.
 - **The bare noun lists the collection**: `rune skill` with no subcommand lists the source deck's skills with staged markers, capturing the one real advantage of Heroku's plural mandate ("topics are plural nouns", bare topic lists, [style guide][HEROKU]) inside the singular scheme.
-- **The consumer manifest stays `.rune`**: tool-named dotfiles use the bare tool name (`.git`, `.cargo`, `.npmrc`, `.vscode`); the plural precedents (`.gitmodules`, `.gitattributes`) are content-named manifests.
-- **Both staging surfaces are canonical**: `rune add` for casts, whole domains, and qualified ids; the kind commands for staging by bare name. Docker's parallel top-level and management-command surfaces are the precedent.
+- **The consumer manifest stays `.rune`**: tool-named dotfiles use the bare tool name (`.git`, `.cargo`, `.npmrc`, `.vscode`). The plural precedents (`.gitmodules`, `.gitattributes`) are content-named manifests.
+- **Both staging surfaces are canonical**: `rune add` for casts, whole domains, and qualified ids. The kind commands for staging by bare name. Docker's parallel top-level and management-command surfaces are the precedent.
 
-The Command Line Interface Guidelines ([clig.dev][CLIG]) rule on noun-verb ordering and consistency but take no position on noun number; Microsoft's System.CommandLine guidance asks only that an app "be consistent in pluralization" ([.NET design guidance][DOTNET]).
+The Command Line Interface Guidelines ([clig.dev][CLIG]) rule on noun-verb ordering and consistency but take no position on noun number. Microsoft's System.CommandLine guidance asks only that an app "be consistent in pluralization" ([.NET design guidance][DOTNET]).
 
 ## Consequences
 
-- One taught spelling; the instinctive plural never errors, at the cost of one clap alias attribute per namespace.
+- One taught spelling. The instinctive plural never errors, at the cost of one clap alias attribute per namespace.
 - `.rune` needs no migration, and the name keeps working if the file later tracks more than rune selections.
 - The bare-noun listing adds a read-only surface to every kind namespace that stays in sync with staging.
 

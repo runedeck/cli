@@ -52,9 +52,9 @@ setup. Rune needs the same three things without a second configuration surface.
 
 ## Decision Outcome
 
-Option 2. `ThemeTones` gains `light`; `styles::Palette::from_theme` derives every TUI color from
+Option 2. `ThemeTones` gains `light`. `styles::Palette::from_theme` derives every TUI color from
 the tones and that flag, and accessor functions replace the constants. The app detects provider
-states once at load through the shared registry and reads the bound target once; the status bar
+states once at load through the shared registry and reads the bound target once. The status bar
 shows the deck name, the target, and one glyph per enabled provider. After a scan that finds no
 deck and no modules, the TUI draws a first-run panel that names the root and the commands that
 configure a deck, and the footer points at `rune setup`. The help overlay names its close keys
@@ -66,6 +66,6 @@ and the version.
 - [+] The first frame answers which deck, target, and providers are active
 - [+] A new user reaches setup from the TUI instead of an empty list
 - [-] Provider detection adds bounded filesystem reads before the first frame
-- [-] Light surfaces are fixed values; a custom light palette cannot tune them yet
+- [-] Light surfaces are fixed values. A custom light palette cannot tune them yet
 
 [HERDR]: https://github.com/herdrdev/herdr

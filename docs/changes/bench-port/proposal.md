@@ -2,13 +2,14 @@
 adr: "docs/decisions/CLI-0022 Native bench runner.md"
 status: proposed
 ---
+
 # Bench Port
 
 ## Why
 
 The rune ecosystem's benchmark harness lives in runedeck/bench as a bun/TypeScript
 runner. Bench is a component of rune, and the rune CLI is a single Rust binary with
-no runtime dependencies; carrying a bun toolchain requirement for one subcommand
+no runtime dependencies. Carrying a bun toolchain requirement for one subcommand
 breaks that install story. The linked ADR records the decision to port the runner
 natively into rune.
 
@@ -32,8 +33,8 @@ natively into rune.
 ## Impact
 
 - rune: new `src/cli/bench/` module tree, new dependencies for HTTP and SHA-1.
-- runedeck/bench: `suites/sealed/` renamed to `suites/private/`; README, push
-  guard, and downstream runbook updated; harness marked as reference.
+- runedeck/bench: `suites/sealed/` renamed to `suites/private/`. README, push
+  guard, and downstream runbook updated. Harness marked as reference.
 - N4M3Z/bench (private downstream): tracked sealed content moves to
   `suites/private/`.
-- docs: Manual Testing gains a bench section; walkthroughs gain Bench.md.
+- docs: Manual Testing gains a bench section. Walkthroughs gain Bench.md.

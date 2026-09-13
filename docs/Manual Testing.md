@@ -4,7 +4,7 @@ A hands-on walkthrough of the rune + deck system, one section per subcommand, gr
 
 ## Setup
 
-`DECK` is the content repo; steps assume `~/.cargo/bin` on PATH.
+`DECK` is the content repo. Steps assume `~/.cargo/bin` on PATH.
 
 ```sh
 export DECK=~/Developer/runedeck/deck
@@ -17,9 +17,9 @@ rune --help           # runic wordmark, then groups: Flow, Spec, Deck, Plumbing
 
 Expected:
 
-- on a TTY the wordmark renders in color (cyan sigil, dim tagline); piped output is plain text
+- on a TTY the wordmark renders in color (cyan sigil, dim tagline). Piped output is plain text
 - global flags on every command: `--json` (machine output, no styling) and `--no-color` (plain text on a TTY)
-- the exit-code and locking contract is in [Exit Codes](Exit%20Codes.md); how the overlapping command families relate is in [Command Map](Command%20Map.md)
+- the exit-code and locking contract is in [Exit Codes](Exit%20Codes.md). How the overlapping command families relate is in [Command Map](Command%20Map.md)
 
 Two throwaway sandboxes serve the whole walkthrough: `T` is the deployed consumer several sections reuse, `RUNE_TARGETS` is the targets root the init section scaffolds into.
 
@@ -28,7 +28,7 @@ export RUNE_TARGETS="$(mktemp -d)"
 T=$(mktemp -d) && cd "$T" && rune target . && rune add BuildSkill,ArtifactLength && rune install
 ```
 
-The deck's casts are being rewired to the `runes/core` layout during the adoption pass; until they land, cast selection (`--cast …`) fails with `cast 'base' rune pattern 'development/rules/**' matches no rune`, which is itself the expected fail-loud behavior for a stale cast. Fixtures below select runes by id instead.
+The deck's casts are being rewired to the `runes/core` layout during the adoption pass. Until they land, cast selection (`--cast …`) fails with `cast 'base' rune pattern 'development/rules/**' matches no rune`, which is itself the expected fail-loud behavior for a stale cast. Fixtures below select runes by id instead.
 
 ## Flow
 
@@ -38,7 +38,7 @@ The deck's casts are being rewired to the `runes/core` layout during the adoptio
 rune setup --defaults          # reports deck + target state without prompting
 ```
 
-Expected: no prompts with `--defaults`; `setup --json` emits pure JSON.
+Expected: no prompts with `--defaults`. `setup --json` emits pure JSON.
 
 ### rune config
 
@@ -89,8 +89,8 @@ git rev-parse --verify HEAD           # "fatal: Needed a single revision" — co
 Expected:
 
 - init lists the applied layers: `base`, `shell`, `tool` and writes `answers.yaml`
-- under the targets root init runs in workshop mode: the private/public/assets layout lands, jj colocates when installed, and nothing is committed (`--workshop` forces the mode elsewhere; `--spine` gives a plain project the jj colocation; outside the targets root a plain init still commits the scaffold)
-- `--skeleton <DIR>` overrides the skeleton root; `--bind` makes the fresh project the active target in one step; `rune init --module <DIR>` scaffolds a deck module instead
+- under the targets root init runs in workshop mode: the private/public/assets layout lands, jj colocates when installed, and nothing is committed (`--workshop` forces the mode elsewhere, `--spine` gives a plain project the jj colocation, outside the targets root a plain init still commits the scaffold)
+- `--skeleton <DIR>` overrides the skeleton root. `--bind` makes the fresh project the active target in one step. `rune init --module <DIR>` scaffolds a deck module instead
 - the composed `.gitignore` carries the base and selected-template entries
 - `rune validate` in the scaffolded project runs consumer checks, so the pre-commit hook passes
 - with no configured skeleton root, init extracts the built-in layers to a per-version cache, so scaffolding works from a bare brew install
@@ -142,7 +142,7 @@ rune agent add TheOpponent            # fatal: no agents rune named 'TheOpponent
 Expected:
 
 - each kind command echoes the fully qualified id it staged
-- a bare name present in two domains errors listing both; `<domain>/<name>` disambiguates
+- a bare name present in two domains errors listing both. `<domain>/<name>` disambiguates
 - the bare noun (`rune agent`) lists that kind
 - agents and hooks join these fixtures as the adoption pass lands them in the deck
 
@@ -161,7 +161,7 @@ cd "$DECK" && rune tui
 rune tui --edit                       # checkbox editor with the selection ready
 ```
 
-Miller-column navigation, `/` in-pane filter, `!` problems-only, History batched loading. Code tab: `12j`, `5G`, `gg`, `zz`, `]]`/`[[`, `/` + `n/N`, `V` + `c` range comments; Enter saves, Esc (twice when dirty) cancels; wheel scroll moves only the viewport.
+Miller-column navigation, `/` in-pane filter, `!` problems-only, History batched loading. Code tab: `12j`, `5G`, `gg`, `zz`, `]]`/`[[`, `/` + `n/N`, `V` + `c` range comments. Enter saves, Esc (twice when dirty) cancels. Wheel scroll moves only the viewport.
 
 ### rune dashboard
 
@@ -191,12 +191,12 @@ for p in .claude .codex .gemini .opencode; do echo "$p: $(find $p -type f | wc -
 
 Expected:
 
-- default output per provider: a kind-count line (`agents 3  rules 1  skills 28`) and one `●` line per artifact (`● BuildSkill`); user-modified skips and prunes still print
+- default output per provider: a kind-count line (`agents 3  rules 1  skills 28`) and one `●` line per artifact (`● BuildSkill`). User-modified skips and prunes still print
 - `--verbose` restores the per-file `●` listing and every skip reason
-- every provider directory carries the same deployment, with .claude two files ahead of the others (the plugin manifest and the plugin root's own .manifest; selections that include hooks add a merged hooks.json too)
+- every provider directory carries the same deployment, with .claude two files ahead of the others (the plugin manifest and the plugin root's own .manifest, selections that include hooks add a merged hooks.json too)
 - Claude Code loads the tree as the rune@skills-dir plugin, so skills invoke as /rune:\<name\>
 
-Pinned git install (the remote-consumer path): a `.rune` whose source is `git: https://…` plus a full `ref:` SHA materializes the deployment from the pinned commit. Release binaries accept only `https://` git URLs; the `file://` form used by the integration tests exists solely behind the `test-file-urls` cargo feature (`cargo run --features test-file-urls` with `RUNE_GIT_ALLOW_FILE_URLS=1`), so this step waits for the deck's public remote.
+Pinned git install (the remote-consumer path): a `.rune` whose source is `git: https://…` plus a full `ref:` SHA materializes the deployment from the pinned commit. Release binaries accept only `https://` git URLs. The `file://` form used by the integration tests exists solely behind the `test-file-urls` cargo feature (`cargo run --features test-file-urls` with `RUNE_GIT_ALLOW_FILE_URLS=1`), so this step waits for the deck's public remote.
 
 Variants worth one pass each: `--provider claude` (repeatable provider filter), `--only <prefix>` (source-relative prefix, implies `--no-prune`), `--dry-run` (show what pruning would move), `--no-prune` (keep stale files), `--force` (overwrite user-modified deployed files), `--allow-stale` (skip the behind-origin freshness stop), `--model <id>` (model-qualifier variants).
 
@@ -219,7 +219,7 @@ Expected:
 
 ### rune review
 
-Inspects the review comments the TUI Code tab persists to `.rune-comments.yaml` (`V` + `c` writes a range comment; Enter saves). With no saved comments both commands print nothing and exit 0.
+Inspects the review comments the TUI Code tab persists to `.rune-comments.yaml` (`V` + `c` writes a range comment, Enter saves). With no saved comments both commands print nothing and exit 0.
 
 ```sh
 cd "$DECK" && rune tui                # Code tab: V, move, c, type a comment, Enter, q
@@ -577,8 +577,8 @@ cd "$(mktemp -d)" && rune validate   # refuses: not a rune source; --force overr
 
 Expected:
 
-- deck source names are PascalCase (kebab-case also validates; snake_case fails with a pattern error); providers that want kebab filenames get them at assembly time
-- validate never walks a directory without `deck.yaml`/`module.yaml`/`.rune` unless forced; a root carrying both `module.yaml` and `.rune` gets both check sets
+- deck source names are PascalCase (kebab-case also validates, snake_case fails with a pattern error). Providers that want kebab filenames get them at assembly time
+- validate never walks a directory without `deck.yaml`/`module.yaml`/`.rune` unless forced. A root carrying both `module.yaml` and `.rune` gets both check sets
 - in a scaffolded consumer, validate runs the consumer checks (`.rune` parses, per-provider manifests), so the pre-commit hook passes
 
 Lint warnings (non-blocking): validate also warns when a skill description lacks trigger phrasing ("use when", "invoke", …), when the name contains `claude`/`anthropic` or diverges from its directory, when name/description exceed the 64/1024 agentskills.io limits, when angle brackets are unmatched, or when the body is under 50 chars.
@@ -640,7 +640,7 @@ Expected:
 
 - dry-run prints the planned fetch, placement, and sidecar without writing
 - the real run aligns `SKILL.md`, copies every companion byte-for-byte, and writes one provenance sidecar per file
-- `--kind agent|rule` imports single-file runes; `--companion` places a fetched body as a companion file
+- `--kind agent|rule` imports single-file runes. `--companion` places a fetched body as a companion file
 
 ### rune adopt
 
@@ -655,8 +655,8 @@ rune adopt abandon --yes           # or: move the in-flight adoption to the tree
 
 Expected:
 
-- `finalize` refuses while blocks lack verdicts; the sealed review record lands beside the adopted rune
-- `import` is the one-shot path; `adopt` is the reviewed path
+- `finalize` refuses while blocks lack verdicts. The sealed review record lands beside the adopted rune
+- `import` is the one-shot path. `adopt` is the reviewed path
 
 ### rune bench
 
@@ -675,7 +675,7 @@ rune bench run --suite tier1-sample --models echo-smoke --runs 1 --version smoke
 #   {"results": ..., "records": N, "reused": N, "errored": 0} — errored runs exit 1
 ```
 
-`bench` in `~/.config/rune/config.yaml` is a list of workspace checkouts, each added with `rune config set bench <path>`; with no list configured, the runedeck/bench checkout is discovered automatically. The first entry is the primary (registry, dashboard); every entry contributes its suites (`suites/`, `suites/user/`, `suites/private/`), a later checkout never duplicates a stem an earlier one provides, and a suite's results and cache stay in the checkout that owns it — private-suite runs never write into the public tree. `--suite` accepts a path or a bare name with 2-char prefix matching; results, cache, and summaries are byte-compatible with the bun harness in the bench repo, and the two runners resume from each other's caches. Judged suites still run via the bun harness (`bun run bench -- run …`); `rune bench` names that clearly when pointed at one.
+`bench` in `~/.config/rune/config.yaml` is a list of workspace checkouts, each added with `rune config set bench <path>`. With no list configured, the runedeck/bench checkout is discovered automatically. The first entry is the primary (registry, dashboard). Every entry contributes its suites (`suites/`, `suites/user/`, `suites/private/`), a later checkout never duplicates a stem an earlier one provides, and a suite's results and cache stay in the checkout that owns it — private-suite runs never write into the public tree. `--suite` accepts a path or a bare name with 2-char prefix matching. Results, cache, and summaries are byte-compatible with the bun harness in the bench repo, and the two runners resume from each other's caches. Judged suites still run via the bun harness (`bun run bench -- run …`). `rune bench` names that clearly when pointed at one.
 
 ### rune provider
 
@@ -688,7 +688,7 @@ rune provider enable gemini
 Expected:
 
 - agentskills ships disabled (deploys only via `--provider agentskills`)
-- assembly transforms are named rules per provider in `defaults.yaml` (`kebab-case`, `kebab-case-agents`, `remap-tools`, `strip-links`, `agents-to-toml`); a module's `config.yaml` can override the list per provider
+- assembly transforms are named rules per provider in `defaults.yaml` (`kebab-case`, `kebab-case-agents`, `remap-tools`, `strip-links`, `agents-to-toml`). A module's `config.yaml` can override the list per provider
 
 ### rune todo
 
@@ -725,7 +725,7 @@ rune adopt next && rune adopt verdict <block> keep && rune adopt finalize
 Expected:
 
 - `import` on a directory reprocesses every ADR (README.md excluded) in filename order, assigning sequential ids in the destination prefix
-- `adopt` takes one file per session, exactly like AdoptArtifact; finalize validates against the decisions mdschema and seals the review record beside the ADR
+- `adopt` takes one file per session, exactly like AdoptArtifact. Finalize validates against the decisions mdschema and seals the review record beside the ADR
 - `rune validate` flags imported records whose frontmatter still misses required schema fields — import warns, validate enforces
 
 ### rune docs
@@ -792,7 +792,7 @@ rune launch nonexistent@claude         # error listing known profiles
 rune launch claude -- --version        # real execution: args after -- pass through
 ```
 
-The invocation is `[profile@]<tool>`, user@host style: `sol@claude` is profile `sol` running at tool `claude`. Profiles live under `launch.profiles` in `~/.config/rune/config.yaml`. Environment values support `from_env` references so secrets stay out of config; an unset process variable falls back to the env file (`rune config set env <path>`, default `~/.env`).
+The invocation is `[profile@]<tool>`, user@host style: `sol@claude` is profile `sol` running at tool `claude`. Profiles live under `launch.profiles` in `~/.config/rune/config.yaml`. Environment values support `from_env` references so secrets stay out of config. An unset process variable falls back to the env file (`rune config set env <path>`, default `~/.env`).
 
 Model routes live under `launch.models`. A profile selects one route with `model`, which keeps the provider model and context settings together. Start the local translating proxy used by the Sol and Lumo profiles, then configure the routes and profiles:
 
@@ -840,7 +840,7 @@ Expected:
 - generated environment includes `ANTHROPIC_MODEL=gpt-5.6-sol`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS=270000`, and `CLAUDE_CODE_AUTO_COMPACT_WINDOW=270000`
 - no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is generated because the route does not request earlier compaction
 - the authentication token is redacted and a missing reference errors with the env-file path
-- a newly launched Claude Code session reports the Sol model in `/status`; `! env | grep -E 'ANTHROPIC_MODEL|CLAUDE_CODE_(MAX_CONTEXT_TOKENS|AUTO_COMPACT_WINDOW)'` shows the route-derived values
+- a newly launched Claude Code session reports the Sol model in `/status`. `! env | grep -E 'ANTHROPIC_MODEL|CLAUDE_CODE_(MAX_CONTEXT_TOKENS|AUTO_COMPACT_WINDOW)'` shows the route-derived values
 - `rune launch sol@claude -- --resume` preserves the native Claude Code resume argument
 - `rune launch sol@claude --tmux --dry-run` retains the interactive tmux wrapper
 
@@ -851,7 +851,7 @@ rune launch sol@claude --with cliproxy --dry-run
 rune launch sol@claude --with cliproxy
 ```
 
-Expected: dry-run lists the proxy preflight. A responding proxy proceeds silently; an unavailable proxy prints one warning and still launches. Auto-start remains opt-in through `launch.middleware.cliproxy.command`.
+Expected: dry-run lists the proxy preflight. A responding proxy proceeds silently. An unavailable proxy prints one warning and still launches. Auto-start remains opt-in through `launch.middleware.cliproxy.command`.
 
 ### rune run
 
@@ -869,8 +869,8 @@ rune run agy "Inspect only" --timeout 4m --dry-run
 Expected:
 
 - dry-run reports the resolved launch plan, canonical repository, `read-only` mode, no timeout, route provenance, and redacted credentials without running preflight or the provider
-- positional, file, and piped prompts produce only the final provider answer on standard output; diagnostics remain on standard error
-- Claude and Grok read-only execution exposes only `Read`, `Glob`, and `Grep`; write-capable tools remain unavailable even when nested-process hardening replaces the requested permission mode
+- positional, file, and piped prompts produce only the final provider answer on standard output. Diagnostics remain on standard error
+- Claude and Grok read-only execution exposes only `Read`, `Glob`, and `Grep`. Write-capable tools remain unavailable even when nested-process hardening replaces the requested permission mode
 - the unsupported target returns a JSON `configuration_error`
 - agy dry-run reports its native timeout and a later supervisor timeout
 

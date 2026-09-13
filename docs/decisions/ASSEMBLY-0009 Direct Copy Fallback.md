@@ -45,7 +45,7 @@ The assembly pipeline produces a `build/` directory with provider-specific outpu
 Two commands handle deployment:
 
 - `rune deploy` copies assembled output from `build/` to provider directories with manifest tracking, provenance, and incremental install. This is the normal deployment path after `rune assemble`.
-- `rune copy` copies source files directly to a target directory — no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline isn't needed.
+- `rune copy` copies source files directly to a target directory — no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline is not needed.
 
 ```sh
 rune install .                    # assemble + deploy (convenience wrapper)

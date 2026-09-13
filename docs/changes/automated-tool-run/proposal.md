@@ -2,6 +2,7 @@
 adr: "docs/decisions/CLI-0024 Interactive and Automated Tool Commands.md"
 status: proposed
 ---
+
 # Automated Tool Run
 
 ## Why

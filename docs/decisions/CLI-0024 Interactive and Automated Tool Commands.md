@@ -50,7 +50,7 @@ Chosen option: **Option 3.**
 
 `rune launch [profile@]<tool>` opens an interactive coding-tool session. It inherits terminal input and output, executes through `Command::status()`, forwards native arguments unchanged, and retains terminal wrappers such as tmux.
 
-`rune run [profile@]<tool>` resolves the same tool, profile, model route, middleware environment, and preflight plan. It then executes through the supervised provider path with a prompt from an argument, `--prompt-file`, or noninteractive stdin. Read-only mode is the default; workspace-write mode is explicit. No timeout is applied unless the caller requests one.
+`rune run [profile@]<tool>` resolves the same tool, profile, model route, middleware environment, and preflight plan. It then executes through the supervised provider path with a prompt from an argument, `--prompt-file`, or noninteractive stdin. Read-only mode is the default. Workspace-write mode is explicit. No timeout is applied unless the caller requests one.
 
 Automated execution rejects tmux and Docker wrappers because their processes are controlled outside the direct child process group. The error directs the caller to an unwrapped profile or to `rune launch`.
 

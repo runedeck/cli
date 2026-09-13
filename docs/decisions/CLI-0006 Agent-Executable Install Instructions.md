@@ -60,6 +60,7 @@ Format (9 required elements):
 9. **llms.txt Reference** — optional link for additional context
 
 Content rules from the spec:
+
 - Include: all shell commands for the core workflow, verification commands, minimal working example
 - Exclude: troubleshooting, optional features, GUI-only steps, alternative methods, lengthy explanations
 

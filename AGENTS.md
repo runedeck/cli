@@ -18,7 +18,7 @@ sets `core.hooksPath` to `.githooks`.
 
 ## Architecture
 
-Rune is a Rust 2024 package named `rune-cli`; its library crate and binary are both named `rune`. `src/lib.rs` exports
+Rune is a Rust 2024 package named `rune-cli`. Its library crate and binary are both named `rune`. `src/lib.rs` exports
 the domain model and optional assembly, validation, and deployment features. `src/main.rs` owns the terminal entry
 point, with commands under `src/cli/` and the terminal UI under `src/tui/`.
 
@@ -46,7 +46,7 @@ assembled tree to provider-specific targets while recording manifests and proven
 | TUI | `src/tui/` | Terminal application state, rendering, navigation, and editors |
 
 `provider` is the correct term for content deployment targets and model/API backends. Interactive or automated
-coding-tool execution uses the command-specific launch/run abstractions; do not introduce another provider meaning
+coding-tool execution uses the command-specific launch/run abstractions. Do not introduce another provider meaning
 there.
 
 ### Variants and configuration
@@ -74,7 +74,7 @@ variables.
 `${VALIDATE_SH_SHA}`. Content `.mdschema` files belong in the template at their deployed paths. Document schemas in
 `schemas/` are embedded validation fallbacks and are not deployed.
 
-Project scaffolding also embeds the Copier skeleton under `templates/skeleton/`; keep changes to the module template and
+Project scaffolding also embeds the Copier skeleton under `templates/skeleton/`. Keep changes to the module template and
 project skeleton distinct.
 
 ### Consumer manifests
@@ -86,7 +86,7 @@ are materialized through Rune's cache. Test-only transport allowances must remai
 ### Validation and manifests
 
 `rune validate` performs structural validation, strict mdschema checks, and manifest-backed drift detection. A manifest
-identifies files to inspect; the embedded template remains the expected-content source of truth. Customized scaffold
+identifies files to inspect. The embedded template remains the expected-content source of truth. Customized scaffold
 files that did not match the template at init time stay out of the manifest.
 
 When prek is orchestrating validation, Rune skips duplicated external-tool checks. Without prek, Rune may invoke
@@ -96,10 +96,10 @@ available fallback tools. Missing required strict validation must fail visibly r
 
 - Keep `#![forbid(unsafe_code)]` effective and satisfy pedantic Clippy with warnings denied.
 - Use 4-space indentation and match surrounding Rust naming and comment density.
-- Put unit tests in a sibling `tests.rs` module when touching an area; integration fixtures belong under
+- Put unit tests in a sibling `tests.rs` module when touching an area. Integration fixtures belong under
   `tests/fixtures/` and should use `include_str!` when practical.
 - Preserve parent-module interfaces with re-exports when splitting modules into concern-based facets.
-- Library-domain code uses the repository's established structured errors or `Result<T, String>` boundary; CLI commands
+- Library-domain code uses the repository's established structured errors or `Result<T, String>` boundary. CLI commands
   use `rune::error::Error` and `ErrorKind` where exit classification matters. Do not add `anyhow` or `thiserror`.
 - Commands that expose structured output must keep `--json` machine-readable: prompts, warnings, and subprocess output
   must not corrupt stdout.

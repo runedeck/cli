@@ -38,6 +38,7 @@ version_output() {
                 XDG_CACHE_HOME="${TMPDIR:-/tmp}/rune-semgrep-cache" \
                 SEMGREP_ENABLE_VERSION_CHECK=0 semgrep --version 2>&1
             ;;
+        actionlint) actionlint --version 2>&1 | head -n 1 ;;
         *) "$1" --version 2>&1 ;;
     esac
 }
@@ -57,7 +58,13 @@ all_tools_match() {
         && tool_matches_version copier "$COPIER_VERSION" \
         && tool_matches_version ruff "$RUFF_VERSION" \
         && tool_matches_version semgrep "$SEMGREP_VERSION" \
-        && tool_matches_version mdschema "$MDSCHEMA_VERSION"
+        && tool_matches_version mdschema "$MDSCHEMA_VERSION" \
+        && tool_matches_version rumdl "$RUMDL_VERSION" \
+        && tool_matches_version typos "$TYPOS_VERSION" \
+        && tool_matches_version vale "$VALE_VERSION" \
+        && tool_matches_version lychee "$LYCHEE_VERSION" \
+        && tool_matches_version zizmor "$ZIZMOR_VERSION" \
+        && tool_matches_version actionlint "$ACTIONLINT_VERSION"
 }
 
 brew_install() {
@@ -74,12 +81,10 @@ install_with_brew() {
     install_python_tool semgrep "$SEMGREP_VERSION"
     install_gitleaks
     install_mdschema
+    install_linters
 }
 
 install_linux_prerequisites() {
-    command_exists curl && command_exists pipx && command_exists shellcheck \
-        && command_exists tar && return
-
     if command_exists apt-get; then
         run_privileged apt-get update
         run_privileged apt-get install -y ca-certificates curl pipx shellcheck tar
@@ -121,6 +126,20 @@ archive_digest() {
     printf '%s\n' "${!variable_name:?missing reviewed digest $variable_name}"
 }
 
+digest_matches() {
+    local checksum_file=$1
+    if command_exists sha256sum; then
+        sha256sum --check --status "$checksum_file"
+    elif command_exists shasum; then
+        shasum -a 256 --check --status "$checksum_file"
+    else
+        return 1
+    fi
+}
+
+# Every step is chained with && on purpose: bash ignores `set -e` inside a
+# subshell that an `if !` tests, so a failed digest check would otherwise
+# fall through to the install.
 verified_archive() {
     local archive_url=$1
     local archive_name=$2
@@ -130,26 +149,18 @@ verified_archive() {
     scratch_directory=$(mktemp -d "${TMPDIR:-/tmp}/rune-tools.XXXXXX")
 
     if ! (
-        set -e
-        curl -fsSL "$archive_url" -o "$scratch_directory/$archive_name"
-        printf '%s  %s\n' "$expected_digest" "$archive_name" \
-            > "$scratch_directory/selected-checksum"
-        cd "$scratch_directory"
-        if command_exists sha256sum; then
-            sha256sum --check selected-checksum
-        elif command_exists shasum; then
-            shasum -a 256 --check selected-checksum
-        else
-            exit 1
-        fi
-        tar -xzf "$archive_name"
-        extracted_binary=$(find . -type f -name "$binary_name" -perm -u+x -print -quit)
-        [ -n "$extracted_binary" ]
-        mkdir -p "$INSTALL_DIRECTORY"
-        install -m 0755 "$extracted_binary" "$INSTALL_DIRECTORY/$binary_name"
+        cd "$scratch_directory" \
+            && curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-connrefused "$archive_url" -o "$archive_name" \
+            && printf '%s  %s\n' "$expected_digest" "$archive_name" > selected-checksum \
+            && digest_matches selected-checksum \
+            && tar -xzf "$archive_name" \
+            && extracted_binary=$(find . -type f -name "$binary_name" -perm -u+x -print -quit) \
+            && [ -n "$extracted_binary" ] \
+            && mkdir -p "$INSTALL_DIRECTORY" \
+            && install -m 0755 "$extracted_binary" "$INSTALL_DIRECTORY/$binary_name"
     ); then
         command rm -rf "$scratch_directory"
-        fail "could not install verified archive $archive_name"
+        fail "could not install verified archive $archive_name: digest or extraction failed"
     fi
 
     command rm -rf "$scratch_directory"
@@ -206,6 +217,100 @@ install_mdschema() {
         "$archive_name" "$digest" mdschema
 }
 
+# Release archive naming differs per project. Each helper maps the platform
+# to the upstream asset name, then routes through verified_archive.
+rust_target() {
+    case "$(platform):$(architecture)" in
+        darwin:arm64) printf 'aarch64-apple-darwin\n' ;;
+        darwin:amd64) printf 'x86_64-apple-darwin\n' ;;
+        linux:arm64) printf 'aarch64-unknown-linux-%s\n' "$1" ;;
+        linux:amd64) printf 'x86_64-unknown-linux-%s\n' "$1" ;;
+        *) fail "no release archive for $(platform)/$(architecture)" ;;
+    esac
+}
+
+install_rumdl() {
+    tool_matches_version rumdl "$RUMDL_VERSION" && return
+    local archive_name digest
+    archive_name="rumdl-v${RUMDL_VERSION}-$(rust_target gnu).tar.gz"
+    digest=$(archive_digest rumdl "$(platform)" "$(architecture)")
+    log "Installing digest-verified rumdl $RUMDL_VERSION"
+    verified_archive \
+        "https://github.com/rvben/rumdl/releases/download/v${RUMDL_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" rumdl
+}
+
+install_typos() {
+    tool_matches_version typos "$TYPOS_VERSION" && return
+    local archive_name digest
+    archive_name="typos-v${TYPOS_VERSION}-$(rust_target musl).tar.gz"
+    digest=$(archive_digest typos "$(platform)" "$(architecture)")
+    log "Installing digest-verified typos $TYPOS_VERSION"
+    verified_archive \
+        "https://github.com/crate-ci/typos/releases/download/v${TYPOS_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" typos
+}
+
+install_vale() {
+    tool_matches_version vale "$VALE_VERSION" && return
+    local archive_name digest system_name machine_name
+    case "$(platform):$(architecture)" in
+        darwin:arm64) system_name=macOS; machine_name=arm64 ;;
+        darwin:amd64) system_name=macOS; machine_name=64-bit ;;
+        linux:arm64) system_name=Linux; machine_name=arm64 ;;
+        linux:amd64) system_name=Linux; machine_name=64-bit ;;
+        *) fail "no release archive for $(platform)/$(architecture)" ;;
+    esac
+    archive_name="vale_${VALE_VERSION}_${system_name}_${machine_name}.tar.gz"
+    digest=$(archive_digest vale "$(platform)" "$(architecture)")
+    log "Installing digest-verified vale $VALE_VERSION"
+    verified_archive \
+        "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" vale
+}
+
+install_lychee() {
+    tool_matches_version lychee "$LYCHEE_VERSION" && return
+    local archive_name digest
+    archive_name="lychee-$(rust_target gnu).tar.gz"
+    digest=$(archive_digest lychee "$(platform)" "$(architecture)")
+    log "Installing digest-verified lychee $LYCHEE_VERSION"
+    verified_archive \
+        "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" lychee
+}
+
+install_zizmor() {
+    tool_matches_version zizmor "$ZIZMOR_VERSION" && return
+    local archive_name digest
+    archive_name="zizmor-$(rust_target gnu).tar.gz"
+    digest=$(archive_digest zizmor "$(platform)" "$(architecture)")
+    log "Installing digest-verified zizmor $ZIZMOR_VERSION"
+    verified_archive \
+        "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" zizmor
+}
+
+install_actionlint() {
+    tool_matches_version actionlint "$ACTIONLINT_VERSION" && return
+    local archive_name digest
+    archive_name="actionlint_${ACTIONLINT_VERSION}_$(platform)_$(architecture).tar.gz"
+    digest=$(archive_digest actionlint "$(platform)" "$(architecture)")
+    log "Installing digest-verified actionlint $ACTIONLINT_VERSION"
+    verified_archive \
+        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" actionlint
+}
+
+install_linters() {
+    install_rumdl
+    install_typos
+    install_vale
+    install_lychee
+    install_zizmor
+    install_actionlint
+}
+
 verify_tools() {
     local failures=()
 
@@ -216,6 +321,12 @@ verify_tools() {
     tool_matches_version ruff "$RUFF_VERSION" || failures+=("ruff $RUFF_VERSION")
     tool_matches_version semgrep "$SEMGREP_VERSION" || failures+=("semgrep $SEMGREP_VERSION")
     tool_matches_version mdschema "$MDSCHEMA_VERSION" || failures+=("mdschema $MDSCHEMA_VERSION")
+    tool_matches_version rumdl "$RUMDL_VERSION" || failures+=("rumdl $RUMDL_VERSION")
+    tool_matches_version typos "$TYPOS_VERSION" || failures+=("typos $TYPOS_VERSION")
+    tool_matches_version vale "$VALE_VERSION" || failures+=("vale $VALE_VERSION")
+    tool_matches_version lychee "$LYCHEE_VERSION" || failures+=("lychee $LYCHEE_VERSION")
+    tool_matches_version zizmor "$ZIZMOR_VERSION" || failures+=("zizmor $ZIZMOR_VERSION")
+    tool_matches_version actionlint "$ACTIONLINT_VERSION" || failures+=("actionlint $ACTIONLINT_VERSION")
 
     [ "${#failures[@]}" -eq 0 ] \
         || fail "setup finished without the pinned toolchain: ${failures[*]}"
@@ -225,26 +336,31 @@ main() {
     local original_path=$PATH
     export PATH="$INSTALL_DIRECTORY:$PATH"
 
-    if all_tools_match; then
-        log "Pinned repository check tools are installed."
-        return
+    if ! all_tools_match; then
+        if command_exists brew; then
+            install_with_brew
+        else
+            [ "$(platform)" = "linux" ] \
+                || fail "macOS setup requires Homebrew: https://brew.sh"
+            install_linux_prerequisites
+            install_python_tool prek "$PREK_VERSION"
+            install_python_tool copier "$COPIER_VERSION"
+            install_python_tool ruff "$RUFF_VERSION"
+            install_python_tool semgrep "$SEMGREP_VERSION"
+            install_gitleaks
+            install_mdschema
+            install_linters
+        fi
+
+        verify_tools
     fi
 
-    if command_exists brew; then
-        install_with_brew
-    else
-        [ "$(platform)" = "linux" ] \
-            || fail "macOS setup requires Homebrew: https://brew.sh"
-        install_linux_prerequisites
-        install_python_tool prek "$PREK_VERSION"
-        install_python_tool copier "$COPIER_VERSION"
-        install_python_tool ruff "$RUFF_VERSION"
-        install_python_tool semgrep "$SEMGREP_VERSION"
-        install_gitleaks
-        install_mdschema
+    # A consumer's own tools (deck validators, language toolchains) install
+    # through a sibling hook that the template never overwrites.
+    if [ -x "$script_directory/install-tools.local" ]; then
+        "$script_directory/install-tools.local"
     fi
 
-    verify_tools
     log "Pinned repository check tools are installed."
     case ":$original_path:" in
         *":$INSTALL_DIRECTORY:"*) ;;

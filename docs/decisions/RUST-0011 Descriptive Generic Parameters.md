@@ -34,7 +34,7 @@ Rust convention uses single letters for generic parameters (`T`, `S`, `E`, `K`, 
 
 ## Decision Outcome
 
-Use full descriptive names for generic type parameters. The compiler doesn't care about length. Humans do.
+Use full descriptive names for generic type parameters. The compiler does not care about length. Humans do.
 
 ```rust
 // Not this

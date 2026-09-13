@@ -2,6 +2,7 @@
 adr: "docs/decisions/CLI-0021 Launch Profile Composition.md"
 status: proposed
 ---
+
 # Launch Profiles
 
 ## Why

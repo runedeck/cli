@@ -51,4 +51,3 @@ Checkpoint tags (`checkpoint-stage-a`, and successors) mark known-good baselines
 - Legacy repos keep working through explicit fallbacks without maintaining two CLIs
 - Compatibility shims persist wherever fallbacks remain, and each needs a test so silent drift cannot break migrations
 - Checkpoint tags add rollback discipline but require tagging whenever the baseline moves
-

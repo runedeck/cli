@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tree, so a root whose directories were already moved away still resolves to
   the directory holding the unfinished work.
 - Retried conversions acknowledge work completed by crash recovery instead of
-  failing with an empty-tree error; reports carry a `recovered` marker.
+  failing with an empty-tree error. Reports carry a `recovered` marker.
 - Archive journal validation rejects overlapping canonical destinations.
 - Export from a root whose manifest recorded no opaque files no longer fails
   planning removal of the absent mirror directory.

@@ -2,6 +2,7 @@
 adr: "docs/decisions/ADR-XXXX.md"
 status: proposed
 ---
+
 # Openspec Interop
 
 ## Why

@@ -5,13 +5,13 @@ authors:
     - Martin Zeman <N4M3Z@users.noreply.github.com>
     - Claude (claude) <claude@claude.noreply.nexus.local>
     - Claude Fable 5 (claude-fable-5) <claude-fable-5@claude.noreply.nexus.local>
-    - Claude Fable 51m (claude-fable-51m) <claude-fable-51m@claude.noreply.nexus.local>
     - Claude Opus 5 (claude-opus-5) <claude-opus-5@claude.noreply.nexus.local>
-    - Claude Opus 51m (claude-opus-51m) <claude-opus-51m@claude.noreply.nexus.local>
     - Claude Opus 4.8 (claude-opus-4-8) <claude-opus-4-8@claude.noreply.nexus.local>
     - Claude Gpt 5.6 Sol (gpt-5.6-sol) <gpt-5.6-sol@claude.noreply.nexus.local>
     - Codex Gpt 5.6 Sol (gpt-5.6-sol) <gpt-5.6-sol@codex.noreply.nexus.local>
-    - Grok (grok-composer-2.5-fast) <grok-composer-2.5-fast@grok.noreply.nexus.local>
+    - Grok 4.6 (grok-4.6) <grok-4.6@grok.noreply.nexus.local>
+    - Lumo Max (lumo-max) <lumo-max@lumo.noreply.nexus.local>
+    - Kimi K3 (kimi-k3) <kimi-k3@kimi.noreply.nexus.local>
 trailers:
     - Claude <noreply@anthropic.com>
     - Claude Fable 5 <noreply@anthropic.com>
@@ -22,4 +22,7 @@ trailers:
 model_domains:
     - claude.noreply.nexus.local
     - codex.noreply.nexus.local
+    - cursor.noreply.nexus.local
     - grok.noreply.nexus.local
+    - lumo.noreply.nexus.local
+    - kimi.noreply.nexus.local

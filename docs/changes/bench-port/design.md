@@ -12,12 +12,12 @@ because rune stays a single static binary and bench data formats are small,
 stable, and fully specified.
 
 Concurrency uses OS threads with a work queue (no async runtime). HTTP providers
-use a blocking HTTP client; CLI providers use `std::process::Command`. Both fit
+use a blocking HTTP client. CLI providers use `std::process::Command`. Both fit
 the existing `Result<T, String>` error style.
 
 ## Command surface
 
-```
+```text
 rune bench run --suite <path|name> [--models a,b] [--runs N] [--version V]
                [--config models.yaml] [--results DIR] [--timeout SECS]
                [--stagger MS] [--judge-model ID] [--human-scores PATH]
@@ -40,7 +40,7 @@ the spec commands already use.
 - `suites/` — committed sample suites (public).
 - `suites/user/` — local, gitignored.
 - `suites/private/` — held-out suites, tracked only in a private downstream
-  checkout; autodetected when present, or pointed at directly via
+  checkout. Autodetected when present, or pointed at directly via
   `bench.private_root` when the private checkout lives elsewhere.
 - `bench/models.yaml` — the model registry (unchanged format).
 - `results/` — cache and outputs (unchanged layout).
@@ -48,7 +48,7 @@ the spec commands already use.
 rune never copies private suite content into the public workspace: a run of a
 private-tier suite defaults its results root (cache, results, reports) to
 `<private_root>/bench/results` inside the private checkout, and the visualizer
-copy is skipped. The public dashboard scans only the public results root; a
+copy is skipped. The public dashboard scans only the public results root. A
 private dashboard is built explicitly with `--results` and `--out` pointing
 into the private checkout. `suiteId` and `version` are validated as single
 path components (no separators, no dot-navigation) before they become results
@@ -58,10 +58,10 @@ directories.
 
 Exact reimplementation of the contract, in `src/cli/bench/`:
 
-- `suite.rs` — serde types + validation matching the zod schema; unknown fields
-  ignored; suiteId derivation (id, file stem, slugified name).
+- `suite.rs` — serde types + validation matching the zod schema. Unknown fields
+  ignored. SuiteId derivation (id, file stem, slugified name).
 - `scoring.rs` — `is_correct`: lowercase substring, negatives first and
-  overriding; the 11 upstream test cases replicated.
+  overriding. The 11 upstream test cases replicated.
 - `cache.rs` — signature normalization (trim, lowercase+sort answers), SHA-1
   12-hex hash, cache filename and payload with exact key order, gather/resume
   from both prior results and cache entries, system-prompt mismatch hard error.
@@ -69,8 +69,8 @@ Exact reimplementation of the contract, in `src/cli/bench/`:
   worker pool of `concurrency` threads with `stagger_ms` start offsets,
   per-invoke timeout, errors never cached.
 - `report.rs` — results JSON, markdown report, summary JSON with the upstream
-  field set and sort (successRate desc, averageDuration asc; error runs in the
-  denominator); JSON pretty-printed with 2-space indent to match
+  field set and sort (successRate desc, averageDuration asc, error runs in the
+  denominator). JSON pretty-printed with 2-space indent to match
   `JSON.stringify(..., null, 2)`.
 - `registry.rs` — models.yaml parsing with the same hard errors (duplicate ids,
   temperature on CLI providers, base_url required for openai-compatible,
@@ -85,7 +85,7 @@ unversioned), `negative_answers`/`negativeAnswers`, `result`, `error`, and
 `JsNumber` serializer: integer-valued floats below 1e21 print as plain
 integers (ECMAScript decimal notation), non-integral values use serde_json's
 shortest form — which diverges from ECMAScript only in its exponential zones
-(below ~1e-6, at 1e21 and above); no emitted metric reaches those zones while
+(below ~1e-6, at 1e21 and above). No emitted metric reaches those zones while
 provider costs are zero, and the compat spec records the limitation.
 
 Two protocol clarifications the port pins down:
@@ -99,7 +99,7 @@ Two protocol clarifications the port pins down:
 - Both implementations gather reuse candidates from prior results files and
   cache entries, and a fresh run appears in both sources, so a candidate list
   can hold duplicates of one execution. Reuse beyond the actually executed
-  run count serves duplicated samples; fixing that requires a deduplication
+  run count serves duplicated samples. Fixing that requires a deduplication
   identity and changes both runners together (tracked as a follow-up, not
   fixed unilaterally here).
 
@@ -133,7 +133,7 @@ answers).
   wiring status.
 - `audit`: the README-documented suite checks — canonical answers self-score,
   negatives must not substring-collide with answers, dangerously short tokens
-  flagged; run before shipping a suite.
+  flagged. Run before shipping a suite.
 
 ## Naming: sealed → private
 
@@ -141,20 +141,20 @@ The held-out tier renames from `suites/sealed/` to `suites/private/` across the
 public repo (gitignore, pre-push guard path regex, README, runbook doc) and the
 private downstream (git mv of tracked content, MANIFEST regenerated). The push
 guard's canary regex matches values, not tier names, so existing canaries stay
-valid; new suites use `canary: rune:bench:private:<uuid>`.
+valid. New suites use `canary: rune:bench:private:<uuid>`.
 
 ## Risks
 
 - **Float formatting drift** between serde_json and JS `JSON.stringify` breaks
   byte-parity of summaries. Guard: the parity task runs both runners on the
-  same fixtures (echo model) and diffs outputs; where formatting differs, a
+  same fixtures (echo model) and diffs outputs. Where formatting differs, a
   custom serializer pins the JS form.
 - **Cache misread corrupts resume**: a wrong signature or filename scheme
   silently orphans prior results. Guard: cache tests ported from the bun suite
   plus a cross-runner resume test (bun writes cache, rune resumes from it, and
   vice versa).
 - **CLI provider drift**: harness argv changes upstream. Guard: providers carry
-  the exact argv in one place each; doctor reports the binary version.
+  the exact argv in one place each. Doctor reports the binary version.
 - **Scope**: judged suites and dashboard are large. Guard: tasks land QA
   pipeline first (run/report/list on QA suites is the parity core), judged and
   dashboard follow behind the same flag surface.
