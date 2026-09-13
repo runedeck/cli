@@ -2,7 +2,7 @@
 
 ### Requirement: Provider lifecycle states
 
-`rune provider status` SHALL report each provider as `disabled`, `not installed`, `current`,
+`rune provider status` MUST report each provider as `disabled`, `not installed`, `current`,
 `outdated`, `needs repair`, or `modified`, with a fix or review command for each non-current state.
 
 #### Scenario: Managed file is missing
@@ -12,7 +12,7 @@
 
 ### Requirement: Modified state protection
 
-Status, setup, and doctor SHALL keep user-modified managed files in the `modified` state and SHALL
+Status, setup, and doctor MUST keep user-modified managed files in the `modified` state and MUST
 never replace them without explicit approval.
 
 #### Scenario: Repair meets a modified file
@@ -22,8 +22,8 @@ never replace them without explicit approval.
 
 ### Requirement: Provider explanation
 
-`rune provider explain <NAME>` SHALL print the detection evidence, the deployment state, and the
-fix command, and its JSON SHALL carry `provider`, `config_source`, `target`, `evidence`,
+`rune provider explain <NAME>` MUST print the detection evidence, the deployment state, and the
+fix command, and its JSON MUST carry `provider`, `config_source`, `target`, `evidence`,
 `deployment_state`, and `fix_command`.
 
 #### Scenario: Explain reports one provider
@@ -33,7 +33,7 @@ fix command, and its JSON SHALL carry `provider`, `config_source`, `target`, `ev
 
 ### Requirement: Bounded detection evidence
 
-Provider detection SHALL use only bounded evidence: an executable name on `PATH`, a known
+Provider detection MUST use only bounded evidence: an executable name on `PATH`, a known
 non-sensitive config directory, a rune deployment manifest, and managed-file digest validation.
 
 #### Scenario: Detection runs on a clean machine
@@ -43,7 +43,7 @@ non-sensitive config directory, a rune deployment manifest, and managed-file dig
 
 ### Requirement: Shared detection registry
 
-Setup, context, status, doctor, and drift SHALL derive their provider set from one bundled
+Setup, context, status, doctor, and drift MUST derive their provider set from one bundled
 registry.
 
 #### Scenario: Doctor discovers providers
@@ -53,8 +53,8 @@ registry.
 
 ### Requirement: Syntax-preserving provider edits
 
-Provider enable and disable SHALL preserve comments, anchors, unrelated keys, ordering, and line
-endings, and SHALL return byte-exact content when no semantic change exists.
+Provider enable and disable MUST preserve comments, anchors, unrelated keys, ordering, and line
+endings, and MUST return byte-exact content when no semantic change exists.
 
 #### Scenario: Toggle touches one key
 

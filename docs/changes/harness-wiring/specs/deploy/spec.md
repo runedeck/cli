@@ -2,7 +2,7 @@
 
 ### Requirement: Deploy
 
-The Deploy capability SHALL describe its required behavior here.
+The Deploy capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

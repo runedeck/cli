@@ -2,7 +2,7 @@
 
 ### Requirement: Pending adoption review state is external and durable
 
-The CLI SHALL preserve block-by-block review entries across sequential invocations without writing them into the adopted artifact or its `.provenance` directory. In Git repositories it SHALL prefer worktree-specific Git metadata. Each session key SHALL include the canonical module root and module-relative artifact path. In non-Git modules it SHALL use a user state or cache directory keyed by the canonical module root.
+The CLI MUST preserve block-by-block review entries across sequential invocations without writing them into the adopted artifact or its `.provenance` directory. In Git repositories it MUST prefer worktree-specific Git metadata. Each session key MUST include the canonical module root and module-relative artifact path. In non-Git modules it MUST use a user state or cache directory keyed by the canonical module root.
 
 #### Scenario: Linked worktrees hold separate sessions
 
@@ -21,7 +21,7 @@ The CLI SHALL preserve block-by-block review entries across sequential invocatio
 
 ### Requirement: Finalize publishes concise reviewed sidecars
 
-Finalize SHALL keep every block pending until it receives an individual verdict and SHALL enforce verdict consistency and structural validation. After enforcement it SHALL atomically update each imported adopt/v1 sidecar with the final subject digest, reviewed state, reviewer, completion time, and concise adaptation summary. It SHALL delete the temporary session only after every required sidecar update succeeds and SHALL NOT write a review ledger into the source tree.
+Finalize MUST keep every block pending until it receives an individual verdict and MUST enforce verdict consistency and structural validation. After enforcement it MUST atomically update each imported adopt/v1 sidecar with the final subject digest, reviewed state, reviewer, completion time, and concise adaptation summary. It MUST delete the temporary session only after every required sidecar update succeeds and MUST NOT write a review ledger into the source tree.
 
 #### Scenario: Finalize completes safely
 
@@ -35,7 +35,7 @@ Finalize SHALL keep every block pending until it receives an individual verdict 
 
 ### Requirement: Doctor uses sessions and sidecars as authority
 
-Doctor SHALL report pending external sessions and SHALL verify that each reviewed adopt/v1 sidecar's subject digest matches its file. Doctor SHALL diagnose `review.yaml` and `*.review.yaml` as legacy ledgers with an actionable migration/removal message and SHALL NOT require such a ledger for a reviewed artifact.
+Doctor MUST report pending external sessions and MUST verify that each reviewed adopt/v1 sidecar's subject digest matches its file. Doctor MUST diagnose `review.yaml` and `*.review.yaml` as legacy ledgers with an actionable migration/removal message and MUST NOT require such a ledger for a reviewed artifact.
 
 #### Scenario: Reviewed tree has no ledger
 
@@ -49,7 +49,7 @@ Doctor SHALL report pending external sessions and SHALL verify that each reviewe
 
 ### Requirement: Reseal operates on reviewed adopt sidecars
 
-Reseal SHALL select the specified artifact from reviewed adopt/v1 sidecars, refuse pending or unreviewed inputs, and atomically update final subject digests to match maintainer touch-ups.
+Reseal MUST select the specified artifact from reviewed adopt/v1 sidecars, refuse pending or unreviewed inputs, and atomically update final subject digests to match maintainer touch-ups.
 
 #### Scenario: Maintainer touch-up is resealed
 
@@ -58,7 +58,7 @@ Reseal SHALL select the specified artifact from reviewed adopt/v1 sidecars, refu
 
 ### Requirement: Context suffix normalization
 
-Authorship validation SHALL ignore a trailing `1m` context suffix after a model version digit in display model IDs and email local parts. The accepted author list SHALL contain only canonical model identities without the suffix.
+Authorship validation MUST ignore a trailing `1m` context suffix after a model version digit in display model IDs and email local parts. The accepted author list MUST contain only canonical model identities without the suffix.
 
 #### Scenario: One-million-context identity
 
@@ -67,7 +67,7 @@ Authorship validation SHALL ignore a trailing `1m` context suffix after a model 
 
 ### Requirement: Legacy ledger removal is explicit
 
-Existing reviewed trees SHALL remain deployable from reviewed adopt sidecars. Rune SHALL diagnose legacy ledgers as redundant workflow records and SHALL leave removal or archival to an explicit maintainer action.
+Existing reviewed trees MUST remain deployable from reviewed adopt sidecars. Rune MUST diagnose legacy ledgers as redundant workflow records and MUST leave removal or archival to an explicit maintainer action.
 
 #### Scenario: Doctor preserves a legacy ledger
 

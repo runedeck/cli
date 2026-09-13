@@ -2,7 +2,7 @@
 
 ### Requirement: Per-provider exclusion
 
-`.rune` SHALL support a per-provider exclude list that removes named runes from that provider's
+`.rune` MUST support a per-provider exclude list that removes named runes from that provider's
 deploy set without a change to any other provider.
 
 #### Scenario: Skill turns off for one provider
@@ -12,7 +12,7 @@ deploy set without a change to any other provider.
 
 ### Requirement: All-provider toggle default
 
-A toggle verb without `--provider` SHALL apply to every provider that the
+A toggle verb without `--provider` MUST apply to every provider that the
 configuration knows, so the overlay records the intent for providers that a
 user enables later.
 
@@ -23,7 +23,7 @@ user enables later.
 
 ### Requirement: Toggle visibility
 
-`rune <kind> list` SHALL show each rune's on or off state for every enabled provider.
+`rune <kind> list` MUST show each rune's on or off state for every enabled provider.
 
 #### Scenario: List renders the matrix
 
@@ -32,7 +32,7 @@ user enables later.
 
 ### Requirement: Assemble honors toggles
 
-Assemble SHALL exclude toggled-off runes from the affected provider's build, and install SHALL
+Assemble MUST exclude toggled-off runes from the affected provider's build, and install MUST
 prune their previously deployed copies into the trash quarantine.
 
 #### Scenario: Install removes a toggled-off deployment
@@ -42,7 +42,7 @@ prune their previously deployed copies into the trash quarantine.
 
 ### Requirement: Manifest preservation
 
-A toggle write SHALL keep unrelated `.rune` content byte-exact, including comments and ordering.
+A toggle write MUST keep unrelated `.rune` content byte-exact, including comments and ordering.
 
 #### Scenario: Toggle edits a commented manifest
 

@@ -2,7 +2,7 @@
 
 ### Requirement: ${CAPABILITY_TITLE}
 
-The ${CAPABILITY_TITLE} capability SHALL describe its required behavior here.
+The ${CAPABILITY_TITLE} capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

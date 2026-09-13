@@ -107,6 +107,16 @@ pub fn doctor_output(source: &str) -> Result<SpecDoctorOutput, Error> {
         );
     }
 
+    findings.extend(
+        super::validate::lint_tree(&spec_root)?
+            .into_iter()
+            .map(|diagnostic| DoctorFinding {
+                severity: severity_label(diagnostic.severity),
+                path: diagnostic.path,
+                message: diagnostic.message,
+            }),
+    );
+
     let specifications = scan_specifications(root)?;
     for specification in &specifications {
         if specification.requirements == 0 {

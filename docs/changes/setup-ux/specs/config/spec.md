@@ -2,8 +2,8 @@
 
 ### Requirement: Config check reporting
 
-`rune config check` SHALL report the failing file, each ignored key, the impact, and one fix
-command for each issue, and SHALL exit 1 when it finds an issue.
+`rune config check` MUST report the failing file, each ignored key, the impact, and one fix
+command for each issue, and MUST exit 1 when it finds an issue.
 
 #### Scenario: Unknown key appears in source config
 
@@ -13,7 +13,7 @@ command for each issue, and SHALL exit 1 when it finds an issue.
 
 ### Requirement: Config check is read-only
 
-`rune config check` SHALL write nothing.
+`rune config check` MUST write nothing.
 
 #### Scenario: Check runs on a broken config
 
@@ -22,7 +22,7 @@ command for each issue, and SHALL exit 1 when it finds an issue.
 
 ### Requirement: Commented defaults
 
-`rune config defaults --scope <SCOPE>` SHALL print the commented default configuration of the
+`rune config defaults --scope <SCOPE>` MUST print the commented default configuration of the
 installed binary for that scope.
 
 #### Scenario: Defaults print for the user scope
@@ -32,8 +32,8 @@ installed binary for that scope.
 
 ### Requirement: Scoped key reset
 
-`rune config reset <KEY> --scope <SCOPE>` SHALL remove only the named key, SHALL write a
-timestamped backup first, SHALL verify the result before an atomic write, and SHALL print the
+`rune config reset <KEY> --scope <SCOPE>` MUST remove only the named key, MUST write a
+timestamped backup first, MUST verify the result before an atomic write, and MUST print the
 restore command.
 
 #### Scenario: Reset removes an unknown key
@@ -44,7 +44,7 @@ restore command.
 
 ### Requirement: Config reference output
 
-`rune config reference --json` SHALL emit compiler-backed metadata with every key, type, and
+`rune config reference --json` MUST emit compiler-backed metadata with every key, type, and
 default for each scope.
 
 #### Scenario: Reference covers a new key
@@ -54,7 +54,7 @@ default for each scope.
 
 ### Requirement: Reference drift check
 
-Continuous integration SHALL fail when the committed config reference differs from the reference
+Continuous integration MUST fail when the committed config reference differs from the reference
 output of the built binary.
 
 #### Scenario: Committed reference drifts

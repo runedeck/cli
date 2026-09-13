@@ -2,7 +2,7 @@
 
 ### Requirement: Optional scaffold setup
 
-The Init capability SHALL offer repository setup only after a new project scaffold has been written and its Git, jj, and binding steps have completed.
+The Init capability MUST offer repository setup only after a new project scaffold has been written and its Git, jj, and binding steps have completed.
 
 #### Scenario: Interactive project init
 

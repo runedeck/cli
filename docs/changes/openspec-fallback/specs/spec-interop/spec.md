@@ -2,7 +2,7 @@
 
 ### Requirement: Interactive OpenSpec root selection
 
-When a repository contains an `openspec/` tree, no live `docs/` tree, and no configured `spec.root`, the first interactive lifecycle command SHALL offer to keep `openspec/` or migrate to `docs/`, then persist the explicit answer in `config.yaml`.
+When a repository contains an `openspec/` tree, no live `docs/` tree, and no configured `spec.root`, the first interactive lifecycle command MUST offer to keep `openspec/` or migrate to `docs/`, then persist the explicit answer in `config.yaml`.
 
 #### Scenario: Keep the OpenSpec layout
 
@@ -21,7 +21,7 @@ When a repository contains an `openspec/` tree, no live `docs/` tree, and no con
 
 ### Requirement: Optional upstream advisory validation
 
-On an OpenSpec root, `rune spec doctor` SHALL attempt `openspec validate --all --no-interactive` when the upstream executable is available. Failure or timeout SHALL produce a warning that does not change the exit code unless rune reports its own error finding.
+On an OpenSpec root, `rune spec doctor` MUST attempt `openspec validate --all --no-interactive` when the upstream executable is available. Failure or timeout MUST produce a warning that does not change the exit code unless rune reports its own error finding.
 
 #### Scenario: Upstream validator reports an issue
 

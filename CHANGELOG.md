@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Specification house rules in `rune spec validate` and `rune spec doctor` (CLI-0040): MUST is the only normative keyword in prose, a canonical specification stays under 150 lines, and every italic defined term has an entry in `docs/specs/glossary.md`. The OpenSpec compatibility parser and its oracle fixtures are unchanged. The cli's own specifications convert to MUST, and `spec-lifecycle` and `commit-attribution` split off `spec-interop` and `worktree-identity`.
 - Portable project scaffolding: `rune init --with <templates>` composes flat embedded templates offline and writes Copier-compatible update metadata; `--lang` and `--purpose` remain compatibility aliases.
 - `rune run [profile@]<tool>` executes Claude, Codex, agy, Grok, and OpenCode noninteractively through the provider layer shared with native bench (CLI-0024, CLI-0025). It accepts prompts from an argument, file, or standard input; defaults to read-only mode with no timeout; supports explicit repository, workspace-write, timeout, dry-run, and typed JSON output; and rejects tmux and Docker wrappers. Read-only runs restrict Claude and Grok to `Read`, `Glob`, and `Grep`, because their sandbox and permission settings alone still allow writes through the tool set.
 - Route-specific model metadata keeps provider model and context settings together for both `rune launch` and `rune run` (CLI-0026). Claude routes derive model, maximum context, and automatic compaction settings as one group; conflicting profile environment keys fail resolution. Fresh installs include `sol@claude` and `grok@claude` profiles for CLIProxyAPI on localhost, with user configuration replacing either route or profile by name.
@@ -169,11 +170,11 @@ rune 0.4.0 succeeds forge-cli 0.3.x.
 ### Removed
 
 - All commands drop their positional path arguments. Same positional meant different things across verbs (`rune init <PATH>` wrote into PATH, `rune install <PATH>` read from PATH); every command now uses named flags (`--source`, `--target`, `--upstream`).
-    - `install`, `deploy`, `clean`, `assemble`, `validate`, `release`: source is `--source <DIR>`, defaults to `.`
-    - `init`: target is `--target <DIR>`, no default (scaffolding requires explicit destination)
-    - `copy`: both `--source <DIR>` and `--target <DIR>` are required
-    - `provenance`: inspection target is `--target <DIR_OR_FILE>` (defaults to `.`); the existing source-URI filter is renamed from `--source` to `--source-uri` to avoid name collision
-    - `drift`: source defaults to `.` via `--source`; the second positional is now `--upstream <DIR>` (renamed from `target` since semantically it is the upstream reference)
+  - `install`, `deploy`, `clean`, `assemble`, `validate`, `release`: source is `--source <DIR>`, defaults to `.`
+  - `init`: target is `--target <DIR>`, no default (scaffolding requires explicit destination)
+  - `copy`: both `--source <DIR>` and `--target <DIR>` are required
+  - `provenance`: inspection target is `--target <DIR_OR_FILE>` (defaults to `.`); the existing source-URI filter is renamed from `--source` to `--source-uri` to avoid name collision
+  - `drift`: source defaults to `.` via `--source`; the second positional is now `--upstream <DIR>` (renamed from `target` since semantically it is the upstream reference)
 
 ## [0.3.1] - 2026-04-16
 

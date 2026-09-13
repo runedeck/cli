@@ -2,7 +2,7 @@
 
 ### Requirement: Named launch profiles
 
-The Launch capability SHALL resolve `[profile@]<tool>` from the built-in profile catalog and user launch configuration and SHALL compose the selected profile with the ordered middleware plan. The built-in catalog SHALL provide `sol@claude` and `grok@claude` through CLIProxyAPI on localhost, with authentication read from `CLIPROXY_API_KEY`.
+The Launch capability MUST resolve `[profile@]<tool>` from the built-in profile catalog and user launch configuration and MUST compose the selected profile with the ordered middleware plan. The built-in catalog MUST provide `sol@claude` and `grok@claude` through CLIProxyAPI on localhost, with authentication read from `CLIPROXY_API_KEY`.
 
 #### Scenario: Built-in proxy profile
 
@@ -26,7 +26,7 @@ The Launch capability SHALL resolve `[profile@]<tool>` from the built-in profile
 
 ### Requirement: Route-specific model metadata
 
-The Launch capability SHALL derive model identity and context settings from one selected model route.
+The Launch capability MUST derive model identity and context settings from one selected model route.
 
 #### Scenario: Claude model route
 
@@ -46,7 +46,7 @@ The Launch capability SHALL derive model identity and context settings from one 
 
 ### Requirement: Interactive execution
 
-The Launch capability SHALL execute the resolved plan with inherited terminal input and output.
+The Launch capability MUST execute the resolved plan with inherited terminal input and output.
 
 #### Scenario: Native session behavior
 
