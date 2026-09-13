@@ -5,6 +5,7 @@ use rune::manifest::provenance::read as read_sidecar;
 use std::fs;
 use std::path::Path;
 
+pub(crate) mod metadata;
 mod scan;
 
 #[allow(clippy::too_many_lines)]

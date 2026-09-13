@@ -72,11 +72,32 @@ repos:
             pass_filenames: false
             stages: [pre-commit]
 
+          # The rune hooks skip when the binary is absent so a fresh clone stays
+          # usable before make install. REQUIRE_RUNE, set by the Build quality job
+          # that has the binary built from the same commit, turns absence into a
+          # failure. REQUIRE_GATES stays the pinned linters' variable.
           - id: rune-validate
             name: rune validate
-            entry: sh -c 'if command -v rune >/dev/null 2>&1 && { [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ]; }; then rune validate; fi'
+            entry: sh -c 'if command -v rune >/dev/null 2>&1; then if [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ]; then rune validate; fi; elif [ -n "${REQUIRE_RUNE:-}" ]; then echo "REQUIRE_RUNE set and rune is absent"; exit 1; fi'
             language: system
             pass_filenames: false
+
+          # A pending sidecar left by `rune adr import`, or an orphan or
+          # stale-name sidecar after a hand move, fails here before it lands.
+          - id: rune-adopt-doctor
+            name: rune adopt doctor
+            entry: sh -c 'if command -v rune >/dev/null 2>&1; then if [ -f module.yaml ]; then rune adopt doctor --root .; fi; elif [ -n "${REQUIRE_RUNE:-}" ]; then echo "REQUIRE_RUNE set and rune is absent"; exit 1; fi'
+            language: system
+            pass_filenames: false
+            files: '(^|/)\.provenance/|^docs/decisions/'
+
+          # Broken ADR links, as a plain forge-core import produces.
+          - id: rune-docs-check
+            name: rune docs check
+            entry: sh -c 'if command -v rune >/dev/null 2>&1; then rune docs check; elif [ -n "${REQUIRE_RUNE:-}" ]; then echo "REQUIRE_RUNE set and rune is absent"; exit 1; fi'
+            language: system
+            pass_filenames: false
+            files: ^docs/
 
           # Prose and workflow linters. Each hook skips when its binary is
           # absent so a fresh clone stays usable before make install runs;
@@ -129,12 +150,11 @@ repos:
             language: system
             files: ^\.github/workflows/.*\.ya?ml$
 
-          # rune has no pinned release yet, so this hook skips when the binary
-          # is absent even under REQUIRE_GATES. It joins the required set once
-          # tool-versions can pin it.
+          # The house rules (CLI-0040) and the change ledger. Required under
+          # REQUIRE_RUNE like the other rune hooks.
           - id: rune-spec-doctor
             name: rune spec doctor
-            entry: sh -c 'if command -v rune >/dev/null 2>&1 && [ -d docs/changes ]; then rune spec doctor; fi'
+            entry: sh -c 'if command -v rune >/dev/null 2>&1; then if [ -d docs/changes ]; then rune spec doctor; fi; elif [ -n "${REQUIRE_RUNE:-}" ]; then echo "REQUIRE_RUNE set and rune is absent"; exit 1; fi'
             language: system
             pass_filenames: false
             files: ^docs/(changes|specs)/

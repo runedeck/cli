@@ -36,7 +36,7 @@ pub(crate) struct RegisteredProviderTarget {
 }
 
 /// Advisory per-target lock held while a process mutates a deploy target
-/// (deploy, prune, doctor --repair). A second rune process fails fast
+/// (deploy, prune, repair). A second rune process fails fast
 /// instead of interleaving manifest and tree writes. The lock file records
 /// the holder's pid and is removed on drop.
 #[derive(Debug)]

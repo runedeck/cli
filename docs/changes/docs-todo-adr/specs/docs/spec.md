@@ -2,7 +2,7 @@
 
 ### Requirement: Docs
 
-The Docs capability SHALL describe its required behavior here.
+The Docs capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

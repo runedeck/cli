@@ -2,7 +2,7 @@
 
 ### Requirement: SkateBench-compatible QA runner
 
-`rune bench run` SHALL execute QA suites under the protocol in
+`rune bench run` MUST execute QA suites under the protocol in
 runedeck/bench `docs/skatebench-compat.md`: binary substring scoring with
 negatives overriding positives, N runs per (test, model) at the registry
 temperature, per-run cache entries written immediately on success, errors never
@@ -23,7 +23,7 @@ recomputing correctness.
 
 ### Requirement: Output format parity
 
-Results, markdown, and summary outputs SHALL match the bun harness byte-for-byte
+Results, markdown, and summary outputs MUST match the bun harness byte-for-byte
 on identical inputs (modulo timestamps), including key order, 2-space JSON
 indentation, absent-versus-null optional fields, and summary ranking sort.
 
@@ -36,7 +36,7 @@ indentation, absent-versus-null optional fields, and summary ranking sort.
 
 ### Requirement: Suite tiers
 
-Suites SHALL be discovered from the bench workspace in three tiers: committed
+Suites MUST be discovered from the bench workspace in three tiers: committed
 `suites/`, local `suites/user/`, and held-out `suites/private/`. The private
 tier resolves via autodetection in the workspace or the `bench.private_root`
 config, and its content is only ever read in place.
@@ -49,7 +49,7 @@ config, and its content is only ever read in place.
 
 ### Requirement: Model registry
 
-`rune bench` SHALL read the existing `models.yaml` registry unchanged:
+`rune bench` MUST read the existing `models.yaml` registry unchanged:
 duplicate ids, temperature on CLI providers, and a missing base_url for
 openai-compatible are hard errors. `${ENV}` references expand only for enabled
 models and fail when unset.
@@ -61,9 +61,9 @@ models and fail when unset.
 
 ### Requirement: Workspace diagnostics
 
-`rune bench doctor` SHALL report bench workspace resolution, suite tier
+`rune bench doctor` MUST report bench workspace resolution, suite tier
 presence, registry validity, and per-provider readiness. `rune bench audit`
-SHALL verify that canonical answers self-score, negatives do not
+MUST verify that canonical answers self-score, negatives do not
 substring-collide with answers, and dangerously short tokens are flagged.
 
 #### Scenario: Missing workspace

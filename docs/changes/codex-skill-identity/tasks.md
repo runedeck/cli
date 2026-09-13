@@ -22,8 +22,10 @@ Later edits require their own validation and publication checks.
   and native evidence parsing.
 - [ ] 2.2 Complete the remaining T01–T18 assertion controls and native observations listed in the acceptance
   map.
-- [ ] 2.3 Freeze checker and fixture revisions outside future candidate write scopes and verify external runner
-  completeness.
+- [x] 2.3 Freeze checker and fixture revisions outside future candidate write scopes and verify external runner
+  completeness. The runner binds work order, attempt, and verifier identity, and the new controls cover verifier
+  rewrites, planted receipts, detached writers, timeouts after success text, interrupted runs, and competing
+  finalization.
 - [x] 2.4 Strengthen T04/T05 exact finding and affected-path assertions and pass the 18-test identity suite.
 - [x] 2.5 Execute the two new static alias controls and record their results separately from `7412b6a`.
 
@@ -58,12 +60,12 @@ Repository tests remain editable review artifacts. Their existence does not prov
 
 ## 5. Verify the existing migration path
 
-- [x] 5.1 Require complete ownership evidence before moving obsolete legacy bundles; refuse conflicts with
+- [x] 5.1 Require complete ownership evidence before moving obsolete legacy bundles. Refuse conflicts with
   `CSI005_MIGRATION_CONFLICT`.
 - [x] 5.2 Preserve local edits, foreign destinations, untracked content, and retained legacy copies.
 - [x] 5.3 Add repeat-installation, migration recovery, and competing-writer controls through the existing writer.
 - [x] 5.4 Verify T14 public retry and T15 two-install coexistence through the focused 54-test deployment suite.
-- [x] 5.5 Strengthen T09–T12 affected-path, edited-entrypoint, and retained-duplicate controls; pass the 12 migration
+- [x] 5.5 Strengthen T09–T12 affected-path, edited-entrypoint, and retained-duplicate controls. Pass the 12 migration
   and 18 identity tests.
 
 ## 6. Verify integration and native discovery
@@ -72,11 +74,11 @@ Repository tests remain editable review artifacts. Their existence does not prov
   publication gate for `7412b6a`.
 - [x] 6.2 Pass the Linux/macOS matrix and T18 case-insensitive filesystem probe at `7412b6a` in
   [Skill readiness run 34571451799](https://github.com/runedeck/cli/actions/runs/34571451799).
-- [ ] 6.3 Complete N01/N02 invocation and companion-access evidence and resolve observed same-name user-root ambiguity.
+- [ ] 6.3 Complete N01/N02 invocation and companion-access evidence and resolve observed same-name user-root ambiguity. The 2026-09-13 disposable probe reached explicit invocation. The companion read is blocked by the outer sandbox and needs an unsandboxed terminal.
 - [x] 6.4 Record N03: the native catalog retains both same-name canaries, and static inspection reports
   `CSI001_DUPLICATE_NAME`.
 - [x] 6.5 Resolve material findings from independent review of the expanded candidate.
-- [ ] 6.6 Complete T18's native duplicate-through-alias rejection evidence; the observed alias emitted no duplicate.
+- [x] 6.6 Record T18's alias case: the native catalog lists a directory alias once at its real path, and static readiness rejects the alias as a duplicate. A native duplicate through an alias is not observable on Codex Desktop 0.153.4.
 - [ ] 6.7 Run the revised six-target workflow and standalone macOS filesystem probe at their next published head.
 - [x] 6.8 Record the bounded directory-alias catalog observation without inferring internal deduplication or invocation.
 - [ ] 6.9 Pass the immutable publication gate for the follow-up assertions, alias controls, and workflow changes.

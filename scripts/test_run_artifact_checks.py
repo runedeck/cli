@@ -70,6 +70,8 @@ class ArtifactCheckTests(unittest.TestCase):
             snapshot_sha256=RUNNER.file_digest(self.snapshot)
             if self.snapshot.exists()
             else "0" * 64,
+            work_order=getattr(self, "work_order", None),
+            attempt=getattr(self, "attempt", None),
         )
 
     def freeze(self):
@@ -374,6 +376,166 @@ class ArtifactCheckTests(unittest.TestCase):
                 )
         with self.assertRaises(ValueError):
             RUNNER.assess(check, b"not json", 0, self.root)
+
+
+    # --- Verifier ownership: the worker cannot change what judges it. ---
+
+    def test_worker_rewriting_the_runner_or_manifest_fails_the_run(self):
+        for target, label in ((SCRIPT, "runner"), (None, "manifest")):
+            with self.subTest(target=label):
+                if label == "runner":
+                    # Append a comment: same behavior, different bytes.
+                    code = (
+                        f"from pathlib import Path; p=Path({str(SCRIPT)!r}); "
+                        "p.write_text(p.read_text() + '\\n# tampered\\n')"
+                    )
+                else:
+                    code = (
+                        f"from pathlib import Path; p=Path({str(self.manifest)!r}); "
+                        "p.write_text(p.read_text() + ' ')"
+                    )
+                self.command(code)
+                self.freeze()
+                original = SCRIPT.read_bytes()
+                try:
+                    receipt = self.run_checks(1)
+                finally:
+                    SCRIPT.write_bytes(original)
+                self.assertIn("pin does not match", receipt["error"])
+                self.assertFalse(receipt["checks"][0]["accepted"])
+                self.snapshot.unlink()
+                self.output.rename(self.directory / f"receipt-{label}")
+
+    def test_worker_cannot_add_or_drop_required_checks(self):
+        self.freeze()
+        options = self.options("run")
+        # The coordinator's pin names the frozen manifest. A candidate that
+        # adds or drops a check carries a new digest and is refused before
+        # anything runs.
+        self.contract["checks"].append(
+            dict(self.contract["checks"][0], id="extra", argv=[sys.executable, "-c", "print(1)"], adapter="command")
+        )
+        del self.contract["checks"][-1]["expected_tests"]
+        self.manifest.write_text(json.dumps(self.contract))
+        with self.assertRaisesRegex(RUNNER.CheckError, "pin does not match"):
+            RUNNER.execute(options)
+        self.assertFalse(self.output.exists())
+
+    def test_detached_writer_escapes_the_process_group_and_refreeze_exposes_it(self):
+        # A grandchild that starts its own session outlives the check. The
+        # runner cannot stop it; the receipt binds the tree at write time,
+        # and the coordinator's next freeze sees the changed input.
+        child = (
+            "import time; from pathlib import Path; time.sleep(0.4); "
+            "Path('tests/late.txt').write_text('late')"
+        )
+        self.command(
+            "import subprocess, sys; subprocess.Popen([sys.executable, '-c', "
+            + repr(child)
+            + "], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)"
+        )
+        self.freeze()
+        first = RUNNER.file_digest(self.snapshot)
+        receipt = self.run_checks()
+        self.assertTrue(receipt["accepted"], "the runner cannot see a future write")
+        time.sleep(0.6)
+        self.assertTrue((self.root / "tests/late.txt").exists())
+        self.snapshot.unlink()
+        self.manifest.write_text(json.dumps(self.contract))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(RUNNER.execute(self.options("freeze")), 0)
+        self.assertNotEqual(
+            RUNNER.file_digest(self.snapshot), first, "a re-freeze after acceptance must differ"
+        )
+
+    def test_planted_receipt_file_fails_the_run(self):
+        self.command(
+            f"from pathlib import Path; Path({str(self.output / 'receipt.json')!r}).write_text('{{\"accepted\": true}}')"
+        )
+        self.freeze()
+        with self.assertRaises(FileExistsError):
+            RUNNER.execute(self.options("run"))
+        planted = json.loads((self.output / "receipt.json").read_text())
+        self.assertEqual(planted, {"accepted": True}, "the planted file is never overwritten")
+        self.assertNotIn("checks", planted, "and it is not a runner receipt")
+
+    # --- Fresh evidence: one attempt, one candidate, one verifier. ---
+
+    def test_receipt_binds_work_order_attempt_and_verifier(self):
+        self.work_order, self.attempt = "wo-42", "attempt-1"
+        self.freeze()
+        receipt = self.run_checks()
+        self.assertEqual(receipt["work_order"], "wo-42")
+        self.assertEqual(receipt["attempt"], "attempt-1")
+        self.assertEqual(receipt["verifier"]["runner_sha256"], RUNNER.file_digest(SCRIPT))
+        self.assertEqual(receipt["verifier"]["python_sha256"], receipt["snapshot"]["python"]["sha256"])
+        self.assertEqual(receipt["snapshot_sha256"], RUNNER.file_digest(self.snapshot))
+        for bad in ("", "has space", "a" * 129):
+            with self.assertRaisesRegex(RUNNER.CheckError, "labels"):
+                RUNNER.attempt_label(bad)
+
+    def test_receipt_carries_runner_identity_time_and_a_fresh_nonce(self):
+        self.work_order, self.attempt = "wo-42", "attempt-1"
+        self.freeze()
+        first = self.run_checks()
+        self.output = self.directory / "receipt-second"
+        second = self.run_checks()
+        for receipt in (first, second):
+            self.assertRegex(receipt["receipt_id"], r"^[0-9a-f]{32}$")
+            self.assertRegex(receipt["started_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$")
+            self.assertLessEqual(receipt["started_at"], receipt["completed_at"])
+            self.assertGreaterEqual(receipt["duration_seconds"], 0)
+            self.assertEqual(receipt["runner_process"]["pid"], os.getpid())
+            self.assertTrue(receipt["runner_process"]["host"])
+        # Equal labels against one snapshot are still two receipts a
+        # coordinator can order and tell apart.
+        self.assertEqual((first["work_order"], first["attempt"]), (second["work_order"], second["attempt"]))
+        self.assertNotEqual(first["receipt_id"], second["receipt_id"])
+        self.assertLess(first["started_at"], second["started_at"])
+
+    def test_timeout_after_success_output_cannot_pass(self):
+        self.command(
+            "import sys, time; print('Ran 1 test in 0.001s'); print(); print('OK'); sys.stdout.flush(); time.sleep(2)"
+        )
+        self.contract["checks"][0].update(timeout_seconds=0.2)
+        self.freeze()
+        receipt = self.run_checks(1)
+        self.assertIn("timeout", receipt["error"])
+        self.assertFalse(receipt["checks"][0]["accepted"])
+        self.assertIn("OK", (self.output / "contract.log").read_text(), "old success text is retained but does not accept")
+
+    def test_interrupted_run_leaves_no_accepted_receipt(self):
+        self.command("import time; time.sleep(5)")
+        self.contract["checks"][0].update(timeout_seconds=10)
+        self.freeze()
+        options = self.options("run")
+        argv = [sys.executable, str(SCRIPT), "run"]
+        for key in ("root", "manifest", "runner_sha256", "manifest_sha256", "snapshot", "snapshot_sha256", "output"):
+            argv.extend(["--" + key.replace("_", "-"), getattr(options, key)])
+        process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        time.sleep(0.5)
+        os.killpg(process.pid, 9)
+        process.wait()
+        self.assertFalse((self.output / "receipt.json").exists(), "a killed runner writes no receipt")
+        # A retry must use a fresh attempt directory; the interrupted one is
+        # occupied and never reused.
+        with self.assertRaises(FileExistsError):
+            RUNNER.execute(self.options("run"))
+
+    def test_competing_finalization_admits_one_receipt(self):
+        self.freeze()
+        self.run_checks()
+        first = (self.output / "receipt.json").read_bytes()
+        with self.assertRaises(FileExistsError):
+            RUNNER.execute(self.options("run"))
+        self.assertEqual((self.output / "receipt.json").read_bytes(), first)
+        # A replaced verifier under the same attempt label is a different
+        # attempt: its receipt lands elsewhere and carries its own digests.
+        self.attempt = "attempt-1"
+        self.output = self.directory / "receipt-second"
+        second = self.run_checks()
+        self.assertEqual(second["attempt"], "attempt-1")
+        self.assertNotEqual(json.loads(first).get("attempt"), "attempt-1")
 
 
 if __name__ == "__main__":

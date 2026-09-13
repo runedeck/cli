@@ -2,7 +2,7 @@
 
 ### Requirement: Topic search
 
-`rune discover [QUERY]` SHALL list public repositories that carry the `runedeck-deck` topic,
+`rune discover [QUERY]` MUST list public repositories that carry the `runedeck-deck` topic,
 with the name, description, star count, and URL of each.
 
 #### Scenario: Community decks list
@@ -12,7 +12,7 @@ with the name, description, star count, and URL of each.
 
 ### Requirement: Bounded read-only search
 
-Discovery SHALL send one unauthenticated search request with a ten-second timeout and SHALL
+Discovery MUST send one unauthenticated search request with a ten-second timeout and MUST
 write nothing.
 
 #### Scenario: Feed stays silent
@@ -22,7 +22,7 @@ write nothing.
 
 ### Requirement: Staging hint
 
-Each listed deck SHALL carry the exact staging command shape for that repository.
+Each listed deck MUST carry the exact staging command shape for that repository.
 
 #### Scenario: Row names the next command
 
@@ -31,7 +31,7 @@ Each listed deck SHALL carry the exact staging command shape for that repository
 
 ### Requirement: Machine output
 
-`rune discover --json` SHALL emit the same rows as one JSON document.
+`rune discover --json` MUST emit the same rows as one JSON document.
 
 #### Scenario: JSON mirrors the table
 

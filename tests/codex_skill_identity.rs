@@ -829,3 +829,280 @@ fn second_install_is_identity_stable() {
     fixture.install();
     assert_eq!(before, snapshot(fixture.target.path()));
 }
+
+// --- Doctor stays read-only; repair is the write path. Both keep #59 semantics. ---
+
+fn doctor_json(fixture: &Fixture, extra: &[&str]) -> (bool, serde_json::Value) {
+    let assert = Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "doctor",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+            "--json",
+        ])
+        .args(extra)
+        .assert();
+    let output = assert.get_output().clone();
+    (
+        output.status.success(),
+        serde_json::from_slice(&output.stdout).unwrap(),
+    )
+}
+
+fn walk_tree(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+    for entry in fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_tree(root, &path, files);
+        } else {
+            files.insert(
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                fs::read(&path).unwrap(),
+            );
+        }
+    }
+}
+
+fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    walk_tree(root, root, &mut files);
+    files
+}
+
+#[test]
+fn doctor_rejects_the_removed_repair_flag() {
+    let fixture = Fixture::new();
+    fixture.install();
+    Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "doctor",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+            "--repair",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn doctor_is_read_only_and_repair_restores_after_a_real_deployment() {
+    let fixture = Fixture::new();
+    fixture.install();
+    // A real #59 deployment: skills under .agents with a source snapshot.
+    let snapshot = fixture
+        .target
+        .path()
+        .join(".agents/.provenance/source-snapshot.json");
+    assert!(snapshot.is_file(), "install writes the source snapshot");
+
+    // Break the deployment: delete a managed file and add an orphan.
+    let removed = fixture.skill().join("scripts/helper.py");
+    fs::remove_file(&removed).unwrap();
+    let orphan = fixture.target.path().join(".agents/rules/Orphan.md");
+    write(&orphan, b"orphan\n");
+    let before = tree_bytes(fixture.target.path());
+
+    // Doctor with --verify fails, names repair, and changes nothing.
+    let (ok, report) = doctor_json(&fixture, &["--verify"]);
+    assert!(!ok);
+    let statuses: Vec<_> = report["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|target| target["findings"].as_array().unwrap())
+        .map(|finding| finding["status"].as_str().unwrap().to_string())
+        .collect();
+    assert!(statuses.contains(&"missing".to_string()), "{statuses:?}");
+    assert!(statuses.contains(&"orphan".to_string()), "{statuses:?}");
+    assert!(
+        report["repair_command"]
+            .as_str()
+            .unwrap()
+            .starts_with("rune repair --target "),
+        "{report}"
+    );
+    assert!(
+        report.get("repairs").is_none(),
+        "doctor carries no repair log"
+    );
+    assert_eq!(
+        tree_bytes(fixture.target.path()),
+        before,
+        "doctor wrote nothing"
+    );
+
+    // Skill readiness still reports the incomplete bundle and exits nonzero.
+    let (ok, report) = doctor_json(&fixture, &["--skill-readiness"]);
+    assert!(!ok);
+    let readiness = &report["skill_readiness"];
+    assert_eq!(readiness["accepted"], false);
+    assert!(
+        readiness["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| {
+                finding["code"]
+                    .as_str()
+                    .is_some_and(|code| code.starts_with("CSI"))
+            }),
+        "{readiness}"
+    );
+    assert_eq!(
+        tree_bytes(fixture.target.path()),
+        before,
+        "readiness wrote nothing"
+    );
+
+    // Dry run plans both writes and changes nothing.
+    Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "repair",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+            "--dry-run",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicates::str::contains("would restore"))
+        .stdout(predicates::str::contains("would quarantine"));
+    assert_eq!(
+        tree_bytes(fixture.target.path()),
+        before,
+        "dry run wrote nothing"
+    );
+
+    // Repair restores from the digest-matching build and quarantines the orphan.
+    Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "repair",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("restored"))
+        .stdout(predicates::str::contains("quarantined"));
+    assert!(removed.is_file());
+    assert!(!orphan.exists());
+    let trash = fixture.target.path().join(".agents/.trash");
+    assert!(trash.is_dir(), "orphan is quarantined, never deleted");
+
+    let (ok, report) = doctor_json(&fixture, &["--verify"]);
+    assert!(ok, "{report}");
+    assert!(report.get("repair_command").is_none());
+}
+
+#[test]
+fn repair_never_overwrites_a_user_edit() {
+    let fixture = Fixture::new();
+    fixture.install();
+    let edited = fixture.skill().join("Workflow.md");
+    write(&edited, b"user edit\n");
+
+    Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "repair",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(&edited).unwrap(), b"user edit\n");
+    let (_, report) = doctor_json(&fixture, &[]);
+    assert!(
+        report["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|target| target["findings"].as_array().unwrap())
+            .any(|finding| finding["status"] == "modified")
+    );
+}
+
+#[test]
+fn adopt_doctor_and_provenance_accept_a_real_deployment_snapshot() {
+    let fixture = Fixture::new();
+    fixture.install();
+    let root = fixture.target.path();
+    let snapshot = root.join(".agents/.provenance/source-snapshot.json");
+    assert!(snapshot.is_file(), "install writes the source snapshot");
+
+    // The deployed-file scan resolves sidecars from deployed files and never
+    // reads the snapshot; a real #59 target verifies clean.
+    Command::cargo_bin("rune")
+        .unwrap()
+        .args([
+            "provenance",
+            "--target",
+            root.join(".agents").to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A developer checkout keeps deployed trees inside the module root, so
+    // the adopt scanner walks `.agents/.provenance/` and meets the snapshot.
+    // It must pass through the deploy validator, not the sidecar parser.
+    write(&root.join("module.yaml"), b"name: deployed\n");
+    Command::cargo_bin("rune")
+        .unwrap()
+        .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let bytes = fs::read(&snapshot).unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    record["source"]["digest"] = serde_json::Value::String("abc".into());
+    fs::write(&snapshot, serde_json::to_vec(&record).unwrap()).unwrap();
+    Command::cargo_bin("rune")
+        .unwrap()
+        .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("invalid source snapshot"));
+
+    fs::write(&snapshot, b"{torn").unwrap();
+    Command::cargo_bin("rune")
+        .unwrap()
+        .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("invalid source snapshot"));
+}
+
+#[test]
+fn skill_readiness_runs_before_the_first_deployment() {
+    let fixture = Fixture::new();
+    // No install: the target has no .manifest. Readiness must still report,
+    // and the missing manifest is not a fatal doctor error.
+    let assert = Command::cargo_bin("rune")
+        .unwrap()
+        .current_dir(fixture.source.path())
+        .args([
+            "doctor",
+            "--target",
+            fixture.target.path().to_str().unwrap(),
+            "--skill-readiness",
+            "--json",
+        ])
+        .assert()
+        .failure();
+    let output = assert.get_output().clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("manifest_missing"), "{stderr}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["targets"], serde_json::json!([]));
+    assert_eq!(report["skill_readiness"]["accepted"], false);
+    assert!(report.get("repair_command").is_none());
+}

@@ -4,6 +4,9 @@ Use this loop for a reviewed change to code, skills, rules, or agents.
 It combines scoped workers, independent review, existing validators, and receipts tied to source bytes.
 The [runner](../scripts/run-artifact-checks.py) uses Python's standard library on Linux and macOS.
 It runs reviewed local commands. It is not a sandbox or a model scheduler.
+The worker cannot change what judges it: the runner, manifest, and snapshot pins come from the coordinator, a candidate
+that edits any of them fails the pin check, and a planted receipt is never overwritten. A detached grandchild that
+outlives a check is outside the runner's process group. The next freeze exposes what it wrote.
 
 ## Freeze the work order
 
@@ -41,13 +44,23 @@ The timeout cannot exceed 3600 seconds. The output limit cannot exceed 16 MiB.
 | `unittest` | Positive exact `expected_tests` | One successful summary, the expected count, and no skipped tests |
 | `cargo` | Positive exact `expected_tests` | Successful test summaries, the expected total, and no failed, ignored, or measured cases |
 | `layer-report` | Relative `report_root` | Versioned source-layer JSON, the expected root, nonzero checked paths, no findings, and `valid: true` |
-| `command` | None | Exit zero only; explicitly records no test count |
+| `command` | None | Exit zero only. Explicitly records no test count |
 
 Cargo filters must be visible in reviewed arguments. The exact count defines the required selected set.
 Zero-test doc-test groups do not fail when the reviewed command executes the expected nonzero total.
 Malformed or unsupported counted results fail. Never change a test check to `command` to bypass its result parser.
 Use `command` for explicit lint commands whose exit contract is independently verified.
 It cannot detect silent skips inside a general shell script or `make` target.
+
+Pass `--work-order <label>` and `--attempt <label>` to `run`. The receipt records both beside the verifier identity
+(runner and interpreter digests), so one receipt completes one attempt of one work order against one snapshot and
+nothing else. Use a fresh attempt label for every retry. A killed run writes no receipt, and its output directory stays
+occupied, so a retry cannot land in it.
+
+Every receipt also carries a runner-generated `receipt_id`, `started_at` and `completed_at` in UTC, `duration_seconds`,
+and the `runner_process` host and PID. Two receipts with equal labels stay distinct and ordered, so a coordinator can
+tell a duplicate dispatch from a retry and a replaced agent from a rerun. The receipt still does not authenticate the
+process that wrote it. That claim needs the isolation named below.
 
 Commands receive only `PATH`, `HOME`, `TMPDIR`, `CARGO_HOME`, and `RUSTUP_HOME` from the calling environment.
 The runner fixes locale, disables color, and disables Python bytecode writes.

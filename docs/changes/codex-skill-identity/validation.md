@@ -42,7 +42,7 @@ Its 1519-test total comes from all 34 result summaries, including the empty resu
 The retained immutable publication log is `runedeck-final-cli-push.log`, with SHA-256:
 `06ca48608afff69850e66be7d71d54840250ee42c78d55635724c85dda88b6fd`.
 It identifies `7412b6a`, the isolated checkout, passing applicable gates, and the published bookmark.
-Shellcheck and TypeScript report no applicable files; required test suites are not skipped.
+Shellcheck and TypeScript report no applicable files. Required test suites are not skipped.
 The coordinator retains both logs outside tracked source.
 
 ## Follow-up assertion checks
@@ -56,7 +56,7 @@ Independent review completed, and the focused migration and identity runs passed
 
 | Focused result | Observed count | Retained log SHA-256 |
 | --- | --- | --- |
-| `runedeck-followup-migration-tests.log` | 12 passed, zero failed or ignored; 716 unrelated cases filtered out | `558cc17a0921e6d884cbfb46c6781ecd46760468946978dae488437cf6f01a81` |
+| `runedeck-followup-migration-tests.log` | 12 passed, zero failed or ignored, and 716 unrelated cases filtered out | `558cc17a0921e6d884cbfb46c6781ecd46760468946978dae488437cf6f01a81` |
 | `runedeck-followup-identity-tests.log` | 18 passed, zero failed, ignored, or filtered out | `6b1f9b12a784e6a948cf455df8751f2c3e1bb26f2b55cab0f6a68de7c3a37040` |
 | `runedeck-followup-alias-tests.log` | Two passed, zero failed, ignored, or filtered out | `11e1618d2089ac8666ae4bdcd9fe7dba0e791db4d3bcb180b22e8f43b72555b4` |
 
@@ -69,7 +69,7 @@ The tested identity integration file has SHA-256
 The new `codex_skill_aliases` target passed both additional controls.
 Its fixture file has SHA-256 `88ce1c6b44c2bb1413aa1214566dfe10c8bfc421da531f112e33136fe1e0a273`.
 They require exact duplicate identities and logical paths for sibling directory aliases and distinct physical bundles.
-This conservative static behavior follows the existing design; it does not claim that the harness loads both alias paths.
+This conservative static behavior follows the existing design. It does not claim that the harness loads both alias paths.
 The current workflow includes this sixth target and a standalone macOS filesystem probe.
 Neither change inherits the five-target `7412b6a` CI result.
 The next immutable publication and revised workflow results remain pending.
@@ -93,7 +93,7 @@ These earlier results describe implementation checkpoints. The completed head-bo
 | `rtk proxy cargo test --bin rune cli::deploy::tests:: --all-features` | 54 passed |
 | `rtk proxy cargo test --all-features --test codex_skill_portability --test skill_layers` | 15 passed: two rendered and 13 source-layer tests |
 
-Each command exited zero. These groups overlap the broader suites; do not add their counts to full-suite totals.
+Each command exited zero. These groups overlap the broader suites. Do not add their counts to full-suite totals.
 The metadata target executes a harmless Python sibling import with a five-second limit.
 It also checks deployed provider exclusion, absent optional metadata, and whole nested-map replacement.
 The native parser controls include failed startup and malformed, empty, stale, and incomplete evidence.
@@ -174,7 +174,7 @@ Further changes require a fresh signature and publication gate.
 
 The expanded eight-requirement contract passes OpenSpec strict validation.
 The draft ADR and both corrected canonical ADRs pass the existing mdschema.
-The scoped offline link check reports 39 valid references and no errors; seven external references are excluded.
+The scoped offline link check reports 39 valid references and no errors. Seven external references are excluded.
 Rumdl passes all eleven touched Markdown files, including repository guidance and both canonical ADRs.
 No additional mdschema is configured for the other documents in this change directory.
 
@@ -205,7 +205,7 @@ The disposable fixture included `.agents/skills/csi-alias-link` pointing to `csi
 The catalog contained one enabled `csi-alias-canary` at `.agents/skills/csi-alias-original/SKILL.md`.
 The alias emitted no second entry. This does not distinguish an ignored alias from internal deduplication.
 The catalog reported no errors, and the fixture inventory remained unchanged.
-The client sent only `initialize`, `initialized`, and `skills/list`; it did not start a model turn.
+The client sent only `initialize`, `initialized`, and `skills/list`. It did not start a model turn.
 The raw record also contains a server status notification.
 
 The adapter SHA-256 matches the adapter at signed revision `7412b6a`:
@@ -221,12 +221,54 @@ The observation records catalog behavior only. Duplicate rejection, companion ac
 
 ### Remaining native acceptance
 
-N01 and N02 remain incomplete.
+N01 and N02 remain incomplete, blocked on the outer sandbox as recorded below.
 Earlier normal native startup failed with `failed to initialize sqlite state runtime` and `Operation not permitted`.
 The supported app-server proxy could not find its `app-server-control.sock` socket at that checkpoint.
 The later catalog-only observations below cover every selected path but retain same-name enabled user copies.
 Neither context has a representative canary invocation or companion-read record.
 The alias observation above does not establish T18's duplicate-through-alias rejection case.
+
+### Disposable N01/N02 probes on the integration candidate
+
+Three probes ran on 2026-09-13 against a disposable fixture: one canary skill installed by `rune install --provider codex`
+into a temporary target, an isolated `HOME`, and an isolated `CODEX_HOME` copy of the owner's Codex configuration.
+The binary was Codex Desktop 0.153.4 on macOS 26.6.2, arm64, reported as
+`runedeck-skill-discovery/0.153.4 (Mac OS 26.6.2; arm64)`.
+
+- Static inventory with the native catalog: `static_valid: true`, `source_verification: verified`, no findings.
+  The seven catalog entries were the canary plus six bundled `.system` skills under the isolated Codex home.
+- Direct `openai` route: the thread started (`fresh_session: passed`, `complete_catalog: passed`) and the turn
+  produced no item within the 300-second limit. Recorded as `native process exceeded its time limit`, exit code -15.
+- `cliproxyapi/gpt-6-astra` route: the turn completed, the model invoked the canary by name
+  (`explicit_invocation: passed`), and reported the read command as failed with
+  `sandbox-exec: sandbox_apply: Operation not permitted`. No `commandExecution` item appeared in the transcript, so
+  `companion_access` stays `unverified` and the adapter reports
+  `native turn supplied no exact successful companion read`.
+- N03 on the same fixture: a same-name copy under `.codex/skills` produced two enabled catalog entries, and doctor
+  reported `CSI001_DUPLICATE_NAME` with `static_valid: false`.
+
+The blocker is the outer sandbox: the Codex app-server's own read-only sandbox cannot apply a Seatbelt profile
+from inside the Claude Code sandbox, so the read never executes. N01 and N02 need the probe run from an unsandboxed
+terminal. The disposable fixture, the probe script, and the isolated homes are ready. No real user root was touched.
+
+The acceptance step of that run also carried `CSI006_INVALID_EVIDENCE` on the binding, separate from the missing read.
+The inventory was built with the catalog-only observation, and the acceptance doctor was given the adapter's own
+catalog copy, whose recorded raw-transcript digest differs, so the inventory digests disagreed. The acceptance doctor
+MUST receive the same `--skill-catalog` file the inventory was built from. The tracked driver
+`scripts/probe-codex-native-acceptance` does so. A successful companion read on the rerun is judged against that
+binding only.
+The retained artifacts are under `/tmp/claude-501/native-acceptance-4/` on the owner's machine and are not tracked.
+
+### T18 alias probe on the integration candidate
+
+A sibling symlink `identity-alias -> IdentityCanary` inside the deployed `.agents/skills` root was probed
+catalog-only on 2026-09-13 with the same isolated homes and Codex Desktop 0.153.4.
+The native catalog listed the canary once, at its real path, and no entry for the alias.
+Static readiness with that catalog reported `CSI001_DUPLICATE_NAME` naming both the real path and the alias path,
+with `static_valid: false`.
+So the alias case rejects statically. Native discovery does not surface a duplicate through a directory alias, so
+"duplicate native entry through an alias" cannot be observed on this harness version. The retained artifacts are
+under `/tmp/claude-501/native-alias/` and are not tracked.
 
 ### Selected Workshop and Deck catalogs
 

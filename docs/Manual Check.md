@@ -81,7 +81,7 @@ rune add --cast development
     #   → ok N · modified 0 · missing 0 · orphan 0
     echo tamper >> .claude/rules/Deslop.md && rune doctor --target .
     #   → modified 1, and: "left untouched; use `rune install --force` to replace it"
-    rune doctor --target . --repair        # restores missing, quarantines orphans; leaves your edit
+    rune repair --target .                 # restores missing, quarantines orphans; leaves your edit
     ```
 
 13. **Spec-driven lifecycle** (the openspec adoption — lives under `docs/`, no `openspec/` folder).

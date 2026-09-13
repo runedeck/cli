@@ -2,10 +2,13 @@
 """Run reviewed checks against frozen inputs and retain external receipts."""
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
+import platform
 import re
+import secrets
 import selectors
 import shutil
 import signal
@@ -243,6 +246,22 @@ def state(root, manifest, options):
     }
 
 
+def utc_stamp(seconds):
+    return (
+        datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def attempt_label(value):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value):
+        raise CheckError("Work order and attempt labels use letters, digits, and ._:- only.")
+    return value
+
+
 def external_path(value, root):
     path = Path(value).absolute()
     if path.is_symlink() or inside(path.resolve(), root):
@@ -402,11 +421,30 @@ def execute(options):
     frozen = read_json(pinned(snapshot_path, options.snapshot_sha256))
     output.mkdir(exist_ok=False)
     descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    started = time.time()
     receipt = {
         "version": VERSION,
         "snapshot_sha256": options.snapshot_sha256,
         "runner_sha256": options.runner_sha256,
         "manifest_sha256": options.manifest_sha256,
+        # One attempt of one work order against one candidate digest. A
+        # receipt from another attempt, or for another snapshot, never
+        # completes this one. The verifier is the runner and interpreter
+        # bytes that produced it. The receipt id is a runner-generated
+        # nonce, so two receipts with equal labels never collide, and the
+        # timestamps and process identity let a coordinator order them and
+        # tell a duplicate dispatch from a retry.
+        "work_order": attempt_label(options.work_order),
+        "attempt": attempt_label(options.attempt),
+        "receipt_id": secrets.token_hex(16),
+        "started_at": utc_stamp(started),
+        "completed_at": None,
+        "duration_seconds": None,
+        "runner_process": {"host": platform.node(), "pid": os.getpid()},
+        "verifier": {
+            "runner_sha256": options.runner_sha256,
+            "python_sha256": frozen["python"]["sha256"],
+        },
         "snapshot": frozen,
         "required_check_ids": [check["id"] for check in manifest["checks"]],
         "checks": [],
@@ -447,6 +485,9 @@ def execute(options):
     except (OSError, ValueError, RuntimeError) as error:
         receipt["error"] = str(error)
     finally:
+        finished = time.time()
+        receipt["completed_at"] = utc_stamp(finished)
+        receipt["duration_seconds"] = round(finished - started, 3)
         try:
             write_receipt_file(
                 output, descriptor, "receipt.json", encoded(receipt) + b"\n"
@@ -471,6 +512,8 @@ def main():
         if action == "run":
             command.add_argument("--snapshot", required=True)
             command.add_argument("--snapshot-sha256", required=True)
+            command.add_argument("--work-order", help="Coordinator work-order label this attempt serves")
+            command.add_argument("--attempt", help="Unique label for this attempt; a fresh one per retry")
     try:
         return execute(parser.parse_args())
     except (OSError, ValueError, RuntimeError) as error:

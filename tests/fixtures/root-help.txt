@@ -22,7 +22,8 @@
   Deck:
     discover    [QUERY]                                               Find community decks by GitHub topic
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
-    doctor      [--target <DIR>] [--verify] [--repair]                Check and repair deployment integrity
+    doctor      [--target <DIR>] [--verify]                           Check deployment integrity
+    repair      [--root <DIR>] [--target <DIR>] [--dry-run]           Repair doctor findings: trash orphans, rename subjects, restore files
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
     graph       export [--source <DIR>]                               Export the artifact graph as Turtle for SHACL validation
     drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift
@@ -32,6 +33,7 @@
     sign        [--amend | --tag <TAG> [COMMIT] | --verify [REF]]     Seal the branch, sign tags, verify against KEYS
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     adopt       start|...|finalize|abandon|reseal|doctor              Adopt an upstream rune through block-by-block review
+    move        <FROM> <TO> [--root <DIR>]                            Move a reviewed artifact with its provenance
     bench       run|report|list|dashboard|doctor|audit                Run and report SkateBench-compatible benchmark suites
     provider    [enable|disable <name>]                               List or toggle deploy providers
     todo        [add|do|ls|obsidian|import]                           Repo tasks in TODO.txt with an Obsidian transform

@@ -1,6 +1,6 @@
 # Worker instructions
 
-Read the [requirements](specs/codex-skill-identity/spec.md), [ADR](adr.md), and [acceptance contract](acceptance.md).
+Read the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/skill-readiness/spec.md), [layers](specs/skill-layers/spec.md)), the [ADR](adr.md), and the [acceptance contract](acceptance.md).
 The source base is `a9176a18009c4d1e3e979431f0ace761874f76e8`.
 The user authorized implementation and two separate PRs on 2026-09-10.
 
@@ -30,7 +30,7 @@ Permit empty metadata-only append/prepend bodies when the resolved entrypoint re
 
 Hash every bundle path, entry type, executable bit, file body, and symlink target.
 Exclude generated provenance from the content digest and validate its claims separately.
-Use the reserved `.provenance` namespace for build sidecars; preserve adjacent authored YAML as content.
+Use the reserved `.provenance` namespace for build sidecars. Preserve adjacent authored YAML as content.
 Reject escaping links, missing companions, cycles, and case collisions.
 
 Bind source selection, authored roots, effective configuration, builder bytes, and model overrides through the source

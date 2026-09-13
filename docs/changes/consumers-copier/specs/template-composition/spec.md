@@ -2,7 +2,7 @@
 
 ### Requirement: Consumer Reference Recovery
 
-The cli SHALL record in `answers.yaml` a skeleton commit that resolves on the skeleton repository, and each Copier update SHALL move from that commit to the new one.
+The cli MUST record in `answers.yaml` a skeleton commit that resolves on the skeleton repository, and each Copier update MUST move from that commit to the new one.
 
 #### Scenario: Phantom pin receives a resolvable commit
 
@@ -11,7 +11,7 @@ The cli SHALL record in `answers.yaml` a skeleton commit that resolves on the sk
 
 ### Requirement: Consumer Additions
 
-The cli SHALL carry its build targets, test steps, and lint excludes as additions on top of the template's files, and a Copier update SHALL preserve them.
+The cli MUST carry its build targets, test steps, and lint excludes as additions on top of the template's files, and a Copier update MUST preserve them.
 
 #### Scenario: Copier update preserves declared additions
 

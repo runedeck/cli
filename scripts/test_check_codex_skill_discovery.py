@@ -108,6 +108,34 @@ class DiscoveryControls(unittest.TestCase):
                 ADAPTER.validate_inventory(invalid, "/tmp/discovery", False)
             ADAPTER.validate_inventory(invalid, "/tmp/discovery", True)
 
+    def test_verdict_fails_on_missing_evidence_failed_steps_or_unaccepted_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(ADAPTER.verdict(out), 1, "an empty run directory is not accepted")
+            (out / "probe").mkdir()
+            exits = "doctor-static-exit=0\ncatalog-exit=0\ndoctor-catalog-exit=0\nprobe-exit=0\nacceptance-exit=0\n"
+            (out / "exits.txt").write_text(exits)
+            accepted = {"skill_readiness": {"static_valid": True, "source_verification": "verified", "native_discovery": "verified", "accepted": True}}
+            (out / "acceptance.out").write_text(json.dumps(accepted))
+            with redirect_stdout(StringIO()):
+                self.assertEqual(ADAPTER.verdict(out), 1, "no evidence record is a failure even with a passing acceptance file")
+            (out / "probe" / "evidence.json").write_text("{}")
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                self.assertEqual(ADAPTER.verdict(out), 0)
+            self.assertTrue(json.loads(buffer.getvalue())["accepted"])
+            (out / "exits.txt").write_text(exits.replace("probe-exit=0", "probe-exit=1"))
+            with redirect_stdout(StringIO()):
+                self.assertEqual(ADAPTER.verdict(out), 1, "a failed probe step is a failure")
+            (out / "exits.txt").write_text(exits)
+            unverified = {"skill_readiness": {**accepted["skill_readiness"], "native_discovery": "unverified", "accepted": False}}
+            (out / "acceptance.out").write_text(json.dumps(unverified))
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                self.assertEqual(ADAPTER.verdict(out), 1, "an unverified record is a failure")
+            self.assertTrue(any("native_discovery" in p for p in json.loads(buffer.getvalue())["problems"]))
+
     def test_missing_executable_records_failure_without_skipped_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

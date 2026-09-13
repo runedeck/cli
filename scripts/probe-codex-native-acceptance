@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# N01/N02-style native acceptance on a disposable fixture (CSI-06).
+#
+# Usage: scripts/probe-codex-native-acceptance --rune <bin> --codex <bin> \
+#            --codex-home <dir> --out <new-dir>
+#
+# Builds one canary skill, installs it for Codex into a temporary target
+# under an isolated HOME, observes the native catalog, freezes the static
+# inventory against that catalog, runs the explicit-invocation probe, and
+# judges the evidence with the same catalog file the inventory was built
+# from. The adapter's own catalog copy carries a different raw-transcript
+# digest and must never feed the acceptance step. N03 then adds a same-name
+# copy through a second root and proves uniqueness fails.
+#
+# Nothing here touches a real user root. The isolated Codex home is the
+# caller's responsibility and must not contain credentials it does not want
+# the harness to use. Run from a terminal outside any outer sandbox: the
+# Codex app-server applies its own Seatbelt profile, which a nested sandbox
+# refuses.
+set -uo pipefail
+
+rune="" codex="" codex_home="" out=""
+while [ $# -gt 0 ]; do
+    case $1 in
+        --rune) rune=$2; shift 2 ;;
+        --codex) codex=$2; shift 2 ;;
+        --codex-home) codex_home=$2; shift 2 ;;
+        --out) out=$2; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+for required in rune codex codex_home out; do
+    if [ -z "${!required}" ]; then
+        echo "usage: probe-codex-native-acceptance --rune <bin> --codex <bin> --codex-home <dir> --out <new-dir>" >&2
+        exit 2
+    fi
+done
+if [ -e "$out" ]; then
+    echo "output directory exists: $out" >&2
+    exit 2
+fi
+here=$(cd "$(dirname "$0")" && pwd)
+adapter="$here/check-codex-skill-discovery.py"
+mkdir -p "$out"
+
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/native-fixture.XXXXXX")
+source_root="$fixture/source"
+target="$fixture/target"
+home="$fixture/home"
+mkdir -p "$source_root/skills/IdentityCanary/references" "$target" "$home"
+export HOME="$home" CODEX_HOME="$codex_home"
+printf 'name: identity-fixture\nversion: 0.1.0\ndescription: fixture\nevents: []\n' > "$source_root/module.yaml"
+: > "$source_root/defaults.yaml"
+cat > "$source_root/skills/IdentityCanary/SKILL.md" <<'MD'
+---
+name: IdentityCanary
+description: Read the harmless identity canary companion when asked to prove skill access.
+license: MIT
+---
+
+# IdentityCanary
+
+## Instructions
+
+Read [the detail companion](references/detail.md) and stop.
+MD
+printf 'RUNE_IDENTITY_CANARY_7b91\n' > "$source_root/skills/IdentityCanary/references/detail.md"
+
+cd "$source_root" || exit 1
+if ! "$rune" install --provider codex --source "$source_root" --target "$target" > "$out/install.log" 2>&1; then
+    echo "install failed"; cat "$out/install.log"; exit 1
+fi
+git -C "$target" init -q . 2>/dev/null
+skill="$target/.agents/skills/IdentityCanary/SKILL.md"
+
+run() {
+    # run <label> <command...>: capture stdout, stderr, and the exact exit
+    # status of every step beside its output.
+    local label=$1; shift
+    "$@" > "$out/$label.out" 2> "$out/$label.err"
+    echo "$label-exit=$?" >> "$out/exits.txt"
+}
+
+run doctor-static "$rune" doctor --target "$target" --skill-readiness --json
+run catalog python3 "$adapter" --codex "$codex" --codex-home "$codex_home" --cwd "$target" --output-dir "$out/catalog" --catalog-only --timeout 120
+catalog="$out/catalog/catalog.json"
+# The inventory the evidence binds to is built against the native catalog.
+run doctor-catalog "$rune" doctor --target "$target" --skill-readiness --skill-catalog "$catalog" --json
+run probe python3 "$adapter" --codex "$codex" --codex-home "$codex_home" --cwd "$target" --output-dir "$out/probe" --inventory "$out/doctor-catalog.out" --catalog "$catalog" --skill-path "$skill" --companion references/detail.md --timeout 300
+if [ -f "$out/probe/evidence.json" ]; then
+    # Same catalog file as the inventory: the adapter's probe/catalog.json is
+    # a different record with its own raw-transcript digest.
+    run acceptance "$rune" doctor --target "$target" --skill-readiness --skill-catalog "$catalog" --skill-evidence "$out/probe/evidence.json" --skill-transcript "$out/probe/normalized.jsonl" --skill-raw-transcript "$out/probe/raw.jsonl" --json
+fi
+
+# N03: a same-name copy through a second applicable root breaks uniqueness.
+mkdir -p "$target/.codex/skills"
+cp -R "$target/.agents/skills/IdentityCanary" "$target/.codex/skills/IdentityCanary"
+run duplicate python3 "$adapter" --codex "$codex" --codex-home "$codex_home" --cwd "$target" --output-dir "$out/duplicate" --catalog-only --timeout 120
+run duplicate-readiness "$rune" doctor --target "$target" --skill-readiness --skill-catalog "$out/duplicate/catalog.json" --json
+
+echo "fixture=$fixture" > "$out/DONE"
+cat "$out/exits.txt"
+# The verdict is the exit of this driver: missing evidence, a failed step, or
+# an unaccepted record is a failure, never a silent "unverified".
+python3 "$adapter" --verdict "$out"

@@ -2,7 +2,7 @@
 
 ### Requirement: Adoption opens a review session
 
-`rune adopt start <source>` SHALL perform the import mechanics (pinned fetch or local copy, adopt/v1 provenance sidecars), segment every adopted markdown file into review blocks, and write an external temporary session in which every block's verdict is `pending`. The adopt sidecar SHALL record the pending-review state.
+`rune adopt start <source>` MUST perform the import mechanics (pinned fetch or local copy, adopt/v1 provenance sidecars), segment every adopted markdown file into review blocks, and write an external temporary session in which every block's verdict is `pending`. The adopt sidecar MUST record the pending-review state.
 
 #### Scenario: Start from a commit-pinned URL
 
@@ -16,7 +16,7 @@
 
 ### Requirement: Segmentation is deterministic
 
-Segmentation SHALL be line-based and reproducible: identical input yields identical blocks and ids. Frontmatter is one block. A fenced code block is atomic. Paragraphs split at blank lines. Consecutive list items group into one block. Consecutive table lines group. Headings are their own blocks. Each block SHALL carry an ordinal id per file and a SHA-256 digest of its content.
+Segmentation MUST be line-based and reproducible: identical input yields identical blocks and ids. Frontmatter is one block. A fenced code block is atomic. Paragraphs split at blank lines. Consecutive list items group into one block. Consecutive table lines group. Headings are their own blocks. Each block MUST carry an ordinal id per file and a SHA-256 digest of its content.
 
 #### Scenario: Fences are never split
 
@@ -30,7 +30,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Verdicts are recorded one block at a time
 
-`rune adopt verdict <block-id> <keep|adapt|cut>` SHALL record the verdict in the temporary session. `adapt` and `cut` SHALL require `--note`. An unknown block id or an already-decided block SHALL be an error unless `--force` re-decides it.
+`rune adopt verdict <block-id> <keep|adapt|cut>` MUST record the verdict in the temporary session. `adapt` and `cut` MUST require `--note`. An unknown block id or an already-decided block MUST be an error unless `--force` re-decides it.
 
 #### Scenario: Cut without a note is rejected
 
@@ -39,7 +39,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Progress is inspectable and injectable
 
-`rune adopt status` SHALL list in-flight sessions with per-file pending/decided counts, and `rune adopt next` SHALL emit the next pending blocks (id, kind, content). Both SHALL support `--json` for machine consumption and dynamic context injection.
+`rune adopt status` MUST list in-flight sessions with per-file pending/decided counts, and `rune adopt next` MUST emit the next pending blocks (id, kind, content). Both MUST support `--json` for machine consumption and dynamic context injection.
 
 #### Scenario: Status with one session
 
@@ -48,7 +48,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Finalize enforces the review
 
-`rune adopt finalize` SHALL fail while any verdict is pending. It SHALL verify verdict consistency against the edited files: a `cut` block's content no longer appears, a `keep` block's content still appears, an `adapt` block's content differs (whitespace-normalized comparisons). It SHALL run `mdschema check` with the kind's schema and fail on schema violations or when `mdschema` is absent. On success it SHALL re-sync the adopt sidecar's subject digest to the reviewed content, flip the sidecar to `review: reviewed`, add concise final review metadata, and delete the temporary session after all sidecars are safe.
+`rune adopt finalize` MUST fail while any verdict is pending. It MUST verify verdict consistency against the edited files: a `cut` block's content no longer appears, a `keep` block's content still appears, an `adapt` block's content differs (whitespace-normalized comparisons). It MUST run `mdschema check` with the kind's schema and fail on schema violations or when `mdschema` is absent. On success it MUST re-sync the adopt sidecar's subject digest to the reviewed content, flip the sidecar to `review: reviewed`, add concise final review metadata, and delete the temporary session after all sidecars are safe.
 
 #### Scenario: Pending block blocks finalize
 
@@ -67,7 +67,7 @@ Segmentation SHALL be line-based and reproducible: identical input yields identi
 
 ### Requirement: Final review authority is the adopt sidecar
 
-The completed review SHALL leave no block ledger in the artifact tree. Adopt/v1 sidecars SHALL carry final subject digests, `review: reviewed`, reviewer identity, completion time, and a concise adaptation summary. Temporary block entries SHALL be deleted only after all sidecars are safely updated.
+The completed review MUST leave no block ledger in the artifact tree. Adopt/v1 sidecars MUST carry final subject digests, `review: reviewed`, reviewer identity, completion time, and a concise adaptation summary. Temporary block entries MUST be deleted only after all sidecars are safely updated.
 
 #### Scenario: Finalize removes workflow state
 
@@ -76,7 +76,7 @@ The completed review SHALL leave no block ledger in the artifact tree. Adopt/v1 
 
 ### Requirement: Agents and rules are adoptable
 
-`rune import` (and therefore `rune adopt start`) SHALL accept `--kind agent` and `--kind rule`, placing single-file artifacts at `agents/<name>.md` and `rules/<name>.md` with the same sidecar treatment as skills.
+`rune import` (and therefore `rune adopt start`) MUST accept `--kind agent` and `--kind rule`, placing single-file artifacts at `agents/<name>.md` and `rules/<name>.md` with the same sidecar treatment as skills.
 
 #### Scenario: Rule adoption placement
 
@@ -85,7 +85,7 @@ The completed review SHALL leave no block ledger in the artifact tree. Adopt/v1 
 
 ### Requirement: Names follow the source schema
 
-Adopted artifact names SHALL match `^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$`, be at most 64 characters, and equal the containing directory name for skills.
+Adopted artifact names MUST match `^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$`, be at most 64 characters, and equal the containing directory name for skills.
 
 #### Scenario: Explicit deck casing
 
@@ -94,7 +94,7 @@ Adopted artifact names SHALL match `^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$`, be at m
 
 ### Requirement: Abandon closes a session safely
 
-`rune adopt abandon` SHALL close an in-flight session by moving the imported artifact, its sidecars, and temporary session to the trash, never deleting the artifact in place.
+`rune adopt abandon` MUST close an in-flight session by moving the imported artifact, its sidecars, and temporary session to the trash, never deleting the artifact in place.
 
 #### Scenario: Abandon mid-review
 

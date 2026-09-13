@@ -1,0 +1,54 @@
+provenance:
+  _type: https://in-toto.io/Statement/v1
+  predicateType: https://slsa.dev/provenance/v1
+  subject:
+  - name: docs/decisions/ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md
+    digest:
+      sha256: b1cdd3151556b88a17cb50ecfecb20ca80f5074ae3ea9e8041e9615938b1e410
+  predicate:
+    buildDefinition:
+      buildType: adopt/v1
+      externalParameters:
+        source: ''
+        upstream_url: https://github.com/N4M3Z/forge-core
+        upstream_commit: ''
+        transforms_applied:
+        - align
+      resolvedDependencies:
+      - name: upstream
+        uri: https://github.com/N4M3Z/forge-core
+        digest:
+          sha256: 0e528a48266ab6170c26d1ad1af0dcca965c18e8eb86ab44d194122928fbdf02
+    runDetails:
+      builder:
+        id: rune-cli
+        version:
+          rune: 0.5.0
+      metadata:
+        startedOn: 2026-09-13T10:49:24.537020+00:00
+        review: reviewed
+        reviewer: Claude Fable 5 (claude-fable-5) <claude-fable-5@claude.noreply.nexus.local>
+        completedOn: 2026-09-13T11:06:02.059422+00:00
+        summary: 25 keep, 7 adapt
+        replacements:
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:1
+          sha256: 87e660aa7ac3450bf804e552cb10b10e9a119169713a0b3c30d34df3b6a997c6
+          path: replacements/87e660aa7ac3450bf804e552cb10b10e9a119169713a0b3c30d34df3b6a997c6
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:4
+          sha256: 01eeebf39b95c96a72daadfc6486a7b4e036d393db6e5fdae0f28cb1f2e412cb
+          path: replacements/01eeebf39b95c96a72daadfc6486a7b4e036d393db6e5fdae0f28cb1f2e412cb
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:5
+          sha256: 80819457baa82a99fcd6f09b1901aaa6b80443437ed9c528db16bd23054c8720
+          path: replacements/80819457baa82a99fcd6f09b1901aaa6b80443437ed9c528db16bd23054c8720
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:12
+          sha256: 6ef11c62b0a6a92e62b9b4176ab583ed2f83cd61f8ef32cd1177ef8da7066897
+          path: replacements/6ef11c62b0a6a92e62b9b4176ab583ed2f83cd61f8ef32cd1177ef8da7066897
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:19
+          sha256: 72d42174712cc9ed4c8d3078f923b5b138a53feabd190178ad8f467b16752870
+          path: replacements/72d42174712cc9ed4c8d3078f923b5b138a53feabd190178ad8f467b16752870
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:29
+          sha256: 2e6ea1a866d7bf813a61d8f9ceda2f173cc14556d993d91ae7b706f190eeec8e
+          path: replacements/2e6ea1a866d7bf813a61d8f9ceda2f173cc14556d993d91ae7b706f190eeec8e
+        - block: ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars.md:32
+          sha256: 7c303a51136bfe0e5a19a7a99d25d1d09fb2db94147e3133d8fcd08bd4d1b7a3
+          path: replacements/7c303a51136bfe0e5a19a7a99d25d1d09fb2db94147e3133d8fcd08bd4d1b7a3

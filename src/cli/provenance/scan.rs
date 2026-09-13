@@ -1,3 +1,5 @@
+use super::metadata;
+use crate::cli::adopt::subject::{SubjectFault, resolve_subject};
 use console::Style;
 use rune::manifest;
 use rune::manifest::provenance::read as read_sidecar;
@@ -289,14 +291,28 @@ fn collect_from_provenance_dir(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        // Review records (`review.yaml`, `<stem>.review.yaml`) are adoption
-        // review statements, not SLSA sidecars; the adopt machinery owns them.
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        if file_name == "review.yaml" || file_name.ends_with(".review.yaml") {
+        if path.is_dir() {
             continue;
         }
-        if path.extension().unwrap_or_default() == manifest::SIDECAR_EXTENSION {
-            reports.push(verify_sidecar(module_root, &path));
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        // The adopt scanner and this walk classify entries through one table.
+        match metadata::classify(&file_name) {
+            metadata::ProvenanceEntry::Sidecar => {
+                reports.push(verify_sidecar(module_root, &path));
+            }
+            // Adoption review ledgers belong to the adopt machinery.
+            metadata::ProvenanceEntry::LegacyLedger | metadata::ProvenanceEntry::Ignored => {}
+            metadata::ProvenanceEntry::SourceSnapshot => {
+                if let Err(error) = metadata::check_source_snapshot(&path) {
+                    reports.push(error_report(path.to_string_lossy().to_string(), error));
+                }
+            }
+            metadata::ProvenanceEntry::Unsupported => {
+                reports.push(error_report(
+                    path.to_string_lossy().to_string(),
+                    metadata::unsupported_message(),
+                ));
+            }
         }
     }
 }
@@ -314,20 +330,36 @@ fn verify_sidecar(module_root: &Path, sidecar_path: &Path) -> SidecarReport {
     };
     let definition = &statement.predicate.build_definition;
 
-    let (verified, actual) = match resolve_in_repo(module_root, &subject.name) {
-        Some(resolved) => match fs::read_to_string(&resolved) {
-            Ok(content) => {
-                let hash = manifest::content_sha256(&content);
-                (hash == subject.digest.sha256, hash)
-            }
-            Err(error) => {
-                return error_report(
-                    label,
-                    format!("cannot read {}: {error}", resolved.display()),
-                );
-            }
+    // The holder directory (the sidecar's `.provenance/` parent) and the
+    // recorded module-relative name must agree; a stale name is an integrity
+    // fault, not a lookup miss.
+    let holder = sidecar_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(module_root);
+    // The resolver answers with the holder-relative file, which may itself be
+    // relative to the working directory. Confine that exact path; never
+    // re-join it onto the module root, which doubles a relative prefix.
+    let (verified, actual) = match resolve_subject(module_root, holder, &subject.name) {
+        Ok(resolved) => match confine_existing(module_root, &resolved) {
+            Some(resolved) => match fs::read_to_string(&resolved) {
+                Ok(content) => {
+                    let hash = manifest::content_sha256(&content);
+                    (hash == subject.digest.sha256, hash)
+                }
+                Err(error) => {
+                    return error_report(
+                        label,
+                        format!("cannot read {}: {error}", resolved.display()),
+                    );
+                }
+            },
+            None => (false, String::new()),
         },
-        None => (false, String::new()),
+        Err(fault @ SubjectFault::NameDisagrees { .. }) => {
+            return error_report(label, fault.to_string());
+        }
+        Err(SubjectFault::Missing { .. }) => (false, String::new()),
     };
 
     let dependencies = definition
@@ -395,8 +427,13 @@ fn is_remote_uri(uri: &str) -> bool {
 /// path that escapes the root (path-boundary validation). Returns `None` when
 /// the file is missing or outside the repo.
 fn resolve_in_repo(module_root: &Path, repo_relative: &str) -> Option<PathBuf> {
-    let candidate = module_root.join(repo_relative);
-    let canonical = fs::canonicalize(&candidate).ok()?;
+    confine_existing(module_root, &module_root.join(repo_relative))
+}
+
+/// Canonicalize an existing path as given and require it inside the module
+/// root. Returns `None` when the file is missing or outside the repo.
+fn confine_existing(module_root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(candidate).ok()?;
     let root_canonical = fs::canonicalize(module_root).ok()?;
     canonical.starts_with(&root_canonical).then_some(canonical)
 }

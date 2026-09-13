@@ -1,0 +1,4 @@
+[INTOTO]: https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md "in-toto Statement v1"
+
+[ARCH-0012]: https://github.com/N4M3Z/forge-core/blob/132e0589eb87849973ab8ee984926f318af4d642/docs/decisions/ARCH-0012%20Community%20Adoption%20Strategy.md "forge-core ARCH-0012 Community Adoption Strategy"
+[ARCH-0013]: https://github.com/N4M3Z/forge-core/blob/132e0589eb87849973ab8ee984926f318af4d642/docs/decisions/ARCH-0013%20Markdown-First%20Adoption%20Mechanism.md "forge-core ARCH-0013 Markdown-First Adoption Mechanism"

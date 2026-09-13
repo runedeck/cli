@@ -31,7 +31,7 @@ frontmatter stripping, reference link removal, variant merging, and provider-spe
 
 ## Decision Drivers
 
-- Authors write one source of truth; deployment targets may differ per provider
+- Authors write one source of truth. Deployment targets may differ per provider
 - Frontmatter carries metadata for tooling but has no function for the target scaffolding — deploying it wastes tokens
 - Reference-style links (`[1]: url`) provide provenance in source but waste tokens in deployed content where the AI
   never follows them

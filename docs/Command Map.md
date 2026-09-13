@@ -33,14 +33,23 @@ looks wrong:
 1. `validate` — is the source well-formed? (schemas, lint)
 2. `status` — what does the deck intend? (specs, changes, deployments)
 3. `drift` — does the deployment match the build? (diffs, missing files)
-4. `doctor` — can the deployment be repaired? (`--verify` to fail CI,
-   `--repair` to restore from build and quarantine orphans)
+4. `doctor` — is the deployment intact? (`--verify` to fail CI. Doctor never
+   writes, it names `rune repair` when something is repairable)
 5. `provenance` — where did this deployed file come from? (forensics)
 
 `bench doctor`, `spec doctor`, and `adopt doctor` are the same idea scoped to
 their own subsystems. `adopt doctor` verifies pending external sessions and
-reviewed adopt sidecar digests. Legacy review ledgers are migration warnings,
-not final authority.
+reviewed adopt sidecar digests, and requires the sidecar holder and its
+recorded `subject.name` to agree. Legacy review ledgers are migration
+warnings, not final authority.
+
+`repair` is the one command that writes to fix doctor findings: it trashes
+orphan reviewed sidecars into `.trash/<stamp>/`, rewrites stale subject
+names, restores missing managed files from a digest-matching build, and
+quarantines deployment orphans. `--dry-run` prints the plan. A reviewed
+subject whose bytes changed is not a repair. `adopt reseal --artifact <path>`
+endorses the edit instead. `move <from> <to>` relocates one reviewed
+artifact with its sidecars and records `transferredFrom: <artifact>@<commit>`.
 
 ## Bringing content in
 

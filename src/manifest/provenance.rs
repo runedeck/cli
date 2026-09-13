@@ -160,6 +160,23 @@ pub struct Metadata {
     pub completed_on: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub summary: String,
+    /// `<module-relative artifact>@<commit>`: where a reviewed artifact sat
+    /// before `rune move` relocated it. Empty for artifacts that never moved.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub transferred_from: String,
+    /// Approved replacement texts for adapt verdicts, stored under
+    /// `.provenance/replacements/<sha256>` beside the adapted file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replacements: Vec<Replacement>,
+}
+
+/// One approved replacement: the block it replaced, the content digest,
+/// and the store path relative to the sidecar's `.provenance/` directory.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Replacement {
+    pub block: String,
+    pub sha256: String,
+    pub path: String,
 }
 
 /// Parse a provenance sidecar from YAML content.

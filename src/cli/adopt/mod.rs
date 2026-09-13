@@ -11,8 +11,10 @@ use std::sync::LazyLock;
 /// misconfigured server cannot exhaust memory.
 const MAX_ADOPT_BYTES: u64 = 10 * 1024 * 1024;
 
+pub(crate) mod relocate;
 pub(crate) mod review;
 pub(crate) mod segment;
+pub(crate) mod subject;
 mod tree;
 
 #[cfg(test)]
@@ -85,8 +87,14 @@ pub fn execute(
             );
         }
         let module_root = canonical_module_root(Path::new(module))?;
-        let attribution = source_url.unwrap_or(url);
-        return tree::adopt_tree(&directory, &module_root, name, attribution, dry_run);
+        // A local directory without --source-url records its canonical
+        // location as a file URL, the same shape classify_url accepts, so the
+        // upstream field never carries a bare relative path.
+        let canonical = fs::canonicalize(&directory)
+            .map_err(|error| format!("cannot resolve {}: {error}", directory.display()))?;
+        let attribution =
+            source_url.map_or_else(|| format!("file://{}", canonical.display()), str::to_string);
+        return tree::adopt_tree(&directory, &module_root, name, &attribution, dry_run);
     }
     execute_with_fetcher(url, module, name, companion, kind, dry_run, fetch)
 }

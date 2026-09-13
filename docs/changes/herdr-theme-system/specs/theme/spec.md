@@ -2,7 +2,7 @@
 
 ### Requirement: Named theme selection
 
-`theme.name` SHALL select one built-in palette, and an unknown name SHALL warn and keep the
+`theme.name` MUST select one built-in palette, and an unknown name MUST warn and keep the
 default without aborting the command.
 
 #### Scenario: Config names an unknown theme
@@ -12,8 +12,8 @@ default without aborting the command.
 
 ### Requirement: Appearance pairing
 
-With `theme.auto_switch` enabled, rune SHALL use `theme.light_name` on a light terminal and
-`theme.dark_name` on a dark terminal when the terminal reports its appearance, and SHALL use the
+With `theme.auto_switch` enabled, rune MUST use `theme.light_name` on a light terminal and
+`theme.dark_name` on a dark terminal when the terminal reports its appearance, and MUST use the
 configured default when it does not.
 
 #### Scenario: Terminal reports a light background
@@ -23,7 +23,7 @@ configured default when it does not.
 
 ### Requirement: Token overrides
 
-`theme.custom` entries SHALL override single color tokens on the resolved base palette.
+`theme.custom` entries MUST override single color tokens on the resolved base palette.
 
 #### Scenario: Config overrides one token
 
@@ -32,7 +32,7 @@ configured default when it does not.
 
 ### Requirement: One palette source
 
-`Sheet` output and the TUI SHALL derive their colors from one resolved palette.
+`Sheet` output and the TUI MUST derive their colors from one resolved palette.
 
 #### Scenario: Theme changes once
 
@@ -41,7 +41,7 @@ configured default when it does not.
 
 ### Requirement: Color suppression precedence
 
-`--no-color`, `NO_COLOR`, and non-terminal output SHALL suppress color before any theme applies.
+`--no-color`, `NO_COLOR`, and non-terminal output MUST suppress color before any theme applies.
 
 #### Scenario: Piped output with a theme set
 

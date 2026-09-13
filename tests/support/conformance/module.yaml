@@ -1,0 +1,4 @@
+name: conformance-fixture
+version: 0.1.0
+description: Fixture for the rendered-bundle comparison with the pinned Agent Skills reference.
+events: []

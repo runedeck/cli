@@ -45,6 +45,7 @@ use std::sync::LazyLock;
 mod apply;
 mod commands;
 mod doctor;
+mod lint;
 mod model;
 #[cfg(test)]
 mod openspec_oracle;
@@ -63,6 +64,7 @@ pub use commands::{
     scan_changes, scan_specifications, show, show_output, sorted_changes,
 };
 pub use doctor::{SpecDoctorOutput, doctor, doctor_output, render_doctor};
+pub use lint::{GLOSSARY_FILE, MAX_SPEC_LINES};
 pub use validate::{
     MdschemaCheck, MdschemaDiagnostic, render_diagnostics, validate, validate_output,
     validate_spec_tree,

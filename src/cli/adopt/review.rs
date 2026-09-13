@@ -13,6 +13,8 @@
 //! tree; reviewed adopt sidecars are the permanent authority.
 
 use super::segment::{self, Block, BlockKind};
+use super::subject::{SubjectFault, holder_relative_name, resolve_subject};
+use crate::cli::provenance::metadata;
 use regex::Regex;
 use rune::manifest;
 use serde::{Deserialize, Serialize};
@@ -81,7 +83,6 @@ fn host_of(uri: &str) -> Option<&str> {
 
 pub const REVIEW_PREDICATE_TYPE: &str = "https://runedeck.github.io/attestation/adoption-review/v1";
 const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
-const REVIEW_FILE: &str = "review.yaml";
 const SESSION_FILE: &str = "session.yaml";
 const SESSION_DIRECTORY: &str = "adopt-sessions";
 const SKIP_WALK: &[&str] = &[".git", ".jj", ".trash", manifest::PROVENANCE_DIRECTORY];
@@ -157,6 +158,11 @@ pub struct BlockEntry {
     pub transport: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// The approved text that replaces an adapted block. Finalize proves
+    /// every block of it is present in the edited file and writes it to the
+    /// replacement store beside the sidecar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
 }
 
 pub struct Session {
@@ -222,6 +228,7 @@ pub fn open_session(
                 decided_on: String::new(),
                 transport: String::new(),
                 content: Some(block.content),
+                replacement: None,
             });
         }
     }
@@ -356,6 +363,7 @@ pub fn verdict(
     block_id: &str,
     verdict: &str,
     note: Option<&str>,
+    replacement: Option<&str>,
     force: bool,
 ) -> Result<i32, String> {
     if !matches!(verdict, "keep" | "adapt" | "cut") {
@@ -367,6 +375,16 @@ pub fn verdict(
         return Err(format!(
             "a {verdict} verdict requires --note with the rationale"
         ));
+    }
+    if verdict != "adapt" && replacement.is_some() {
+        return Err(format!(
+            "--replacement applies to adapt verdicts only, got '{verdict}'"
+        ));
+    }
+    if verdict == "adapt" && replacement.is_none_or(|text| text.trim().is_empty()) {
+        eprintln!(
+            "warning: adapt without --replacement is deprecated and fails in the next release; pass the approved text so finalize can prove it"
+        );
     }
     let mut session = single_session(root, artifact)?;
     let block = session
@@ -394,6 +412,9 @@ pub fn verdict(
     }
     block.verdict = verdict.to_string();
     block.note = note.unwrap_or("").trim().to_string();
+    block.replacement = replacement
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string);
     block.decided_on = chrono::Utc::now().to_rfc3339();
     block.transport = "verdict-cli".to_string();
     write_record(&session.record_path, &session.record)?;
@@ -500,17 +521,20 @@ pub fn finalize(
     // for another finalize, while already-reviewed sidecars remain valid.
     // The session disappears only after every imported subject is durable.
     let summary = adaptation_summary(&session.record.review.predicate.blocks);
+    let replacements = write_replacement_store(&session)?;
     for (file, digest) in &digests {
         let relative = relative_id(&session.artifact_root, file);
         if new_files.contains(&relative) {
             continue;
         }
+        let file_replacements = replacements.get(&relative).cloned().unwrap_or_default();
         finalize_sidecar(
             file,
             digest,
             &session.record.review.predicate.reviewer,
             &completed_on,
             &summary,
+            file_replacements,
         )?;
     }
     remove_session_file(&session.record_path)?;
@@ -558,10 +582,63 @@ fn detect_new_files(
     Ok(new_files)
 }
 
+/// The replacement store directory for an artifact file: `.provenance/replacements/`
+/// beside the file, so the approved text travels with the sidecar.
+const REPLACEMENT_STORE: &str = metadata::REPLACEMENT_STORE;
+
+/// Segment an approved replacement the way its file would be segmented, so
+/// finalize compares like with like.
+fn replacement_blocks(block: &BlockEntry, artifact_root: &Path) -> Vec<Block> {
+    let Some(text) = block.replacement.as_deref() else {
+        return Vec::new();
+    };
+    let file_name = block.id.split(':').next().unwrap_or_default();
+    let path = if artifact_root.is_dir() {
+        artifact_root.join(file_name)
+    } else {
+        artifact_root.to_path_buf()
+    };
+    segment_bytes(&path, text.as_bytes())
+}
+
+/// Write each approved replacement to `<file dir>/.provenance/replacements/<sha256>`
+/// and return the sidecar references keyed by artifact-relative file name.
+fn write_replacement_store(
+    session: &Session,
+) -> Result<BTreeMap<String, Vec<manifest::provenance::Replacement>>, String> {
+    let mut references: BTreeMap<String, Vec<manifest::provenance::Replacement>> = BTreeMap::new();
+    for block in &session.record.review.predicate.blocks {
+        let Some(text) = block.replacement.as_deref() else {
+            continue;
+        };
+        let file_name = block.id.split(':').next().unwrap_or_default().to_string();
+        let file = session.artifact_root_file(&file_name);
+        let sha256 = manifest::content_sha256(text);
+        let store = file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(manifest::PROVENANCE_DIRECTORY)
+            .join(REPLACEMENT_STORE);
+        fs::create_dir_all(&store)
+            .map_err(|error| format!("cannot create {}: {error}", store.display()))?;
+        atomic_write(&store.join(&sha256), text)?;
+        references
+            .entry(file_name)
+            .or_default()
+            .push(manifest::provenance::Replacement {
+                block: block.id.clone(),
+                sha256: sha256.clone(),
+                path: format!("{REPLACEMENT_STORE}/{sha256}"),
+            });
+    }
+    Ok(references)
+}
+
 /// Final-state blocks whose content matches no imported block: rewrites from
 /// `adapt` verdicts and genuinely new material. They enter the record as
 /// `added` entries so the sealed statement covers the whole reviewed file,
-/// not only what upstream shipped.
+/// not only what upstream shipped. Approved replacement blocks count as
+/// imported so they reconcile as adapt results, not anonymous additions.
 fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEntry> {
     let mut imported: BTreeMap<String, usize> = BTreeMap::new();
     for block in &session.record.review.predicate.blocks {
@@ -569,6 +646,9 @@ fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEnt
         *imported
             .entry(segment::normalize(block.kind, content))
             .or_insert(0) += 1;
+        for replacement in replacement_blocks(block, &session.artifact_root) {
+            *imported.entry(replacement.normalized()).or_insert(0) += 1;
+        }
     }
     let mut additions = Vec::new();
     for path in final_files {
@@ -597,6 +677,7 @@ fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEnt
                 decided_on: String::new(),
                 transport: String::new(),
                 content: None,
+                replacement: None,
             });
         }
     }
@@ -608,8 +689,14 @@ fn collect_additions(session: &Session, final_files: &[PathBuf]) -> Vec<BlockEnt
 /// digests follow the maintainer's final touch-ups; the diff under review
 /// carries the endorsement. Refuses after nothing changed, and never touches
 /// verdicts, notes, or block entries — content digests and sidecars only.
+///
+/// Reseal also repairs the two faults a hand move leaves behind: a reviewed
+/// sidecar whose file is gone moves to `.trash/<stamp>/` under the module
+/// root, and a sidecar whose `subject.name` no longer matches its holder gets
+/// the holder-relative name.
 pub fn reseal(root: &Path, artifact: Option<&str>) -> Result<i32, String> {
     let pending = find_sessions(root)?;
+    let module_root = module_root_for(root)?;
     let provenance = scan_provenance(root);
     provenance.require_complete()?;
     let mut artifacts = provenance.reviewed_artifacts();
@@ -676,26 +763,199 @@ pub fn reseal(root: &Path, artifact: Option<&str>) -> Result<i32, String> {
             changed += 1;
         }
     }
-    if changed == 0 {
+
+    let repairs = repair_sidecar_entries(
+        root,
+        &module_root,
+        provenance
+            .sidecars
+            .iter()
+            .filter(|entry| entry.covers(&artifact_root)),
+        false,
+    )?;
+    for repair in &repairs {
+        println!("{}", repair.describe());
+    }
+    let pruned = repairs
+        .iter()
+        .filter(|repair| repair.action == "pruned")
+        .count();
+    let renamed = repairs.len() - pruned;
+
+    if changed == 0 && repairs.is_empty() {
         println!("nothing changed since review; sidecars untouched");
         return Ok(0);
     }
     println!(
-        "resealed {} ({changed} subject(s) updated); the signed commit endorses the touch-ups",
+        "resealed {} ({changed} subject(s) updated, {renamed} renamed, {pruned} pruned); the signed commit endorses the touch-ups",
         display_relative(root, &artifact_root)
     );
     Ok(0)
 }
 
-/// Retained for CLI compatibility. Reviewed sidecars are updated atomically by
-/// finalize, and pending sessions are restartable, so no ledger-based repair is
-/// safe or necessary.
-#[allow(clippy::unnecessary_wraps)]
-pub fn doctor_repair(_root: &Path) -> Result<i32, String> {
-    println!(
-        "`rune adopt doctor --repair` is deprecated; finalize is restartable and doctor now verifies sessions and sidecars directly"
-    );
-    Ok(0)
+/// The deploy prune stamp format, shared so every `.trash/` path reads alike.
+pub(crate) fn trash_stamp() -> String {
+    chrono::Utc::now().format("%Y-%m-%d-%H%MZ").to_string()
+}
+
+/// Move a reviewed sidecar whose file is gone into
+/// `<module_root>/.trash/<stamp>/<module-relative sidecar path>`.
+pub(crate) fn trash_orphaned_sidecar(
+    module_root: &Path,
+    sidecar_path: &Path,
+    stamp: &str,
+) -> Result<PathBuf, String> {
+    // Both sides canonical, so a `/var` versus `/private/var` root never
+    // turns the relative path into an absolute one that renames onto itself.
+    let module_root = fs::canonicalize(module_root)
+        .map_err(|error| format!("cannot resolve {}: {error}", module_root.display()))?;
+    let canonical = fs::canonicalize(sidecar_path)
+        .map_err(|error| format!("cannot resolve {}: {error}", sidecar_path.display()))?;
+    let relative = canonical.strip_prefix(&module_root).map_err(|_| {
+        format!(
+            "{} lies outside the module root {}",
+            sidecar_path.display(),
+            module_root.display()
+        )
+    })?;
+    let destination = module_root.join(".trash").join(stamp).join(relative);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    fs::rename(sidecar_path, &destination).map_err(|error| {
+        format!(
+            "cannot move {} to {}: {error}",
+            sidecar_path.display(),
+            destination.display()
+        )
+    })?;
+    Ok(destination)
+}
+
+/// Rewrite a sidecar's recorded `subject.name` to the holder-relative path.
+pub(crate) fn update_sidecar_subject(sidecar_path: &Path, name: &str) -> Result<(), String> {
+    let mut sidecar = manifest::provenance::read(sidecar_path)?;
+    if let Some(subject) = sidecar.provenance.subject.first_mut() {
+        subject.name = name.to_string();
+    }
+    write_sidecar(sidecar_path, &sidecar)
+}
+
+/// Repair the source-side faults doctor reports: orphan reviewed sidecars move
+/// to `.trash/<stamp>/` and stale subject names take the holder-relative path.
+/// Digest mismatches stay with `rune adopt reseal --artifact`, which endorses
+/// edited bytes on purpose. Returns the number of repairs.
+pub fn repair_source(root: &Path) -> Result<Vec<SourceRepair>, String> {
+    apply_source_repairs(root, false)
+}
+
+/// The repairs `repair_source` would make, listed, nothing written or printed.
+pub fn plan_source_repairs(root: &Path) -> Result<Vec<SourceRepair>, String> {
+    apply_source_repairs(root, true)
+}
+
+/// The source integrity errors doctor would report right now: what repair
+/// cannot fix (a reviewed digest that no longer matches, an unreadable
+/// subject) and, on a dry run, what it has not fixed yet.
+pub fn source_faults(root: &Path) -> Result<Vec<String>, String> {
+    let module_root = module_root_for(root)?;
+    let provenance = scan_provenance(root);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    provenance.report_errors(&mut errors);
+    inspect_adopt_sidecars(&module_root, &provenance, &mut errors, &mut warnings);
+    Ok(errors)
+}
+
+fn apply_source_repairs(root: &Path, dry_run: bool) -> Result<Vec<SourceRepair>, String> {
+    let module_root = module_root_for(root)?;
+    let provenance = scan_provenance(root);
+    provenance.require_complete()?;
+    repair_sidecar_entries(root, &module_root, provenance.sidecars.iter(), dry_run)
+}
+
+/// One write the source pass makes or, on a dry run, would make. `sidecar`
+/// is the module-relative sidecar path in every case. A prune names the
+/// quarantine directory in `destination`. A rename names the recorded
+/// subject in `subject` and the holder-relative subject in `destination`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SourceRepair {
+    pub action: String,
+    pub sidecar: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub destination: String,
+}
+
+impl SourceRepair {
+    /// The one-line human form every caller prints.
+    pub fn describe(&self) -> String {
+        let arrow = crate::cli::style::ARROW;
+        match (self.action.as_str(), &self.subject) {
+            ("pruned", _) => format!(
+                "pruned {} {arrow} {} (recoverable via mv)",
+                self.sidecar, self.destination
+            ),
+            (action, Some(subject)) => format!("{action} {subject} {arrow} {}", self.destination),
+            (action, None) => format!("{action} {} {arrow} {}", self.sidecar, self.destination),
+        }
+    }
+}
+
+/// The one repair loop reseal and repair share: an orphan reviewed sidecar
+/// moves to `.trash/<stamp>/`, a stale subject name takes the holder-relative
+/// path. Every write is returned and nothing is printed here, so `--json`
+/// stays pure and a dry run lists exactly what a real run would do.
+fn repair_sidecar_entries<'entries>(
+    root: &Path,
+    module_root: &Path,
+    entries: impl Iterator<Item = &'entries AdoptSidecar>,
+    dry_run: bool,
+) -> Result<Vec<SourceRepair>, String> {
+    let stamp = trash_stamp();
+    let mut repairs = Vec::new();
+    for entry in entries {
+        let Some(subject) = entry.value.provenance.subject.first() else {
+            continue;
+        };
+        if entry.value.provenance.predicate.run_details.metadata.review != "reviewed" {
+            continue;
+        }
+        match resolve_subject(module_root, &entry.holder, &subject.name) {
+            Ok(_) => {}
+            Err(SubjectFault::Missing { .. }) => {
+                let sidecar = display_relative(root, &entry.path);
+                let (action, destination) = if dry_run {
+                    ("would prune", format!(".trash/{stamp}/"))
+                } else {
+                    let moved = trash_orphaned_sidecar(module_root, &entry.path, &stamp)?;
+                    ("pruned", display_relative(module_root, &moved))
+                };
+                repairs.push(SourceRepair {
+                    action: action.into(),
+                    sidecar,
+                    subject: None,
+                    destination,
+                });
+            }
+            Err(SubjectFault::NameDisagrees { recorded, actual }) => {
+                let action = if dry_run {
+                    "would rename subject"
+                } else {
+                    update_sidecar_subject(&entry.path, &actual)?;
+                    "renamed subject"
+                };
+                repairs.push(SourceRepair {
+                    action: action.into(),
+                    sidecar: display_relative(root, &entry.path),
+                    subject: Some(recorded),
+                    destination: actual,
+                });
+            }
+        }
+    }
+    Ok(repairs)
 }
 
 /// Report pending external sessions, verify reviewed adopt sidecars against
@@ -719,7 +979,8 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
     }
 
     provenance.report_errors(&mut errors);
-    inspect_adopt_sidecars(&provenance, &mut errors, &mut warnings);
+    let module_root = module_root_for(root)?;
+    inspect_adopt_sidecars(&module_root, &provenance, &mut errors, &mut warnings);
     for path in provenance.legacy_records() {
         warnings.push(format!(
             "{}: legacy adoption review ledger; reviewed sidecars are authoritative — inspect and remove or archive this file explicitly",
@@ -757,7 +1018,26 @@ pub fn doctor(root: &Path, json: bool) -> Result<i32, String> {
 
 struct AdoptSidecar {
     holder: PathBuf,
+    path: PathBuf,
     value: manifest::provenance::ProvenanceSidecar,
+}
+
+impl AdoptSidecar {
+    /// True when the sidecar belongs to the artifact: any holder below a
+    /// skill directory, or the one sidecar named for a single-file artifact.
+    fn covers(&self, artifact_root: &Path) -> bool {
+        if artifact_root.is_dir() {
+            return self.holder.starts_with(artifact_root);
+        }
+        let subject_file = self.value.provenance.subject.first().map(|subject| {
+            Path::new(&subject.name)
+                .file_name()
+                .unwrap_or_default()
+                .to_os_string()
+        });
+        artifact_root.parent() == Some(self.holder.as_path())
+            && subject_file.as_deref() == artifact_root.file_name()
+    }
 }
 
 #[derive(Default)]
@@ -783,6 +1063,9 @@ impl ProvenanceScan {
         Err(self.errors.join("\n"))
     }
 
+    /// Artifact roots that carry at least one reviewed sidecar. The holder
+    /// directory decides the root, never the recorded name, so a sidecar
+    /// whose name went stale still selects the artifact it sits in.
     fn reviewed_artifacts(&self) -> Vec<PathBuf> {
         let mut artifacts = self
             .sidecars
@@ -938,9 +1221,27 @@ fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut Provena
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == REVIEW_FILE || name.ends_with(".review.yaml") {
-            scan.legacy_records.push(path);
-            continue;
+        match metadata::classify(&name) {
+            metadata::ProvenanceEntry::Sidecar => {}
+            metadata::ProvenanceEntry::LegacyLedger => {
+                scan.legacy_records.push(path);
+                continue;
+            }
+            metadata::ProvenanceEntry::SourceSnapshot => {
+                if let Err(error) = metadata::check_source_snapshot(&path) {
+                    scan.errors.push(format!("{}: {error}", path.display()));
+                }
+                continue;
+            }
+            metadata::ProvenanceEntry::Ignored => continue,
+            metadata::ProvenanceEntry::Unsupported => {
+                scan.errors.push(format!(
+                    "{}: {}",
+                    path.display(),
+                    metadata::unsupported_message()
+                ));
+                continue;
+            }
         }
         match manifest::provenance::read(&path) {
             Ok(value) if value.provenance.predicate.build_definition.build_type == "adopt/v1" => {
@@ -950,6 +1251,7 @@ fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut Provena
                 } else {
                     scan.sidecars.push(AdoptSidecar {
                         holder: holder.to_path_buf(),
+                        path,
                         value,
                     });
                 }
@@ -963,11 +1265,19 @@ fn scan_provenance_directory(holder: &Path, directory: &Path, scan: &mut Provena
     }
 }
 
+/// Doctor never writes. Each repairable fault names the command that does.
 fn inspect_adopt_sidecars(
+    module_root: &Path,
     scan: &ProvenanceScan,
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) {
+    let root_hint = display_relative(&std::env::current_dir().unwrap_or_default(), module_root);
+    let root_hint = if root_hint.is_empty() {
+        "."
+    } else {
+        root_hint.as_str()
+    };
     for entry in &scan.sidecars {
         let subject = entry
             .value
@@ -975,9 +1285,6 @@ fn inspect_adopt_sidecars(
             .subject
             .first()
             .expect("provenance scan rejects subjectless adopt sidecars");
-        let file = entry
-            .holder
-            .join(Path::new(&subject.name).file_name().unwrap_or_default());
         let review = &entry.value.provenance.predicate.run_details.metadata.review;
         if review != "reviewed" {
             warnings.push(format!(
@@ -986,18 +1293,36 @@ fn inspect_adopt_sidecars(
             ));
             continue;
         }
+        let file = match resolve_subject(module_root, &entry.holder, &subject.name) {
+            Ok(file) => file,
+            Err(fault @ SubjectFault::Missing { .. }) => {
+                errors.push(format!(
+                    "{}: {fault}; run `rune repair --root {root_hint}` to move the orphan sidecar to .trash/",
+                    subject.name
+                ));
+                continue;
+            }
+            Err(fault @ SubjectFault::NameDisagrees { .. }) => {
+                errors.push(format!(
+                    "{}: {fault}; run `rune repair --root {root_hint}` to rewrite the subject name",
+                    subject.name
+                ));
+                continue;
+            }
+        };
         match fs::read(&file) {
             Ok(bytes) => {
                 let digest = manifest::content_sha256_bytes(&bytes);
                 if digest != subject.digest.sha256 {
+                    let artifact = holder_relative_name(module_root, &entry.holder, &subject.name);
                     errors.push(format!(
-                        "{}: reviewed sidecar digest does not match the file (sidecar sha256:{}, disk sha256:{digest})",
+                        "{}: reviewed sidecar digest does not match the file (sidecar sha256:{}, disk sha256:{digest}); run `rune adopt reseal --root {root_hint} --artifact {artifact}` to endorse the edit",
                         subject.name, subject.digest.sha256
                     ));
                 }
             }
             Err(error) => errors.push(format!(
-                "{}: reviewed subject is missing or unreadable: {error}",
+                "{}: reviewed subject is unreadable: {error}",
                 subject.name
             )),
         }
@@ -1102,6 +1427,28 @@ fn check_consistency(session: &Session) -> Result<(), String> {
             ));
         }
     }
+    // An approved replacement must be in the file, block for block. A
+    // replacement that shares a block with a kept entry needs both copies.
+    let mut required: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+    for block in &session.record.review.predicate.blocks {
+        for replacement in replacement_blocks(block, &session.artifact_root) {
+            let entry = required.entry(replacement.normalized()).or_default();
+            entry.0 += 1;
+            if !entry.1.contains(&block.id) {
+                entry.1.push(block.id.clone());
+            }
+        }
+    }
+    for (key, (count, ids)) in &required {
+        let kept = groups.get(key).map_or(0, |group| group.keep);
+        let actual = final_counts.get(key).copied().unwrap_or(0);
+        if actual < kept + count {
+            violations.push(format!(
+                "approved replacement missing from the edited artifact: {}",
+                ids.join(", ")
+            ));
+        }
+    }
     if violations.is_empty() {
         Ok(())
     } else {
@@ -1199,7 +1546,8 @@ fn resolve_schema(
 }
 
 /// A recorded subject whose file was deleted during review (every block cut)
-/// leaves a pending sidecar behind; drop it so nothing dangles.
+/// leaves a pending sidecar behind; move it to the module trash so nothing
+/// dangles and nothing is lost.
 fn remove_orphaned_sidecar(artifact_root: &Path, recorded_name: &str) {
     let file = if artifact_root.is_dir() {
         artifact_root.join(recorded_name)
@@ -1209,11 +1557,14 @@ fn remove_orphaned_sidecar(artifact_root: &Path, recorded_name: &str) {
     let Some(sidecar_path) = manifest::existing_sidecar_for(&file) else {
         return;
     };
-    if let Err(error) = fs::remove_file(&sidecar_path) {
-        eprintln!(
-            "warning: cannot remove orphaned sidecar {}: {error}",
-            sidecar_path.display()
-        );
+    let module_root = module_root_for(artifact_root).unwrap_or_else(|_| {
+        artifact_root
+            .parent()
+            .unwrap_or(artifact_root)
+            .to_path_buf()
+    });
+    if let Err(error) = trash_orphaned_sidecar(&module_root, &sidecar_path, &trash_stamp()) {
+        eprintln!("warning: cannot quarantine orphaned sidecar: {error}");
     }
 }
 
@@ -1223,6 +1574,7 @@ fn finalize_sidecar(
     reviewer: &str,
     completed_on: &str,
     summary: &str,
+    replacements: Vec<manifest::provenance::Replacement>,
 ) -> Result<(), String> {
     let Some(sidecar_path) = manifest::existing_sidecar_for(file) else {
         return Err(format!(
@@ -1240,6 +1592,7 @@ fn finalize_sidecar(
     metadata.reviewer = reviewer.to_string();
     metadata.completed_on = completed_on.to_string();
     metadata.summary = summary.to_string();
+    metadata.replacements = replacements;
     write_sidecar(&sidecar_path, &sidecar)
 }
 
@@ -1261,7 +1614,7 @@ fn update_sidecar_digest(file: &Path, digest: &str) -> Result<(), String> {
     write_sidecar(&sidecar_path, &sidecar)
 }
 
-fn write_sidecar(
+pub(super) fn write_sidecar(
     sidecar_path: &Path,
     sidecar: &manifest::provenance::ProvenanceSidecar,
 ) -> Result<(), String> {
@@ -1403,7 +1756,7 @@ fn relative_id(artifact_root: &Path, file: &Path) -> String {
     }
 }
 
-fn module_root_for(path: &Path) -> Result<PathBuf, String> {
+pub(super) fn module_root_for(path: &Path) -> Result<PathBuf, String> {
     let start = if path.is_dir() {
         path.to_path_buf()
     } else {
@@ -1464,7 +1817,7 @@ pub(super) fn record_path_for(artifact_root: &Path) -> Result<PathBuf, String> {
     Ok(session_root_for(&module_root)?.join(key).join(SESSION_FILE))
 }
 
-fn find_sessions(root: &Path) -> Result<Vec<Session>, String> {
+pub(super) fn find_sessions(root: &Path) -> Result<Vec<Session>, String> {
     let module_root = module_root_for(root)?;
     let state_root = session_root_for(&module_root)?;
     let mut sessions = Vec::new();

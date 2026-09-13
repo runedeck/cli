@@ -41,24 +41,24 @@ Keep these 18 named cases identifiable even if existing helpers supply most of t
 
 | ID and contract test name | Required positive and negative evidence | Requirement |
 | --- | --- | --- |
-| T01 `codex_default_skills_use_by_kind_target` | Skill goes to `.agents/skills/AlphaSkill`; native agent keeps its private destination | CSI-01 |
-| T02 `explicit_skill_target_is_preserved` | Configured override remains effective; incorrect default assumption fails target acceptance | CSI-01 |
-| T03 `equal_duplicate_names_are_ambiguous` | One entry passes; separate user/project entries with equal content fail | CSI-02 |
-| T04 `declared_name_controls_duplicate_detection` | Different names pass; divergent copies and renamed folders with one declared name fail | CSI-02 |
-| T05 `incomplete_scope_cannot_pass` | Complete roots pass; inaccessible roots or unresolved selection fail with a scope finding | CSI-01, CSI-02 |
-| T06 `bundle_digest_covers_companions_and_entry_types` | Unchanged bundle is stable; companion, binary byte, executable bit, or symlink-target mutation changes its digest | CSI-03 |
-| T07 `complete_selected_bundle_deploys` | Nested links, script sibling import, binary asset, and authored `agents/openai.yaml` survive; excluded skill leaves no companions | CSI-03 |
-| T08 `portable_metadata_survives_codex_assembly` | Resolved parsed values survive; dropping one fails; valid variant overrides and absent optional fields pass; directives stay filtered | CSI-04 |
-| T09 `only_proven_obsolete_copy_is_quarantined` | Valid ownership permits migration; matching name/hash without ownership cannot permit it | CSI-05 |
-| T10 `migration_preserves_foreign_content` | Empty destination permits migration; foreign destination, unknown sidecar, or untracked addition stays byte-identical | CSI-05 |
-| T11 `migration_preserves_local_edits` | Unchanged managed bundle migrates; edited entrypoint or companion remains recoverable and unresolved | CSI-05 |
-| T12 `retained_legacy_copy_blocks_unique_readiness` | Completed migration clears its finding; `--no-prune` retains content and its finding | CSI-02, CSI-05 |
+| T01 `codex_default_skills_use_by_kind_target` | Skill goes to `.agents/skills/AlphaSkill`. Native agent keeps its private destination | CSI-01 |
+| T02 `explicit_skill_target_is_preserved` | Configured override remains effective. Incorrect default assumption fails target acceptance | CSI-01 |
+| T03 `equal_duplicate_names_are_ambiguous` | One entry passes. Separate user/project entries with equal content fail | CSI-02 |
+| T04 `declared_name_controls_duplicate_detection` | Different names pass. Divergent copies and renamed folders with one declared name fail | CSI-02 |
+| T05 `incomplete_scope_cannot_pass` | Complete roots pass. Inaccessible roots or unresolved selection fail with a scope finding | CSI-01, CSI-02 |
+| T06 `bundle_digest_covers_companions_and_entry_types` | Unchanged bundle is stable. Companion, binary byte, executable bit, or symlink-target mutation changes its digest | CSI-03 |
+| T07 `complete_selected_bundle_deploys` | Nested links, script sibling import, binary asset, and authored `agents/openai.yaml` survive. Excluded skill leaves no companions | CSI-03 |
+| T08 `portable_metadata_survives_codex_assembly` | Resolved parsed values survive. Dropping one fails. Valid variant overrides and absent optional fields pass. Directives stay filtered | CSI-04 |
+| T09 `only_proven_obsolete_copy_is_quarantined` | Valid ownership permits migration. Matching name/hash without ownership cannot permit it | CSI-05 |
+| T10 `migration_preserves_foreign_content` | Empty destination permits migration. Foreign destination, unknown sidecar, or untracked addition stays byte-identical | CSI-05 |
+| T11 `migration_preserves_local_edits` | Unchanged managed bundle migrates. Edited entrypoint or companion remains recoverable and unresolved | CSI-05 |
+| T12 `retained_legacy_copy_blocks_unique_readiness` | Completed migration clears its finding. `--no-prune` retains content and its finding | CSI-02, CSI-05 |
 | T13 `second_install_is_identity_stable` | Existing valid managed destination permits an unchanged second install with no content, manifest, provenance, or quarantine changes | CSI-07 |
-| T14 `failed_migration_preserves_recovery` | Success updates claims; injected failure preserves recoverable content; retry handles a valid managed destination without a false foreign conflict | CSI-05, CSI-07 |
-| T15 `shared_skill_target_has_no_competing_writer` | All enabled relevant providers preserve each other's files across two installs; conflicting targets cannot pass acceptance | CSI-01, CSI-07 |
-| T16 `modified_doctor_finding_overrides_zero_exit` | Clean structured findings pass; modified selected file fails despite general doctor exit zero | CSI-03, CSI-07 |
-| T17 `missing_skipped_or_stale_results_fail` | Complete current result passes; missing executable, zero discovered tests, required skip, malformed JSON, or stale digest fails | CSI-06, CSI-07 |
-| T18 `case_aliases_and_symlinks_are_accounted_for` | Valid internal reference passes; case collision, escape, cycle, or duplicate native entry through an alias fails | CSI-02, CSI-03 |
+| T14 `failed_migration_preserves_recovery` | Success updates claims. Injected failure preserves recoverable content. Retry handles a valid managed destination without a false foreign conflict | CSI-05, CSI-07 |
+| T15 `shared_skill_target_has_no_competing_writer` | All enabled relevant providers preserve each other's files across two installs. Conflicting targets cannot pass acceptance | CSI-01, CSI-07 |
+| T16 `modified_doctor_finding_overrides_zero_exit` | Clean structured findings pass. Modified selected file fails despite general doctor exit zero | CSI-03, CSI-07 |
+| T17 `missing_skipped_or_stale_results_fail` | Complete current result passes. Missing executable, zero discovered tests, required skip, malformed JSON, or stale digest fails | CSI-06, CSI-07 |
+| T18 `case_aliases_and_symlinks_are_accounted_for` | Valid internal reference passes. Case collision, escape, cycle, or duplicate native entry through an alias fails | CSI-02, CSI-03 |
 
 ## Implemented test map
 
@@ -82,24 +82,24 @@ The prefixes identify these files:
 
 | ID | Implemented tests | Remaining contract evidence |
 | --- | --- | --- |
-| T01 | `I::codex_default_skills_use_by_kind_target`, `D::codex_defaults_use_shared_skills_and_keep_identity_fields`; existing `install_generates_valid_codex_toml_with_effort` in `tests/deploy.rs` | Execution passed at `7412b6a` |
-| T02 | `I::explicit_skill_target_is_preserved`; existing `install_routes_content_kinds_to_target_map_roots` in `tests/deploy.rs` | Execution passed at `7412b6a` |
+| T01 | `I::codex_default_skills_use_by_kind_target`, `D::codex_defaults_use_shared_skills_and_keep_identity_fields`. Existing `install_generates_valid_codex_toml_with_effort` in `tests/deploy.rs` | Execution passed at `7412b6a` |
+| T02 | `I::explicit_skill_target_is_preserved`. Existing `install_routes_content_kinds_to_target_map_roots` in `tests/deploy.rs` | Execution passed at `7412b6a` |
 | T03 | `I::equal_duplicate_names_are_ambiguous`, `P::test_catalog_preserves_equal_name_duplicates`, `P::test_catalog_is_sorted_without_selecting_a_winner` | Execution passed at `7412b6a` |
-| T04 | `I::declared_name_controls_duplicate_detection`, `I::declared_names_control_divergent_and_distinct_candidates`; both duplicate fixtures check reversed-root ordering and exact affected paths | Strengthened assertions passed in the later 18-test identity run; next publication gate pending |
-| T05 | `I::incomplete_scope_cannot_pass`, `I::missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill`, `I::current_source_changes_invalidate_deployed_selection` | Exact scope-finding and path assertions passed in the later 18-test identity run; next publication gate pending |
-| T06 | `I::bundle_digest_covers_companions_and_entry_types`; `B::companion_bytes_paths_and_binary_changes_invalidate_identity`, `B::executable_bits_are_part_of_the_bundle_identity`, `B::contained_symlink_target_and_entry_type_change_identity`, `B::provenance_content_and_timestamps_do_not_change_identity` | Execution passed at `7412b6a` |
+| T04 | `I::declared_name_controls_duplicate_detection`, `I::declared_names_control_divergent_and_distinct_candidates`. Both duplicate fixtures check reversed-root ordering and exact affected paths | Strengthened assertions passed in the later 18-test identity run. Next publication gate pending |
+| T05 | `I::incomplete_scope_cannot_pass`, `I::missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill`, `I::current_source_changes_invalidate_deployed_selection` | Exact scope-finding and path assertions passed in the later 18-test identity run. Next publication gate pending |
+| T06 | `I::bundle_digest_covers_companions_and_entry_types` with `B::companion_bytes_paths_and_binary_changes_invalidate_identity`, `B::executable_bits_are_part_of_the_bundle_identity`, `B::contained_symlink_target_and_entry_type_change_identity`, `B::provenance_content_and_timestamps_do_not_change_identity` | Execution passed at `7412b6a` |
 | T07 | `I::complete_selected_bundle_deploys`, `M::codex_selected_companions_remain_runnable_and_excluded_bundles_stay_absent` | Execution passed at `7412b6a` |
 | T08 | `I::portable_metadata_survives_codex_assembly`, `M::codex_assembly_preserves_absent_optional_metadata`, `M::codex_variant_replaces_nested_metadata_without_superseded_keys` | Execution passed at `7412b6a` |
-| T09 | `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force` | Exact ownership-refusal paths passed in the later 12-test migration run; next publication gate pending |
-| T10 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::codex_migration_preserves_yaml_that_looks_like_provenance` | Foreign-content preservation and exact refusal paths passed in the later migration run; next publication gate pending |
-| T11 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::modified_file_keeps_install_semantics_but_invalidates_source_snapshot` | Both entrypoint and companion edits, with exact affected paths, passed in the later migration run; next publication gate pending |
-| T12 | `D::codex_migration_no_prune_keeps_legacy_claims_and_then_resumes`, `I::no_prune_install_remains_unverified_until_complete_install`, `I::retained_legacy_copy_blocks_unique_readiness_until_migration_completes` | Duplicate identity and exact paths before migration, then one clean candidate after migration, passed in the later identity run; next publication gate pending |
+| T09 | `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force` | Exact ownership-refusal paths passed in the later 12-test migration run. Next publication gate pending |
+| T10 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::codex_migration_preserves_yaml_that_looks_like_provenance` | Foreign-content preservation and exact refusal paths passed in the later migration run. Next publication gate pending |
+| T11 | `D::codex_migration_preserves_conflicts_before_any_content_write_even_with_force`, `D::modified_file_keeps_install_semantics_but_invalidates_source_snapshot` | Both entrypoint and companion edits, with exact affected paths, passed in the later migration run. Next publication gate pending |
+| T12 | `D::codex_migration_no_prune_keeps_legacy_claims_and_then_resumes`, `I::no_prune_install_remains_unverified_until_complete_install`, `I::retained_legacy_copy_blocks_unique_readiness_until_migration_completes` | Duplicate identity and exact paths before migration, then one clean candidate after migration, passed in the later identity run. Next publication gate pending |
 | T13 | `I::second_install_is_identity_stable`, `D::codex_migration_moves_complete_bundle_and_repeats_without_changes`, `D::source_snapshot_deploys_only_after_complete_install_and_stays_outside_manifest` | Serialized execution passed at `7412b6a` |
 | T14 | `D::codex_migration_public_failure_restores_destination_and_retries`, `D::codex_migration_recovers_failed_copy_and_retries_without_foreign_loss`, `D::codex_migration_restores_legacy_bundle_when_manifest_update_fails`, `D::codex_migration_keeps_legacy_when_replacement_changes_after_preflight` | Full serialized suite passed at `7412b6a` |
 | T15 | `D::codex_and_agentskills_distinct_roots_coexist_across_two_installs`, `D::codex_shared_root_refuses_multiple_selected_writers_before_target_creation`, `D::codex_shared_root_refuses_a_different_recorded_writer` | Both configurations and the full serialized suite passed at `7412b6a` |
 | T16 | `I::modified_doctor_finding_overrides_zero_exit` | Execution passed at `7412b6a` |
-| T17 | `I::missing_skipped_or_stale_results_fail`, `N::empty_or_malformed_records_cannot_pass_native_validation`, `P::test_missing_executable_records_failure_without_skipped_success`; `Q::test_zero_tests_fail_despite_success_exit`, `Q::test_unittest_skip_cannot_pass`, `Q::test_missing_executable_fails_freeze`, `Q::test_pins_cannot_be_replaced_by_candidate_hashes` | Count, skip, and stale-pin controls passed; trusted external-runner isolation remains unproven |
-| T18 | `I::case_aliases_and_symlinks_are_accounted_for`; `B::case_collision_detection_does_not_depend_on_host_filesystem`, `B::contained_directory_aliases_preserve_local_references`, `B::escaping_dangling_and_cyclic_symlinks_are_rejected`; `F::sibling_directory_aliases_remain_distinct_without_native_evidence`, `F::distinct_physical_same_name_skills_remain_duplicates` | Earlier platform checks and the two later static alias tests passed. A native directory alias emitted no duplicate; duplicate-through-alias rejection remains unproven |
+| T17 | `I::missing_skipped_or_stale_results_fail`, `N::empty_or_malformed_records_cannot_pass_native_validation`, `P::test_missing_executable_records_failure_without_skipped_success` with `Q::test_zero_tests_fail_despite_success_exit`, `Q::test_unittest_skip_cannot_pass`, `Q::test_missing_executable_fails_freeze`, `Q::test_pins_cannot_be_replaced_by_candidate_hashes` | Count, skip, and stale-pin controls passed. Trusted external-runner isolation remains unproven |
+| T18 | `I::case_aliases_and_symlinks_are_accounted_for` with the `B` group (`B::case_collision_detection_does_not_depend_on_host_filesystem`, `B::contained_directory_aliases_preserve_local_references`, `B::escaping_dangling_and_cyclic_symlinks_are_rejected`) and the `F` group (`F::sibling_directory_aliases_remain_distinct_without_native_evidence`, `F::distinct_physical_same_name_skills_remain_duplicates`) | Earlier platform checks and the two later static alias tests passed. A native directory alias emitted no duplicate. Duplicate-through-alias rejection remains unproven |
 
 The current [skill-readiness workflow](../../../.github/workflows/skill-readiness.yaml) declares six integration targets,
 including `codex_skill_aliases`, and 35 required Python controls on Linux and macOS.
@@ -203,7 +203,7 @@ The following tests are authored controls. See [validation](validation.md#layer-
 | --- | --- |
 | L01, L02, L09 | `S::generic_and_claude_layers_pass_without_changing_source`, `S::codex_layer_rejects_claude_tool_and_parameter`, `U::ordinary_words_and_portable_metadata_remain_valid`, `G::source_routing_directives_survive_until_actual_rendering` |
 | L03 | `S::exact_model_variant_inherits_harness_checks`, `S::model_variant_cannot_change_skill_identity`, `S::unknown_and_misplaced_model_folders_fail`, `G::model_layer_cannot_override_identity_routing_or_runtime_metadata` |
-| L04, L05 | `S::variant_requires_explicit_mode`, `S::model_layer_does_not_inherit_the_harness_variant_body`, `G::effective_body_uses_actual_append_prepend_replace_semantics`, `G::user_then_model_then_harness_selects_one_body_winner`, `G::metadata_only_harness_append_and_prepend_keep_base_body`, `G::user_entrypoint_requires_complete_replacement_and_preserves_name`; existing `A::resolve_provider_model_takes_precedence_over_provider` |
+| L04, L05 | `S::variant_requires_explicit_mode`, `S::model_layer_does_not_inherit_the_harness_variant_body`, `G::effective_body_uses_actual_append_prepend_replace_semantics`, `G::user_then_model_then_harness_selects_one_body_winner`, `G::metadata_only_harness_append_and_prepend_keep_base_body`, `G::user_entrypoint_requires_complete_replacement_and_preserves_name`. Existing `A::resolve_provider_model_takes_precedence_over_provider` |
 | L06 | `S::generic_companion_cannot_hide_harness_calls`, `U::examples_quotes_and_conditionals_do_not_suppress_literals`, `G::user_companion_replaces_same_relative_base_path` |
 | L07 | `R::resolved_codex_variant_excludes_the_claude_procedure`, `R::installed_companion_leak_blocks_strict_readiness`, `U::rendered_companions_are_scanned_but_provenance_and_binary_assets_are_not`, `U::rendered_codex_companions_reject_gemini_symbols` |
 | L08 | `S::malformed_model_registry_fails_without_embedded_fallback`, `S::empty_provider_model_list_fails`, `S::deck_selection_uses_the_deck_model_registry`, `S::empty_selection_fails_instead_of_reporting_zero_checks_as_success`, `S::symlinked_skills_container_is_not_followed`, `U::malformed_entrypoint_metadata_fails_visibly`, `U::unreadable_or_changed_relevant_files_fail_visibly` |
@@ -218,7 +218,7 @@ The CLI invalid cases now assert relevant codes, tokens, and paths.
 The model-layer integration case also asserts the actual assembled body without cumulative provider text.
 Earlier focused integration targets passed before the consistency corrections.
 The new configuration/input controls pass their focused integration run.
-The immutable publication check passed at `7412b6a`; later changes require a new check.
+The immutable publication check passed at `7412b6a`. Later changes require a new check.
 
 Run the source gate against the existing deck and report its baseline findings separately.
 The expanded content PR resolves SafetyFirst, the five measured baseline skills, and affected authoring guidance.
@@ -302,8 +302,8 @@ rtk proxy make validate
 ```
 
 Use direct assertions on parsed doctor findings and bundle records inside the integration target.
-The repository ignores `Cargo.lock`; these commands also work from a fresh clone without a generated lockfile.
-Keep source and executable bytes unchanged throughout validation; serialize builds and the final test run.
+The repository ignores `Cargo.lock`. These commands also work from a fresh clone without a generated lockfile.
+Keep source and executable bytes unchanged throughout validation. Serialize builds and the final test run.
 The native check uses the supported harness surface verified at the selected implementation checkpoint.
 Do not invent a Codex catalog command or substitute a different harness.
 Keep fixture authors and implementation reviewers independent during acceptance.

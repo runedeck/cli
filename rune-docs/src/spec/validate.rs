@@ -3,6 +3,7 @@
 //! interop artifacts surfaced as warnings. One pipeline serves `validate`,
 //! archive preflight, and doctor, so acceptance cannot differ by command.
 
+use super::lint::{self, Glossary, LintTarget};
 use super::templates::{DELTA_SPEC_MDSCHEMA, SPEC_MDSCHEMA};
 use super::{
     DiagnosticSeverity, PrefixMatch, SpecRoot, SpecViolation, changes_root,
@@ -103,6 +104,7 @@ pub(super) fn validate_spec_target(
         "schemas/delta-spec.mdschema",
         DELTA_SPEC_MDSCHEMA,
     )?;
+    let glossary = Glossary::load(repository, spec_root.specifications());
     let mut diagnostics = Vec::new();
 
     match &target {
@@ -118,6 +120,7 @@ pub(super) fn validate_spec_target(
                     &capability,
                     &spec_path,
                     &spec_schema,
+                    &glossary,
                     mdschema_check,
                     &mut diagnostics,
                 )?;
@@ -128,6 +131,7 @@ pub(super) fn validate_spec_target(
                     &change_dir,
                     &spec_schema,
                     &delta_schema,
+                    &glossary,
                     false,
                     mdschema_check,
                     &mut diagnostics,
@@ -141,6 +145,7 @@ pub(super) fn validate_spec_target(
                 &spec_root.changes().join(change),
                 &spec_schema,
                 &delta_schema,
+                &glossary,
                 true,
                 mdschema_check,
                 &mut diagnostics,
@@ -152,12 +157,64 @@ pub(super) fn validate_spec_target(
                 capability,
                 &spec_root.specifications().join(capability).join("spec.md"),
                 &spec_schema,
+                &glossary,
                 mdschema_check,
                 &mut diagnostics,
             )?;
         }
     }
 
+    Ok(diagnostics)
+}
+
+/// The prose lints alone, over every canonical specification and active
+/// delta. Doctor reports these beside its relationship findings.
+pub(super) fn lint_tree(spec_root: &SpecRoot) -> Result<Vec<SpecViolation>, Error> {
+    let repository = spec_root.repository();
+    let glossary = Glossary::load(repository, spec_root.specifications());
+    let mut diagnostics = Vec::new();
+    let mut capabilities = Vec::new();
+    discover_capabilities_below(
+        spec_root.specifications(),
+        spec_root.specifications(),
+        &mut capabilities,
+    )?;
+    for (capability, spec_path) in capabilities {
+        lint::lint_canonical(
+            LintTarget {
+                repository,
+                path: &spec_path,
+                capability: &capability,
+                change: None,
+            },
+            &read(&spec_path)?,
+            &glossary,
+            &mut diagnostics,
+        );
+    }
+    for change_dir in active_change_directories(spec_root.changes())? {
+        let Some(change) = change_dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let mut deltas = Vec::new();
+        let base = change_dir.join("specs");
+        if base.is_dir() {
+            discover_capabilities_below(&base, &base, &mut deltas)?;
+        }
+        for (capability, delta_path) in deltas {
+            lint::lint_delta(
+                LintTarget {
+                    repository,
+                    path: &delta_path,
+                    capability: &capability,
+                    change: Some(change),
+                },
+                &read(&delta_path)?,
+                &glossary,
+                &mut diagnostics,
+            );
+        }
+    }
     Ok(diagnostics)
 }
 
@@ -243,6 +300,7 @@ fn validate_canonical(
     capability: &str,
     path: &Path,
     schema: &str,
+    glossary: &Glossary,
     mdschema_check: MdschemaCheck,
     diagnostics: &mut Vec<SpecViolation>,
 ) -> Result<(), Error> {
@@ -270,14 +328,27 @@ fn validate_canonical(
             issues,
         ));
     }
+    lint::lint_canonical(
+        LintTarget {
+            repository,
+            path,
+            capability,
+            change: None,
+        },
+        &content,
+        glossary,
+        diagnostics,
+    );
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_change(
     spec_root: &SpecRoot,
     change_dir: &Path,
     spec_schema: &str,
     delta_schema: &str,
+    glossary: &Glossary,
     validate_referenced_canonical_schema: bool,
     mdschema_check: MdschemaCheck,
     diagnostics: &mut Vec<SpecViolation>,
@@ -303,6 +374,17 @@ fn validate_change(
             &content,
             delta_schema,
             mdschema_check,
+            diagnostics,
+        );
+        lint::lint_delta(
+            LintTarget {
+                repository: spec_root.repository(),
+                path: &delta_path,
+                capability: &capability,
+                change: Some(change),
+            },
+            &content,
+            glossary,
             diagnostics,
         );
     }

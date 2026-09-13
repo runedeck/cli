@@ -14,6 +14,7 @@ import selectors
 import shlex
 import signal
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -326,7 +327,53 @@ def run_observation(args):
     return 1 if problem else 0
 
 
+def verdict(out):
+    """Judge one native acceptance run directory. Exit 0 only for an accepted record.
+
+    Missing evidence, a missing or nonzero step, an unreadable acceptance
+    record, or a record that is not accepted is a failure. Nothing here
+    turns an absent observation into a pass.
+    """
+    out = Path(out)
+    problems = []
+    exits = {}
+    exits_file = out / "exits.txt"
+    if not exits_file.is_file():
+        problems.append("no exits.txt: the driver did not record its steps")
+    else:
+        for line in exits_file.read_text().splitlines():
+            label, _, status = line.partition("-exit=")
+            if not status.isdigit():
+                problems.append(f"malformed exit line: {line}")
+                continue
+            exits[label] = int(status)
+    for step in ("doctor-static", "catalog", "doctor-catalog", "probe", "acceptance"):
+        if step not in exits:
+            problems.append(f"step did not run: {step}")
+        elif exits[step] != 0:
+            problems.append(f"step exited {exits[step]}: {step}")
+    if not (out / "probe" / "evidence.json").is_file():
+        problems.append("no native evidence record: the probe did not reach an evidence-bearing turn")
+    acceptance = out / "acceptance.out"
+    if acceptance.is_file():
+        try:
+            record = json.loads(acceptance.read_text()).get("skill_readiness", {})
+        except (ValueError, AttributeError):
+            record = {}
+            problems.append("acceptance record is not a doctor JSON document")
+        for key, expected in (("static_valid", True), ("source_verification", "verified"), ("native_discovery", "verified"), ("accepted", True)):
+            if record.get(key) != expected:
+                problems.append(f"acceptance {key} is {record.get(key)!r}, expected {expected!r}")
+    else:
+        problems.append("no acceptance record")
+    result = {"out": str(out), "accepted": not problems, "problems": problems}
+    print(json.dumps(result, indent=2))
+    return 0 if not problems else 1
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--verdict":
+        return verdict(sys.argv[2])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codex", default="/Applications/ChatGPT.app/Contents/Resources/codex")
     parser.add_argument("--codex-home", help="Optional isolated native home; no credentials are copied")

@@ -2,7 +2,7 @@
 
 ### Requirement: Init
 
-The Init capability SHALL describe its required behavior here.
+The Init capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

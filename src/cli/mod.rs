@@ -34,6 +34,7 @@ mod process;
 mod provenance;
 mod provider_cmd;
 mod release;
+mod repair;
 mod review;
 mod run;
 mod setup;
@@ -108,7 +109,7 @@ enum Command {
         source: String,
     },
 
-    /// Check and conservatively repair deployed manifest integrity
+    /// Check deployed manifest integrity (read-only; `rune repair` writes)
     Doctor {
         /// Deploy target or provider directory. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -118,12 +119,8 @@ enum Command {
         #[arg(long)]
         verify: bool,
 
-        /// Restore missing managed files and quarantine managed-directory orphans.
-        #[arg(long)]
-        repair: bool,
-
         /// Check complete Codex skill identities. Native evidence is required for acceptance.
-        #[arg(long, conflicts_with = "repair")]
+        #[arg(long)]
         skill_readiness: bool,
 
         /// Complete native skills/list catalog, reduced to name, path, and enabled fields.
@@ -156,6 +153,37 @@ enum Command {
         /// Raw Codex protocol envelopes that support the normalized transcript.
         #[arg(long, value_name = "JSONL", requires = "skill_evidence")]
         skill_raw_transcript: Option<std::path::PathBuf>,
+    },
+
+    /// Repair doctor findings: trash orphan sidecars, rename stale subjects,
+    /// restore missing managed files, quarantine deployment orphans
+    Repair {
+        /// Module root for the source pass. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<String>,
+
+        /// Deploy target or provider directory. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        target: Option<String>,
+
+        /// Print every write the repair would make and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Move a reviewed artifact with its provenance inside one repository
+    Move {
+        /// Skill directory, agent file, or rule file to move.
+        #[arg(value_name = "FROM")]
+        from: String,
+
+        /// Destination path. Must not exist yet.
+        #[arg(value_name = "TO")]
+        to: String,
+
+        /// Tree the paths are relative to. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        root: String,
     },
 
     /// Launch the terminal dashboard
@@ -1196,6 +1224,15 @@ enum AdoptAction {
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
 
+        /// The approved text that replaces an adapted block. Finalize proves
+        /// it is present in the edited file and stores it beside the sidecar.
+        #[arg(long, value_name = "TEXT", conflicts_with = "replacement_file")]
+        replacement: Option<String>,
+
+        /// Read the approved replacement text from a file.
+        #[arg(long, value_name = "PATH", conflicts_with = "replacement")]
+        replacement_file: Option<String>,
+
         /// Tree to scan. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         root: String,
@@ -1256,15 +1293,11 @@ enum AdoptAction {
     },
 
     /// Verify sealed review records, open sessions, and unreviewed imports
+    /// (read-only; `rune repair` writes)
     Doctor {
         /// Tree to scan. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         root: String,
-
-        /// Repair sidecars a crashed finalize left pending: flipped only when
-        /// the file on disk matches the sealed record's digest exactly.
-        #[arg(long)]
-        repair: bool,
     },
 }
 
@@ -1314,7 +1347,6 @@ pub fn run() -> i32 {
         Command::Doctor {
             target,
             verify,
-            repair,
             skill_readiness,
             skill_catalog,
             skill_model,
@@ -1327,7 +1359,6 @@ pub fn run() -> i32 {
                     doctor::execute_with_skills(
                         &target,
                         verify,
-                        repair,
                         args.json,
                         &doctor::SkillOptions {
                             enabled: true,
@@ -1339,8 +1370,28 @@ pub fn run() -> i32 {
                         },
                     )
                 } else {
-                    doctor::execute(&target, verify, repair, args.json)
+                    doctor::execute(&target, verify, args.json)
                 },
+                args.json,
+            );
+        }
+        Command::Repair {
+            root,
+            target,
+            dry_run,
+        } => {
+            return exit_code(
+                repair::execute(root.as_deref(), target.as_deref(), dry_run, args.json),
+                args.json,
+            );
+        }
+        Command::Move { from, to, root } => {
+            return exit_code(
+                adopt::relocate::execute(
+                    std::path::Path::new(&root),
+                    std::path::Path::new(&from),
+                    std::path::Path::new(&to),
+                ),
                 args.json,
             );
         }
@@ -2090,8 +2141,14 @@ fn deck_help(help: &mut String) {
     help_command(
         help,
         "doctor",
-        "[--target <DIR>] [--verify] [--repair]",
-        "Check and repair deployment integrity",
+        "[--target <DIR>] [--verify]",
+        "Check deployment integrity",
+    );
+    help_command(
+        help,
+        "repair",
+        "[--root <DIR>] [--target <DIR>] [--dry-run]",
+        "Repair doctor findings: trash orphans, rename subjects, restore files",
     );
     help_command(
         help,
@@ -2146,6 +2203,12 @@ fn deck_help(help: &mut String) {
         "adopt",
         "start|...|finalize|abandon|reseal|doctor",
         "Adopt an upstream rune through block-by-block review",
+    );
+    help_command(
+        help,
+        "move",
+        "<FROM> <TO> [--root <DIR>]",
+        "Move a reviewed artifact with its provenance",
     );
     help_command(
         help,
@@ -2421,17 +2484,31 @@ fn run_adopt(action: AdoptAction, json: bool) -> i32 {
             block_id,
             verdict,
             note,
+            replacement,
+            replacement_file,
             root,
             artifact,
             force,
-        } => adopt::review::verdict(
-            Path::new(&root),
-            artifact.as_deref(),
-            &block_id,
-            &verdict,
-            note.as_deref(),
-            force,
-        ),
+        } => {
+            let replacement = match (replacement, replacement_file) {
+                (Some(text), _) => Ok(Some(text)),
+                (None, Some(path)) => std::fs::read_to_string(&path)
+                    .map(Some)
+                    .map_err(|error| format!("cannot read --replacement-file {path}: {error}")),
+                (None, None) => Ok(None),
+            };
+            replacement.and_then(|replacement| {
+                adopt::review::verdict(
+                    Path::new(&root),
+                    artifact.as_deref(),
+                    &block_id,
+                    &verdict,
+                    note.as_deref(),
+                    replacement.as_deref(),
+                    force,
+                )
+            })
+        }
         AdoptAction::Finalize {
             root,
             artifact,
@@ -2451,14 +2528,7 @@ fn run_adopt(action: AdoptAction, json: bool) -> i32 {
         AdoptAction::Reseal { root, artifact } => {
             adopt::review::reseal(Path::new(&root), artifact.as_deref())
         }
-        AdoptAction::Doctor { root, repair } => {
-            if repair {
-                adopt::review::doctor_repair(Path::new(&root))
-                    .and_then(|_| adopt::review::doctor(Path::new(&root), json))
-            } else {
-                adopt::review::doctor(Path::new(&root), json)
-            }
-        }
+        AdoptAction::Doctor { root } => adopt::review::doctor(Path::new(&root), json),
     };
     exit_code(result, json)
 }

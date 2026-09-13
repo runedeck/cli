@@ -192,8 +192,7 @@ pub fn propose_output(
         template_overrides: overrides,
         next_steps: vec![
             "Link proposal.md to the governing ADR and fill in scope.".to_string(),
-            "Replace the delta spec placeholders with SHALL requirements and scenarios."
-                .to_string(),
+            "Replace the delta spec placeholders with MUST requirements and scenarios.".to_string(),
             "Implement tasks.md, checking items as executable checks pass.".to_string(),
             format!("Run `rune spec archive {id}` when every task is checked."),
         ],

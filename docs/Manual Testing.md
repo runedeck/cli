@@ -273,7 +273,7 @@ Prerequisites and setup:
 OPENSPEC_ROOT=$(mktemp -d)
 ADVISORY_BIN=$(mktemp -d)
 mkdir -p "$OPENSPEC_ROOT/openspec/specs/widgets"
-python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Widgets Specification\n\n## Purpose\n\nDescribe widgets.\n\n## Requirements\n\n### Requirement: Widget lookup\n\nThe system SHALL return a widget.\n\n#### Scenario: Widget exists\n\n- **WHEN** a widget exists\n- **THEN** the widget is returned\n")' "$OPENSPEC_ROOT/openspec/specs/widgets/spec.md"
+python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Widgets Specification\n\n## Purpose\n\nDescribe widgets.\n\n## Requirements\n\n### Requirement: Widget lookup\n\nThe system MUST return a widget.\n\n#### Scenario: Widget exists\n\n- **WHEN** a widget exists\n- **THEN** the widget is returned\n")' "$OPENSPEC_ROOT/openspec/specs/widgets/spec.md"
 python3 -c 'from pathlib import Path; path = Path(__import__("sys").argv[1]); path.write_text("#!/bin/sh\nprintf fixture-validation-failed >&2\nexit 1\n"); path.chmod(0o755)' "$ADVISORY_BIN/openspec"
 ```
 
@@ -338,8 +338,8 @@ Prerequisites and setup:
 ```sh
 DELTA_ROOT=$(mktemp -d)
 mkdir -p "$DELTA_ROOT/docs/specs/search" "$DELTA_ROOT/docs/changes/update-search/specs/search"
-python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Search Specification\n\n## Purpose\n\nDescribe search.\n\n## Requirements\n\n### Requirement: Legacy lookup\n\nThe system SHALL return a document.\n\n#### Scenario: Document exists\n\n- **WHEN** a document exists\n- **THEN** the document is returned\n\n### Requirement: Obsolete filter\n\nThe system SHALL expose an obsolete filter.\n\n#### Scenario: Filter requested\n\n- **WHEN** the filter is requested\n- **THEN** the filter is returned\n")' "$DELTA_ROOT/docs/specs/search/spec.md"
-python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("## ADDED Requirements\n\n### Requirement: Owner filter\n\nThe system SHALL filter documents by owner.\n\n#### Scenario: Owner selected\n\n- **WHEN** an owner is selected\n- **THEN** only matching documents are returned\n\n## MODIFIED Requirements\n\n### Requirement: Current lookup\n\nThe system SHALL return a document with its path.\n\n#### Scenario: Document exists\n\n- **WHEN** a document exists\n- **THEN** the document and path are returned\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: Legacy lookup`\n- TO: `### Requirement: Current lookup`\n\n## REMOVED Requirements\n\n- `### Requirement: Obsolete filter`\n")' "$DELTA_ROOT/docs/changes/update-search/specs/search/spec.md"
+python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Search Specification\n\n## Purpose\n\nDescribe search.\n\n## Requirements\n\n### Requirement: Legacy lookup\n\nThe system MUST return a document.\n\n#### Scenario: Document exists\n\n- **WHEN** a document exists\n- **THEN** the document is returned\n\n### Requirement: Obsolete filter\n\nThe system MUST expose an obsolete filter.\n\n#### Scenario: Filter requested\n\n- **WHEN** the filter is requested\n- **THEN** the filter is returned\n")' "$DELTA_ROOT/docs/specs/search/spec.md"
+python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("## ADDED Requirements\n\n### Requirement: Owner filter\n\nThe system MUST filter documents by owner.\n\n#### Scenario: Owner selected\n\n- **WHEN** an owner is selected\n- **THEN** only matching documents are returned\n\n## MODIFIED Requirements\n\n### Requirement: Current lookup\n\nThe system MUST return a document with its path.\n\n#### Scenario: Document exists\n\n- **WHEN** a document exists\n- **THEN** the document and path are returned\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: Legacy lookup`\n- TO: `### Requirement: Current lookup`\n\n## REMOVED Requirements\n\n- `### Requirement: Obsolete filter`\n")' "$DELTA_ROOT/docs/changes/update-search/specs/search/spec.md"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("---\nstatus: proposed\n---\n# Update Search\n\n## Why\n\nKeep search behavior explicit.\n\n## What Changes\n\n- Update lookup and filtering.\n\n## Capabilities\n\n- search (modified)\n\n## Impact\n\n- Search behavior\n")' "$DELTA_ROOT/docs/changes/update-search/proposal.md"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("## Implementation\n\n- [x] Apply the search delta\n")' "$DELTA_ROOT/docs/changes/update-search/tasks.md"
 ```
@@ -404,7 +404,7 @@ Prerequisites and setup:
 ROUNDTRIP_ROOT=$(mktemp -d)
 mkdir -p "$ROUNDTRIP_ROOT/openspec/specs/widgets" "$ROUNDTRIP_ROOT/openspec/schemas/custom" "$ROUNDTRIP_ROOT/expected"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("spec:\n    root: docs\n")' "$ROUNDTRIP_ROOT/config.yaml"
-python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Widgets Specification\n\n## Purpose\n\nDescribe widgets.\n\n## Requirements\n\n### Requirement: Widget lookup\n\nThe system SHALL return a widget.\n\n#### Scenario: Widget exists\n\n- **WHEN** a widget exists\n- **THEN** the widget is returned\n")' "$ROUNDTRIP_ROOT/openspec/specs/widgets/spec.md"
+python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Widgets Specification\n\n## Purpose\n\nDescribe widgets.\n\n## Requirements\n\n### Requirement: Widget lookup\n\nThe system MUST return a widget.\n\n#### Scenario: Widget exists\n\n- **WHEN** a widget exists\n- **THEN** the widget is returned\n")' "$ROUNDTRIP_ROOT/openspec/specs/widgets/spec.md"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Example project\n")' "$ROUNDTRIP_ROOT/openspec/project.md"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("schema: custom\n")' "$ROUNDTRIP_ROOT/openspec/schemas/custom/schema.yaml"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_bytes(bytes([0, 1, 127, 255]))' "$ROUNDTRIP_ROOT/openspec/unknown.bin"
@@ -494,7 +494,7 @@ test "$CANONICAL_MTIME" = "$(stat -f '%m' "$RETRY_ROOT/docs/specs/widgets/spec.m
 test "$ARCHIVE_MTIME" = "$(stat -f '%m' "$ARCHIVE_PATH")"
 python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("spec:\n    root: docs\n")' "$RETRY_ROOT/config.yaml"
 mkdir -p "$RETRY_ROOT/openspec/specs/other"
-python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Other Specification\n\n## Purpose\n\nDescribe another capability.\n\n## Requirements\n\n### Requirement: Other behavior\n\nThe system SHALL provide another behavior.\n\n#### Scenario: Behavior requested\n\n- **WHEN** the behavior is requested\n- **THEN** the behavior is provided\n")' "$RETRY_ROOT/openspec/specs/other/spec.md"
+python3 -c 'from pathlib import Path; Path(__import__("sys").argv[1]).write_text("# Other Specification\n\n## Purpose\n\nDescribe another capability.\n\n## Requirements\n\n### Requirement: Other behavior\n\nThe system MUST provide another behavior.\n\n#### Scenario: Behavior requested\n\n- **WHEN** the behavior is requested\n- **THEN** the behavior is provided\n")' "$RETRY_ROOT/openspec/specs/other/spec.md"
 rune spec import --openspec --source "$RETRY_ROOT"
 IMPORT_MTIME=$(stat -f '%m' "$RETRY_ROOT/docs/.interop/openspec/manifest.yaml")
 sleep 1
@@ -562,7 +562,7 @@ In the deployed consumer fixture:
 ```sh
 rune doctor --target .                # summary of managed-file states, left untouched
 rune doctor --target . --verify       # exit nonzero while broken/orphaned files exist
-rune doctor --target . --repair       # restores missing managed files, quarantines orphans
+rune repair --target .                # restores missing managed files, quarantines orphans (doctor stays read-only)
 ```
 
 On a wired home target, doctor also checks the rule-wiring block: delete the generated region from `~/.codex/AGENTS.md` and `rune doctor --target ~/.codex --verify` exits 1 with a `(rule wiring)` finding.
@@ -601,7 +601,7 @@ rune drift --target .                 # clean, exit 0
 echo tamper >> .claude/rules/ArtifactLength.md
 rune drift --target .                 # flags ArtifactLength.md as modified
 rune drift --target . --all           # also lists Identical files (hidden by default)
-rune install --force                  # user modifications need --force; doctor --repair leaves them
+rune install --force                  # user modifications need --force; repair leaves them
 rune drift --target .                 # clean again, exit 0
 ```
 

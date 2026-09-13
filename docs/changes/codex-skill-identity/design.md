@@ -2,7 +2,7 @@
 
 ## Context
 
-See [proposal](proposal.md) for scope and [requirements](specs/codex-skill-identity/spec.md) for observable behavior.
+See [proposal](proposal.md) for scope and the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/skill-readiness/spec.md), [layers](specs/skill-layers/spec.md)) for observable behavior.
 The owner selected a staged layout migration on 2026-09-10.
 Use existing `ByKind` support. Defer cross-provider routing by assembled identity.
 This PR uses an independent clone of the recorded CLI base.
@@ -95,7 +95,7 @@ Do not exclude authored data because it resembles a provenance statement.
 A versioned source snapshot covers caller-selected configuration and authored source roots.
 The snapshot includes new and removed files, file modes, and contained symlink targets.
 It binds raw selection files, effective embedded configuration, and the current builder executable bytes.
-Explicit model overrides are recorded; doctor requires a matching `--skill-model` value.
+Explicit model overrides are recorded. Doctor requires a matching `--skill-model` value.
 Inputs cover every configured local source or already-materialized pinned Git source.
 Changes to unselected content can therefore invalidate readiness conservatively.
 Generated build, provider, and documentation roots are not snapshot inputs.

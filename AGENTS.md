@@ -43,6 +43,8 @@ assembled tree to provider-specific targets while recording manifests and proven
 | Providers | `src/provider/` | Content-provider configuration from `defaults.yaml` |
 | Ontology | `src/ontology.rs` | User configuration and resolved paths and launch routes |
 | Services | `src/services/` | Shared file, history, provenance, and source operations |
+| Skill readiness | `src/skill_readiness/` | Static skill inventory, bundle digests, layer policy, native evidence binding |
+| Repair | `src/cli/repair.rs`, `src/cli/adopt/relocate.rs` | `rune repair`, `rune move`. Both doctors are read-only |
 | TUI | `src/tui/` | Terminal application state, rendering, navigation, and editors |
 
 `provider` is the correct term for content deployment targets and model/API backends. Interactive or automated

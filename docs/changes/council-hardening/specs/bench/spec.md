@@ -2,7 +2,7 @@
 
 ### Requirement: Bench
 
-The Bench capability SHALL describe its required behavior here.
+The Bench capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

@@ -3,7 +3,7 @@
 - [x] 1.1 Deterministic markdown segmentation (`src/cli/adopt/segment.rs`, pulldown-cmark blocks, gap recovery, `segment/v1`)
 - [x] 1.2 Review record types and read/write (`src/cli/adopt/review.rs`, in-toto statement with adoption-review predicate)
 - [x] 1.3 `rune adopt` subcommand family: start, status, next, verdict, finalize, abandon. Import alias retired
-- [x] 1.4 `--kind agent|rule` placement and kebab-case naming in import
+- [x] 1.4 `--kind agent|rule` placement and schema-pattern naming in import (deck casing preserved)
 - [x] 1.5 Finalize consistency checks (whole-block multisets, kind-aware normalization) via the internal mdschema checker with trusted schema resolution
 - [x] 1.6 Adopt sidecar pending/reviewed state. Provenance scan skips review records. Reviewed artifacts refuse re-import
 - [x] 1.7 Deck: `.mdschema` per artifact kind encoding the skill-creator + dynamic-context standard (runes/meta)
@@ -11,7 +11,7 @@
 
 ## 2. Verification
 
-- [x] 2.1 Tests: segmentation fixture, verdict lifecycle, finalize refusals (pending, cut-survives, keep-deleted), record shape, rule placement, kebab conversion
+- [x] 2.1 Tests: segmentation fixture, verdict lifecycle, finalize refusals (pending, cut-survives, keep-deleted), record shape, rule placement, name pattern parity with the skill schema
 - [x] 2.2 cargo fmt, clippy clean in adopt scope. Council review (codex gpt-5.6-sol xhigh + grok) applied to the design before implementation
 - [x] 2.3 End-to-end dry run adopting a forge-core rule. Walkthrough at docs/walkthroughs/Adopt.md
 

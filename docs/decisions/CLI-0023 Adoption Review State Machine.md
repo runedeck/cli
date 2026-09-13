@@ -16,7 +16,7 @@ author: "@N4M3Z"
 project: rune-cli
 related:
     - "CLI-0016 Rune Adopt Provenance Mechanism"
-    - "PROV-0006 Adoption Metadata in Provenance Sidecars"
+    - "ASSEMBLY-0012 Adoption Metadata in Provenance Sidecars"
 responsible: ["@N4M3Z"]
 accountable: ["@N4M3Z"]
 consulted: []
