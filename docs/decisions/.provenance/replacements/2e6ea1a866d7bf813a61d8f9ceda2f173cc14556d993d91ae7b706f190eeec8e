@@ -1,0 +1,3 @@
+- [ASSEMBLY-0002](ASSEMBLY-0002%20Provenance%20Tracking.md) — the base schema this ADR declares sufficient for adoption
+- [ARCH-0012][ARCH-0012] — the strategy requiring Phase 2 eval queries across adopted skills
+- [ARCH-0013][ARCH-0013] — the mechanism producing the sidecars this ADR shapes; defines each transform as a skill

@@ -2,7 +2,7 @@
 
 ### Requirement: Stable shell headings
 
-The Skill Authoring capability SHALL require every canonical `SKILL.md` to contain one H1 and the H2 section `Instructions`. It SHALL permit the optional H2 sections `Prerequisites`, `Constraints`, `Verification`, `Troubleshooting`, and `References` only in the Stable shell order.
+The Skill Authoring capability MUST require every canonical `SKILL.md` to contain one H1 and the H2 section `Instructions`. It MUST permit the optional H2 sections `Prerequisites`, `Constraints`, `Verification`, `Troubleshooting`, and `References` only in the Stable shell order.
 
 #### Scenario: Minimal shell passes
 
@@ -26,7 +26,7 @@ The Skill Authoring capability SHALL require every canonical `SKILL.md` to conta
 
 ### Requirement: Task-specific subsections
 
-The Skill Authoring capability SHALL permit task-specific H3 headings beneath `Constraints`, `Instructions`, `Verification`, and `Troubleshooting`. It SHALL reject headings below H3 and SHALL reject H3 headings beneath `Prerequisites` or `References`.
+The Skill Authoring capability MUST permit task-specific H3 headings beneath `Constraints`, `Instructions`, `Verification`, and `Troubleshooting`. It MUST reject headings below H3 and MUST reject H3 headings beneath `Prerequisites` or `References`.
 
 #### Scenario: Action heading passes
 
@@ -45,7 +45,7 @@ The Skill Authoring capability SHALL permit task-specific H3 headings beneath `C
 
 ### Requirement: Instruction breadth warning
 
-The Skill Authoring capability SHALL emit a warning when `## Instructions` contains more than four H3 headings. The warning SHALL NOT make validation fail when no error-severity findings exist.
+The Skill Authoring capability MUST emit a warning when `## Instructions` contains more than four H3 headings. The warning MUST NOT make validation fail when no error-severity findings exist.
 
 #### Scenario: Focused instructions pass without warning
 
@@ -60,7 +60,7 @@ The Skill Authoring capability SHALL emit a warning when `## Instructions` conta
 
 ### Requirement: Skill identity agreement
 
-The Skill Authoring capability SHALL require the H1 text, frontmatter `name`, and skill directory name to be equal.
+The Skill Authoring capability MUST require the H1 text, frontmatter `name`, and skill directory name to be equal.
 
 #### Scenario: Skill identity agrees
 
@@ -74,7 +74,7 @@ The Skill Authoring capability SHALL require the H1 text, frontmatter `name`, an
 
 ### Requirement: Canonical Agent Skills source
 
-The Skill Authoring capability SHALL require canonical skill directories, frontmatter `name` values, and H1 identifiers to use the same lowercase kebab-case value. Canonical top-level frontmatter SHALL contain only fields defined by Agent Skills. Provider-specific fields SHALL be introduced by provider transforms rather than canonical skill source.
+The Skill Authoring capability MUST require canonical skill directories, frontmatter `name` values, and H1 identifiers to use the same lowercase kebab-case value. Canonical top-level frontmatter MUST contain only fields defined by Agent Skills. Provider-specific fields MUST be introduced by provider transforms rather than canonical skill source.
 
 #### Scenario: Canonical source remains portable
 
@@ -84,7 +84,7 @@ The Skill Authoring capability SHALL require canonical skill directories, frontm
 
 ### Requirement: Validation responsibility
 
-The Skill Authoring capability SHALL use standalone `mdschema` as the stringent checker for Stable shell vocabulary, order, uniqueness, depth, and subsection placement. Rune's built-in checker SHALL remain a partial fallback for basic structural checks. Rune SHALL perform identity validation and the instruction breadth warning in either validation path.
+The Skill Authoring capability MUST use standalone `mdschema` as the stringent checker for Stable shell vocabulary, order, uniqueness, depth, and subsection placement. Rune's built-in checker MUST remain a partial fallback for basic structural checks. Rune MUST perform identity validation and the instruction breadth warning in either validation path.
 
 #### Scenario: Standalone checker is available
 
@@ -99,7 +99,7 @@ The Skill Authoring capability SHALL use standalone `mdschema` as the stringent 
 
 ### Requirement: Stable shell distribution
 
-The Skill Authoring capability SHALL distribute the Stable shell through the `RuneShell` rule, deck skill schemas, the CLI initialization template, and `build-skill` guidance.
+The Skill Authoring capability MUST distribute the Stable shell through the `RuneShell` rule, deck skill schemas, the CLI initialization template, and `build-skill` guidance.
 
 #### Scenario: New deck uses the shell
 

@@ -52,7 +52,7 @@ Chosen option: **Option 3.**
 
 `launch.models.<alias>` defines a model `id`, a `context` capacity, and an optional `compact` percentage. `launch.profiles.<tool>.<profile>.model` selects the alias. Configured routes replace complete built-in entries rather than merging individual fields.
 
-For Claude Code, route selection derives `ANTHROPIC_MODEL`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` as one group. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is emitted only when the route explicitly requests earlier compaction. A profile selecting a route must not also define these generated keys; Rune rejects the conflict instead of combining settings from different sources.
+For Claude Code, route selection derives `ANTHROPIC_MODEL`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` as one group. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is emitted only when the route explicitly requests earlier compaction. A profile selecting a route must not also define these generated keys. Rune rejects the conflict instead of combining settings from different sources.
 
 Endpoint and authentication values remain profile environment entries because they describe access to the route rather than model capacity. Optional small-model settings also remain in the profile. Both `rune launch` and `rune run` use the same resolved route and dry-run output reports the alias, model identifier, context capacity, source, generated settings, and redacted credentials.
 

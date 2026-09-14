@@ -48,7 +48,7 @@ Rune modules need a repeatable way to bring in useful upstream skills without lo
 
 Chosen option: **Option 3**.
 
-`rune adopt <url>` classifies anchored HTTPS, GitHub blob/raw, and hermetic `file://` fixture URLs. It fetches bytes through `ureq` for HTTPS, rejects non-UTF-8 bodies, applies the `align` transform, writes the artifact under the requested module, and records a source-side `.provenance/<stem>.yaml` sidecar. GitHub URLs must carry a full 40-hex commit in the URL before Rune records `externalParameters.upstream_commit`; plain HTTPS sources record an empty commit field.
+`rune adopt <url>` classifies anchored HTTPS, GitHub blob/raw, and hermetic `file://` fixture URLs. It fetches bytes through `ureq` for HTTPS, rejects non-UTF-8 bodies, applies the `align` transform, writes the artifact under the requested module, and records a source-side `.provenance/<stem>.yaml` sidecar. GitHub URLs must carry a full 40-hex commit in the URL before Rune records `externalParameters.upstream_commit`. Plain HTTPS sources record an empty commit field.
 
 The sidecar uses the existing manifest provenance types with `buildType: adopt/v1`, `externalParameters.upstream_url`, `externalParameters.transforms_applied: ["align"]`, the landed subject digest, and one `resolvedDependencies` entry named `upstream` containing the fetched-body digest. Unit tests inject fetched bytes directly, and an ignored smoke can cover a real hosted skill separately.
 

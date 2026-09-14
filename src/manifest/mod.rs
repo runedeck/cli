@@ -1,6 +1,8 @@
+pub mod bundle;
 pub(crate) mod extract;
 pub mod provenance;
 mod read;
+pub mod source_snapshot;
 mod staleness;
 mod statement;
 mod status;
@@ -104,15 +106,10 @@ pub fn existing_sidecar_for(file_path: &std::path::Path) -> Option<std::path::Pa
     legacy.is_file().then_some(legacy)
 }
 
-/// Compute the build sidecar path from a content file path. The full
-/// filename is kept (`logo.png` → `logo.png.yaml`) so same-stem assets get
-/// distinct sidecars, mirroring the deployed `.provenance/` naming.
+/// Keep generated build provenance in the same reserved namespace as deployment.
+/// Authored companions such as `data` and `data.yaml` never share a metadata path.
 pub fn sidecar_path(content_path: &std::path::Path) -> std::path::PathBuf {
-    let file_name = content_path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
-    content_path.with_file_name(format!("{file_name}.{SIDECAR_EXTENSION}"))
+    sidecar_for(content_path)
 }
 
 pub fn content_sha256(content: &str) -> String {

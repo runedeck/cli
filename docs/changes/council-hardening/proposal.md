@@ -2,6 +2,7 @@
 adr: "docs/decisions/CLI-0022 Native bench runner.md"
 status: proposed
 ---
+
 # Council Hardening
 
 ## Why
@@ -17,7 +18,7 @@ before being scheduled.
 
 Bug fixes:
 
-- Deploy treats only a missing `.manifest` as empty; read errors fail closed.
+- Deploy treats only a missing `.manifest` as empty. Read errors fail closed.
 - Prune refuses ownership when provenance is missing or unreadable.
 - `drift --target` fails when a deployed file is missing.
 - Provenance sidecar names encode the full filename, with migration for
@@ -41,8 +42,8 @@ Improvements:
 - `--json` honored by bench run/report/audit/dashboard and import/adopt.
 - One path-confinement helper, one atomic-replace API, atomic assemble into a
   temp tree, and a lock on install/deploy/doctor-repair targets.
-- Documented exit-code contract; suite semantic validation; per-model bench
-  doctor probes; channel-based bench worker harvesting; file-based prompts
+- Documented exit-code contract. Suite semantic validation. Per-model bench
+  doctor probes. Channel-based bench worker harvesting. File-based prompts
   for argv-limited providers.
 - Surface (additive only): the deploy verb family documented around
   `install`, the health ladder documented, import/adopt cross-referenced as
@@ -58,6 +59,6 @@ Improvements:
 - rune: src/cli/{deploy,drift,adopt,assemble,bench,validate}, src/manifest,
   src/ontology.rs, new shared helpers under src/cli/config or src/services.
 - runedeck/bench: bun harness gains the coordinated resume-dedup and
-  exit-code changes; compat spec gains both.
-- docs: exit-code contract and health-ladder sections; Manual Testing
+  exit-code changes. Compat spec gains both.
+- docs: exit-code contract and health-ladder sections. Manual Testing
   updates where behavior changes.

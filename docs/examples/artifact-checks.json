@@ -1,0 +1,14 @@
+{
+    "version": "rune-artifact-checks/v1",
+    "inputs": ["tests"],
+    "checks": [
+        {
+            "id": "fixture-contract",
+            "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+            "adapter": "unittest",
+            "expected_tests": 1,
+            "timeout_seconds": 20,
+            "max_output_bytes": 65536
+        }
+    ]
+}

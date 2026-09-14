@@ -1,3 +1,6 @@
+//! `rune doctor`: read-only deployment integrity. Every repairable finding
+//! names `rune repair`, the one command that writes.
+
 use rune::error::{Error, ErrorKind};
 use rune::manifest;
 use serde::Serialize;
@@ -6,8 +9,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const MANAGED_DIRECTORIES: &[&str] = &["agents", "skills", "rules", "hooks"];
-const MANIFEST_MISSING_CODE: &str = "doctor.manifest_missing";
+pub(crate) const MANIFEST_MISSING_CODE: &str = "doctor.manifest_missing";
 const MANIFEST_CORRUPT_CODE: &str = "doctor.manifest_corrupt";
+
+mod skills;
+pub use skills::SkillOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,33 +38,54 @@ pub(crate) struct TargetReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct RepairAction {
-    pub(crate) action: String,
-    pub(crate) path: String,
-    pub(crate) destination: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DoctorReport {
     pub(crate) targets: Vec<TargetReport>,
-    pub(crate) repairs: Vec<RepairAction>,
+    /// Strict Codex skill inventory, present when `--skill-readiness` ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) skill_readiness: Option<rune::skill_readiness::SkillReadiness>,
+    /// The command that repairs what this report found, when anything is
+    /// repairable. Doctor itself never writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) repair_command: Option<String>,
 }
 
-pub fn execute(target: &str, verify: bool, repair: bool, json: bool) -> Result<i32, Error> {
+pub fn execute(target: &str, verify: bool, json: bool) -> Result<i32, Error> {
+    execute_with_skills(target, verify, json, &SkillOptions::default())
+}
+
+pub fn execute_with_skills(
+    target: &str,
+    verify: bool,
+    json: bool,
+    skill_options: &SkillOptions,
+) -> Result<i32, Error> {
     let source_root = std::env::current_dir().map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot determine current directory: {error}"),
         )
     })?;
-    // Repair mutates the target tree; take the same per-target lock deploy
-    // holds so the two cannot interleave.
-    let _target_lock = if repair {
-        Some(crate::cli::config::lock_target(Path::new(target))?)
+    let mut report = if skill_options.enabled {
+        // Strict skill inventory also works before the first deployment.
+        match inspect(Path::new(target), &source_root) {
+            Ok(report) => report,
+            Err(error) if error.code() == MANIFEST_MISSING_CODE => DoctorReport {
+                targets: Vec::new(),
+                skill_readiness: None,
+                repair_command: None,
+            },
+            Err(error) => return Err(error),
+        }
     } else {
-        None
+        inspect(Path::new(target), &source_root)?
     };
-    let report = inspect_and_repair(Path::new(target), &source_root, repair)?;
+    if skill_options.enabled {
+        report.skill_readiness = Some(skills::inspect(
+            Path::new(target),
+            &source_root,
+            skill_options,
+        )?);
+    }
     if json {
         let json = serde_json::to_string_pretty(&report).map_err(|error| {
             Error::new(
@@ -68,68 +95,74 @@ pub fn execute(target: &str, verify: bool, repair: bool, json: bool) -> Result<i
         })?;
         println!("{json}");
     } else {
-        print_human(&report, repair);
+        print_human(&report);
     }
-    Ok(exit_status(&report, verify, repair))
+    Ok(exit_status(&report, verify))
 }
 
-fn inspect_and_repair(
-    target: &Path,
-    source_root: &Path,
-    repair: bool,
-) -> Result<DoctorReport, Error> {
+pub(crate) fn inspect(target: &Path, source_root: &Path) -> Result<DoctorReport, Error> {
     let targets = discover_targets(target, source_root)?;
-    let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%MZ").to_string();
     let mut reports = Vec::with_capacity(targets.len());
-    let mut repairs = Vec::new();
-
     for (provider, provider_target) in targets {
         let manifest = load_manifest(&provider_target)?;
-        let initial = inspect_target(&provider, &provider_target, &manifest)?;
-        if repair {
-            repair_findings(
-                &provider,
-                &provider_target,
-                source_root,
-                &manifest,
-                &initial,
-                &stamp,
-                &mut repairs,
-            )?;
-        }
-        let findings = if repair {
-            inspect_target(&provider, &provider_target, &manifest)?
-        } else {
-            initial
-        };
+        let findings = inspect_target(&provider, &provider_target, &manifest)?;
         reports.push(TargetReport {
             provider,
             target: provider_target.to_string_lossy().into_owned(),
             findings,
         });
     }
-
+    let repair_command = reports
+        .iter()
+        .any(target_is_broken)
+        .then(|| repair_command(target));
     Ok(DoctorReport {
         targets: reports,
-        repairs,
+        skill_readiness: None,
+        repair_command,
     })
 }
 
-fn exit_status(report: &DoctorReport, verify: bool, repair: bool) -> i32 {
-    let broken = report
-        .targets
-        .iter()
-        .flat_map(|target| &target.findings)
-        .any(|finding| {
-            matches!(
-                finding.status,
-                IntegrityStatus::Missing | IntegrityStatus::Orphan
-            )
-        });
-    i32::from(broken && (verify || repair))
+/// The repair invocation for a doctor target, quoted for a shell.
+pub(crate) fn repair_command(target: &Path) -> String {
+    format!(
+        "rune repair --target {}",
+        crate::cli::shell_quote(&target.to_string_lossy())
+    )
 }
 
-fn discover_targets(target: &Path, source_root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
+/// Missing or orphaned managed files: the two states repair can act on.
+pub(crate) fn target_is_broken(target: &TargetReport) -> bool {
+    target.findings.iter().any(|finding| {
+        matches!(
+            finding.status,
+            IntegrityStatus::Missing | IntegrityStatus::Orphan
+        )
+    })
+}
+
+/// Skill readiness is acceptance-based: an unaccepted inventory or any
+/// non-ok managed file fails regardless of `--verify`. Without it, only
+/// `--verify` turns broken findings into a nonzero exit.
+fn exit_status(report: &DoctorReport, verify: bool) -> i32 {
+    if let Some(readiness) = &report.skill_readiness {
+        let invalid = report
+            .targets
+            .iter()
+            .flat_map(|target| &target.findings)
+            .any(|finding| finding.status != IntegrityStatus::Ok);
+        if !readiness.accepted || invalid {
+            return 1;
+        }
+    }
+    let broken = report.targets.iter().any(target_is_broken);
+    i32::from(broken && verify)
+}
+
+pub(crate) fn discover_targets(
+    target: &Path,
+    source_root: &Path,
+) -> Result<Vec<(String, PathBuf)>, Error> {
     let provider_targets = crate::cli::config::registered_provider_target_records(source_root)?;
     if has_regular_manifest(target) {
         let provider = provider_for_target(target, &provider_targets)?.ok_or_else(|| {
@@ -323,7 +356,9 @@ fn ambiguous_provider_error(target: &Path, providers: &[String]) -> Error {
     .with_fix_command("rune provider status")
 }
 
-fn load_manifest(target: &Path) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
+pub(crate) fn load_manifest(
+    target: &Path,
+) -> Result<HashMap<String, manifest::ManifestEntry>, Error> {
     let path = target.join(".manifest");
     let content = fs::read_to_string(&path).map_err(|error| {
         Error::new(
@@ -376,7 +411,7 @@ fn validate_managed_relative(relative: &str) -> Result<(), Error> {
     }
 }
 
-fn inspect_target(
+pub(crate) fn inspect_target(
     provider: &str,
     target: &Path,
     entries: &HashMap<String, manifest::ManifestEntry>,
@@ -525,153 +560,22 @@ fn collect_managed_files_recursive(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn repair_findings(
-    provider: &str,
-    target: &Path,
-    source_root: &Path,
-    manifest: &HashMap<String, manifest::ManifestEntry>,
-    findings: &[Finding],
-    stamp: &str,
-    repairs: &mut Vec<RepairAction>,
-) -> Result<(), Error> {
-    for finding in findings {
-        match finding.status {
-            IntegrityStatus::Missing => {
-                let Some(entry) = manifest.get(&finding.path) else {
-                    continue;
-                };
-                if let Some(source) =
-                    matching_build_source(source_root, provider, &finding.path, &entry.fingerprint)?
-                {
-                    let destination = target.join(&finding.path);
-                    ensure_destination_within(&destination, target)?;
-                    if let Some(parent) = destination.parent() {
-                        fs::create_dir_all(parent).map_err(|error| {
-                            Error::new(
-                                ErrorKind::Io,
-                                format!("cannot create {}: {error}", parent.display()),
-                            )
-                        })?;
-                    }
-                    fs::copy(&source, &destination).map_err(|error| {
-                        Error::new(
-                            ErrorKind::Io,
-                            format!(
-                                "cannot restore {} from {}: {error}",
-                                destination.display(),
-                                source.display()
-                            ),
-                        )
-                    })?;
-                    repairs.push(RepairAction {
-                        action: "restored".to_string(),
-                        path: finding.path.clone(),
-                        destination: destination.to_string_lossy().into_owned(),
-                    });
-                }
-            }
-            IntegrityStatus::Orphan => {
-                let source = target.join(&finding.path);
-                let destination = target.join(".trash").join(stamp).join(&finding.path);
-                ensure_destination_within(&destination, target)?;
-                if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent).map_err(|error| {
-                        Error::new(
-                            ErrorKind::Io,
-                            format!("cannot create {}: {error}", parent.display()),
-                        )
-                    })?;
-                }
-                fs::rename(&source, &destination).map_err(|error| {
-                    Error::new(
-                        ErrorKind::Io,
-                        format!(
-                            "cannot quarantine {} to {}: {error}",
-                            source.display(),
-                            destination.display()
-                        ),
-                    )
-                })?;
-                prune_empty_parents(source.parent(), target);
-                repairs.push(RepairAction {
-                    action: "quarantined".to_string(),
-                    path: finding.path.clone(),
-                    destination: destination.to_string_lossy().into_owned(),
-                });
-            }
-            IntegrityStatus::Ok | IntegrityStatus::Modified => {}
-        }
-    }
-    Ok(())
-}
-
-fn matching_build_source(
-    source_root: &Path,
-    provider: &str,
-    relative: &str,
-    expected_digest: &str,
-) -> Result<Option<PathBuf>, Error> {
-    let build_root = source_root.join("build").join(provider);
-    let candidate = build_root.join(relative);
-    let Ok(bytes) = fs::read(&candidate) else {
-        return Ok(None);
-    };
-    if manifest::content_sha256_bytes(&bytes) != expected_digest {
-        return Ok(None);
-    }
-    let resolved_candidate = rune::services::confine::confine_existing(&build_root, &candidate)
-        .map_err(|message| Error::new(ErrorKind::Config, message))?;
-    Ok(Some(resolved_candidate))
-}
-
-fn ensure_destination_within(destination: &Path, target: &Path) -> Result<(), Error> {
-    rune::services::confine::confine_for_write(target, destination)
-        .map_err(|message| Error::new(ErrorKind::Config, message))
-}
-
-fn prune_empty_parents(start: Option<&Path>, stop: &Path) {
-    let mut current = start;
-    while let Some(directory) = current {
-        if directory == stop || !directory.starts_with(stop) {
-            break;
-        }
-        if !fs::read_dir(directory).is_ok_and(|mut entries| entries.next().is_none()) {
-            break;
-        }
-        if fs::remove_dir(directory).is_err() {
-            break;
-        }
-        current = directory.parent();
-    }
-}
-
-fn print_human(report: &DoctorReport, repaired: bool) {
-    let sheet = crate::cli::style::Sheet::detect(false);
-    if repaired && !report.repairs.is_empty() {
+fn print_human(report: &DoctorReport) {
+    if let Some(readiness) = &report.skill_readiness {
         println!(
-            "{}",
-            sheet.heading(&format!(
-                "repaired {} deployment finding(s)",
-                report.repairs.len()
-            ))
+            "Skill inventory: {}",
+            if readiness.static_valid {
+                "valid"
+            } else {
+                "failed"
+            }
         );
-        for repair in &report.repairs {
-            println!(
-                "   {} {} {} {}",
-                sheet.green(crate::cli::style::OK),
-                repair.action,
-                repair.path,
-                sheet.dim(&format!(
-                    "{} {}",
-                    crate::cli::style::ARROW,
-                    repair.destination
-                ))
-            );
+        println!("Native discovery: {}", readiness.native_discovery);
+        for finding in &readiness.findings {
+            println!("{}: {}", finding.code, finding.message);
         }
-        println!();
     }
-
+    let sheet = crate::cli::style::Sheet::detect(false);
     for target in &report.targets {
         let count = |status| {
             target
@@ -726,6 +630,14 @@ fn print_human(report: &DoctorReport, repaired: bool) {
             }
         }
     }
+    if let Some(command) = &report.repair_command {
+        println!(
+            "{}",
+            sheet.dim(&format!(
+                "run `{command}` to restore missing files and quarantine orphans"
+            ))
+        );
+    }
 }
 
 const DOT_MARK: &str = "●";
@@ -733,81 +645,54 @@ const DOT_MARK: &str = "●";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rune::manifest;
-    use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
 
-    struct Fixture {
-        root: TempDir,
-        source: PathBuf,
-        target_base: PathBuf,
-        provider_target: PathBuf,
-    }
+    #[test]
+    fn doctor_reports_without_writing_and_names_repair() {
+        let fixture = crate::cli::repair::tests::Fixture::new();
+        fixture.write_manifest(&[("skills/Alpha/SKILL.md", "deployed")]);
+        fixture.build_file("skills/Alpha/SKILL.md", "deployed");
+        fixture.deployed_file("rules/Orphan.md", "orphan");
 
-    impl Fixture {
-        fn new() -> Self {
-            let root = TempDir::new().unwrap();
-            let source = root.path().join("source");
-            let target_base = root.path().join("target");
-            let provider_target = target_base.join(".claude");
-            fs::create_dir_all(source.join("build/claude/skills/Alpha")).unwrap();
-            fs::create_dir_all(provider_target.join("skills/Alpha")).unwrap();
-            Self {
-                root,
-                source,
-                target_base,
-                provider_target,
-            }
-        }
+        let report = inspect(&fixture.target_base, &fixture.source).unwrap();
 
-        fn write_manifest(&self, entries: &[(&str, &str)]) {
-            let entries = entries
-                .iter()
-                .map(|(path, content)| {
-                    (
-                        (*path).to_string(),
-                        manifest::ManifestEntry {
-                            fingerprint: manifest::content_sha256(content),
-                            provenance: None,
-                        },
-                    )
-                })
-                .collect::<HashMap<_, _>>();
-            let yaml = manifest::write(&entries).unwrap();
-            fs::write(self.provider_target.join(".manifest"), yaml).unwrap();
-        }
-
-        fn build_file(&self, relative: &str, content: &str) {
-            let path = self.source.join("build/claude").join(relative);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, content).unwrap();
-        }
-
-        fn deployed_file(&self, relative: &str, content: &str) {
-            let path = self.provider_target.join(relative);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, content).unwrap();
-        }
+        assert!(
+            !fixture
+                .provider_target
+                .join("skills/Alpha/SKILL.md")
+                .exists(),
+            "doctor must not restore"
+        );
+        assert!(
+            fixture.provider_target.join("rules/Orphan.md").is_file(),
+            "doctor must not quarantine"
+        );
+        let statuses: Vec<_> = report.targets[0]
+            .findings
+            .iter()
+            .map(|finding| finding.status)
+            .collect();
+        assert!(statuses.contains(&IntegrityStatus::Missing));
+        assert!(statuses.contains(&IntegrityStatus::Orphan));
+        assert_eq!(
+            report.repair_command.as_deref(),
+            Some(repair_command(&fixture.target_base).as_str())
+        );
     }
 
     #[test]
-    fn modified_file_is_reported_and_never_repaired() {
-        let fixture = Fixture::new();
+    fn clean_deployment_offers_no_repair_command() {
+        let fixture = crate::cli::repair::tests::Fixture::new();
         fixture.write_manifest(&[("skills/Alpha/SKILL.md", "deployed")]);
-        fixture.build_file("skills/Alpha/SKILL.md", "deployed");
         fixture.deployed_file("skills/Alpha/SKILL.md", "user edit");
 
-        let report = inspect_and_repair(&fixture.target_base, &fixture.source, true).unwrap();
+        let report = inspect(&fixture.target_base, &fixture.source).unwrap();
 
-        assert_eq!(
-            fs::read_to_string(fixture.provider_target.join("skills/Alpha/SKILL.md")).unwrap(),
-            "user edit"
-        );
         assert!(report.targets[0].findings.iter().any(|finding| {
             finding.status == IntegrityStatus::Modified && finding.path == "skills/Alpha/SKILL.md"
         }));
-        assert!(report.repairs.is_empty());
+        assert_eq!(report.repair_command, None, "modified is never repairable");
     }
 
     #[test]
@@ -816,10 +701,15 @@ mod tests {
         let source = root.path().join("source");
         let target = root.path().join("target");
         fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("config.yaml"),
+            "providers:\n  codex:\n    enabled: false\n  agentskills:\n    enabled: true\n",
+        )
+        .unwrap();
         fs::create_dir_all(target.join(".agents")).unwrap();
         fs::write(target.join(".agents/.manifest"), "{}\n").unwrap();
 
-        let report = inspect_and_repair(&target, &source, false).unwrap();
+        let report = inspect(&target, &source).unwrap();
 
         assert_eq!(report.targets.len(), 1);
         assert_eq!(report.targets[0].provider, "agentskills");
@@ -843,79 +733,13 @@ mod tests {
         .unwrap();
         fs::write(target.join(".agents/.manifest"), "{}\n").unwrap();
 
-        let report = inspect_and_repair(&target, &source, false).unwrap();
+        let report = inspect(&target, &source).unwrap();
 
         assert_eq!(report.targets.len(), 1);
         assert_eq!(report.targets[0].provider, "codex");
         assert_eq!(
             report.targets[0].target,
             target.join(".agents").display().to_string()
-        );
-    }
-
-    #[test]
-    fn repair_restores_missing_file_from_digest_matching_build() {
-        let fixture = Fixture::new();
-        fixture.write_manifest(&[("skills/Alpha/SKILL.md", "deployed")]);
-        fixture.build_file("skills/Alpha/SKILL.md", "deployed");
-
-        let report = inspect_and_repair(&fixture.target_base, &fixture.source, true).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(fixture.provider_target.join("skills/Alpha/SKILL.md")).unwrap(),
-            "deployed"
-        );
-        assert!(
-            report.targets[0]
-                .findings
-                .iter()
-                .any(|finding| finding.status == IntegrityStatus::Ok)
-        );
-        assert_eq!(report.repairs[0].action, "restored");
-    }
-
-    #[test]
-    fn repair_does_not_restore_source_with_wrong_digest() {
-        let fixture = Fixture::new();
-        fixture.write_manifest(&[("skills/Alpha/SKILL.md", "deployed")]);
-        fixture.build_file("skills/Alpha/SKILL.md", "new build");
-
-        let report = inspect_and_repair(&fixture.target_base, &fixture.source, true).unwrap();
-
-        assert!(
-            !fixture
-                .provider_target
-                .join("skills/Alpha/SKILL.md")
-                .exists()
-        );
-        assert!(
-            report.targets[0]
-                .findings
-                .iter()
-                .any(|finding| finding.status == IntegrityStatus::Missing)
-        );
-        assert!(report.repairs.is_empty());
-    }
-
-    #[test]
-    fn repair_quarantines_orphan_under_target_trash() {
-        let fixture = Fixture::new();
-        fixture.write_manifest(&[("skills/Alpha/SKILL.md", "deployed")]);
-        fixture.deployed_file("skills/Alpha/SKILL.md", "deployed");
-        fixture.deployed_file("rules/Orphan.md", "orphan");
-
-        let report = inspect_and_repair(&fixture.target_base, &fixture.source, true).unwrap();
-
-        assert!(!fixture.provider_target.join("rules/Orphan.md").exists());
-        let quarantine = Path::new(&report.repairs[0].destination);
-        assert!(quarantine.is_file());
-        assert!(quarantine.starts_with(fixture.provider_target.join(".trash")));
-        assert_eq!(fs::read_to_string(quarantine).unwrap(), "orphan");
-        assert!(
-            !report.targets[0]
-                .findings
-                .iter()
-                .any(|finding| finding.status == IntegrityStatus::Orphan)
         );
     }
 
@@ -930,9 +754,10 @@ mod tests {
                     status: IntegrityStatus::Modified,
                 }],
             }],
-            repairs: Vec::new(),
+            skill_readiness: None,
+            repair_command: None,
         };
-        assert_eq!(exit_status(&report, true, false), 0);
+        assert_eq!(exit_status(&report, true), 0);
 
         let broken = DoctorReport {
             targets: vec![TargetReport {
@@ -943,11 +768,11 @@ mod tests {
                     status: IntegrityStatus::Missing,
                 }],
             }],
-            repairs: Vec::new(),
+            skill_readiness: None,
+            repair_command: Some("rune repair --target target".to_string()),
         };
-        assert_eq!(exit_status(&broken, false, false), 0);
-        assert_eq!(exit_status(&broken, true, false), 1);
-        assert_eq!(exit_status(&broken, false, true), 1);
+        assert_eq!(exit_status(&broken, false), 0);
+        assert_eq!(exit_status(&broken, true), 1);
     }
 
     #[test]
@@ -1035,15 +860,9 @@ mod tests {
         fs::write(source.join("module.yaml"), "name: test\n").unwrap();
         fs::write(provider_target.join(".manifest"), "invalid: [").unwrap();
 
-        let error = inspect_and_repair(&provider_target, &source, false).unwrap_err();
+        let error = inspect(&provider_target, &source).unwrap_err();
 
         assert_eq!(error.code(), MANIFEST_CORRUPT_CODE);
         assert_eq!(error.fix_command(), None);
-    }
-
-    #[test]
-    fn fixture_keeps_temp_directory_alive() {
-        let fixture = Fixture::new();
-        assert!(fixture.root.path().exists());
     }
 }

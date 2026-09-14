@@ -57,6 +57,8 @@ jobs:
                           ["review", "5319e7", "Summons the full ordered review sequence"],
                           ["review:runeseer", "5319e7", "Summons the adjudicating correctness lane"],
                           ["review:macroscope", "5319e7", "Summons the macroscope lane"],
+                          ["review:cursor", "5319e7", "Summons a standalone Cursor round"],
+                          ["review:coderabbit", "5319e7", "Summons a standalone CodeRabbit round"],
                           ["review:autofix", "5319e7", "Summons a mechanical-fix suggestion patch"],
                           ["skip:cursor", "b60205", "Owner override: the cursor lane never runs"],
                           ["skip:macroscope", "b60205", "Owner override: the macroscope lane never runs"],
@@ -64,7 +66,16 @@ jobs:
                           ["ignore:cursor", "d93f0b", "Owner override: the cursor lane reports but does not hold the merge"],
                           ["ignore:macroscope", "d93f0b", "Owner override: the macroscope lane reports but does not hold the merge"],
                           ["ignore:runeseer", "d93f0b", "Owner override: the runeseer lane reports but does not hold the merge"],
-                          ["spec:none", "ededed", "Owner waiver: no specification change needed, reason in body"],
+                          ["ignore:spec", "d93f0b", "Allowed defect: protected paths change without a specification, reason in body"],
+                          // The seer cascade and correctness bodies apply and
+                          // read the stage records and provider blockers;
+                          // provisioning pins their names, colors, and
+                          // descriptions.
+                          ["stage:cursor", "ededed", "Round record: the cursor stage settled on this head"],
+                          ["stage:macroscope", "ededed", "Round record: the macroscope stage settled on this head"],
+                          ["issue:cursor", "e99695", "Provider blocker: clear the cursor problem before re-summoning"],
+                          ["issue:macroscope", "e99695", "Provider blocker: clear the macroscope problem before re-summoning"],
+                          ["issue:rune", "e99695", "Provider blocker: clear the rune problem before re-summoning"],
                       ];
                       for (const [name, color, description] of wanted) {
                           try {
@@ -76,9 +87,9 @@ jobs:
                               await github.rest.issues.createLabel({ ...context.repo, name, color, description });
                           }
                       }
-                      // Names the per-lane families replaced. Leaving it behind
+                      // Names the current taxonomy replaced. Leaving one behind
                       // would offer an override that no workflow reads.
-                      const retired = ["review:skip"];
+                      const retired = ["review:skip", "spec:none"];
                       for (const name of retired) {
                           try {
                               await github.rest.issues.deleteLabel({ ...context.repo, name });

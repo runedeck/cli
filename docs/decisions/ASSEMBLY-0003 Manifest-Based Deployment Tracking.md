@@ -42,7 +42,7 @@ Installing skills, agents, and rules to provider directories is a multi-step pro
 
 ## Decision Outcome
 
-The manifest is a **deployment record**, not a build artifact. It lives at the target as a `.manifest` dotfile — one per provider directory. Assembly does not produce it; copy creates it after deploying files.
+The manifest is a **deployment record**, not a build artifact. It lives at the target as a `.manifest` dotfile — one per provider directory. Assembly does not produce it. Copy creates it after deploying files.
 
 ```yaml
 agents:

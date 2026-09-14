@@ -47,17 +47,17 @@ Coding-tool launch wrappers need to combine local proxies, observability, redact
 
 1. **Keep launch behavior only in shell functions.** This preserves local flexibility, but leaves no typed config, no portable tests, and no extension contract.
 2. **Add first-class Rust flags for every proxy and wrapper.** This is easy to document, but each new environment transform expands the kernel.
-3. **Model launch as an ordered middleware chain with built-ins plus script middleware.** Rust owns plan composition, dry-runs, and stable built-ins; external scripts patch the plan through JSON.
+3. **Model launch as an ordered middleware chain with built-ins plus script middleware.** Rust owns plan composition, dry-runs, and stable built-ins. External scripts patch the plan through JSON.
 
 ## Decision Outcome
 
 Chosen option: **Option 3**, because middleware chains keep launch policy composable while preserving Rune's minimal-kernel extension model.
 
-`rune launch <tool>` resolves tool configuration from the unified config and builds a `LaunchPlan` containing child environment entries, an optional API `base_url`, command wrappers, and best-effort preflight steps. Middleware runs in the order named by `--with a,b,c`; conflicting `base_url` or environment keys warn and use the later value. `--tmux[=name]` appends the `tmux` middleware as the outer wrapper, so it encloses any earlier wrappers.
+`rune launch <tool>` resolves tool configuration from the unified config and builds a `LaunchPlan` containing child environment entries, an optional API `base_url`, command wrappers, and best-effort preflight steps. Middleware runs in the order named by `--with a,b,c`. Conflicting `base_url` or environment keys warn and use the later value. `--tmux[=name]` appends the `tmux` middleware as the outer wrapper, so it encloses any earlier wrappers.
 
 Built-in middleware covers `pxpipe`, `otel`, `presidio`, `squid`, `cliproxy`, `docker`, and `tmux`. Unknown middleware named `foo` resolves to `rune-launch-mw-foo` using the same module `commands/`, configured extension directories, and `PATH` search order as external rune verbs. Rune sends the current plan as JSON on stdin and merges the JSON patch from stdout. If no built-in or script exists, launch fails with a message listing the known middleware.
 
-The child receives only the composed environment. A plan `base_url` is exported through the selected tool's configured base URL environment variable; the default `claude` mapping uses `ANTHROPIC_BASE_URL`. `--dry-run` prints the resolved plan and final argv without spawning preflight steps or the tool.
+The child receives only the composed environment. A plan `base_url` is exported through the selected tool's configured base URL environment variable. The default `claude` mapping uses `ANTHROPIC_BASE_URL`. `--dry-run` prints the resolved plan and final argv without spawning preflight steps or the tool.
 
 ## Consequences
 

@@ -43,7 +43,7 @@ no submission queue.
    and a single point of failure before the community exists.
 2. **Curated list file in the cli repository** — simple, but every listing needs a pull request
    and the list goes stale.
-3. **GitHub topic search** — publishers tag their repository `runedeck-deck`; `rune discover`
+3. **GitHub topic search** — publishers tag their repository `runedeck-deck`. `rune discover`
    searches the topic.
 
 ## Decision Outcome
@@ -51,15 +51,15 @@ no submission queue.
 Option 3. `rune discover [QUERY] [--json]` searches public repositories carrying the
 `runedeck-deck` topic through the GitHub search API, unauthenticated, with a ten-second timeout.
 Each row shows the name, description, stars, and URL, plus the exact staging command shape.
-Failures are structured with a diagnosis fix command; a rate-limit response names the wait.
-Listing quality stays with the publishers; rune never executes or clones anything during
+Failures are structured with a diagnosis fix command. A rate-limit response names the wait.
+Listing quality stays with the publishers. Rune never executes or clones anything during
 discovery.
 
 ## Consequences
 
 - [+] Publishing a deck is one repository topic, no gatekeeper
 - [+] Discovery pairs with the switchboard: find, add, toggle
-- [-] Unauthenticated search is rate-limited; heavy use needs a later token path
+- [-] Unauthenticated search is rate-limited. Heavy use needs a later token path
 - [-] The topic namespace is unmoderated, so listings carry no endorsement
 
 [HERDR]: https://github.com/herdrdev/herdr

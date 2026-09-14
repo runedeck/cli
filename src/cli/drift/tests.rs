@@ -3,6 +3,11 @@ use super::*;
 #[test]
 fn discovery_uses_the_registry_for_agentskills() {
     let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "providers:\n  codex:\n    enabled: false\n  agentskills:\n    enabled: true\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(root.path().join(".agents")).unwrap();
     std::fs::write(root.path().join(".agents/.manifest"), "{}\n").unwrap();
     let provider_targets =

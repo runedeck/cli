@@ -2,7 +2,7 @@
 
 ### Requirement: Todo
 
-The Todo capability SHALL describe its required behavior here.
+The Todo capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

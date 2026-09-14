@@ -588,6 +588,7 @@ fn finalize_refuses_pending_and_enforces_cut() {
             id,
             verdict,
             Some("fixture rationale"),
+            None,
             false,
         )
         .expect("verdict records");
@@ -656,6 +657,7 @@ fn kept_content_deleted_blocks_finalize() {
             None,
             block["id"].as_str().expect("id"),
             "keep",
+            None,
             None,
             false,
         )
@@ -780,7 +782,7 @@ fn injection_lint_flags_override_phrasing_and_gates_keep() {
             .any(|flag| flag.as_str() == Some("instruction-override"))
     );
 
-    let error = review::verdict(dir.path(), None, &flagged_id, "keep", None, false)
+    let error = review::verdict(dir.path(), None, &flagged_id, "keep", None, None, false)
         .expect_err("keep on a flagged block without a note must fail");
     assert!(error.contains("requires --note"), "got: {error}");
 
@@ -790,6 +792,7 @@ fn injection_lint_flags_override_phrasing_and_gates_keep() {
         &flagged_id,
         "keep",
         Some("maintainer accepts the risk in this fixture"),
+        None,
         false,
     )
     .expect("keep with rationale records");
@@ -807,7 +810,8 @@ fn verdicts_carry_timestamp_and_transport() {
         .as_str()
         .expect("id")
         .to_string();
-    review::verdict(dir.path(), None, &first_id, "keep", None, false).expect("verdict records");
+    review::verdict(dir.path(), None, &first_id, "keep", None, None, false)
+        .expect("verdict records");
 
     let record: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&record_path).expect("record"))
@@ -830,7 +834,7 @@ fn finalize_all_keep(dir: &tempfile::TempDir, root: &std::path::Path) {
         .map(|block| block["id"].as_str().expect("id").to_string())
         .collect();
     for id in &ids {
-        review::verdict(dir.path(), None, id, "keep", None, false).expect("verdict records");
+        review::verdict(dir.path(), None, id, "keep", None, None, false).expect("verdict records");
     }
     review::finalize(
         dir.path(),
@@ -1203,5 +1207,472 @@ fn deploy_collection_skips_pending_reviews() {
     assert!(
         crate::cli::assemble::sources::pending_review_paths(dir.path()).is_empty(),
         "nothing pending after finalize"
+    );
+}
+
+#[test]
+fn doctor_flags_subject_name_disagreeing_with_holder() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    // A hand `mv` leaves the sidecar recording the old module-relative name.
+    let moved = dir.path().join("skills/Renamed");
+    std::fs::rename(&root, &moved).unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
+    let sidecar = manifest::provenance::read(&moved.join(".provenance/SKILL.md.yaml")).unwrap();
+    assert_eq!(
+        sidecar.provenance.subject[0].name, "skills/AdoptedSkill/SKILL.md",
+        "doctor never writes"
+    );
+}
+
+#[test]
+fn repair_rewrites_stale_subject_name_and_reseal_agrees() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let moved = dir.path().join("skills/Renamed");
+    std::fs::rename(&root, &moved).unwrap();
+
+    assert_eq!(review::repair_source(dir.path()).unwrap().len(), 1);
+    let sidecar = manifest::provenance::read(&moved.join(".provenance/SKILL.md.yaml")).unwrap();
+    assert_eq!(
+        sidecar.provenance.subject[0].name,
+        "skills/Renamed/SKILL.md"
+    );
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+    assert_eq!(
+        review::repair_source(dir.path()).unwrap().len(),
+        0,
+        "repair is idempotent"
+    );
+}
+
+#[test]
+fn source_dry_run_plans_the_rename_and_changes_nothing() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let moved = dir.path().join("skills/Renamed");
+    std::fs::rename(&root, &moved).unwrap();
+
+    let planned = review::plan_source_repairs(dir.path()).unwrap();
+    assert_eq!(planned.len(), 1);
+    assert_eq!(planned[0].action, "would rename subject");
+    assert_eq!(
+        planned[0].sidecar,
+        "skills/Renamed/.provenance/SKILL.md.yaml"
+    );
+    assert_eq!(
+        planned[0].subject.as_deref(),
+        Some("skills/AdoptedSkill/SKILL.md")
+    );
+    assert_eq!(planned[0].destination, "skills/Renamed/SKILL.md");
+    let sidecar = manifest::provenance::read(&moved.join(".provenance/SKILL.md.yaml")).unwrap();
+    assert_eq!(
+        sidecar.provenance.subject[0].name, "skills/AdoptedSkill/SKILL.md",
+        "a dry run rewrites nothing"
+    );
+    assert_eq!(
+        review::doctor(dir.path(), false).unwrap(),
+        1,
+        "the fault is still there"
+    );
+}
+
+#[test]
+fn source_dry_run_lists_the_orphan_prune_and_keeps_the_sidecar() {
+    let dir = review_module_with_schema();
+    let source = skill_tree_fixture();
+    let adopted = execute(
+        source.path().join("skill-creator").to_str().unwrap(),
+        dir.path().to_str().unwrap(),
+        Some("AdoptedSkill"),
+        None,
+        Kind::Skill,
+        Some("https://example.test/RemoteSkill"),
+        false,
+    )
+    .unwrap();
+    let root = adopted.artifact_root.unwrap();
+    review::open_session(&root, &adopted.upstream_uri, &adopted.upstream_digest).unwrap();
+    finalize_all_keep(&dir, &root);
+    std::fs::remove_file(root.join("references.md")).unwrap();
+    let orphan = root.join(".provenance/references.md.yaml");
+
+    let planned = review::plan_source_repairs(dir.path()).unwrap();
+    assert_eq!(planned.len(), 1);
+    assert_eq!(planned[0].action, "would prune");
+    assert_eq!(
+        planned[0].sidecar,
+        "skills/AdoptedSkill/.provenance/references.md.yaml"
+    );
+    assert_eq!(planned[0].subject, None, "a prune names no subject");
+    assert!(planned[0].destination.starts_with(".trash/"));
+    assert!(orphan.is_file(), "a dry run moves nothing");
+    assert!(!dir.path().join(".trash").exists());
+}
+
+#[test]
+fn reseal_trashes_orphan_reviewed_sidecar() {
+    let dir = review_module_with_schema();
+    let source = skill_tree_fixture();
+    let adopted = execute(
+        source.path().join("skill-creator").to_str().unwrap(),
+        dir.path().to_str().unwrap(),
+        Some("AdoptedSkill"),
+        None,
+        Kind::Skill,
+        Some("https://example.test/RemoteSkill"),
+        false,
+    )
+    .unwrap();
+    let root = adopted.artifact_root.unwrap();
+    review::open_session(&root, &adopted.upstream_uri, &adopted.upstream_digest).unwrap();
+    finalize_all_keep(&dir, &root);
+    std::fs::remove_file(root.join("references.md")).unwrap();
+    let orphan = root.join(".provenance/references.md.yaml");
+    assert!(orphan.is_file());
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
+    review::reseal(dir.path(), Some("skills/AdoptedSkill")).unwrap();
+
+    assert!(!orphan.exists(), "orphan sidecar leaves the artifact");
+    let trash = dir.path().join(".trash");
+    let mut moved = Vec::new();
+    for stamp in std::fs::read_dir(&trash).unwrap().flatten() {
+        let candidate = stamp
+            .path()
+            .join("skills/AdoptedSkill/.provenance/references.md.yaml");
+        if candidate.is_file() {
+            moved.push(candidate);
+        }
+    }
+    assert_eq!(
+        moved.len(),
+        1,
+        "sidecar is recoverable from .trash/<stamp>/"
+    );
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}
+
+#[test]
+fn source_snapshot_beside_sidecars_is_deployment_evidence_not_a_sidecar() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    let snapshot = dir.path().join("skills/.provenance/source-snapshot.json");
+    std::fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+    let digest = "b".repeat(64);
+    let valid = format!(
+        r#"{{"version":"rune-provider-source-snapshot/v1","source":{{"version":"rune-source-snapshot/v1","digest":"{digest}","roots":["deck"]}},"selected_skills":{{"skills/AdoptedSkill":"{digest}"}},"model_override":null}}"#
+    );
+    std::fs::write(&snapshot, &valid).unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+
+    for (label, broken) in [
+        ("torn", "{not json".to_string()),
+        ("invalid digest", valid.replace(&digest, "abc")),
+        (
+            "unsupported version",
+            valid.replace("rune-source-snapshot/v1", "rune-source-snapshot/v9"),
+        ),
+        (
+            "unknown field",
+            valid.replace(r#""model_override":null"#, r#""model_override":null,"x":1"#),
+        ),
+    ] {
+        std::fs::write(&snapshot, &broken).unwrap();
+        assert_eq!(
+            review::doctor(dir.path(), false).unwrap(),
+            1,
+            "{label} must fail through the deploy validator"
+        );
+    }
+
+    std::fs::remove_file(&snapshot).unwrap();
+    std::fs::write(dir.path().join("skills/.provenance/notes.txt"), "?").unwrap();
+    assert_eq!(
+        review::doctor(dir.path(), false).unwrap(),
+        1,
+        "unknown metadata is reported"
+    );
+}
+
+#[test]
+fn move_relocates_skill_with_sidecars_and_transfer_record() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    seed_commit(dir.path());
+    let destination = dir.path().join("skills/Relocated");
+
+    assert_eq!(
+        relocate::execute(
+            dir.path(),
+            Path::new("skills/AdoptedSkill"),
+            Path::new("skills/Relocated")
+        )
+        .unwrap(),
+        0
+    );
+
+    assert!(!root.exists());
+    let sidecar =
+        manifest::provenance::read(&destination.join(".provenance/SKILL.md.yaml")).unwrap();
+    assert_eq!(
+        sidecar.provenance.subject[0].name,
+        "skills/Relocated/SKILL.md"
+    );
+    let transferred = &sidecar
+        .provenance
+        .predicate
+        .run_details
+        .metadata
+        .transferred_from;
+    let (artifact, commit) = transferred.split_once('@').expect("artifact@commit");
+    assert_eq!(artifact, "skills/AdoptedSkill");
+    assert_eq!(commit.len(), 40, "full commit id, got {commit}");
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}
+
+#[test]
+fn move_refuses_source_with_open_session() {
+    let dir = review_module_with_schema();
+    let _root = adopt_fixture_skill(&dir);
+    seed_commit(dir.path());
+
+    let error = relocate::execute(
+        dir.path(),
+        Path::new("skills/AdoptedSkill"),
+        Path::new("skills/Other"),
+    )
+    .unwrap_err();
+    assert!(error.contains("open review session"), "{error}");
+    assert!(dir.path().join("skills/AdoptedSkill/SKILL.md").is_file());
+}
+
+#[test]
+fn move_refuses_destination_under_pending_skill() {
+    let dir = review_module_with_schema();
+    let reviewed = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &reviewed);
+    let pending = adopt_suspect_skill(&dir);
+    seed_commit(dir.path());
+
+    let error = relocate::execute(
+        dir.path(),
+        Path::new("skills/AdoptedSkill"),
+        &pending.join("nested/AdoptedSkill"),
+    )
+    .unwrap_err();
+    assert!(error.contains("still pending"), "{error}");
+    assert!(reviewed.join("SKILL.md").is_file());
+}
+
+#[test]
+fn move_refuses_decision_records_and_partial_artifacts() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    finalize_all_keep(&dir, &root);
+    seed_commit(dir.path());
+    std::fs::create_dir_all(dir.path().join("docs/decisions")).unwrap();
+    std::fs::write(
+        dir.path().join("docs/decisions/X-0001 Thing.md"),
+        "# Thing\n",
+    )
+    .unwrap();
+
+    let error = relocate::execute(
+        dir.path(),
+        Path::new("docs/decisions/X-0001 Thing.md"),
+        Path::new("docs/decisions/X-0002 Thing.md"),
+    )
+    .unwrap_err();
+    assert!(error.contains("rune adr"), "{error}");
+
+    let error = relocate::execute(
+        dir.path(),
+        &root.join("SKILL.md"),
+        Path::new("skills/Loose.md"),
+    )
+    .unwrap_err();
+    assert!(error.contains("whole artifact"), "{error}");
+}
+
+fn seed_commit(directory: &std::path::Path) {
+    for args in [
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+        vec!["config", "commit.gpgSign", "false"],
+        vec!["add", "."],
+        vec!["commit", "--quiet", "-m", "seed"],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(&args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn adapt_verdict_stores_replacement_and_finalize_proves_it() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    let record: serde_yaml::Value = read_session(&root);
+    let ids: Vec<String> = record["review"]["predicate"]["blocks"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|block| block["id"].as_str().unwrap().to_string())
+        .collect();
+    let last = ids.last().unwrap().clone();
+    for id in &ids {
+        if id == &last {
+            review::verdict(
+                dir.path(),
+                None,
+                id,
+                "adapt",
+                Some("deck wording"),
+                Some("Approved body.\n"),
+                false,
+            )
+            .unwrap();
+        } else {
+            review::verdict(dir.path(), None, id, "keep", None, None, false).unwrap();
+        }
+    }
+    let record: serde_yaml::Value = read_session(&root);
+    let stored = record["review"]["predicate"]["blocks"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|block| block["id"].as_str() == Some(last.as_str()))
+        .unwrap();
+    assert_eq!(stored["replacement"].as_str(), Some("Approved body.\n"));
+
+    // The approved text is absent from the edited file: finalize refuses.
+    let skill_path = root.join("SKILL.md");
+    let content = std::fs::read_to_string(&skill_path).unwrap();
+    std::fs::write(&skill_path, content.replace("Body.", "Something else.")).unwrap();
+    let error =
+        review::finalize(dir.path(), None, Some("Alice <a@example.com>"), false).unwrap_err();
+    assert!(error.contains("approved replacement missing"), "{error}");
+
+    std::fs::write(&skill_path, content.replace("Body.", "Approved body.")).unwrap();
+    review::finalize(dir.path(), None, Some("Alice <a@example.com>"), false).unwrap();
+
+    let sidecar = manifest::provenance::read(&root.join(".provenance/SKILL.md.yaml")).unwrap();
+    let replacements = &sidecar
+        .provenance
+        .predicate
+        .run_details
+        .metadata
+        .replacements;
+    assert_eq!(replacements.len(), 1);
+    assert_eq!(replacements[0].block, last);
+    let digest = manifest::content_sha256("Approved body.\n");
+    assert_eq!(replacements[0].sha256, digest);
+    assert_eq!(replacements[0].path, format!("replacements/{digest}"));
+    assert_eq!(
+        std::fs::read_to_string(root.join(".provenance/replacements").join(&digest)).unwrap(),
+        "Approved body.\n"
+    );
+    assert!(
+        sidecar
+            .provenance
+            .predicate
+            .run_details
+            .metadata
+            .summary
+            .contains("1 adapt"),
+        "replacement blocks reconcile as adapt, not added: {}",
+        sidecar.provenance.predicate.run_details.metadata.summary
+    );
+    assert!(
+        !sidecar
+            .provenance
+            .predicate
+            .run_details
+            .metadata
+            .summary
+            .contains("added")
+    );
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}
+
+#[test]
+fn replacement_flag_is_rejected_outside_adapt() {
+    let dir = review_module_with_schema();
+    let root = adopt_fixture_skill(&dir);
+    let record: serde_yaml::Value = read_session(&root);
+    let first = record["review"]["predicate"]["blocks"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let error =
+        review::verdict(dir.path(), None, &first, "keep", None, Some("x"), false).unwrap_err();
+    assert!(error.contains("adapt verdicts only"), "{error}");
+}
+
+#[test]
+fn artifact_name_regex_equals_skill_schema_pattern() {
+    let schema: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/schemas/skill.schema.yaml"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let pattern = schema["properties"]["name"]["pattern"].as_str().unwrap();
+    assert_eq!(ARTIFACT_NAME_RE.as_str(), pattern);
+}
+
+#[test]
+fn directory_source_records_canonical_file_url() {
+    let dir = module();
+    let source = skill_tree_fixture();
+    let source_root = source.path().join("skill-creator");
+    let adopted = execute(
+        source_root.to_str().unwrap(),
+        dir.path().to_str().unwrap(),
+        Some("BuildSkill"),
+        None,
+        Kind::Skill,
+        None,
+        false,
+    )
+    .unwrap();
+    let expected = format!(
+        "file://{}",
+        std::fs::canonicalize(&source_root).unwrap().display()
+    );
+    assert_eq!(adopted.upstream_uri, expected);
+    let sidecar = manifest::provenance::read(
+        &dir.path()
+            .join("skills/BuildSkill/.provenance/SKILL.md.yaml"),
+    )
+    .unwrap();
+    assert_eq!(
+        sidecar
+            .provenance
+            .predicate
+            .build_definition
+            .external_parameters
+            .upstream_url,
+        expected
     );
 }

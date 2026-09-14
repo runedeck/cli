@@ -52,8 +52,8 @@ Ask the human for approval before every write step.
 
 ## Diagnosis recipes
 
-- **Deployment looks broken**: run `rune doctor --target .`. Repair only with
-  approval: `rune doctor --target . --repair`.
+- **Deployment looks broken**: run `rune doctor --target .`. Doctor never writes. Repair only
+  with approval: `rune repair --target .`.
 - **Content differs from upstream**: run `rune drift`.
 - **A deployed file has an unclear origin**: run `rune provenance --target <path>`.
 - **Configuration questions**: `rune config path` shows the file,

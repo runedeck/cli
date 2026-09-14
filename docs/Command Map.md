@@ -20,27 +20,36 @@ pass. The rest are its plumbing, useful when one stage is being debugged:
   `build/` intact.
 - `deploy` — copies an existing `build/` into provider targets and updates
   each target's `.manifest`.
-- `copy` — verbatim copy with provenance but no transforms; for content that
+- `copy` — verbatim copy with provenance but no transforms. For content that
   must land byte-identical.
 
-Mutating commands hold a per-target lock; see [Exit Codes](Exit%20Codes.md).
+Mutating commands hold a per-target lock. See [Exit Codes](Exit%20Codes.md).
 
 ## Checking health
 
-The five check commands form a ladder; run them in this order when something
+The five check commands form a ladder. Run them in this order when something
 looks wrong:
 
 1. `validate` — is the source well-formed? (schemas, lint)
 2. `status` — what does the deck intend? (specs, changes, deployments)
 3. `drift` — does the deployment match the build? (diffs, missing files)
-4. `doctor` — can the deployment be repaired? (`--verify` to fail CI,
-   `--repair` to restore from build and quarantine orphans)
+4. `doctor` — is the deployment intact? (`--verify` to fail CI. Doctor never
+   writes, it names `rune repair` when something is repairable)
 5. `provenance` — where did this deployed file come from? (forensics)
 
 `bench doctor`, `spec doctor`, and `adopt doctor` are the same idea scoped to
 their own subsystems. `adopt doctor` verifies pending external sessions and
-reviewed adopt sidecar digests; legacy review ledgers are migration warnings,
-not final authority.
+reviewed adopt sidecar digests, and requires the sidecar holder and its
+recorded `subject.name` to agree. Legacy review ledgers are migration
+warnings, not final authority.
+
+`repair` is the one command that writes to fix doctor findings: it trashes
+orphan reviewed sidecars into `.trash/<stamp>/`, rewrites stale subject
+names, restores missing managed files from a digest-matching build, and
+quarantines deployment orphans. `--dry-run` prints the plan. A reviewed
+subject whose bytes changed is not a repair. `adopt reseal --artifact <path>`
+endorses the edit instead. `move <from> <to>` relocates one reviewed
+artifact with its sidecars and records `transferredFrom: <artifact>@<commit>`.
 
 ## Bringing content in
 
@@ -48,5 +57,5 @@ not final authority.
 - `adopt` — the reviewed path over the same import: a block-by-block external
   session (`start`, `next`, `verdict`, `finalize`) that seals final digests and
   concise review metadata into adopt/v1 sidecars, then removes the temporary
-  block state. Content that will ship to other people goes through `adopt`;
+  block state. Content that will ship to other people goes through `adopt`.
   scratch experiments can use `import`.

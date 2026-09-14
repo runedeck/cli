@@ -95,7 +95,7 @@ fn each_non_current_state_has_a_fix_or_review_command() {
         (
             DeploymentState::NeedsRepair,
             RecommendedAction::Repair,
-            format!("rune doctor --target {} --repair", target.display()),
+            format!("rune repair --target {}", target.display()),
         ),
         (
             DeploymentState::Modified,

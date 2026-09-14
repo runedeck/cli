@@ -2,9 +2,9 @@
 
 ### Requirement: Verified install script
 
-`scripts/install.sh` SHALL download the release archive for the detected platform, SHALL verify
-its SHA-256 against the published checksum before unpacking, SHALL warn when the install
-directory is off `PATH`, and SHALL end by naming `rune setup`.
+`scripts/install.sh` MUST download the release archive for the detected platform, MUST verify
+its SHA-256 against the published checksum before unpacking, MUST warn when the install
+directory is off `PATH`, and MUST end by naming `rune setup`.
 
 #### Scenario: Checksum mismatch aborts
 
@@ -13,7 +13,7 @@ directory is off `PATH`, and SHALL end by naming `rune setup`.
 
 ### Requirement: Manager-aware update
 
-`rune update` SHALL name the native update command for a package-managed install and SHALL
+`rune update` MUST name the native update command for a package-managed install and MUST
 replace only a direct install.
 
 #### Scenario: Homebrew install defers
@@ -23,7 +23,7 @@ replace only a direct install.
 
 ### Requirement: Verified direct update
 
-A direct-install update SHALL verify the downloaded archive's SHA-256 before an atomic rename
+A direct-install update MUST verify the downloaded archive's SHA-256 before an atomic rename
 over the running binary's path.
 
 #### Scenario: Verified replacement

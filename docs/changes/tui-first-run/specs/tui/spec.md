@@ -2,7 +2,7 @@
 
 ### Requirement: Theme-derived TUI palette
 
-The TUI SHALL derive every color from the resolved theme, and a light theme SHALL use light
+The TUI MUST derive every color from the resolved theme, and a light theme MUST use light
 surfaces with dark text.
 
 #### Scenario: Light theme selected
@@ -12,7 +12,7 @@ surfaces with dark text.
 
 ### Requirement: Status bar context
 
-The TUI status bar SHALL show the deck name, the bound target when one exists, and one glyph per
+The TUI status bar MUST show the deck name, the bound target when one exists, and one glyph per
 enabled provider that reflects its deployment state.
 
 #### Scenario: Provider needs repair
@@ -22,8 +22,8 @@ enabled provider that reflects its deployment state.
 
 ### Requirement: First-run panel
 
-When the scan finds no deck and no modules, the TUI SHALL replace the list with a panel that names
-the root and the commands that configure a deck, and the footer SHALL point at `rune setup`.
+When the scan finds no deck and no modules, the TUI MUST replace the list with a panel that names
+the root and the commands that configure a deck, and the footer MUST point at `rune setup`.
 
 #### Scenario: TUI opens on an unconfigured root
 
@@ -32,7 +32,7 @@ the root and the commands that configure a deck, and the footer SHALL point at `
 
 ### Requirement: Help overlay close keys
 
-The help overlay SHALL name its close keys and the rune version in its title.
+The help overlay MUST name its close keys and the rune version in its title.
 
 #### Scenario: User opens help
 

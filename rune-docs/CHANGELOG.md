@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `spec::lint`: the runedeck house rules as a layer over the compatibility parser. Validate and doctor report a prose line that uses SHALL (`spec-shall-keyword`, `delta-shall-keyword`), a canonical specification over 150 lines (`spec-too-long`, and `delta-too-long` as a warning), and an italic defined term with no `- **term**: definition` entry in `<specs>/glossary.md` (`spec-term-undefined`, `delta-term-undefined`). The parser still accepts SHALL and MUST, and the OpenSpec v1.6.0 oracle fixtures are unchanged.
+
+### Changed
+
+- The scaffolded delta template and the archive fixtures use MUST.
+
 ## [0.1.0] - 2026-07-25
 
 ### Added
@@ -23,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tree, so a root whose directories were already moved away still resolves to
   the directory holding the unfinished work.
 - Retried conversions acknowledge work completed by crash recovery instead of
-  failing with an empty-tree error; reports carry a `recovered` marker.
+  failing with an empty-tree error. Reports carry a `recovered` marker.
 - Archive journal validation rejects overlapping canonical destinations.
 - Export from a root whose manifest recorded no opaque files no longer fails
   planning removal of the absent mirror directory.

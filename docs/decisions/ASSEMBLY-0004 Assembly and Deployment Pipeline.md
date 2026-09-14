@@ -9,7 +9,7 @@ tags:
     - architecture
 status: accepted
 created: 2026-03-19
-updated: 2026-03-19
+updated: 2026-09-11
 author: "@N4M3Z"
 project: rune-cli
 related:
@@ -27,7 +27,12 @@ upstream: []
 
 ## Context and Problem Statement
 
-Skills, agents, and rules are authored as markdown with YAML frontmatter. Each AI coding provider expects files in different directories, with different naming conventions, different body formats, and different metadata. Raw file copying works initially but breaks down as the instruction set grows — you end up with duplicated files across providers, no way to trace which source produced a deployed instruction, and no mechanism to detect when someone edited a deployed file directly instead of updating the source. The system needs a clear separation between content transformation (assembly) and file placement (deployment), with provenance tracking at every step.
+Skills, agents, and rules are authored as markdown with YAML frontmatter. Each AI coding provider expects files in
+different directories, with different naming conventions, different body formats, and different metadata. Raw file
+copying works initially but breaks down as the instruction set grows — you end up with duplicated files across
+providers, no way to trace which source produced a deployed instruction, and no mechanism to detect when someone edited
+a deployed file directly instead of updating the source. The system needs a clear separation between content
+transformation (assembly) and file placement (deployment), with provenance tracking at every step.
 
 ## Decision Drivers
 
@@ -46,7 +51,20 @@ Skills, agents, and rules are authored as markdown with YAML frontmatter. Each A
 
 A two-stage pipeline with an intermediate `build/` directory:
 
-```
+### Current implementation note (2026-09-11)
+
+The diagrams below preserve the original accepted design. Current skill and sidecar behavior differs in these details.
+Skill `user/SKILL.md` replaces the complete entrypoint before the harness/model variant stage.
+Harness/model variants still use one winning variant plus the base, rather than cumulative overlays.
+Generated build sidecars now use the reserved `.provenance` directory.
+For example, the skill sidecar is `build/claude/skills/MySkill/.provenance/SKILL.md.yaml`.
+Adjacent authored YAML remains content and is copied with the selected bundle.
+Deployment also writes provenance into target `.provenance` directories and records its path in `.manifest`.
+The complete selected-source snapshot uses `.provenance/source-snapshot.json` in build and target metadata.
+See the [current metadata contract](../changes/codex-skill-identity/design.md#separate-source-and-build-metadata).
+This note records implementation behavior. It does not change this ADR's accepted status or approve the new draft ADR.
+
+```text
 source/         -->    assemble    -->    build/          -->    provider dirs
 (authored)             (transform)                  (assembled)           (deployed)
 ```
@@ -60,14 +78,15 @@ Transforms source content into provider-specific output:
 3. Merge — combine base + variant body using variant's `mode` (append, prepend, replace)
 4. Strip frontmatter — remove `---` delimiters, H1 heading from body
 5. Strip reference links — remove `[N]: url` definitions and `[N]` inline markers
-6. Format per provider — YAML frontmatter (Claude/Gemini/OpenCode), TOML for Codex agents only (skills and rules stay markdown), kebab-case names (Gemini/OpenCode), tool remapping (Gemini)
+6. Format per provider — YAML frontmatter (Claude/Gemini/OpenCode), TOML for Codex agents only (skills and rules stay
+   markdown), kebab-case names (Gemini/OpenCode), tool remapping (Gemini)
 7. Write sidecar — `.yaml` companion preserving stripped frontmatter + provenance
 
 Output structure:
 
 Source (repository — qualifier directories for variant resolution):
 
-```
+```text
 repository/
     rules/
         MyRule.md                                   base (provider-agnostic)
@@ -93,9 +112,10 @@ repository/
 
 Resolution precedence (highest first): `user/` > `provider/model/` > `provider/` > base.
 
-This applies uniformly to all content kinds including skill companions. Subdirectories are flattened at assembly — the prefix is stripped from the output path:
+This applies uniformly to all content kinds including skill companions. Subdirectories are flattened at assembly — the
+prefix is stripped from the output path:
 
-```
+```text
 SOURCE                               ASSEMBLED (build/claude/)           DEPLOYED (.claude/)
 ────────────────────────────         ────────────────────────────        ────────────────────────────
 skills/ArchitectureDecision/         skills/ArchitectureDecision/        skills/ArchitectureDecision/
@@ -109,7 +129,7 @@ skills/ArchitectureDecision/         skills/ArchitectureDecision/        skills/
 
 When a file exists both at the root and in `user/`, the `user/` version wins (override):
 
-```
+```text
 SOURCE                               ASSEMBLED (build/claude/)
 ────────────────────────────         ────────────────────────────
 skills/MySkill/                      skills/MySkill/
@@ -121,7 +141,7 @@ skills/MySkill/                      skills/MySkill/
 
 Assembled output (variants resolved, frontmatter stripped, ready to deploy):
 
-```
+```text
 build/
     claude/
         rules/MyRule.md                             assembled
@@ -140,17 +160,19 @@ build/
         agents/MyAgent.yaml                         sidecar (stripped frontmatter + provenance)
 ```
 
-Deployment copies content files from `build/claude/` → `.claude/`. Sidecars (`.yaml`) stay in `build/`. Deployment writes a `.manifest` dotfile in each target directory recording the SHA-256 of each deployed file (see ASSEMBLY-0003).
+Deployment copies content files from `build/claude/` → `.claude/`. Sidecars (`.yaml`) stay in `build/`. Deployment
+writes a `.manifest` dotfile in each target directory recording the SHA-256 of each deployed file (see ASSEMBLY-0003).
 
 ### Stage 2: Deployment (file copy)
 
 Copies assembled files from `build/<provider>/` to `.<provider>/`. This is a flat copy operation with no transformation.
 
-If rulesync is available, it handles deployment to 21+ providers. If not, a minimal deployer reads the provider config (prefix, extension) and copies files. Either way, assembly output is the same.
+If rulesync is available, it handles deployment to 21+ providers. If not, a minimal deployer reads the provider config
+(prefix, extension) and copies files. Either way, assembly output is the same.
 
 ### Example: Rule with variant
 
-```
+```text
 rules/UseRTK.md                rules/user/UseRTK.md           build/rules/UseRTK.md
 (base)                         (user variant)                  (assembled)
 ┌────────────────────┐         ┌────────────────────┐          ┌────────────────────┐
@@ -167,7 +189,7 @@ rules/UseRTK.md                rules/user/UseRTK.md           build/rules/UseRTK
 
 ### Example: Agent per provider
 
-```
+```text
 agents/SecurityArchitect.md       build/claude/agents/SecurityArchitect.md    (YAML frontmatter)
 (source)                          build/gemini/agents/security-architect.md   (kebab + tool remap)
                                   build/codex/agents/SecurityArchitect.toml   (TOML format)

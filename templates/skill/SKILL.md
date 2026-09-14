@@ -29,7 +29,7 @@ rune doctor --target .               # integrity: ok / modified / missing / orph
 
 - Inspection commands (`context`, `status`, `doctor`, `drift`, `provenance`, `config`, `spec …`) accept `--json` for structured output; staging commands (`add` and the kind adds) print plain text.
 - `rune install --dry-run` previews pruning without writing.
-- `rune doctor --repair` restores missing files and quarantines orphans; it never overwrites user edits. Overwriting edits takes a deliberate `rune install --force`.
+- `rune doctor` is read-only. `rune repair` restores missing files, quarantines orphans, trashes orphan sidecars, and renames stale subjects; it never overwrites user edits. Overwriting edits takes a deliberate `rune install --force`.
 - Never edit deployed files under provider directories; edit the deck source and reinstall. Local exceptions live in a rune's `user/` override.
 
 ## Spec Lifecycle

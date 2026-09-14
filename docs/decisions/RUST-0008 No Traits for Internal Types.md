@@ -35,6 +35,7 @@ Traits in Rust scatter method implementations across files — the struct is def
 No traits for internal types. Use concrete structs with inherent methods. Every method is defined on the struct itself, in the same file, findable with a single "go to definition."
 
 Traits are permitted only for:
+
 - Standard library interop (`Display`, `FromStr`, `Error`, `Default`, `Serialize`)
 - External crate requirements (clap `Parser`, serde `Deserialize`)
 - Genuinely polymorphic boundaries where 2+ real implementations exist today

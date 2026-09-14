@@ -2,6 +2,7 @@
 adr: "docs/decisions/CLI-0022 Native bench runner.md"
 status: proposed
 ---
+
 # Harness Wiring
 
 ## Why
@@ -12,7 +13,7 @@ documentation confirm: codex loads only its AGENTS.md chain (and reserves
 `~/.codex/rules/` for `.rules` command policies), gemini-cli reads only the
 GEMINI.md hierarchy, headless Antigravity currently loads no file context at
 all, and opencode loads only AGENTS.md plus the `instructions` array in its
-config. Deployed rules therefore reach one harness out of four; the others
+config. Deployed rules therefore reach one harness out of four. The others
 depend on a per-machine forge-provision script that goes stale the moment a
 rule changes. Tracks N4M3Z/forge-cli#92 with the council's corrections.
 
@@ -22,7 +23,7 @@ rule changes. Tracks N4M3Z/forge-cli#92 with the council's corrections.
   generated block carrying the assembled rules is maintained in
   `~/.codex/AGENTS.md` and `~/.gemini/GEMINI.md`, and the rules glob is
   ensured in the `instructions` array of
-  `~/.config/opencode/opencode.json`. Regenerated on every install;
+  `~/.config/opencode/opencode.json`. Regenerated on every install.
   content outside the markers is never touched.
 - The legacy forge-provision `harness-rules` block is replaced by the rune
   block on first run so exactly one generated region exists.
@@ -33,7 +34,7 @@ rule changes. Tracks N4M3Z/forge-cli#92 with the council's corrections.
 - `rune doctor` reports unwired or stale rule wiring per harness, including
   the headless-Antigravity limitation.
 - Project-level installs are not wired (a repo's AGENTS.md belongs to the
-  repo); doctor names the limitation.
+  repo). Doctor names the limitation.
 
 ## Capabilities
 

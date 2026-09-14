@@ -12,12 +12,12 @@ with `--json` on stdout and diagnostics on stderr.
     - `docs check`: broken links or orphans
     - `bench run`: any errored run, or nothing executed and nothing reused
     - `bench audit`: a fatal suite finding (short-token warnings alone stay 0)
-    - everything else: the operation itself failed; the message on stderr
+    - everything else: the operation itself failed. The message on stderr
       names the cause
 - `2` — usage errors (clap: unknown flags, missing arguments).
 
 Mutating commands hold a per-target lock (`.rune.lock` in the deploy target)
 for the duration of the write: a second `rune install`, `deploy`, or
-`doctor --repair` against the same target fails fast with exit 1 instead of
+`repair` against the same target fails fast with exit 1 instead of
 interleaving. The lock names the holding pid and is removed when the process
 exits.

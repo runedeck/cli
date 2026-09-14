@@ -67,8 +67,13 @@ jobs:
             - name: Install tools
               run: bash scripts/install-tools
 
+            # The prek CLI is called directly: the wrapper action logs at
+            # TRACE level and buries the failing hook's output. REQUIRE_GATES
+            # turns a missing linter into a failure instead of a skip.
             - name: Commit-stage checks
-              run: prek run --stage pre-commit --all-files
+              env:
+                  REQUIRE_GATES: "1"
+              run: prek run --all-files
 
             # Scan exactly the commits this event introduces. Without a usable
             # base, gitleaks scans the target history and other hooks inspect all files.
@@ -76,13 +81,16 @@ jobs:
               run: |
                   if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
                       from="${{ github.event.pull_request.base.sha }}"
+                      to="${{ github.event.pull_request.head.sha }}"
                   elif [ -n "${{ github.event.before }}" ] && ! printf '%s' "${{ github.event.before }}" | grep -q '^0*$'; then
                       from="${{ github.event.before }}"
+                      to="${{ github.sha }}"
                   else
                       from=""
+                      to="${{ github.sha }}"
                   fi
                   if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
-                      prek run --stage pre-push --from-ref "$from" --to-ref "${{ github.sha }}"
+                      prek run --stage pre-push --from-ref "$from" --to-ref "$to"
                   else
-                      GITLEAKS_PUSH_TO_REF="${{ github.sha }}" prek run --stage pre-push --all-files
+                      GITLEAKS_PUSH_TO_REF="$to" prek run --stage pre-push --all-files
                   fi

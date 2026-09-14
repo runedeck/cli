@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Render the conformance fixture with a candidate rune binary and run the
+# pinned Agent Skills reference over every rendered provider root.
+#
+# Usage: scripts/check-rendered-conformance <rune-binary>
+#
+# The fixture (tests/support/conformance) carries every field the reference
+# allows, the Rune `version` field, a companion file, and a claude variant
+# with claude-only keys and a claude-only symbol. The comparison is against
+# real assembly output, never hand-written fixtures. Every expected provider
+# root must exist, hold the entrypoint and the companion, and pass the
+# reference with recorded profile differences only. The agentskills root
+# must pass with no finding at all, which proves the kebab-case rule and the
+# `version` strip. Any conformance error, an empty root, or a missing file
+# fails.
+set -euo pipefail
+
+rune=${1:?usage: check-rendered-conformance <rune-binary>}
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/rendered-conformance.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+cp -R "$repo/tests/support/conformance/." "$work/"
+"$rune" validate --skill-layers --source "$work" > "$work/layers.log" 2>&1 || {
+    echo "source layer check failed:"; cat "$work/layers.log"; exit 1
+}
+"$rune" assemble --source "$work" > "$work/assemble.log" 2>&1 || {
+    echo "assemble failed:"; cat "$work/assemble.log"; exit 1
+}
+
+status=0
+for entry in codex:generic:ConformanceCanary gemini:generic:ConformanceCanary opencode:generic:ConformanceCanary agentskills:generic:conformance-canary claude:claude:ConformanceCanary; do
+    IFS=: read -r provider profile skill <<< "$entry"
+    skills="$work/build/$provider/skills"
+    echo "== $provider ($profile profile)"
+    for required in "$skills/$skill/SKILL.md" "$skills/$skill/references/detail.md"; do
+        if [ ! -f "$required" ]; then
+            echo "missing rendered file: $required"
+            status=1
+        fi
+    done
+    [ -d "$skills" ] || continue
+    report="$work/$provider.json"
+    if ! python3 "$here/check-skill-conformance.py" --root "$skills" --profile "$profile" --json > "$report"; then
+        status=1
+    fi
+    python3 - "$report" "$provider" <<'PYCHECK' || status=1
+import json, sys
+report = json.load(open(sys.argv[1]))
+provider = sys.argv[2]
+for finding in report["findings"]:
+    print(f"{finding['kind']}: {finding['skill']}: {finding['message']}")
+print(f"{report['checked']} skill(s), profile {report['profile']}, conformant={report['conformant']}")
+if provider == "agentskills" and report["findings"]:
+    print("agentskills output must carry no difference at all")
+    raise SystemExit(1)
+if provider != "agentskills" and not any(f["kind"] == "profile-field" and "version" in f["message"] for f in report["findings"]):
+    print("the Rune version field was not observed as a recorded difference")
+    raise SystemExit(1)
+PYCHECK
+done
+# The claude-only symbol must reach the claude bundle and no other, and the
+# append must keep the base body beside the variant body.
+claude_entry="$work/build/claude/skills/ConformanceCanary/SKILL.md"
+if ! grep -q "AskUserQuestion" "$claude_entry"; then
+    echo "the claude variant body did not reach the claude bundle"; status=1
+fi
+if ! grep -q "Read \[the detail companion\]" "$claude_entry"; then
+    echo "the append dropped the base body from the claude bundle"; status=1
+fi
+for portable in codex gemini opencode agentskills; do
+    if grep -rq "AskUserQuestion" "$work/build/$portable"; then
+        echo "a claude-only symbol leaked into the $portable bundle"; status=1
+    fi
+done
+exit "$status"

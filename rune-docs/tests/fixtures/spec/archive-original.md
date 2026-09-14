@@ -8,7 +8,7 @@ Find runes.
 
 ### Requirement: Existing
 
-The system SHALL retain this behavior.
+The system MUST retain this behavior.
 
 #### Scenario: Existing behavior
 
@@ -17,7 +17,7 @@ The system SHALL retain this behavior.
 
 ### Requirement: Remove Me
 
-The system SHALL remove this behavior later.
+The system MUST remove this behavior later.
 
 #### Scenario: Old behavior
 

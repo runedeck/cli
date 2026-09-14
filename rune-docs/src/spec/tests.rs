@@ -264,10 +264,15 @@ fn nested_capabilities_are_discovered_validated_and_archived() {
         show(&root.path().to_string_lossy(), "payments/card", false).unwrap(),
         0
     );
+    // The upstream fixture parses (compatibility) and only the house keyword
+    // rule fires on its SHALL statements.
+    let diagnostics = validate_spec_tree(root.path(), no_schema_check).unwrap();
+    assert!(!diagnostics.is_empty());
     assert!(
-        validate_spec_tree(root.path(), no_schema_check)
-            .unwrap()
-            .is_empty()
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.ends_with("-shall-keyword")),
+        "{diagnostics:?}"
     );
 
     archive(
@@ -556,8 +561,14 @@ fn targeted_validation_resolves_nested_capability_prefixes() {
     let diagnostics =
         validate::validate_spec_target(root.path(), Some("payments/c"), no_schema_check).unwrap();
 
+    // The prefix resolves to the nested capability, whose upstream fixture
+    // carries SHALL: the house rule is the only diagnostic.
+    assert!(!diagnostics.is_empty());
     assert!(
-        diagnostics.is_empty(),
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "spec-shall-keyword"
+                && diagnostic.capability.as_deref() == Some("payments/card")),
         "unexpected diagnostics: {diagnostics:?}"
     );
 }

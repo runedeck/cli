@@ -2,7 +2,7 @@
 
 ### Requirement: Automated coding-tool execution
 
-The Run capability SHALL execute supported coding tools noninteractively through the provider layer shared with native bench.
+The Run capability MUST execute supported coding tools noninteractively through the provider layer shared with native bench.
 
 #### Scenario: Shared launch resolution
 
@@ -18,7 +18,7 @@ The Run capability SHALL execute supported coding tools noninteractively through
 
 ### Requirement: Prompt input
 
-The Run capability SHALL accept exactly one nonempty prompt source.
+The Run capability MUST accept exactly one nonempty prompt source.
 
 #### Scenario: Positional prompt
 
@@ -42,7 +42,7 @@ The Run capability SHALL accept exactly one nonempty prompt source.
 
 ### Requirement: Repository and sandbox policy
 
-The Run capability SHALL execute against an existing canonical repository directory with an explicit access mode.
+The Run capability MUST execute against an existing canonical repository directory with an explicit access mode.
 
 #### Scenario: Read-only default
 
@@ -69,7 +69,7 @@ The Run capability SHALL execute against an existing canonical repository direct
 
 ### Requirement: Timeout policy
 
-The Run capability SHALL apply no timeout unless the user requests one.
+The Run capability MUST apply no timeout unless the user requests one.
 
 #### Scenario: Productive provider without timeout
 
@@ -84,7 +84,7 @@ The Run capability SHALL apply no timeout unless the user requests one.
 
 ### Requirement: Supervised process lifecycle
 
-The Run capability SHALL distinguish provider output, process termination, timeout, signal, output limit, and supervisor failures.
+The Run capability MUST distinguish provider output, process termination, timeout, signal, output limit, and supervisor failures.
 
 #### Scenario: Output limit
 
@@ -107,7 +107,7 @@ The Run capability SHALL distinguish provider output, process termination, timeo
 
 ### Requirement: Output contract
 
-The Run capability SHALL write the final provider answer to standard output and diagnostics to standard error.
+The Run capability MUST write the final provider answer to standard output and diagnostics to standard error.
 
 #### Scenario: JSON success
 

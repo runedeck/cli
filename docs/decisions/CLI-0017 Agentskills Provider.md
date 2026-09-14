@@ -49,7 +49,7 @@ Chosen option: **Option 2**.
 
 Rune defines provider key `agentskills`, target `.agents`, alias `agents`, and `assembly: [strip-links]`. The generic deployment path places a skill at `.agents/skills/<Name>/SKILL.md` with no path-code changes. Qualifier discovery sees `agentskills` as the provider name and never sees the alias, so `rules/agents/` is not a provider qualifier directory.
 
-The Agent Skills specification requires `name` and `description`. It also recognizes top-level `license`, `compatibility`, `metadata`, and experimental `allowed-tools`; `version` is shown as `metadata.version`, not a top-level field. The provider keeps the recognized top-level fields and does not invent a top-level `version` field.
+The Agent Skills specification requires `name` and `description`. It also recognizes top-level `license`, `compatibility`, `metadata`, and experimental `allowed-tools`. `version` is shown as `metadata.version`, not a top-level field. The provider keeps the recognized top-level fields and does not invent a top-level `version` field.
 
 ## Consequences
 

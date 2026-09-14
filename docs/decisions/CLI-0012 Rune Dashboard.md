@@ -43,7 +43,7 @@ The assembly and deployment pipeline produces a lot of state that is hard to see
 ## Considered Options
 
 1. **Terminal UI (ratatui), per CLI-0007.** Rich and dependency-light at runtime, but provenance graphs, hyperlinks, and syntax highlighting are expensive to render in a terminal, and iteration is slow.
-2. **Web dashboard (axum + htmx + Askama).** The browser handles rendering, links, and graphs; htmx keeps interactivity server-driven without a frontend build step. Adds an async web stack, which must be isolated.
+2. **Web dashboard (axum + htmx + Askama).** The browser handles rendering, links, and graphs. Htmx keeps interactivity server-driven without a frontend build step. Adds an async web stack, which must be isolated.
 3. **Static HTML export.** No server, but no live rescan, search, or interactivity.
 
 ## Decision Outcome

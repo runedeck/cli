@@ -1,6 +1,7 @@
 ---
 status: proposed
 ---
+
 # OpenSpec Root Selection
 
 ## Why
@@ -17,6 +18,7 @@ Repositories with an `openspec/` tree need a durable choice between direct opera
 ## Capabilities
 
 - spec-lifecycle (modified)
+- spec-interop (modified)
 
 ## Impact
 
