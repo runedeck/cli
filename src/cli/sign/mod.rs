@@ -6,6 +6,8 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+mod queue;
+
 use rune::error::ErrorKind;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,6 +31,37 @@ pub(crate) fn execute(
         return amend_head();
     }
     seal_branch()
+}
+
+pub(crate) fn run_queue(action: super::SignAction, json: bool) -> Result<i32, Error> {
+    use super::SignAction;
+    match action {
+        SignAction::Queue {
+            bookmark,
+            receipt,
+            repo,
+            prune,
+        } => queue::queue(
+            bookmark.as_deref(),
+            receipt.as_deref(),
+            repo.as_deref(),
+            prune,
+            json,
+        ),
+        SignAction::Submit {
+            bookmark,
+            receipt,
+            repo,
+        } => queue::submit(&bookmark, receipt.as_deref(), repo.as_deref(), json),
+        SignAction::Next => queue::next(json),
+        SignAction::All => queue::all(json),
+        SignAction::Show { bookmark, id, repo } => {
+            queue::show(bookmark.as_deref(), id.as_deref(), repo.as_deref(), json)
+        }
+        SignAction::Drop { bookmark, id, repo } => {
+            queue::drop(bookmark.as_deref(), id.as_deref(), repo.as_deref())
+        }
+    }
 }
 
 fn seal_branch() -> Result<i32, Error> {

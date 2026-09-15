@@ -1,0 +1,463 @@
+//! Repository reads go through git, signing through jj.
+//!
+//! jj renders every read through templates and revsets, and a repository's
+//! own config can redefine both: a `template-aliases` entry shadows a
+//! keyword such as `description`, a `revset-aliases` entry shadows a builtin
+//! such as `bookmarks()`. The owner runs the queue against a repository a
+//! session controls, so nothing jj renders is trusted. Bookmarks reach git
+//! refs through `jj git export`, and the commit objects, the ancestry, and
+//! the signatures are read with git plumbing, which has no such layer. jj
+//! runs `jj sign` with every signing setting pinned to the owner's
+//! user-scope value.
+
+use super::store::Identity;
+use rune::error::{Error, ErrorKind};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+pub(crate) struct Repo {
+    /// The workspace root: where `KEYS` lives and where jj runs.
+    pub workspace: PathBuf,
+    /// The git directory every workspace of the repository shares.
+    pub git_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Head {
+    pub identity: Identity,
+    /// Whether the commit object carries a signature header at all.
+    pub signed: bool,
+}
+
+/// What the owner's gpg says about a signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// The fingerprints of a signature gpg accepts, subkey then primary.
+    Good(Vec<String>),
+    Rejected(String),
+}
+
+/// What `jj sign` reported, classified for the retry rule.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SignOutcome {
+    Signed,
+    /// The pinentry or the card timed out; another attempt is reasonable.
+    Timeout(String),
+    /// The owner cancelled; never retried.
+    Cancelled(String),
+    Failed(String),
+}
+
+/// The owner's signing settings, pinned on every `jj sign`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Signing {
+    pub program: String,
+    pub key: Option<String>,
+}
+
+impl Repo {
+    /// The repository a path belongs to, located by jj itself.
+    pub(crate) fn open(path: &Path) -> Result<Self, Error> {
+        let workspace = jj_path(path, &["workspace", "root"]).map_err(|error| {
+            Error::new(
+                ErrorKind::Config,
+                format!("{} is not inside a jj workspace: {error}", path.display()),
+            )
+        })?;
+        let git_dir = jj_path(&workspace, &["git", "root"]).map_err(|error| {
+            Error::new(
+                ErrorKind::Config,
+                format!(
+                    "{} has no git store ({error}): the queue reads commits through git",
+                    workspace.display()
+                ),
+            )
+        })?;
+        Ok(Self { workspace, git_dir })
+    }
+
+    /// The identity requests and locks are keyed by: shared by every
+    /// workspace of one repository.
+    pub(crate) fn key(&self) -> String {
+        self.git_dir.to_string_lossy().into_owned()
+    }
+
+    /// The bookmark's head, or `None` when the bookmark does not exist. jj
+    /// exports its bookmarks to git refs first, and refuses to export a
+    /// conflicted one, which the queue refuses in turn.
+    pub(crate) fn head(&self, bookmark: &str) -> Result<Option<Head>, Error> {
+        self.export(bookmark)?;
+        let Some(commit) = self.resolve(bookmark)? else {
+            return Ok(None);
+        };
+        let raw = self.cat_commit(&commit)?;
+        let mut identity = parse_commit(&commit, &raw)?;
+        identity.parents = identity
+            .parents
+            .iter()
+            .map(|parent| Ok(parse_commit(parent, &self.cat_commit(parent)?)?.change_id))
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(Some(Head {
+            identity,
+            signed: has_signature(&raw),
+        }))
+    }
+
+    fn export(&self, bookmark: &str) -> Result<(), Error> {
+        let output = jj(&self.workspace)
+            .args(["git", "export"])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if export_refused(&stderr, bookmark) {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("{bookmark} is conflicted: resolve the bookmark first"),
+            ));
+        }
+        if !output.status.success() {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "jj git export failed in {}: {}",
+                    self.workspace.display(),
+                    stderr.trim()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn resolve(&self, bookmark: &str) -> Result<Option<String>, Error> {
+        let output = self
+            .git()
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("refs/heads/{bookmark}^{{commit}}"))
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    }
+
+    fn cat_commit(&self, commit: &str) -> Result<String, Error> {
+        self.git_stdout(&["cat-file", "commit", commit])
+    }
+
+    /// Whether `ancestor` is a proper ancestor of `descendant`.
+    pub(crate) fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, Error> {
+        if ancestor == descendant {
+            return Ok(false);
+        }
+        let status = self
+            .git()
+            .args(["merge-base", "--is-ancestor", ancestor, descendant])
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        match status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(Error::new(
+                ErrorKind::Io,
+                format!("git cannot compare {ancestor} and {descendant}"),
+            )),
+        }
+    }
+
+    /// The owner's gpg verdict on a commit's signature, through the same
+    /// `git verify-commit --raw` path as `rune sign --verify`, with the gpg
+    /// program pinned so the repository's git config cannot name another.
+    pub(crate) fn verify(&self, commit: &str, signing: &Signing) -> Result<Verdict, Error> {
+        let output = self
+            .git()
+            .arg("-c")
+            .arg(format!("gpg.program={}", signing.program))
+            .arg("-c")
+            .arg(format!("gpg.openpgp.program={}", signing.program))
+            .args(["-c", "gpg.format=openpgp", "verify-commit", "--raw", commit])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        let raw = String::from_utf8_lossy(&output.stderr);
+        let fingerprints = super::super::verified_status_output(output.status.success(), &raw)
+            .and_then(|status| super::super::signature_fingerprints(&status));
+        Ok(match fingerprints {
+            Some(fingerprints) => Verdict::Good(fingerprints),
+            None => Verdict::Rejected(
+                raw.lines()
+                    .filter_map(|line| line.strip_prefix("[GNUPG:] "))
+                    .find(|status| !status.starts_with("NEWSIG"))
+                    .unwrap_or("no signature status")
+                    .to_string(),
+            ),
+        })
+    }
+
+    /// `jj sign -r <commit>` with the owner's settings pinned. The behavior
+    /// is pinned to `drop`, so the rewrite of descendants signs nothing: a
+    /// descendant that was signed is queued again and signed in its turn.
+    pub(crate) fn sign(&self, commit: &str, signing: &Signing) -> Result<SignOutcome, Error> {
+        let mut command = jj(&self.workspace);
+        for setting in signing.overrides() {
+            command.arg("--config").arg(setting);
+        }
+        let output = command
+            .args(["sign", "-r", commit])
+            .stdin(Stdio::inherit())
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Ok(classify_sign_output(output.status.success(), &stderr))
+    }
+
+    fn git(&self) -> Command {
+        let mut command = Command::new("git");
+        command
+            .arg("--no-pager")
+            .arg("--git-dir")
+            .arg(&self.git_dir)
+            .env("GIT_TERMINAL_PROMPT", "0");
+        command
+    }
+
+    fn git_stdout(&self, args: &[&str]) -> Result<String, Error> {
+        let output = self
+            .git()
+            .args(args)
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "git {} failed: {}",
+                    args.join(" "),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+impl Signing {
+    /// The owner's user-scope settings, or the tool defaults. Only the gpg
+    /// backend is supported, because `KEYS` holds gpg fingerprints and the
+    /// verification is gpg's.
+    pub(crate) fn owner(workspace: &Path) -> Result<Self, Error> {
+        let backend =
+            user_setting(workspace, "signing.backend")?.unwrap_or_else(|| "gpg".to_string());
+        if backend != "gpg" {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "the signing queue signs with the gpg backend, and signing.backend is {backend}"
+                ),
+            ));
+        }
+        Ok(Self {
+            program: user_setting(workspace, "signing.backends.gpg.program")?
+                .unwrap_or_else(|| "gpg".to_string()),
+            key: user_setting(workspace, "signing.key")?,
+        })
+    }
+
+    /// `--config` overrides that pin every signing setting `jj sign` reads.
+    pub(crate) fn overrides(&self) -> Vec<String> {
+        let mut overrides = vec![
+            "signing.backend=\"gpg\"".to_string(),
+            format!(
+                "signing.backends.gpg.program={}",
+                toml_string(&self.program)
+            ),
+            "signing.behavior=\"drop\"".to_string(),
+        ];
+        if let Some(key) = &self.key {
+            overrides.push(format!("signing.key={}", toml_string(key)));
+        }
+        overrides
+    }
+}
+
+/// A string value from the owner's user-scope config, `None` when unset.
+/// The listing is rendered by a template, so the three keywords it uses
+/// are checked against `template-aliases` first, through `jj config get`,
+/// which renders nothing.
+fn user_setting(workspace: &Path, key: &str) -> Result<Option<String>, Error> {
+    for keyword in ["name", "value", "overridden"] {
+        let probe = jj(workspace)
+            .args(["config", "get", &format!("template-aliases.{keyword}")])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        if probe.status.success() {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "the jj config defines template-aliases.{keyword}, which changes what jj reports: unset it before signing"
+                ),
+            ));
+        }
+    }
+    let output = jj(workspace)
+        .args([
+            "config",
+            "list",
+            "--user",
+            "--include-overridden",
+            key,
+            "-T",
+            LISTING,
+        ])
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    Ok(user_value(&String::from_utf8_lossy(&output.stdout), key))
+}
+
+/// Fields split by the unit separator, records by the record separator,
+/// with no template function a `template-aliases` entry could shadow.
+const LISTING: &str = "name ++ \"\\x1f\" ++ value ++ \"\\x1f\" ++ overridden ++ \"\\x1e\"";
+
+/// The value of `key` among user-scope entries: the one nothing overrides
+/// when there is one, otherwise the last one, which a repository entry
+/// shadows and which is exactly the value to restore.
+pub(crate) fn user_value(listing: &str, key: &str) -> Option<String> {
+    let entries: Vec<(&str, &str, &str)> = listing
+        .split('\u{1e}')
+        .filter_map(|record| {
+            let mut fields = record.trim_matches('\n').split('\u{1f}');
+            Some((fields.next()?, fields.next()?, fields.next()?))
+        })
+        .filter(|(name, _, _)| *name == key)
+        .collect();
+    let (_, value, _) = entries
+        .iter()
+        .find(|(_, _, overridden)| *overridden == "false")
+        .or_else(|| entries.last())?;
+    let table: toml::Table = toml::from_str(&format!("v = {value}")).ok()?;
+    let value = match table.get("v")? {
+        toml::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    (!value.is_empty()).then_some(value)
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// A path jj prints for a workspace: `jj workspace root` or `jj git root`.
+fn jj_path(workspace: &Path, args: &[&str]) -> Result<PathBuf, Error> {
+    let output = jj(workspace)
+        .args(args)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    if !output.status.success() {
+        return Err(Error::new(
+            ErrorKind::Io,
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    Ok(std::fs::canonicalize(&path).unwrap_or(path))
+}
+
+fn jj(workspace: &Path) -> Command {
+    let mut command = Command::new("jj");
+    command
+        .arg("-R")
+        .arg(workspace)
+        .args(["--color=never", "--ignore-working-copy"]);
+    command
+}
+
+/// Whether jj declined to export this bookmark, which it does for a
+/// conflicted one: the head is then whichever side git last saw, and the
+/// queue must not sign that.
+pub(crate) fn export_refused(stderr: &str, bookmark: &str) -> bool {
+    let mut in_failures = false;
+    for line in stderr.lines() {
+        if line.starts_with("Failed to export some bookmarks") {
+            in_failures = true;
+            continue;
+        }
+        if !line.starts_with(' ') {
+            in_failures = false;
+        }
+        if in_failures
+            && line
+                .split_whitespace()
+                .next()
+                .map(|name| name.trim_end_matches(':'))
+                == Some(bookmark)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The identity of a commit from its git object: tree, author without the
+/// timestamp, the message, the parent commit ids (turned into change ids
+/// by the caller), and the change id jj stores in the `change-id` header.
+pub(crate) fn parse_commit(commit: &str, raw: &str) -> Result<Identity, Error> {
+    let (headers, message) = raw.split_once("\n\n").unwrap_or((raw, ""));
+    let mut identity = Identity {
+        change_id: String::new(),
+        commit_id: commit.to_string(),
+        tree_id: String::new(),
+        author: String::new(),
+        description: message.to_string(),
+        parents: Vec::new(),
+    };
+    for line in headers.lines() {
+        let Some((name, value)) = line.split_once(' ') else {
+            continue;
+        };
+        match name {
+            "tree" => identity.tree_id = value.to_string(),
+            "parent" => identity.parents.push(value.to_string()),
+            "author" => identity.author = author_without_time(value),
+            "change-id" => identity.change_id = value.to_string(),
+            _ => {}
+        }
+    }
+    if identity.tree_id.is_empty() || identity.author.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Parse,
+            format!("git returned no commit object for {commit}"),
+        ));
+    }
+    Ok(identity)
+}
+
+/// `Name <email> 1789482678 +0200` without the two trailing time fields.
+fn author_without_time(value: &str) -> String {
+    match value.rfind('>') {
+        Some(end) => value[..=end].to_string(),
+        None => value.to_string(),
+    }
+}
+
+pub(crate) fn has_signature(raw: &str) -> bool {
+    raw.split_once("\n\n")
+        .map_or(raw, |(headers, _)| headers)
+        .lines()
+        .any(|line| line.starts_with("gpgsig ") || line.starts_with("gpgsig-sha256 "))
+}
+
+pub(crate) fn classify_sign_output(success: bool, stderr: &str) -> SignOutcome {
+    if success {
+        return SignOutcome::Signed;
+    }
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("cancel") {
+        SignOutcome::Cancelled(stderr.trim().to_string())
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        SignOutcome::Timeout(stderr.trim().to_string())
+    } else {
+        SignOutcome::Failed(stderr.trim().to_string())
+    }
+}
