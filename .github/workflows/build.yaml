@@ -10,11 +10,6 @@ on:
     pull_request:
         branches: [main]
 
-# The prek hooks call `gitleaks git`, which needs a release build; the
-# Ubuntu package predates that subcommand.
-env:
-    GITLEAKS_VERSION: "8.30.1"
-
 jobs:
     build:
         runs-on: ubuntu-latest
@@ -73,29 +68,21 @@ jobs:
               with:
                   components: rustfmt, clippy
 
-            - name: Install mdschema
-              run: |
-                  bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
-                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
             - name: Download rune
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
               with:
                   name: rune
                   path: /usr/local/bin
 
+            # The same pinned tools the local hooks and the quality workflow
+            # use, ruff included; the inline installs this replaced had no ruff.
             - name: Install tools
               run: |
                   chmod +x /usr/local/bin/rune
-                  pip install semgrep
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-                  sudo install gitleaks /usr/local/bin/gitleaks
+                  bash scripts/install-tools
 
             - name: Validate
-              uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2
+              run: prek run --all-files
 
     # End-to-end guard: scaffold a fresh project via `rune init` and run
     # `make validate` against it. Catches any change that produces a broken
@@ -114,19 +101,8 @@ jobs:
                   name: rune
                   path: /usr/local/bin
 
-            - name: Install prek
-              uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
-              with:
-                  tool: prek
-
-            - name: Install validation tools
-              run: |
-                  pip install semgrep
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-                  sudo install gitleaks /usr/local/bin/gitleaks
+            - name: Install tools
+              run: bash scripts/install-tools
 
             - name: Scaffold and validate generated project
               shell: bash

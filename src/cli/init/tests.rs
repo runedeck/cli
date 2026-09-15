@@ -373,3 +373,18 @@ fn init_pre_push_is_entire_wrapper_chaining_to_gate() {
         "pre-push validation check SHA placeholder must be substituted at init time"
     );
 }
+
+#[test]
+fn the_executable_bit_follows_the_shebang_not_the_path() {
+    // ruff enforces the same pair in the generated project: EXE001 for a
+    // shebang without the bit, EXE002 for the bit without a shebang.
+    assert!(super::wants_executable_bit(
+        b"#!/usr/bin/env python3\nprint()\n"
+    ));
+    assert!(super::wants_executable_bit(b"#!/bin/sh\nexit 0\n"));
+    assert!(!super::wants_executable_bit(
+        b"\"\"\"A hook module without a shebang.\"\"\"\n"
+    ));
+    assert!(!super::wants_executable_bit(b""));
+    assert!(!super::wants_executable_bit(b"# not a shebang\n"));
+}
