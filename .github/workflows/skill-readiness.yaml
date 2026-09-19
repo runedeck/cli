@@ -1,0 +1,75 @@
+name: Skill readiness
+
+on:
+    pull_request:
+        branches: [main]
+    push:
+        branches: [main]
+
+permissions:
+    contents: read
+
+jobs:
+    contract:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+            - name: Verify case-insensitive acceptance filesystem
+              if: runner.os == 'macOS'
+              run: |
+                  python3 - <<'PYPROBE'
+                  import pathlib
+                  import tempfile
+                  with tempfile.TemporaryDirectory() as directory:
+                      root = pathlib.Path(directory)
+                      original = root / "skill-case-probe"
+                      alias = root / "SKILL-CASE-PROBE"
+                      original.write_text("case probe", encoding="utf-8")
+                      if not alias.exists() or not original.samefile(alias):
+                          raise SystemExit("Acceptance requires a case-insensitive temporary filesystem")
+                  print("case_insensitive_temporary_filesystem=true")
+                  PYPROBE
+            # A private target directory: the macOS runner's Homebrew Python
+            # refuses site-packages installs (PEP 668), and a venv would hide
+            # the pin behind an activation step.
+            - name: Pinned conformance reference dependency
+              run: |
+                  python3 -m pip install --quiet --target "$RUNNER_TEMP/pydeps" "strictyaml==1.6.2"
+                  echo "PYTHONPATH=$RUNNER_TEMP/pydeps" >> "$GITHUB_ENV"
+            - name: Required evidence controls
+              run: |
+                  python3 - <<'PYTEST'
+                  import unittest
+                  suite = unittest.TestSuite()
+                  cases = (
+                      ("test_run_artifact_checks.py", 30),
+                      ("test_check_codex_skill_discovery.py", 15),
+                      ("test_check_skill_conformance.py", 8),
+                  )
+                  for pattern, expected in cases:
+                      selected = unittest.defaultTestLoader.discover("scripts", pattern=pattern)
+                      if selected.countTestCases() != expected:
+                          raise SystemExit(f"{pattern}: expected {expected} tests, got {selected.countTestCases()}")
+                      suite.addTests(selected)
+                  result = unittest.TextTestRunner(verbosity=2).run(suite)
+                  if not result.wasSuccessful() or result.skipped or result.testsRun != 53:
+                      raise SystemExit("Required evidence tests failed, skipped, or did not execute")
+                  PYTEST
+            - name: Skill identity contract
+              run: cargo test --all-features --test codex_skill_identity --test codex_skill_aliases --test codex_skill_metadata --test codex_skill_portability --test skill_layers --test skill_layer_config
+            # The pinned reference validator runs over bundles this candidate
+            # renders from tests/support/conformance, which carries every
+            # reference field, a companion, and a claude variant. An empty or
+            # missing bundle fails the comparison.
+            - name: Rendered bundle conformance
+              run: |
+                  cargo build --all-features
+                  bash scripts/check-rendered-conformance "$PWD/target/debug/rune"

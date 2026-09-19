@@ -1,6 +1,6 @@
 ---
 adr: "docs/decisions/CLI-0027 Temporary Adoption Session State.md"
-status: proposed
+status: abandoned
 ---
 
 # Adopt Session State

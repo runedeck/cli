@@ -2,7 +2,7 @@
 
 ### Requirement: Manifest listing
 
-`rune plugin list` SHALL list every plugin manifest under the plugin directory with its name,
+`rune plugin list` MUST list every plugin manifest under the plugin directory with its name,
 description, and subscribed events.
 
 #### Scenario: Manifests list
@@ -12,7 +12,7 @@ description, and subscribed events.
 
 ### Requirement: Post-install event
 
-After a successful install, rune SHALL run every plugin subscribed to `post-install` with one
+After a successful install, rune MUST run every plugin subscribed to `post-install` with one
 JSON event on stdin carrying the source, the target, the providers, and the deployed count.
 
 #### Scenario: Subscribed plugin receives the event
@@ -22,7 +22,7 @@ JSON event on stdin carrying the source, the target, the providers, and the depl
 
 ### Requirement: Fault isolation
 
-A plugin failure SHALL print one warning and SHALL never change the install result.
+A plugin failure MUST print one warning and MUST never change the install result.
 
 #### Scenario: Failing plugin cannot break the install
 
@@ -31,7 +31,7 @@ A plugin failure SHALL print one warning and SHALL never change the install resu
 
 ### Requirement: Executable confinement
 
-A manifest's executable SHALL resolve inside that plugin's own directory.
+A manifest's executable MUST resolve inside that plugin's own directory.
 
 #### Scenario: Escaping executable is rejected
 

@@ -20,7 +20,7 @@ Adoption today is a byte-copy with provenance (`rune import`) plus a skill that 
     - `rune adopt abandon` — closes a session, moving the imported artifact and temporary session to the trash.
 - Review entries are temporary external session state. Permanent adopt/v1 sidecars retain the source pin, final subject digest, reviewed state, reviewer, completion time, and concise summary (CLI-0027).
 - Segmentation is deterministic and line-based: frontmatter is one block. Fenced code blocks are atomic. Paragraphs split at blank lines. Consecutive list items, table rows, and quote lines group. Headings are their own blocks. Block ids are ordinal per file with a content digest recorded beside them.
-- `rune import` gains `--kind agent|rule` placement (`agents/<name>.md`, `rules/<name>.md`) so forge-core agents and rules are adoptable, and artifact naming moves to the kebab-case standard (lowercase, digits, hyphens, ≤ 64 chars, name equals directory).
+- `rune import` gains `--kind agent|rule` placement (`agents/<name>.md`, `rules/<name>.md`) so forge-core agents and rules are adoptable, and artifact names follow `schemas/skill.schema.yaml` with the deck's casing preserved (≤ 64 chars, name equals directory).
 - Structural validation via mdschema: the deck commits an `.mdschema` per artifact kind encoding the Anthropic skill-creator + dynamic-context frontmatter standard. `rune adopt finalize` fails when `mdschema` is missing or the check fails. `rune doctor` reports mdschema availability.
 - The deck's `adopt-artifact` skill is rewritten in the new format, drives the loop through AskUserQuestion in the main context, and pulls CLI state via `!`-command injection. The model drafts questions and applies edits, rune enforces everything else.
 

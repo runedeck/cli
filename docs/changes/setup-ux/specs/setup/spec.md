@@ -2,7 +2,7 @@
 
 ### Requirement: Setup plan review
 
-`rune setup` SHALL print every planned write and SHALL apply the plan only after one explicit
+`rune setup` MUST print every planned write and MUST apply the plan only after one explicit
 approval.
 
 #### Scenario: User approves the printed plan
@@ -12,7 +12,7 @@ approval.
 
 ### Requirement: Plan-only mode
 
-`rune setup --plan` SHALL print the plan and SHALL perform no writes.
+`rune setup --plan` MUST print the plan and MUST perform no writes.
 
 #### Scenario: Plan mode runs in automation
 
@@ -21,7 +21,7 @@ approval.
 
 ### Requirement: Verified completion record
 
-Setup SHALL write the versioned completion record only after every selected verification check
+Setup MUST write the versioned completion record only after every selected verification check
 passes.
 
 #### Scenario: Verification check fails
@@ -31,7 +31,7 @@ passes.
 
 ### Requirement: First-run nudge
 
-Bare `rune` without a user config SHALL print one line that names `rune setup` and SHALL write
+Bare `rune` without a user config MUST print one line that names `rune setup` and MUST write
 nothing.
 
 #### Scenario: Bare invocation finds no user config
@@ -41,7 +41,7 @@ nothing.
 
 ### Requirement: Agent guide
 
-The repository SHALL provide `docs/agent-guide.md` that starts with read-only commands and requires
+The repository MUST provide `docs/agent-guide.md` that starts with read-only commands and requires
 approval before each write step.
 
 #### Scenario: Guide orders its steps

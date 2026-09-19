@@ -1,0 +1,4 @@
+# The vendored Agent Skills reference validator is upstream bytes pinned by
+# digest in scripts/vendor/skills_ref/PIN.json. Lint findings there are not
+# ours to fix, and an edit would break the pin.
+extend-exclude = ["scripts/vendor"]

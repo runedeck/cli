@@ -19,6 +19,7 @@ config.yaml
 .gemini/
 .codex/
 .opencode/
+.agents/
 
 # Node
 package-lock.json
@@ -30,6 +31,9 @@ docs/plans/
 # Parallel feature work
 .worktrees/
 .workspaces/
+
+# Quarantine: rune repair, reseal, and abandon move evidence here, never delete it
+.trash/
 
 # Python validation caches
 __pycache__/

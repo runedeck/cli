@@ -1,0 +1,17 @@
+{
+    "source": "https://github.com/agentskills/agentskills",
+    "path": "skills-ref/src/skills_ref",
+    "commit": "547831f3a23724ba64a9b79bbf59c5e0bc8f2d1a",
+    "package_version": "0.1.0",
+    "license": "Apache-2.0",
+    "dependency": "strictyaml==1.6.2",
+    "files": {
+        "__init__.py": "a3da705c4847ac19c016f67e3a6c56a94e160986a823d148c21dca4c9b312b4a",
+        "errors.py": "5780d314db735400c3959d20ed19a8c59445786d35a1a1b7cf368f01576d91f4",
+        "models.py": "c6645fcfc04c78e773657856e8c6058e43951ce283e9b303ca721df1acac6a7b",
+        "parser.py": "9a74c9a90eb217b82bec27570332eab74547acfbee2973c0a8bcd23f6c7bc211",
+        "prompt.py": "8ed90a61685b84050a8fde32e63d5f3f04c205b05bfc5f8ef4bb2f101cc9cf15",
+        "validator.py": "b5ee3d8537c83c959c31c2cb080a5227646ede5aea545f1ac835ed3c4645f6c5",
+        "LICENSE": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    }
+}

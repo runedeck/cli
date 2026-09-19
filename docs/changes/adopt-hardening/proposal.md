@@ -15,8 +15,8 @@ The review state machine (CLI-0023) enforces that verdicts exist before finalize
 - **Verdict timestamps**: `rune adopt verdict` stamps `decidedOn` (UTC RFC 3339) on the block entry, so the pending session carries the decision timeline until finalize.
 - **Injection lint**: segmentation flags suspect blocks (`flags:` on the block entry): instruction-override phrasing, tool-invocation shapes, dynamic-injection lines in the adopted body, base64/high-entropy runs, URLs outside the upstream host. Flags ride through `next --json` so questions lead with them. They never block anything.
 - **Doctor review pass**: `rune adopt doctor` reports pending external sessions, verifies reviewed sidecar subject digests against files, and diagnoses legacy review ledgers without treating them as authority.
-- **Skill hardening (deck)**: `disallowed-tools: WebFetch, WebSearch` on adopt-artifact, removing the fetch channel while the review runs.
-- **Interactive verdict channel**: specced here, built as its own change. `rune adopt review` presents blocks on the controlling TTY and records verdicts directly (`channel: tty` vs `channel: cli` on entries), removing the model from the decision datapath.
+- **Skill hardening (deck)**: `disallowed-tools: WebFetch, WebSearch` on adopt-artifact, removing the fetch path while the review runs.
+- **Interactive verdict channel**: specced here, built as its own change. `rune adopt review` presents blocks on the controlling TTY and records verdicts directly (`transport: review-tty` vs `transport: verdict-cli` on entries), removing the model from the decision datapath.
 
 ## Capabilities
 
@@ -24,6 +24,6 @@ The review state machine (CLI-0023) enforces that verdicts exist before finalize
 
 ## Impact
 
-- `src/cli/adopt/{segment,review}.rs` (flags, timestamps, channel field), assembly/deploy source walk, `src/cli/doctor.rs` (review pass).
+- `src/cli/adopt/{segment,review}.rs` (flags, timestamps, transport field), assembly/deploy source walk, `src/cli/doctor.rs` (review pass).
 - Deck: `runes/meta/skills/adopt-artifact/SKILL.md` frontmatter.
 - Session additions are backward-compatible through serde defaults. Existing reviewed sidecars remain deployable without ledgers.

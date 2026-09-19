@@ -2,7 +2,7 @@
 
 ### Requirement: Stable error codes
 
-Each recoverable error SHALL carry a stable `code` that identifies the failure class across
+Each recoverable error MUST carry a stable `code` that identifies the failure class across
 releases.
 
 #### Scenario: Unknown config key fails twice
@@ -12,8 +12,8 @@ releases.
 
 ### Requirement: Fix commands in errors
 
-Each recoverable error SHALL carry a `fix_command` built from resolved paths and names, and JSON
-error output SHALL contain `code`, `message`, and `fix_command`.
+Each recoverable error MUST carry a `fix_command` built from resolved paths and names, and JSON
+error output MUST contain `code`, `message`, and `fix_command`.
 
 #### Scenario: Error names its repair
 

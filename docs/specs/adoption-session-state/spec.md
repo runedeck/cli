@@ -8,7 +8,7 @@ Define how Rune stores temporary adoption reviews and writes final provenance.
 
 ### Requirement: Temporary block review
 
-Rune SHALL store block text, verdicts, notes, flags, and timestamps outside the adopted artifact and its `.provenance` directory. Git worktrees SHALL use worktree-specific metadata. Each session key SHALL include the canonical module root and module-relative artifact path. Non-Git modules SHALL use user state keyed by the canonical module root.
+Rune MUST store block text, verdicts, notes, flags, and timestamps outside the adopted artifact and its `.provenance` directory. Git worktrees MUST use worktree-specific metadata. Each session key MUST include the canonical module root and module-relative artifact path. Non-Git modules MUST use user state keyed by the canonical module root.
 
 #### Scenario: Two worktrees review artifacts
 
@@ -22,7 +22,7 @@ Rune SHALL store block text, verdicts, notes, flags, and timestamps outside the 
 
 ### Requirement: Concise finalized provenance
 
-Finalize SHALL require a verdict for every block. It SHALL update each adopted file's source-level `adopt/v1` sidecar before it removes the temporary session. It SHALL NOT write `review.yaml` or `*.review.yaml` into the source tree.
+Finalize MUST require a verdict for every block. It MUST update each adopted file's source-level `adopt/v1` sidecar before it removes the temporary session. It MUST NOT write `review.yaml` or `*.review.yaml` into the source tree.
 
 #### Scenario: Adoption finalizes
 
@@ -31,7 +31,7 @@ Finalize SHALL require a verdict for every block. It SHALL update each adopted f
 
 ### Requirement: Sidecar authority
 
-Doctor and reseal SHALL use reviewed `adopt/v1` sidecars as authority. Doctor SHALL report legacy review ledgers without deleting them. Reseal SHALL refuse pending or unreviewed artifacts.
+Doctor and reseal MUST use reviewed `adopt/v1` sidecars as authority. Doctor MUST report legacy review ledgers without deleting them. Reseal MUST refuse pending or unreviewed artifacts.
 
 #### Scenario: Reviewed tree has no ledger
 
@@ -40,7 +40,7 @@ Doctor and reseal SHALL use reviewed `adopt/v1` sidecars as authority. Doctor SH
 
 ### Requirement: Canonical model identities
 
-Authorship validation SHALL ignore a trailing `1m` context suffix after a model version digit. The accepted author list SHALL contain only canonical identities without the suffix.
+Authorship validation MUST ignore a trailing `1m` context suffix after a model version digit. The accepted author list MUST contain only canonical identities without the suffix.
 
 #### Scenario: One-million-context identity
 

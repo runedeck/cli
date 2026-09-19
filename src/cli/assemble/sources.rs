@@ -8,6 +8,134 @@ fn parse_targets(content: &str) -> Option<Vec<String>> {
     frontmatter_list(content, "targets").map(|value| value.split(", ").map(String::from).collect())
 }
 
+#[cfg(all(test, unix))]
+mod skill_symlink_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("SKILL.md"),
+            "---\nname: Alpha\n---\n# Alpha\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("Reference.md"), "Reference\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn skill_symlink_companions_are_collected_without_reading_referent_bytes() {
+        let root = fixture();
+        symlink("Reference.md", root.path().join("Alias.md")).unwrap();
+        let mut sources = Vec::new();
+        walk_skill_dir(
+            root.path(),
+            rune::provider::ContentKind::Skills,
+            &mut sources,
+            &HashSet::new(),
+        )
+        .unwrap();
+        let alias = sources
+            .iter()
+            .find(|source| source.relative_path.ends_with("/Alias.md"))
+            .unwrap();
+        assert!(alias.passthrough);
+        assert!(alias.content.is_empty());
+        assert!(alias.content_bytes.is_none());
+    }
+
+    #[test]
+    fn skill_symlink_escape_is_rejected_during_collection() {
+        let root = fixture();
+        symlink("../outside", root.path().join("Alias.md")).unwrap();
+        let error = walk_skill_dir(
+            root.path(),
+            rune::provider::ContentKind::Skills,
+            &mut Vec::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("path leaves the bundle"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn skill_symlink_entrypoint_remains_invalid() {
+        let root = fixture();
+        fs::remove_file(root.path().join("SKILL.md")).unwrap();
+        symlink("Reference.md", root.path().join("SKILL.md")).unwrap();
+        let error = walk_skill_dir(
+            root.path(),
+            rune::provider::ContentKind::Skills,
+            &mut Vec::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("SKILL.md must be a regular file"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn skill_symlink_cannot_be_an_ancestor_of_another_output() {
+        let root = fixture();
+        fs::create_dir(root.path().join("refs")).unwrap();
+        fs::write(root.path().join("refs/x"), "base bytes").unwrap();
+        fs::create_dir_all(root.path().join("user/target")).unwrap();
+        fs::write(root.path().join("user/target/x"), "target bytes").unwrap();
+        symlink("target", root.path().join("user/refs")).unwrap();
+        let error = walk_skill_dir(
+            root.path(),
+            rune::provider::ContentKind::Skills,
+            &mut Vec::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("file is also an output ancestor"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("user/target/x")).unwrap(),
+            "target bytes"
+        );
+    }
+
+    #[test]
+    fn skill_symlink_directory_alias_without_alias_children_is_valid() {
+        let root = fixture();
+        fs::create_dir(root.path().join("target")).unwrap();
+        fs::write(root.path().join("target/x"), "target bytes").unwrap();
+        symlink("target", root.path().join("refs")).unwrap();
+        let mut sources = Vec::new();
+        walk_skill_dir(
+            root.path(),
+            rune::provider::ContentKind::Skills,
+            &mut sources,
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(
+            sources
+                .iter()
+                .any(|source| source.relative_path.ends_with("/refs"))
+        );
+        assert!(
+            !sources
+                .iter()
+                .any(|source| source.relative_path.ends_with("/refs/x"))
+        );
+    }
+}
+
 /// A source file discovered during directory walking.
 ///
 /// ```text
@@ -573,6 +701,12 @@ fn walk_skill_dir(
     sources: &mut Vec<SourceFile>,
     valid_qualifiers: &HashSet<String>,
 ) -> Result<(), Error> {
+    if dir.file_name().and_then(|name| name.to_str()).is_none() {
+        return Err(Error::new(
+            ErrorKind::Validate,
+            "skill directory names must be valid UTF-8",
+        ));
+    }
     let skill_name = dir
         .file_name()
         .unwrap_or_default()
@@ -583,6 +717,7 @@ fn walk_skill_dir(
         std::collections::HashMap::new();
 
     collect_skill_files(
+        dir,
         dir,
         &skill_name,
         kind,
@@ -596,6 +731,7 @@ fn walk_skill_dir(
     if user_dir.is_dir() {
         collect_skill_files(
             &user_dir,
+            dir,
             &skill_name,
             kind,
             &mut file_map,
@@ -603,6 +739,33 @@ fn walk_skill_dir(
             Path::new(""),
             valid_qualifiers,
         )?;
+    }
+
+    let mut folded_paths = std::collections::BTreeMap::new();
+    for relative in file_map.keys() {
+        for ancestor in Path::new(relative)
+            .ancestors()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            let spelling = ancestor.to_string_lossy();
+            if ancestor != Path::new(relative) && file_map.contains_key(spelling.as_ref()) {
+                return Err(Error::new(
+                    ErrorKind::Validate,
+                    format!(
+                        "skill bundle file is also an output ancestor: {spelling} and {relative}"
+                    ),
+                ));
+            }
+            if let Some(previous) =
+                folded_paths.insert(spelling.to_lowercase(), spelling.to_string())
+                && previous != spelling
+            {
+                return Err(Error::new(
+                    ErrorKind::Validate,
+                    format!("skill bundle path collision: {previous} and {spelling}"),
+                ));
+            }
+        }
     }
 
     // Companions inherit the entrypoint's provider targets. A skill routed
@@ -623,8 +786,10 @@ fn walk_skill_dir(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_skill_files(
     dir: &Path,
+    skill_root: &Path,
     skill_name: &str,
     kind: rune::provider::ContentKind,
     file_map: &mut std::collections::HashMap<String, SourceFile>,
@@ -647,21 +812,42 @@ fn collect_skill_files(
             continue;
         }
 
-        let file_type = checked_file_type(&entry)?;
+        let filename = skill_entry_name(&entry)?;
+        let file_type = entry.file_type().map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot inspect {}: {error}", path.display()),
+            )
+        })?;
+        if file_type.is_symlink()
+            && !is_qualifier
+            && relative_dir.as_os_str().is_empty()
+            && (entry.file_name() == "user"
+                || valid_qualifiers.contains(entry.file_name().to_string_lossy().as_ref()))
+        {
+            return Err(Error::new(
+                ErrorKind::Validate,
+                format!(
+                    "skill qualifier must be a real directory: {}",
+                    path.display()
+                ),
+            ));
+        }
         if file_type.is_dir() {
-            let directory_name = entry.file_name().to_string_lossy().to_string();
+            let directory_name = &filename;
             if directory_name == "__pycache__" {
                 continue;
             }
             let is_reserved_qualifier = !is_qualifier
                 && relative_dir.as_os_str().is_empty()
-                && (directory_name == "user" || valid_qualifiers.contains(&directory_name));
+                && (directory_name == "user" || valid_qualifiers.contains(directory_name));
             if is_reserved_qualifier {
                 continue;
             }
             let child_relative = relative_dir.join(entry.file_name());
             collect_skill_files(
                 &path,
+                skill_root,
                 skill_name,
                 kind,
                 file_map,
@@ -671,66 +857,103 @@ fn collect_skill_files(
             )?;
             continue;
         }
-        if !file_type.is_file() {
+        if !file_type.is_file() && !file_type.is_symlink() {
             warn_skipped(&path, "unsupported file type");
             continue;
         }
-
-        let filename = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
 
         let relative_file = relative_dir.join(&filename);
         let relative_file = relative_file.to_string_lossy().replace('\\', "/");
         let is_skill_file = relative_dir.as_os_str().is_empty() && filename == "SKILL.md";
         let flattened_relative = format!("skills/{skill_name}/{relative_file}");
-        // Companions may be binary (images, archives); they carry bytes and
-        // copy verbatim. SKILL.md itself is a text document and must parse.
-        let raw = fs::read(&path).map_err(|e| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot read {}: {e}", path.display()),
-            )
-        })?;
-        let (content, content_bytes) = match String::from_utf8(raw) {
-            Ok(text) => (text, None),
-            Err(error) if is_skill_file => {
-                return Err(Error::new(
-                    ErrorKind::Validate,
-                    format!("{} is not valid UTF-8: {error}", path.display()),
-                ));
-            }
-            Err(error) => (String::new(), Some(error.into_bytes())),
-        };
-
         if is_qualifier && file_map.contains_key(&relative_file) {
             eprintln!("  override  skills/{skill_name}/user/{relative_file} → {relative_file}");
         } else if is_qualifier {
             eprintln!("  flatten   skills/{skill_name}/user/{relative_file} → {relative_file}");
         }
 
-        let targets = is_skill_file.then(|| parse_targets(&content)).flatten();
         file_map.insert(
             relative_file,
-            SourceFile {
-                relative_path: flattened_relative,
-                full_path: path.to_string_lossy().to_string(),
-                content,
-                content_bytes,
+            skill_source(
+                &path,
+                skill_root,
+                flattened_relative,
+                is_skill_file,
+                file_type.is_symlink(),
                 kind,
-                passthrough: !is_skill_file,
-                qualifier: None,
-                targets,
-                rune_id: None,
-                providers: None,
-                source_uri: None,
-            },
+            )?,
         );
     }
 
     Ok(())
+}
+
+fn skill_entry_name(entry: &fs::DirEntry) -> Result<String, Error> {
+    let filename = entry.file_name();
+    let name = filename.to_string_lossy();
+    if filename.to_str().is_none() || name.contains('\\') || name.chars().any(char::is_control) {
+        return Err(Error::new(
+            ErrorKind::Validate,
+            format!("invalid skill bundle path: {}", entry.path().display()),
+        ));
+    }
+    Ok(name.into_owned())
+}
+
+fn skill_source(
+    path: &Path,
+    skill_root: &Path,
+    relative_path: String,
+    is_skill_file: bool,
+    is_symlink: bool,
+    kind: rune::provider::ContentKind,
+) -> Result<SourceFile, Error> {
+    let raw = if is_symlink {
+        if is_skill_file {
+            return Err(Error::new(
+                ErrorKind::Validate,
+                "SKILL.md must be a regular file",
+            ));
+        }
+        rune::manifest::bundle::contained_symlink_target(skill_root, path).map_err(|problem| {
+            Error::new(
+                ErrorKind::Validate,
+                format!("{}: {}", path.display(), problem.message),
+            )
+        })?;
+        Vec::new()
+    } else {
+        fs::read(path).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", path.display()),
+            )
+        })?
+    };
+    let (content, content_bytes) = match String::from_utf8(raw) {
+        Ok(text) => (text, None),
+        Err(error) if is_skill_file => {
+            return Err(Error::new(
+                ErrorKind::Validate,
+                format!("{} is not valid UTF-8: {error}", path.display()),
+            ));
+        }
+        Err(error) => (String::new(), Some(error.into_bytes())),
+    };
+    let targets = is_skill_file.then(|| parse_targets(&content)).flatten();
+    Ok(SourceFile {
+        relative_path,
+        full_path: path.to_string_lossy().to_string(),
+        content,
+        content_bytes,
+        kind,
+        passthrough: !is_skill_file,
+        qualifier: None,
+        targets,
+        rune_id: None,
+        providers: None,
+        source_uri: None,
+    })
 }
 
 /// Build the set of valid qualifier names from provider names and model IDs.

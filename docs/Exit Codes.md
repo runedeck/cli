@@ -18,6 +18,6 @@ with `--json` on stdout and diagnostics on stderr.
 
 Mutating commands hold a per-target lock (`.rune.lock` in the deploy target)
 for the duration of the write: a second `rune install`, `deploy`, or
-`doctor --repair` against the same target fails fast with exit 1 instead of
+`repair` against the same target fails fast with exit 1 instead of
 interleaving. The lock names the holding pid and is removed when the process
 exits.

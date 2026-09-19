@@ -12,6 +12,7 @@ pub mod provider;
 pub mod result;
 pub mod review;
 pub mod services;
+pub mod skill_readiness;
 pub mod target;
 pub mod view;
 pub mod yaml;

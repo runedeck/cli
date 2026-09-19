@@ -2,7 +2,7 @@
 
 ### Requirement: Added
 
-The system SHALL add this behavior.
+The system MUST add this behavior.
 
 #### Scenario: Added behavior
 
@@ -13,7 +13,7 @@ The system SHALL add this behavior.
 
 ### Requirement: Existing
 
-The system SHALL replace this behavior.
+The system MUST replace this behavior.
 
 #### Scenario: Existing behavior
 

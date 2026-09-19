@@ -2,7 +2,7 @@
 
 ### Requirement: Adr
 
-The Adr capability SHALL describe its required behavior here.
+The Adr capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

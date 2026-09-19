@@ -1,0 +1,1 @@
+[ASSEMBLY-0002](ASSEMBLY-0002%20Provenance%20Tracking.md) already specifies `.provenance/<Name>.yaml` sidecars in [SLSA v1.0][SLSA] format for assembly builds. The question is how adoption fits into that schema — whether it needs local-forge fields under `externalParameters`, or whether SLSA's native `resolvedDependencies` already models the build composition exactly right.

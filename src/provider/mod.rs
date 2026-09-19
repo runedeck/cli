@@ -123,6 +123,64 @@ impl ProviderConfig {
     }
 }
 
+/// Resolve CLI selectors by exact name, then explicit alias, then target path.
+/// Shared target paths must not shadow an explicit provider alias.
+pub fn resolve_requested_names(
+    providers: &HashMap<String, ProviderConfig>,
+    requested: &[String],
+) -> Result<Vec<String>, String> {
+    let mut selected = std::collections::BTreeSet::new();
+    let mut unknown = Vec::new();
+    for requested_name in requested {
+        if providers.contains_key(requested_name) {
+            selected.insert(requested_name.clone());
+            continue;
+        }
+        let aliases: Vec<_> = providers
+            .iter()
+            .filter(|(_, config)| {
+                config
+                    .aliases
+                    .as_ref()
+                    .is_some_and(|aliases| aliases.contains(requested_name))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        let mut candidates = if aliases.is_empty() {
+            providers
+                .iter()
+                .filter(|(name, config)| config.matches_target(requested_name, name))
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>()
+        } else {
+            aliases
+        };
+        candidates.sort();
+        match candidates.as_slice() {
+            [] => unknown.push(requested_name.clone()),
+            [name] => {
+                selected.insert(name.clone());
+            }
+            _ => {
+                return Err(format!(
+                    "ambiguous provider '{requested_name}': {}. Use an exact provider name",
+                    candidates.join(", ")
+                ));
+            }
+        }
+    }
+    if !unknown.is_empty() {
+        let mut available = providers.keys().cloned().collect::<Vec<_>>();
+        available.sort();
+        return Err(format!(
+            "unknown provider(s): {}. Available: {}",
+            unknown.join(", "),
+            available.join(", ")
+        ));
+    }
+    Ok(selected.into_iter().collect())
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ProviderTarget {

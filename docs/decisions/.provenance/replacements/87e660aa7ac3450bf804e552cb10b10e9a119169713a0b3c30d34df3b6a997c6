@@ -1,0 +1,26 @@
+---
+title: "Adoption Metadata in Provenance Sidecars"
+description: "Adoption reuses ASSEMBLY-0002 with a distinct buildType; transform skills applied during adoption appear as SLSA resolvedDependencies, not local fields"
+type: adr
+category: assembly
+tags:
+    - provenance
+    - adoption
+    - schema
+status: accepted
+created: 2026-04-16
+updated: 2026-09-13
+author: "@N4M3Z"
+project: rune-cli
+related:
+    - "ASSEMBLY-0002 Provenance Tracking"
+    - "CLI-0016 Rune Adopt Provenance Mechanism"
+    - "CLI-0023 Adoption Review State Machine"
+    - "CLI-0027 Temporary Adoption Session State"
+responsible: ["@N4M3Z"]
+accountable: ["@N4M3Z"]
+consulted: []
+informed: []
+upstream:
+    - "https://github.com/N4M3Z/forge-core/blob/132e0589eb87849973ab8ee984926f318af4d642/docs/decisions/PROV-0006%20Adoption%20Metadata%20in%20Provenance%20Sidecars.md"
+---

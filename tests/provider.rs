@@ -45,7 +45,7 @@ fn provider_explain_json_has_the_required_shape_and_evidence() {
     assert_eq!(report["deployment_state"], "not installed");
     assert!(report["fix_command"].as_str().is_some());
     let evidence = report["evidence"].as_array().unwrap();
-    assert_eq!(evidence.len(), 3);
+    assert_eq!(evidence.len(), 4);
     let evidence_fields = ["kind", "result", "value"]
         .into_iter()
         .map(String::from)
@@ -72,6 +72,7 @@ fn provider_explain_json_has_the_required_shape_and_evidence() {
             ("executable", "not_found"),
             ("config_directory", "not_found"),
             ("deployment_manifest", "not_found"),
+            ("deployment_manifest", "not_found"),
         ]
     );
     assert_eq!(evidence[0]["value"], "codex");
@@ -81,6 +82,9 @@ fn provider_explain_json_has_the_required_shape_and_evidence() {
             .is_some_and(|value| std::path::Path::new(value).ends_with(".codex"))
     );
     assert!(evidence[2]["value"].as_str().is_some_and(|value| {
+        std::path::Path::new(value).ends_with(std::path::Path::new(".agents/.manifest"))
+    }));
+    assert!(evidence[3]["value"].as_str().is_some_and(|value| {
         std::path::Path::new(value).ends_with(std::path::Path::new(".codex/.manifest"))
     }));
 }

@@ -2,7 +2,7 @@
 
 ### Requirement: Specification Waiver Migration
 
-The specification waiver label SHALL be `ignore:spec`, its reason SHALL appear in the pull request body as `ignore:spec: <reason>`, and `spec:none` SHALL be retired from label provisioning.
+The specification waiver label MUST be `ignore:spec`, its reason MUST appear in the pull request body as `ignore:spec: <reason>`, and `spec:none` MUST be retired from label provisioning.
 
 #### Scenario: Open PR changes waiver label
 
@@ -11,7 +11,7 @@ The specification waiver label SHALL be `ignore:spec`, its reason SHALL appear i
 
 ### Requirement: Protected Specification Paths
 
-The spec-presence check SHALL accept a canonical specification or a change-local delta at `docs/changes/<id>/specs/<capability>/spec.md` as the specification for a protected change.
+The spec-presence check MUST accept a canonical specification or a change-local delta at `docs/changes/<id>/specs/<capability>/spec.md` as the specification for a protected change.
 
 #### Scenario: Active delta accompanies a protected change
 

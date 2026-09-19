@@ -2,7 +2,7 @@
 
 ### Requirement: Dotrune
 
-The Dotrune capability SHALL describe its required behavior here.
+The Dotrune capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

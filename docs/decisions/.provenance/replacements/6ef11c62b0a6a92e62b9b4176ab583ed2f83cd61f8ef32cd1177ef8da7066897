@@ -1,0 +1,1 @@
+Because [ARCH-0013][ARCH-0013] defines each transform as a skill, the SLSA dependency model fits natively. Every transform skill applied to an adoption appears alongside the upstream source in `resolvedDependencies`, each pinned by SHA. No local-forge fields are needed; no parallel sidecar; no duplicate structures.

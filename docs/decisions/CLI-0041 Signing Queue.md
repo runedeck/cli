@@ -97,13 +97,13 @@ publication the hook already validated, which DECK-0013 exists to prevent.
   subcommand followed by a ceremony flag is an error.
 - The signing backend, program, key, and behavior are pinned to the owner's user-scope jj configuration on every
   `jj sign` the queue runs, so a repository's config cannot make the owner run a program of a session's choosing.
-  When the owner configured no key, the repository can still name one; verification against `KEYS` catches a key
+  When the owner configured no key, the repository can still name one. Verification against `KEYS` catches a key
   that is not the owner's.
 - Only the gpg backend is supported, because `KEYS` and the verification are gpg's.
-- A conflicted bookmark is refused everywhere; the session resolves it first.
+- A conflicted bookmark is refused everywhere. The session resolves it first.
 - The request store is the owner's state directory, and a session that can write it can queue anything. The queue
   guarantees which programs run and that the signed commit is the one whose identity the request records and whose
-  receipt names it; the checked push hook, run by the owner, remains the check that the signed head is the reviewed
+  receipt names it. The checked push hook, run by the owner, remains the check that the signed head is the reviewed
   one.
 - The queue depends on git's commit object format and jj's `change-id` header, both stable, and on jj exporting
   bookmarks to `refs/heads`, which `jj git export` does for every git-backed repository.

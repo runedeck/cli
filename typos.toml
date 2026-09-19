@@ -24,3 +24,8 @@ extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\"", 
 ratatui = "ratatui"
 tre = "tre"
 unparseable = "unparseable"
+
+# Reference-style link labels in adopted decision records. ASSEMBLY-0012 is
+# upstream prose under a sealed digest and cannot be reworded here.
+[default.extend-identifiers]
+INTOTO = "INTOTO"

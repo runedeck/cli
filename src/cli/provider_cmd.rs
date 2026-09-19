@@ -133,7 +133,7 @@ fn fix_command(root: &Path, detection: &ProviderDetection) -> Option<String> {
         }
         RecommendedAction::Install => Some("rune context".to_string()),
         RecommendedAction::Repair => Some(format!(
-            "rune doctor --target {} --repair",
+            "rune repair --target {}",
             crate::cli::shell_quote(&detection.target.to_string_lossy())
         )),
         RecommendedAction::Review => Some(format!(

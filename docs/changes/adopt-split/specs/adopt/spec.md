@@ -2,7 +2,7 @@
 
 ### Requirement: Adopt
 
-The Adopt capability SHALL describe its required behavior here.
+The Adopt capability MUST describe its required behavior here.
 
 #### Scenario: Required behavior
 

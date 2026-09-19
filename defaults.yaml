@@ -92,7 +92,9 @@ providers:
             rules: []
 
     codex:
-        target: ".codex"
+        target:
+            default: ".codex"
+            skills: ".agents"
         model: gpt-5.5
         aliases:
             - codexcli
@@ -103,7 +105,7 @@ providers:
             - rulesync
         keep_fields:
             agents: [name, description, model, effort]
-            skills: [name, description, version]
+            skills: [name, description, version, license, compatibility, metadata]
             rules: []
         models:
             strong: [gpt-5.5]
