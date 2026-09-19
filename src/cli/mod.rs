@@ -60,6 +60,7 @@ mod update_check;
 use clap::{Parser, Subcommand};
 use rune::error::{Error, ErrorKind};
 use rune::result::ActionResult;
+use std::path::PathBuf as QueuePathBuf;
 use std::{ffi::OsString, fmt::Write as _};
 
 const BUILD_VERSION: &str = concat!(
@@ -725,8 +726,14 @@ enum Command {
         format: Option<String>,
     },
 
-    /// Seal the branch with an owner-signed empty commit, or sign and verify tags
+    /// Seal the branch with an owner-signed empty commit, sign and verify tags,
+    /// or work the signing queue
+    #[command(args_conflicts_with_subcommands = true)]
     Sign {
+        /// Queue subcommands: `queue`, `submit`, `next`, `all`, `show`, `drop`.
+        #[command(subcommand)]
+        action: Option<SignAction>,
+
         /// Rewrite the head commit with the owner's signature instead of
         /// sealing on top; the SHA changes and the push takes a lease.
         #[arg(long, conflicts_with_all = ["tag", "verify"])]
@@ -901,6 +908,61 @@ enum SpecAction {
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SignAction {
+    /// List the signing queue, or queue a bookmark's head for the owner's key
+    ///
+    /// The queue is one ledger for every repository: `$XDG_STATE_HOME/rune/sign-queue`,
+    /// by default `~/.local/state/rune/sign-queue`. `RUNE_STATE_DIR` replaces the
+    /// `rune` directory; the session and the owner must read the same one.
+    Queue {
+        /// Bookmark whose head a session validated. Omit to list the queue.
+        bookmark: Option<String>,
+        /// The check receipt: a log whose last line is `exit=0` or `<stage>-exit=0`
+        /// and which names the head's commit id.
+        #[arg(long, value_name = "FILE")]
+        receipt: Option<QueuePathBuf>,
+        /// Workspace of the bookmark. Defaults to the enclosing jj workspace.
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
+        /// Remove stale, signed, and failed requests.
+        #[arg(long)]
+        prune: bool,
+    },
+    /// Queue a bookmark's head for the owner's key (the verb form of `queue`)
+    Submit {
+        bookmark: String,
+        #[arg(long, value_name = "FILE")]
+        receipt: Option<QueuePathBuf>,
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
+    },
+    /// Sign the first current request, base first (the owner, at the key)
+    ///
+    /// Reads the ledger `queue` lists and names it when nothing is waiting, so an
+    /// empty queue and a different `RUNE_STATE_DIR` are told apart.
+    Next,
+    /// Sign every current request in stack order, stopping at the first failure
+    All,
+    /// Show one request and its state
+    Show {
+        bookmark: Option<String>,
+        /// Select by request id instead of bookmark.
+        #[arg(long, value_name = "REQUEST")]
+        id: Option<String>,
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
+    },
+    /// Withdraw a request that no signer holds
+    Drop {
+        bookmark: Option<String>,
+        #[arg(long, value_name = "REQUEST")]
+        id: Option<String>,
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
     },
 }
 
@@ -1683,13 +1745,19 @@ pub fn run() -> i32 {
             )
         }
         Command::Sign {
+            action,
             amend,
             tag,
             commit,
             verify,
         } => {
             return exit_code(
-                sign::execute(amend, tag.as_deref(), commit.as_deref(), verify.as_deref()),
+                match action {
+                    None => {
+                        sign::execute(amend, tag.as_deref(), commit.as_deref(), verify.as_deref())
+                    }
+                    Some(action) => sign::run_queue(action, args.json),
+                },
                 args.json,
             );
         }
@@ -2067,6 +2135,18 @@ fn deck_help(help: &mut String) {
         "sign",
         "[--amend | --tag <TAG> [COMMIT] | --verify [REF]]",
         "Seal the branch, sign tags, verify against KEYS",
+    );
+    help_command(
+        help,
+        "sign queue",
+        "[<BOOKMARK> --receipt <FILE>] [--prune]",
+        "Queue a validated head for the key, or list the queue",
+    );
+    help_command(
+        help,
+        "sign next",
+        "| all | show <BOOKMARK> | drop <BOOKMARK>",
+        "Sign from the queue base first; inspect or withdraw",
     );
     help_command(
         help,

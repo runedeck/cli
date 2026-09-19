@@ -1051,7 +1051,7 @@ fn write_templates(
                 format!("cannot write {}: {error}", target_path.display()),
             )
         })?;
-        make_executable_if_needed(&target_path, &relative)?;
+        make_executable_if_needed(&target_path, &template.contents)?;
         installed_paths.push(relative.clone());
         action.installed.push(DeployedFile {
             source: template
@@ -1384,30 +1384,37 @@ fn is_vcs_internal(name: &std::ffi::OsStr) -> bool {
     matches!(name.to_str(), Some(".git" | ".jj" | ".hg" | ".svn"))
 }
 
+/// The embedded templates carry no file modes, so the bit is derived from
+/// the content: a file that starts with a shebang is a program and gets
+/// 755, anything else stays at the default mode. This is the rule ruff
+/// enforces in the generated project (EXE001, EXE002), so a hook module
+/// without a shebang stays 644 and a script with one becomes executable
+/// wherever it lives.
+pub(crate) fn wants_executable_bit(contents: &[u8]) -> bool {
+    contents.starts_with(b"#!")
+}
+
 #[cfg(unix)]
-fn make_executable_if_needed(target: &Path, relative: &Path) -> Result<(), Error> {
+fn make_executable_if_needed(target: &Path, contents: &[u8]) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
 
-    let executable = relative.components().any(|component| {
-        matches!(component, Component::Normal(name) if name == ".githooks" || name == "bin")
-    });
-    if executable {
-        let mut permissions = fs::metadata(target)
-            .map_err(|error| Error::new(ErrorKind::Io, format!("{}: {error}", target.display())))?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(target, permissions).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot chmod {}: {error}", target.display()),
-            )
-        })?;
+    if !wants_executable_bit(contents) {
+        return Ok(());
     }
-    Ok(())
+    let mut permissions = fs::metadata(target)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("{}: {error}", target.display())))?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(target, permissions).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot chmod {}: {error}", target.display()),
+        )
+    })
 }
 
 #[cfg(not(unix))]
-fn make_executable_if_needed(_target: &Path, _relative: &Path) -> Result<(), Error> {
+fn make_executable_if_needed(_target: &Path, _contents: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 

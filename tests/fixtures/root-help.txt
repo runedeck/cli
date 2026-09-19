@@ -30,6 +30,8 @@
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
     sign        [--amend | --tag <TAG> [COMMIT] | --verify [REF]]     Seal the branch, sign tags, verify against KEYS
+    sign queue  [<BOOKMARK> --receipt <FILE>] [--prune]               Queue a validated head for the key, or list the queue
+    sign next   | all | show <BOOKMARK> | drop <BOOKMARK>             Sign from the queue base first; inspect or withdraw
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     adopt       start|...|finalize|abandon|reseal|doctor              Adopt an upstream rune through block-by-block review
     bench       run|report|list|dashboard|doctor|audit                Run and report SkateBench-compatible benchmark suites
