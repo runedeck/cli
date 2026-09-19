@@ -1,7 +1,7 @@
 //! The two seals of the review ceremony as commit messages: an open-seal
-//! binds a pull request to the repository, its base, its head tree, and a
-//! single-use nonce; a merge-seal binds the reviewed head and the ledger
-//! generation the owner authorized.
+//! binds one pull request by number to the repository, its base, its head
+//! tree, and a single-use nonce; a merge-seal binds the reviewed head, the
+//! ledger generation, and the digest of the ledger the owner authorized.
 
 use rune::error::{Error, ErrorKind};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,10 @@ const NONCE_BYTES: usize = 32;
 pub(crate) struct OpenSeal {
     pub repo: String,
     pub base: String,
+    /// The pull request the seal readies. `rune sign adopt` seals before
+    /// the app opens the draft, so its seal names the outside pull request
+    /// and the draft's head branch is `adopt/<number>`.
+    pub pull_request: u64,
     pub tree: String,
     pub nonce: String,
 }
@@ -25,6 +29,10 @@ pub(crate) struct OpenSeal {
 pub(crate) struct MergeSeal {
     pub reviewed_sha: String,
     pub generation: u64,
+    /// The sha256 of the ledger artifact the owner saw, as the controller's
+    /// ledger line names it. A rebuilt ledger at the same generation has
+    /// another digest and unseals.
+    pub digest: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +44,12 @@ pub(crate) enum Seal {
 impl OpenSeal {
     pub(crate) fn message(&self) -> String {
         format!("{OPEN_PREFIX}{}", json(self))
+    }
+
+    /// The head branch a draft carries when this seal was made by
+    /// `rune sign adopt` on the pull request it names.
+    pub(crate) fn adopt_branch(&self) -> String {
+        format!("adopt/{}", self.pull_request)
     }
 }
 
@@ -61,7 +75,8 @@ pub(crate) fn parse(message: &str) -> Option<Seal> {
     }
     if let Some(body) = first.strip_prefix(MERGE_PREFIX) {
         let seal: MergeSeal = serde_json::from_str(body).ok()?;
-        return is_hex(&seal.reviewed_sha, 40).then_some(Seal::Merge(seal));
+        return (is_hex(&seal.reviewed_sha, 40) && is_hex(&seal.digest, 64))
+            .then_some(Seal::Merge(seal));
     }
     None
 }
@@ -154,11 +169,17 @@ mod tests {
         let open = OpenSeal {
             repo: "runedeck/cli".to_string(),
             base: "main".to_string(),
+            pull_request: 62,
             tree: TREE.to_string(),
             nonce: "ab".repeat(32),
         };
         let message = open.message();
-        assert!(message.starts_with("open-seal: {\"repo\":\"runedeck/cli\""));
+        assert!(message.starts_with("open-seal: {"));
+        let fields: serde_json::Value =
+            serde_json::from_str(message.strip_prefix(OPEN_PREFIX).unwrap()).unwrap();
+        assert_eq!(fields["pull_request"], 62);
+        assert_eq!(fields["repo"], "runedeck/cli");
+        assert_eq!(open.adopt_branch(), "adopt/62");
         assert_eq!(parse(&message), Some(Seal::Open(open.clone())));
         assert_eq!(
             parse(&format!("{message}\n\nbody\n")),
@@ -167,21 +188,41 @@ mod tests {
         let merge = MergeSeal {
             reviewed_sha: SHA.to_string(),
             generation: 2,
+            digest: "ab".repeat(32),
         };
         assert_eq!(parse(&merge.message()), Some(Seal::Merge(merge)));
+        // A merge-seal without the ledger digest is the old shape and is
+        // not a seal.
+        assert_eq!(
+            parse(&format!(
+                "{MERGE_PREFIX}{{\"reviewed_sha\":\"{SHA}\",\"generation\":2}}"
+            )),
+            None
+        );
         assert_eq!(parse("seal: approve"), None);
         assert_eq!(parse("open-seal: not json"), None);
         assert_eq!(parse(&format!("{message} trailing")), None);
         let short_nonce = OpenSeal {
             repo: "r".to_string(),
             base: "main".to_string(),
+            pull_request: 1,
             tree: TREE.to_string(),
             nonce: "abcd".to_string(),
         };
         assert_eq!(parse(&short_nonce.message()), None);
+        // A seal without the pull request number is the old shape and is
+        // not a seal.
+        assert_eq!(
+            parse(&format!(
+                "{OPEN_PREFIX}{{\"repo\":\"r\",\"base\":\"main\",\"tree\":\"{TREE}\",\"nonce\":\"{}\"}}",
+                "ab".repeat(32)
+            )),
+            None
+        );
         let short_sha = MergeSeal {
             reviewed_sha: "abc".to_string(),
             generation: 1,
+            digest: "ab".repeat(32),
         };
         assert_eq!(parse(&short_sha.message()), None);
     }

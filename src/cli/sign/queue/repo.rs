@@ -8,12 +8,24 @@
 //! refs through `jj git export`, and the commit objects, the ancestry, and
 //! the signatures are read with git plumbing, which has no such layer. jj
 //! runs `jj sign` with every signing setting pinned to the owner's
-//! user-scope value.
+//! user-scope value, and every jj call pins the git it runs.
+//!
+//! The repository's own git config is the session's too. A push or a fetch
+//! runs with the settings that name a program pinned on the command line,
+//! so no hook, ssh wrapper, askpass, or credential helper from the
+//! candidate repository runs as the owner.
 
 use super::store::Identity;
 use rune::error::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+/// Bookmarks that are never a session's own branch, in the order the
+/// protected ref is looked for on the remote.
+pub(crate) const PROTECTED: [&str; 3] = ["main", "master", "trunk"];
+
+/// The zero id git accepts as "the ref does not exist".
+const ZERO: &str = "0000000000000000000000000000000000000000";
 
 pub(crate) struct Repo {
     /// The workspace root: where `KEYS` lives and where jj runs.
@@ -222,6 +234,111 @@ impl Repo {
         self.rev_parse(&format!("refs/remotes/{remote}/{bookmark}"))
     }
 
+    /// The remote-tracking ref of the protected branch: the first of
+    /// `main`, `master`, `trunk` the remote has. `KEYS` and the seal
+    /// search base come from here, never from the working tree.
+    pub(crate) fn protected_ref(&self, remote: &str) -> Result<String, Error> {
+        for name in PROTECTED {
+            let reference = format!("refs/remotes/{remote}/{name}");
+            if self.rev_parse(&reference)?.is_some() {
+                return Ok(reference);
+            }
+        }
+        Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "no refs/remotes/{remote}/{{main,master,trunk}} in {}: fetch {remote} first",
+                self.workspace.display()
+            ),
+        ))
+    }
+
+    /// A file's bytes at a ref, `None` when the ref has no such path.
+    pub(crate) fn blob(&self, reference: &str, path: &str) -> Result<Option<Vec<u8>>, Error> {
+        let output = self
+            .git()
+            .args(["cat-file", "blob", &format!("{reference}:{path}")])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(output.stdout))
+    }
+
+    /// Commit ids and subjects reachable from `head` and not from `base`,
+    /// parents after children, at most `limit` of them.
+    pub(crate) fn range_subjects(
+        &self,
+        base: &str,
+        head: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Error> {
+        let count = limit.to_string();
+        let range = format!("{base}..{head}");
+        let listing = self.git_stdout(&[
+            "log",
+            "--topo-order",
+            "--format=%H%x1f%s",
+            "-n",
+            &count,
+            &range,
+        ])?;
+        Ok(parse_subjects(&listing))
+    }
+
+    /// `git push <remote> <commit>:refs/heads/<bookmark>` with a lease on
+    /// `expected`, the remote head the caller verified, or on the ref not
+    /// existing when `expected` is `None`. Transport settings are pinned,
+    /// stdio is inherited so ssh can prompt, and jj imports the result.
+    pub(crate) fn push(
+        &self,
+        remote: &str,
+        commit: &str,
+        bookmark: &str,
+        expected: Option<&str>,
+    ) -> Result<(), Error> {
+        let hooks = tempfile::tempdir().map_err(|error| {
+            Error::new(ErrorKind::Io, format!("cannot make a temp dir: {error}"))
+        })?;
+        let status = self
+            .transport_git(hooks.path())
+            .args(["push", remote])
+            .arg(format!("{commit}:refs/heads/{bookmark}"))
+            .arg(format!(
+                "--force-with-lease=refs/heads/{bookmark}:{}",
+                expected.unwrap_or("")
+            ))
+            .status()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !status.success() {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("git push of {bookmark} to {remote} failed"),
+            ));
+        }
+        self.import()
+    }
+
+    /// `git` with every setting that names a program to run pinned, so the
+    /// repository's own config cannot run one as the owner: no hooks, plain
+    /// `ssh`, no askpass, no git proxy, and only the system and user
+    /// credential helpers.
+    fn transport_git(&self, hooks: &Path) -> Command {
+        let mut command = self.git();
+        command
+            .arg("-c")
+            .arg(format!("core.hooksPath={}", hooks.display()))
+            .args(["-c", "core.sshCommand=ssh"])
+            .args(["-c", "core.askPass="])
+            .args(["-c", "core.gitProxy="])
+            .args(["-c", "credential.helper="]);
+        for helper in trusted_credential_helpers() {
+            command.arg("-c").arg(format!("credential.helper={helper}"));
+        }
+        command
+    }
+
     /// The URL of a remote from the git configuration, `None` when unset.
     pub(crate) fn remote_url(&self, remote: &str) -> Result<Option<String>, Error> {
         let output = self
@@ -280,40 +397,64 @@ impl Repo {
         self.import()
     }
 
-    /// Commit ids and subjects from `revision` back through its history,
-    /// newest first, at most `limit` of them.
-    pub(crate) fn subjects(
-        &self,
-        revision: &str,
-        limit: usize,
-    ) -> Result<Vec<(String, String)>, Error> {
-        let count = limit.to_string();
-        let listing = self.git_stdout(&["log", "--format=%H%x1f%s", "-n", &count, revision])?;
-        Ok(listing
-            .lines()
-            .filter_map(|line| {
-                let (commit, subject) = line.split_once('\u{1f}')?;
-                Some((commit.to_string(), subject.to_string()))
-            })
-            .collect())
-    }
-
     /// A new bookmark at `commit`, refused when the ref already exists.
     pub(crate) fn create_bookmark(&self, bookmark: &str, commit: &str) -> Result<(), Error> {
         self.git_stdout(&[
             "update-ref",
             &format!("refs/heads/{bookmark}"),
             commit,
-            "0000000000000000000000000000000000000000",
+            ZERO,
         ])?;
         self.import()
     }
 
-    /// `git fetch <remote> refs/pull/<number>/head`: the outside pull
-    /// request's head as the forge serves it, returned by commit id.
+    /// `git fetch <remote> <protected>` under pinned transport settings, so
+    /// `KEYS` is read as the forge has it now and a rotated key is honored.
+    /// The forge may be unreachable when the owner signs, so a failed fetch
+    /// is reported and the last-fetched ref stands: the seal then verifies
+    /// against the older `KEYS`, which the verifier on the forge catches.
+    pub(crate) fn refresh_protected(&self, remote: &str, reference: &str) -> Result<(), String> {
+        let Some(name) = reference.strip_prefix(&format!("refs/remotes/{remote}/")) else {
+            return Err(format!(
+                "{reference} is not a remote-tracking ref of {remote}"
+            ));
+        };
+        let hooks =
+            tempfile::tempdir().map_err(|error| format!("cannot make a temp dir: {error}"))?;
+        let refspec = format!("+refs/heads/{name}:{reference}");
+        let output = self
+            .transport_git(hooks.path())
+            .args(["fetch", "--no-tags", "--quiet", remote, &refspec])
+            .output()
+            .map_err(|error| format!("cannot run git: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+
+    /// `git fetch <remote> refs/pull/<number>/head` under pinned transport
+    /// settings: the outside pull request's head as the forge serves it,
+    /// returned by commit id.
     pub(crate) fn fetch_pull_head(&self, remote: &str, number: u64) -> Result<String, Error> {
+        let hooks = tempfile::tempdir().map_err(|error| {
+            Error::new(ErrorKind::Io, format!("cannot make a temp dir: {error}"))
+        })?;
         let refspec = format!("refs/pull/{number}/head:refs/adopt/{number}");
-        self.git_stdout(&["fetch", "--no-tags", remote, &refspec])?;
+        let output = self
+            .transport_git(hooks.path())
+            .args(["fetch", "--no-tags", remote, &refspec])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "git fetch of refs/pull/{number}/head failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
         self.rev_parse(&format!("refs/adopt/{number}"))?
             .ok_or_else(|| {
                 Error::new(
@@ -570,13 +711,50 @@ fn jj_path(workspace: &Path, args: &[&str]) -> Result<PathBuf, Error> {
     Ok(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
+/// jj on the workspace with the git it runs pinned to `git` on PATH: the
+/// repository's config can name another program under
+/// `git.executable-path`, and every export and import would run it.
 fn jj(workspace: &Path) -> Command {
     let mut command = Command::new("jj");
     command
         .arg("-R")
         .arg(workspace)
-        .args(["--color=never", "--ignore-working-copy"]);
+        .args(["--color=never", "--ignore-working-copy"])
+        .args(["--config", "git.executable-path=\"git\""]);
     command
+}
+
+/// Credential helpers from the system and user git config, in that order,
+/// which a push re-applies after resetting the list the repository set.
+fn trusted_credential_helpers() -> Vec<String> {
+    let mut helpers = Vec::new();
+    for scope in ["--system", "--global"] {
+        let output = Command::new("git")
+            .args(["config", scope, "--get-all", "credential.helper"])
+            .output();
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            helpers.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string),
+            );
+        }
+    }
+    helpers
+}
+
+fn parse_subjects(listing: &str) -> Vec<(String, String)> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (commit, subject) = line.split_once('\u{1f}')?;
+            Some((commit.to_string(), subject.to_string()))
+        })
+        .collect()
 }
 
 /// Whether jj declined to export this bookmark, which it does for a

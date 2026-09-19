@@ -251,3 +251,46 @@ fn a_record_written_before_the_ceremony_reads_as_a_head_request() {
         Some("r.log")
     );
 }
+
+#[test]
+fn the_ledger_is_the_controller_apps_newest_ledger_check_run_and_no_other_app_counts() {
+    use super::gh::{App, CheckRun, Output, newest_ledger_line};
+    let sha = "25d45bbb35a811f68ebce7a00910790aeef3e77c";
+    let line = |artifact_id: u64| {
+        Some(format!(
+            "ledger: {{\"artifact_id\":{artifact_id},\"digest\":\"{}\",\"generation\":1,\"pull_request\":7,\"reviewed_sha\":\"{sha}\"}}\nmore text",
+            "ab".repeat(32)
+        ))
+    };
+    let run = |id: u64, name: &str, slug: Option<&str>, text: Option<String>| CheckRun {
+        id,
+        name: name.to_string(),
+        app: slug.map(|slug| App {
+            slug: slug.to_string(),
+        }),
+        output: Output { text },
+    };
+    let older = run(5, "ledger", Some("runeseer"), line(1));
+    let newer = run(8, "ledger", Some("runeseer"), line(2));
+    let forged = run(9, "ledger", Some("someone-else"), line(3));
+    let other_name = run(10, "quality", Some("runeseer"), line(4));
+    let no_app = run(11, "ledger", None, line(5));
+    let prose = run(
+        12,
+        "ledger",
+        Some("runeseer"),
+        Some("the ledger is elsewhere".to_string()),
+    );
+    let runs = vec![older.clone(), newer.clone(), forged, other_name, no_app];
+    assert_eq!(
+        newest_ledger_line(runs.into_iter()).map(|line| line.artifact_id),
+        Some(2)
+    );
+    // A newer controller run whose text is not a line yields nothing: the
+    // reader never falls back to an older run.
+    assert_eq!(newest_ledger_line(vec![older, prose].into_iter()), None);
+    assert_eq!(
+        newest_ledger_line(vec![run(9, "ledger", Some("someone-else"), line(3))].into_iter()),
+        None
+    );
+}

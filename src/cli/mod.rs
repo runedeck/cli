@@ -825,10 +825,11 @@ enum Command {
         verify: Option<String>,
 
         /// With --verify: check the ceremony seals beneath REF instead of one
-        /// signature. An open-seal must be signed by a KEYS key, bind this
-        /// repository, and be carried by exactly one open pull request whose
-        /// head is REF. A merge-seal at REF must be an empty child of the
-        /// reviewed commit it names. Exit 0 when every check holds, 1 otherwise.
+        /// signature. An open-seal between the base and REF must be signed by
+        /// a KEYS key, bind this repository and the pull request under check,
+        /// whose body carries the seal's nonce and whose head is REF. A
+        /// merge-seal at REF must be an empty child of the reviewed commit it
+        /// names. Exit 0 when every check holds, 1 otherwise.
         #[arg(
             long,
             value_name = "REF",
@@ -837,6 +838,17 @@ enum Command {
             requires = "verify"
         )]
         seal: Option<String>,
+
+        /// With --seal: the pull request under check. Without it, exactly one
+        /// open pull request must have REF as its head.
+        #[arg(long, value_name = "NUMBER", requires = "seal")]
+        pull_request: Option<u64>,
+
+        /// With --seal: the ref KEYS is read from. Defaults to the protected
+        /// branch as origin has it (`refs/remotes/origin/main`, `master`, or
+        /// `trunk`). Never the working tree.
+        #[arg(long, value_name = "REF", requires = "seal")]
+        keys_ref: Option<String>,
     },
 
     /// Manage the watchlist of rune and deployment locations to monitor
@@ -1917,6 +1929,8 @@ pub fn run() -> i32 {
             commit,
             verify,
             seal,
+            pull_request,
+            keys_ref,
         } => {
             return exit_code(
                 match action {
@@ -1926,6 +1940,8 @@ pub fn run() -> i32 {
                         commit.as_deref(),
                         verify.as_deref(),
                         seal.as_deref(),
+                        pull_request,
+                        keys_ref.as_deref(),
                     ),
                     Some(action) => sign::run_queue(action, args.json),
                 },

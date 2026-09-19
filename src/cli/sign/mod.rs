@@ -17,18 +17,35 @@ use std::process::{Command, Stdio};
 
 const SEAL_SUBJECT: &str = "seal: approve";
 
+/// The options of `rune sign --verify --seal`.
+pub(crate) struct SealCheck<'a> {
+    pub reference: &'a str,
+    /// The pull request under check. Without it, exactly one open pull
+    /// request must have the ref as its head.
+    pub pull_request: Option<u64>,
+    /// The ref `KEYS` is read from. Defaults to the protected branch on
+    /// `origin`.
+    pub keys_ref: Option<&'a str>,
+}
+
 pub(crate) fn execute(
     amend: bool,
     tag: Option<&str>,
     commit: Option<&str>,
     verify: Option<&str>,
     seal: Option<&str>,
+    pull_request: Option<u64>,
+    keys_ref: Option<&str>,
 ) -> Result<i32, Error> {
     if let Some(reference) = verify {
         // `--verify --seal <ref>` and `--verify <ref> --seal` both name
         // the ref once; a bare `--seal` verifies the ref `--verify` names.
         if let Some(sealed) = seal {
-            return verify::seals(if sealed == "HEAD" { reference } else { sealed });
+            return verify::seals(&SealCheck {
+                reference: if sealed == "HEAD" { reference } else { sealed },
+                pull_request,
+                keys_ref,
+            });
         }
         return verify_reference(reference);
     }
@@ -297,6 +314,24 @@ fn repository_keys_path() -> Result<PathBuf, Error> {
             "no KEYS file at the repository root: verification needs the committed owner keys",
         ))
     }
+}
+
+/// Every fingerprint published in `KEYS` at a ref, which is the protected
+/// branch as the remote has it: the trust anchor never comes from the
+/// working tree a session controls. Refused when the ref has no `KEYS`.
+fn keys_fingerprints_at(repo: &queue::repo::Repo, reference: &str) -> Result<Vec<String>, Error> {
+    let Some(bytes) = repo.blob(reference, "KEYS")? else {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!("no KEYS at {reference}: the owner keys are read from the protected branch"),
+        ));
+    };
+    let file = tempfile::NamedTempFile::new()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write KEYS: {error}")))?;
+    std::fs::write(file.path(), bytes)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write KEYS: {error}")))?;
+    keys_fingerprints(file.path())
+        .map_err(|error| Error::new(ErrorKind::Config, format!("KEYS at {reference}: {error}")))
 }
 
 /// Every fingerprint (primary and subkey) published in `KEYS`, read via

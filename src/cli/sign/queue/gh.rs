@@ -30,12 +30,25 @@ pub(crate) struct PullRequest {
     pub body: String,
     #[serde(default)]
     pub url: String,
+    /// `OPEN`, `CLOSED`, or `MERGED` as gh reports it.
+    #[serde(default)]
+    pub state: String,
 }
 
-const PULL_REQUEST_FIELDS: &str = "number,isDraft,baseRefName,headRefName,headRefOid,body,url";
+const PULL_REQUEST_FIELDS: &str =
+    "number,isDraft,baseRefName,headRefName,headRefOid,body,url,state";
 
-/// The comment marker the controller puts first in the ledger comment.
-pub(crate) const LEDGER_MARKER: &str = "<!-- rune-ledger -->";
+/// The check run the controller publishes on `reviewed_sha`, whose first
+/// output line is the ledger line.
+pub(crate) const LEDGER_CHECK: &str = "ledger";
+pub(crate) const LEDGER_LINE_PREFIX: &str = "ledger: ";
+/// The file inside the ledger artifact.
+pub(crate) const LEDGER_FILE: &str = "runeseer-ledger.json";
+
+/// The app that owns the ledger: the reviewing identity. A check run is
+/// the ledger only when this app created it, because only the creating
+/// app can edit a check run.
+pub(crate) const CONTROLLER_APP: &str = "runeseer";
 
 /// `gh pr list --state open [--head <branch>]`: every open pull request, or
 /// the ones whose head is the branch.
@@ -106,24 +119,118 @@ pub(crate) fn edit_body(repo: &str, number: u64, body: &str) -> Result<(), Error
     .map(|_| ())
 }
 
-/// `gh api repos/<repo>/issues/<number>/comments --paginate`: the body of the
-/// last comment that starts with the ledger marker, or `None`.
-pub(crate) fn ledger_comment(repo: &str, number: u64) -> Result<Option<String>, Error> {
-    #[derive(Deserialize)]
-    struct Comment {
-        #[serde(default)]
-        body: String,
+/// The controller's word on one reviewed head: the first output line of
+/// its `ledger` check run. The merge-seal binds `reviewed_sha`,
+/// `generation`, and `digest`, and `artifact_id` names the full ledger.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) struct LedgerLine {
+    pub artifact_id: u64,
+    pub digest: String,
+    pub generation: u64,
+    pub pull_request: u64,
+    pub reviewed_sha: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub(crate) struct CheckRun {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub app: Option<App>,
+    #[serde(default)]
+    pub output: Output,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub(crate) struct Output {
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub(crate) struct App {
+    #[serde(default)]
+    pub slug: String,
+}
+
+#[derive(Deserialize)]
+struct CheckRunsPage {
+    #[serde(default)]
+    check_runs: Vec<CheckRun>,
+}
+
+impl CheckRun {
+    pub(crate) fn by_controller(&self) -> bool {
+        self.name == LEDGER_CHECK
+            && self
+                .app
+                .as_ref()
+                .is_some_and(|app| app.slug == CONTROLLER_APP)
     }
-    let path = format!("repos/{repo}/issues/{number}/comments");
+
+    /// The ledger line, when the first line of the output text is one.
+    pub(crate) fn ledger_line(&self) -> Option<LedgerLine> {
+        let first = self.output.text.as_deref()?.lines().next()?.trim_end();
+        serde_json::from_str(first.strip_prefix(LEDGER_LINE_PREFIX)?).ok()
+    }
+}
+
+/// `gh api repos/<repo>/commits/<sha>/check-runs?check_name=ledger`: the
+/// newest ledger check run the controller app created on the commit, or
+/// `None`. A same-named check run from any other app is not the ledger.
+pub(crate) fn ledger_line(repo: &str, sha: &str) -> Result<Option<LedgerLine>, Error> {
+    let path =
+        format!("repos/{repo}/commits/{sha}/check-runs?check_name={LEDGER_CHECK}&per_page=100");
     let output = run(&["api", &path, "--paginate", "--slurp"])?;
     // `--slurp` wraps every page in one outer array.
-    let pages: Vec<Vec<Comment>> = parse(&output, "gh api")?;
-    Ok(pages
-        .into_iter()
-        .flatten()
-        .filter(|comment| comment.body.trim_start().starts_with(LEDGER_MARKER))
-        .map(|comment| comment.body)
-        .next_back())
+    let pages: Vec<CheckRunsPage> = parse(&output, "gh api")?;
+    Ok(newest_ledger_line(
+        pages.into_iter().flat_map(|page| page.check_runs),
+    ))
+}
+
+pub(crate) fn newest_ledger_line(runs: impl Iterator<Item = CheckRun>) -> Option<LedgerLine> {
+    runs.filter(CheckRun::by_controller)
+        .max_by_key(|run| run.id)
+        .and_then(|run| run.ledger_line())
+}
+
+/// `gh api repos/<repo>/actions/artifacts/<id>/zip`: the ledger file out of
+/// the artifact, byte for byte, so the caller can prove it by the digest.
+/// The archive is read by `unzip`, which every runner and workstation has.
+pub(crate) fn ledger_artifact(repo: &str, artifact_id: u64) -> Result<Vec<u8>, Error> {
+    let path = format!("repos/{repo}/actions/artifacts/{artifact_id}/zip");
+    let archive = run_bytes(&["api", &path])?;
+    let file = tempfile::NamedTempFile::new().map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write the ledger artifact to a temporary file: {error}"),
+        )
+    })?;
+    std::fs::write(file.path(), &archive).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write the ledger artifact: {error}"),
+        )
+    })?;
+    let output = Command::new("unzip")
+        .arg("-p")
+        .arg(file.path())
+        .arg(LEDGER_FILE)
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run unzip: {error}")))?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Io,
+            format!(
+                "ledger artifact {artifact_id} holds no {LEDGER_FILE}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(output.stdout)
 }
 
 /// `gh pr checks <number> --required`: the required checks and their
@@ -175,6 +282,10 @@ pub(crate) fn is_admin(repo: &str) -> Result<bool, Error> {
 }
 
 fn run(args: &[&str]) -> Result<String, Error> {
+    run_bytes(args).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn run_bytes(args: &[&str]) -> Result<Vec<u8>, Error> {
     let output = Command::new("gh")
         .args(args)
         .output()
@@ -189,7 +300,7 @@ fn run(args: &[&str]) -> Result<String, Error> {
             ),
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output.stdout)
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(output: &str, what: &str) -> Result<T, Error> {

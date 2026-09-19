@@ -142,19 +142,20 @@ pub(crate) fn submit(
             ),
         ));
     }
-    let comment = gh::ledger_comment(&slug, pull_request.number)?.ok_or_else(|| {
+    let (line, ledger) = ledger::fetch(&slug, &head.identity.commit_id)?.ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
             format!(
-                "pull request #{} has no ledger comment: wait for the controller",
-                pull_request.number
+                "head {} has no ledger from {}: wait for the controller",
+                &head.identity.commit_id[..12],
+                gh::CONTROLLER_APP
             ),
         )
     })?;
-    let ledger = ledger::parse(&comment).map_err(|reason| Error::new(ErrorKind::Parse, reason))?;
     let checks = gh::required_checks(&slug, pull_request.number)?;
     let coverage = ledger::admit(
         &ledger,
+        &line,
         &slug,
         pull_request.number,
         &pull_request.base_ref_name,
@@ -733,7 +734,7 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
         commit: Some(observed.clone()),
     });
     store.save(&request)?;
-    let keys = super::keys_fingerprints(&repo.workspace.join("KEYS"))?;
+    let keys = open::owner_keys(&repo)?;
     let live = Live {
         request: request.clone(),
         head: Some(head),
@@ -809,6 +810,7 @@ fn merge_seal(
     let seal = MergeSeal {
         reviewed_sha: coverage.reviewed_sha.clone(),
         generation: coverage.generation,
+        digest: coverage.digest.clone(),
     };
     let message = seal.message();
     ceremony::seal_above(
@@ -856,7 +858,7 @@ fn record_signed_head(store: &Store, live: Live, signing: &Signing) -> Result<Ou
         // on an open or merge request's head came from elsewhere.
         return record_failure(store, request, "the head was signed outside the queue");
     }
-    let keys = super::keys_fingerprints(&repo.workspace.join("KEYS"))?;
+    let keys = open::owner_keys(&repo)?;
     if let Err(reason) = owner_signature(&repo, &head.identity.commit_id, signing, &keys)? {
         return record_failure(store, request, &reason);
     }

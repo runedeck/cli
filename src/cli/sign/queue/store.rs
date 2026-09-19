@@ -84,6 +84,10 @@ pub(crate) struct Coverage {
     pub base: String,
     pub reviewed_sha: String,
     pub generation: u64,
+    /// The sha256 of the ledger artifact the admission read, which the
+    /// merge-seal names.
+    #[serde(default)]
+    pub digest: String,
     /// `clean` or `free-lanes-only`.
     pub verdict: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,8 +99,9 @@ pub(crate) struct Coverage {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Thread {
     pub id: String,
+    /// The lane whose login opened the thread, or `None` for a human's.
     #[serde(default)]
-    pub lane: String,
+    pub lane: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disposition: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
