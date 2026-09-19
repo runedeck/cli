@@ -20,6 +20,9 @@ pub(crate) struct Repo {
     pub workspace: PathBuf,
     /// The git directory every workspace of the repository shares.
     pub git_dir: PathBuf,
+    /// Whether jj manages the workspace. A plain git checkout, as a CI
+    /// runner has, can verify seals but never sign.
+    pub jj: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +76,45 @@ impl Repo {
                 ),
             )
         })?;
-        Ok(Self { workspace, git_dir })
+        Ok(Self {
+            workspace,
+            git_dir,
+            jj: true,
+        })
+    }
+
+    /// The repository a path belongs to, through jj when the path is a jj
+    /// workspace and through git alone otherwise, for verification on a
+    /// plain checkout.
+    pub(crate) fn open_for_reading(path: &Path) -> Result<Self, Error> {
+        if let Ok(repo) = Self::open(path) {
+            return Ok(repo);
+        }
+        let git = |args: &[&str]| -> Result<PathBuf, Error> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .output()
+                .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+            if !output.status.success() {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!(
+                        "{} is not inside a git repository: {}",
+                        path.display(),
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                ));
+            }
+            let found = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            Ok(std::fs::canonicalize(&found).unwrap_or(found))
+        };
+        Ok(Self {
+            workspace: git(&["rev-parse", "--show-toplevel"])?,
+            git_dir: git(&["rev-parse", "--absolute-git-dir"])?,
+            jj: false,
+        })
     }
 
     /// The identity requests and locks are keyed by: shared by every
@@ -104,6 +145,9 @@ impl Repo {
     }
 
     fn export(&self, bookmark: &str) -> Result<(), Error> {
+        if !self.jj {
+            return Ok(());
+        }
         let output = jj(&self.workspace)
             .args(["git", "export"])
             .output()
@@ -145,6 +189,159 @@ impl Repo {
 
     fn cat_commit(&self, commit: &str) -> Result<String, Error> {
         self.git_stdout(&["cat-file", "commit", commit])
+    }
+
+    /// A commit's identity with its parents as commit ids, straight from
+    /// the object: what the seal checks compare.
+    pub(crate) fn commit(&self, commit: &str) -> Result<Identity, Error> {
+        parse_commit(commit, &self.cat_commit(commit)?)
+    }
+
+    /// The commit id a revision names, or `None` when git cannot resolve it.
+    pub(crate) fn rev_parse(&self, revision: &str) -> Result<Option<String>, Error> {
+        let output = self
+            .git()
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{revision}^{{commit}}"))
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    }
+
+    /// The remote-tracking head of a bookmark, when the remote has one.
+    pub(crate) fn remote_head(
+        &self,
+        remote: &str,
+        bookmark: &str,
+    ) -> Result<Option<String>, Error> {
+        self.rev_parse(&format!("refs/remotes/{remote}/{bookmark}"))
+    }
+
+    /// The URL of a remote from the git configuration, `None` when unset.
+    pub(crate) fn remote_url(&self, remote: &str) -> Result<Option<String>, Error> {
+        let output = self
+            .git()
+            .args(["config", "--get", &format!("remote.{remote}.url")])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    }
+
+    /// `git diff --stat` between the merge base of `base` and `head` and
+    /// `head`: what the pull request introduces.
+    pub(crate) fn diff_stat(&self, base: &str, head: &str) -> Result<String, Error> {
+        let stat = self.git_stdout(&["diff", "--stat", &format!("{base}...{head}")])?;
+        Ok(if stat.trim().is_empty() {
+            "no file changes".to_string()
+        } else {
+            stat.trim_end().to_string()
+        })
+    }
+
+    /// An empty commit above `parent` with `parent`'s tree and the given
+    /// message, written with git plumbing under the owner's configured
+    /// identity. Session identity overrides never reach it.
+    pub(crate) fn empty_commit(&self, parent: &str, message: &str) -> Result<String, Error> {
+        let tree = self.commit(parent)?.tree_id;
+        let mut command = self.git();
+        for variable in super::super::IDENTITY_OVERRIDES {
+            command.env_remove(variable);
+        }
+        let output = command
+            .args(["commit-tree", &tree, "-p", parent, "-m", message])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "git commit-tree failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Move a bookmark's git ref from `old` to `new` as one compare-and-swap,
+    /// then let jj import the move so `jj sign` can find the commit.
+    pub(crate) fn move_bookmark(&self, bookmark: &str, new: &str, old: &str) -> Result<(), Error> {
+        self.git_stdout(&["update-ref", &format!("refs/heads/{bookmark}"), new, old])?;
+        self.import()
+    }
+
+    /// Commit ids and subjects from `revision` back through its history,
+    /// newest first, at most `limit` of them.
+    pub(crate) fn subjects(
+        &self,
+        revision: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Error> {
+        let count = limit.to_string();
+        let listing = self.git_stdout(&["log", "--format=%H%x1f%s", "-n", &count, revision])?;
+        Ok(listing
+            .lines()
+            .filter_map(|line| {
+                let (commit, subject) = line.split_once('\u{1f}')?;
+                Some((commit.to_string(), subject.to_string()))
+            })
+            .collect())
+    }
+
+    /// A new bookmark at `commit`, refused when the ref already exists.
+    pub(crate) fn create_bookmark(&self, bookmark: &str, commit: &str) -> Result<(), Error> {
+        self.git_stdout(&[
+            "update-ref",
+            &format!("refs/heads/{bookmark}"),
+            commit,
+            "0000000000000000000000000000000000000000",
+        ])?;
+        self.import()
+    }
+
+    /// `git fetch <remote> refs/pull/<number>/head`: the outside pull
+    /// request's head as the forge serves it, returned by commit id.
+    pub(crate) fn fetch_pull_head(&self, remote: &str, number: u64) -> Result<String, Error> {
+        let refspec = format!("refs/pull/{number}/head:refs/adopt/{number}");
+        self.git_stdout(&["fetch", "--no-tags", remote, &refspec])?;
+        self.rev_parse(&format!("refs/adopt/{number}"))?
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("fetched refs/pull/{number}/head but git cannot resolve it"),
+                )
+            })
+    }
+
+    fn import(&self) -> Result<(), Error> {
+        if !self.jj {
+            return Ok(());
+        }
+        let output = jj(&self.workspace)
+            .args(["git", "import"])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(Error::new(
+            ErrorKind::Io,
+            format!(
+                "jj git import failed in {}: {}",
+                self.workspace.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ))
     }
 
     /// Whether `ancestor` is a proper ancestor of `descendant`.
@@ -200,6 +397,15 @@ impl Repo {
     /// is pinned to `drop`, so the rewrite of descendants signs nothing: a
     /// descendant that was signed is queued again and signed in its turn.
     pub(crate) fn sign(&self, commit: &str, signing: &Signing) -> Result<SignOutcome, Error> {
+        if !self.jj {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "{} is not a jj workspace: the queue signs through jj",
+                    self.workspace.display()
+                ),
+            ));
+        }
         let mut command = jj(&self.workspace);
         for setting in signing.overrides() {
             command.arg("--config").arg(setting);

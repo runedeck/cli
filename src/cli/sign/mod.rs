@@ -7,6 +7,8 @@
 use super::*;
 
 mod queue;
+pub(crate) mod seal;
+mod verify;
 
 use rune::error::ErrorKind;
 use std::io::{Read, Write};
@@ -20,8 +22,14 @@ pub(crate) fn execute(
     tag: Option<&str>,
     commit: Option<&str>,
     verify: Option<&str>,
+    seal: Option<&str>,
 ) -> Result<i32, Error> {
     if let Some(reference) = verify {
+        // `--verify --seal <ref>` and `--verify <ref> --seal` both name
+        // the ref once; a bare `--seal` verifies the ref `--verify` names.
+        if let Some(sealed) = seal {
+            return verify::seals(if sealed == "HEAD" { reference } else { sealed });
+        }
         return verify_reference(reference);
     }
     if let Some(name) = tag {
@@ -53,6 +61,19 @@ pub(crate) fn run_queue(action: super::SignAction, json: bool) -> Result<i32, Er
             receipt,
             repo,
         } => queue::submit(&bookmark, receipt.as_deref(), repo.as_deref(), json),
+        SignAction::Open {
+            bookmark,
+            body_file,
+            queue,
+            repo,
+        } => queue::open(
+            &bookmark,
+            body_file.as_deref(),
+            queue,
+            repo.as_deref(),
+            json,
+        ),
+        SignAction::Adopt { number, repo } => queue::adopt(number, repo.as_deref(), json),
         SignAction::Next => queue::next(json),
         SignAction::All => queue::all(json),
         SignAction::Show { bookmark, id, repo } => {
@@ -361,7 +382,7 @@ pub(crate) fn verified_status_output(success: bool, raw_status: &str) -> Option<
 /// Environment identity overrides (agent sessions export them) never apply
 /// to a seal or tag: the signature is the owner's act, so the objects carry
 /// the owner's configured identity.
-const IDENTITY_OVERRIDES: [&str; 6] = [
+pub(crate) const IDENTITY_OVERRIDES: [&str; 6] = [
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_AUTHOR_DATE",

@@ -50,6 +50,59 @@ pub(crate) enum Status {
     Failed,
 }
 
+/// What the owner's touch produces for a request.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Kind {
+    /// The recorded head is signed in place (CLI-0041).
+    #[default]
+    Head,
+    /// An open-seal is signed above the head, pushed, and the draft pull
+    /// request flips to ready with the nonce in its body.
+    Open,
+    /// A merge-seal is signed above the reviewed head. Nothing pushes.
+    Merge,
+}
+
+/// What `rune sign open --queue` recorded for the owner to complete.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct OpenRequest {
+    pub repo: String,
+    pub base: String,
+    pub pull_request: u64,
+    /// The validated body, kept beside the request so the flip appends the
+    /// nonce to the text the session validated.
+    pub body: String,
+}
+
+/// The ledger state `rune sign submit` observed and recorded on a request,
+/// shown to the owner before the key.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Coverage {
+    pub repo: String,
+    pub pull_request: u64,
+    pub base: String,
+    pub reviewed_sha: String,
+    pub generation: u64,
+    /// `clean` or `free-lanes-only`.
+    pub verdict: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub lanes: std::collections::BTreeMap<String, String>,
+    pub threads: Vec<Thread>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Thread {
+    pub id: String,
+    #[serde(default)]
+    pub lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disposition: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Request {
     pub id: String,
@@ -57,9 +110,18 @@ pub(crate) struct Request {
     pub workspace: String,
     pub bookmark: String,
     pub head: Identity,
-    pub receipt: Receipt,
+    /// Absent only for an `open` request, which the draft and the body
+    /// qualify instead of a check log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<Receipt>,
     pub requested_at: String,
     pub status: Status,
+    #[serde(default)]
+    pub kind: Kind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<OpenRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

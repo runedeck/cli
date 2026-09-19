@@ -10,7 +10,7 @@ tags:
     - jj
 status: proposed
 created: 2026-09-15
-updated: 2026-09-15
+updated: 2026-09-19
 author: "@N4M3Z"
 project: rune-cli
 related:
@@ -108,3 +108,9 @@ publication the hook already validated, which DECK-0013 exists to prevent.
 - The queue depends on git's commit object format and jj's `change-id` header, both stable, and on jj exporting
   bookmarks to `refs/heads`, which `jj git export` does for every git-backed repository.
 - The behavior proof of this change is a recording of the scenarios against the built binary, per DECK-0015.
+
+## Audit
+
+- 2026-09-19: CLI-0042 gives `rune sign submit` the merge-seal admission against the controller's ledger. `queue`
+  and `submit` are no longer one command under two names: `queue <bookmark>` keeps the in-place signing this record
+  describes, and `submit <bookmark>` records a `merge` request.

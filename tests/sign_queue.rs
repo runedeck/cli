@@ -225,7 +225,7 @@ fn stacked_requests_sign_base_first_and_the_descendant_stays_current() {
         .success()
         .stdout(predicate::str::contains("rune sign next"));
     rune(&fixture)
-        .args(["sign", "submit", "change/base", "--receipt"])
+        .args(["sign", "queue", "change/base", "--receipt"])
         .arg(&base_receipt)
         .assert()
         .success();
@@ -841,4 +841,534 @@ fn a_request_whose_workspace_is_gone_is_stale_and_prunable_not_fatal() {
         .assert()
         .success()
         .stdout(predicate::str::contains("pruned"));
+}
+
+/// `gh` as the ceremony commands call it, answering from `FAKE_GH_DIR`:
+/// `prs.json` for `pr list` and `pr view`, `ledger.md` for the ledger
+/// comment, `checks.json` for `pr checks`, and `ready-<n>` and `body-<n>`
+/// as the record of `pr ready` and `pr edit`.
+const FAKE_GH: &str = r#"#!/usr/bin/env python3
+import json, os, shutil, sys
+d = os.environ["FAKE_GH_DIR"]
+a = sys.argv[1:]
+with open(os.path.join(d, "calls.log"), "a") as log:
+    log.write(" ".join(a) + "\n")
+def load(name, default):
+    p = os.path.join(d, name)
+    return json.load(open(p)) if os.path.exists(p) else default
+if a[:2] == ["pr", "list"]:
+    prs = load("prs.json", [])
+    if "--head" in a:
+        head = a[a.index("--head") + 1]
+        prs = [p for p in prs if p.get("headRefName") == head]
+    print(json.dumps(prs))
+elif a[:2] == ["pr", "view"]:
+    found = [p for p in load("prs.json", []) if p["number"] == int(a[2])]
+    if not found:
+        sys.exit(1)
+    print(json.dumps(found[0]))
+elif a[:2] == ["pr", "ready"]:
+    open(os.path.join(d, "ready-" + a[2]), "w").close()
+elif a[:2] == ["pr", "edit"]:
+    shutil.copy(a[a.index("--body-file") + 1], os.path.join(d, "body-" + a[2]))
+elif a[:2] == ["pr", "checks"]:
+    print(json.dumps(load("checks.json", [])))
+elif a[0] == "api" and a[1].endswith("/comments"):
+    p = os.path.join(d, "ledger.md")
+    comments = [{"body": open(p).read()}] if os.path.exists(p) else []
+    print(json.dumps([comments]))
+elif a[0] == "api" and a[1].startswith("repos/"):
+    print(json.dumps({"permissions": {"admin": True}}))
+else:
+    sys.exit(3)
+"#;
+
+/// A body that passes `schemas/PULL_REQUEST.mdschema`.
+const BODY: &str = "Seal the ceremony.\n\n## Plan\n\nNone.\n\n## Changes\n\n- Add top.txt\n\n## Testing\n\n- cargo test\n\n## Release Notes\n\n- N/A\n";
+
+/// The ceremony fixture: the queue fixture plus a `main` bookmark at the
+/// base, an `origin` URL, the pull request schema, a git identity for the
+/// seal commits, the fake `gh` on PATH, and a push hook that records its
+/// calls in `pushed`.
+struct Ceremony {
+    fixture: Fixture,
+    gh_dir: PathBuf,
+    bin: PathBuf,
+}
+
+fn ceremony() -> Option<Ceremony> {
+    let fixture = fixture()?;
+    if !tool_present("python3") {
+        return None;
+    }
+    let home = fixture.workspace.parent().expect("home").to_path_buf();
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    fs::write(bin.join("gh"), FAKE_GH).expect("fake gh");
+    let hooks = fixture.workspace.join(".githooks");
+    fs::create_dir_all(&hooks).expect("hooks");
+    fs::write(
+        hooks.join("jj-push"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/../pushed\"\n",
+    )
+    .expect("push hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [bin.join("gh"), hooks.join("jj-push")] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+    }
+    fs::create_dir_all(fixture.workspace.join("schemas")).expect("schemas");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/PULL_REQUEST.mdschema"),
+        fixture.workspace.join("schemas/PULL_REQUEST.mdschema"),
+    )
+    .expect("schema");
+    for (key, value) in [
+        ("user.name", "Owner Test"),
+        ("user.email", "owner@example.com"),
+        ("remote.origin.url", "https://github.com/acme/widgets.git"),
+    ] {
+        run(Process::new("git")
+            .arg("-C")
+            .arg(&fixture.workspace)
+            .args(["config", key, value]));
+    }
+    run(jj(&fixture).args(["bookmark", "set", "main", "-r", "change/base"]));
+    let gh_dir = home.join("gh");
+    fs::create_dir_all(&gh_dir).expect("gh dir");
+    Some(Ceremony {
+        fixture,
+        gh_dir,
+        bin,
+    })
+}
+
+fn ceremony_rune(ceremony: &Ceremony) -> Command {
+    let path = format!(
+        "{}:{}",
+        ceremony.bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut command = rune(&ceremony.fixture);
+    command
+        .env("PATH", path)
+        .env("FAKE_GH_DIR", &ceremony.gh_dir);
+    command
+}
+
+fn pull_request(number: u64, head: &str, oid: &str, draft: bool, body: &str) -> serde_json::Value {
+    serde_json::json!({
+        "number": number,
+        "isDraft": draft,
+        "baseRefName": "main",
+        "headRefName": head,
+        "headRefOid": oid,
+        "body": body,
+        "url": format!("https://github.com/acme/widgets/pull/{number}"),
+    })
+}
+
+fn write_pull_requests(ceremony: &Ceremony, pull_requests: &[serde_json::Value]) {
+    fs::write(
+        ceremony.gh_dir.join("prs.json"),
+        serde_json::to_string(pull_requests).expect("json"),
+    )
+    .expect("prs.json");
+}
+
+fn body_file(ceremony: &Ceremony) -> PathBuf {
+    let path = ceremony.fixture.workspace.join("body.md");
+    fs::write(&path, BODY).expect("body");
+    path
+}
+
+fn commit_message(ceremony: &Ceremony, revision: &str) -> String {
+    run(jj(&ceremony.fixture).args(["log", "--no-graph", "-r", revision, "-T", "description"]))
+}
+
+fn parent_commit(ceremony: &Ceremony, revision: &str) -> String {
+    run(jj(&ceremony.fixture).args([
+        "log",
+        "--no-graph",
+        "-r",
+        &format!("parents({revision})"),
+        "-T",
+        "commit_id",
+    ]))
+}
+
+fn nonce_of(message: &str) -> String {
+    let json = message
+        .trim()
+        .strip_prefix("open-seal: ")
+        .expect("open-seal");
+    let value: serde_json::Value = serde_json::from_str(json).expect("seal json");
+    value["nonce"].as_str().expect("nonce").to_string()
+}
+
+fn ledger(
+    reviewed_sha: &str,
+    generation: u64,
+    verdict_generation: u64,
+    thread: &serde_json::Value,
+) -> String {
+    let ledger = serde_json::json!({
+        "reviewed_sha": reviewed_sha,
+        "generation": generation,
+        "verdict": {"sha": reviewed_sha, "generation": verdict_generation, "state": "clean"},
+        "lanes": {"codex": "completed-no-findings", "runeseer": "completed"},
+        "threads": [thread.clone()],
+    });
+    format!("<!-- rune-ledger -->\n```json\n{ledger}\n```\n")
+}
+
+fn write_ledger(ceremony: &Ceremony, body: &str) {
+    fs::write(ceremony.gh_dir.join("ledger.md"), body).expect("ledger");
+    fs::write(
+        ceremony.gh_dir.join("checks.json"),
+        r#"[{"name": "quality", "bucket": "pass"}]"#,
+    )
+    .expect("checks");
+}
+
+/// Open-seal `change/top` through the whole flow; returns the seal commit.
+fn open_top(ceremony: &Ceremony) -> String {
+    let top = head_commit(&ceremony.fixture, "change/top");
+    write_pull_requests(ceremony, &[pull_request(7, "change/top", &top, true, "")]);
+    let body = body_file(ceremony);
+    ceremony_rune(ceremony)
+        .args(["sign", "open", "change/top", "--body-file"])
+        .arg(&body)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("opened change/top"));
+    head_commit(&ceremony.fixture, "change/top")
+}
+
+#[test]
+fn open_refuses_the_protected_branch_and_a_branch_without_a_draft() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let body = body_file(&ceremony);
+    ceremony_rune(&ceremony)
+        .args(["sign", "open", "main", "--body-file"])
+        .arg(&body)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("protected branch"));
+    write_pull_requests(&ceremony, &[]);
+    ceremony_rune(&ceremony)
+        .args(["sign", "open", "change/top", "--body-file"])
+        .arg(&body)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no open pull request has head change/top",
+        ));
+    assert!(!head_is_signed(&ceremony.fixture, "change/top"));
+    assert!(!ceremony.fixture.workspace.join("pushed").exists());
+}
+
+#[test]
+fn open_seals_pushes_flips_the_draft_and_appends_the_nonce() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let top = head_commit(&ceremony.fixture, "change/top");
+    let sealed = open_top(&ceremony);
+    assert_ne!(sealed, top);
+    assert!(head_is_signed(&ceremony.fixture, "change/top"));
+    assert_eq!(parent_commit(&ceremony, "change/top"), top);
+    let message = commit_message(&ceremony, "change/top");
+    assert!(message.starts_with("open-seal: {\"repo\":\"acme/widgets\",\"base\":\"main\""));
+    let nonce = nonce_of(&message);
+    let pushed = fs::read_to_string(ceremony.fixture.workspace.join("pushed")).expect("pushed");
+    assert_eq!(pushed.trim(), "-b change/top");
+    assert!(ceremony.gh_dir.join("ready-7").exists());
+    let body = fs::read_to_string(ceremony.gh_dir.join("body-7")).expect("body");
+    assert!(body.starts_with(BODY.trim_end()));
+    assert!(body.ends_with(&format!("\nOpen-Seal-Nonce: {nonce}\n")));
+}
+
+#[test]
+fn submit_refuses_an_open_thread_and_an_undisposed_generation() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let top = head_commit(&ceremony.fixture, "change/top");
+    write_pull_requests(
+        &ceremony,
+        &[pull_request(7, "change/top", &top, false, BODY)],
+    );
+    let receipt = receipt(&ceremony.fixture, "top.log", &top, "exit=0");
+    write_ledger(
+        &ceremony,
+        &ledger(
+            &top,
+            1,
+            1,
+            &serde_json::json!({"id": "T1", "lane": "codex"}),
+        ),
+    );
+    ceremony_rune(&ceremony)
+        .args(["sign", "submit", "change/top", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "thread T1 is open without a disposition",
+        ));
+    write_ledger(
+        &ceremony,
+        &ledger(
+            &top,
+            2,
+            1,
+            &serde_json::json!({"id": "T1", "lane": "codex", "disposition": "fixed"}),
+        ),
+    );
+    ceremony_rune(&ceremony)
+        .args(["sign", "submit", "change/top", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "generation 1 and the ledger is at generation 2",
+        ));
+    ceremony_rune(&ceremony)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("empty"));
+}
+
+/// Queue `change/top` for the merge-seal with a clean ledger.
+fn submit_top(ceremony: &Ceremony) -> (String, PathBuf) {
+    let top = head_commit(&ceremony.fixture, "change/top");
+    write_pull_requests(
+        ceremony,
+        &[pull_request(7, "change/top", &top, false, BODY)],
+    );
+    let receipt = receipt(&ceremony.fixture, "top.log", &top, "exit=0");
+    write_ledger(
+        ceremony,
+        &ledger(
+            &top,
+            2,
+            2,
+            &serde_json::json!({"id": "T1", "lane": "codex", "disposition": "fixed"}),
+        ),
+    );
+    ceremony_rune(ceremony)
+        .args(["sign", "submit", "change/top", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(clean)"));
+    (top, receipt)
+}
+
+#[test]
+fn next_shows_the_view_refuses_on_n_and_seals_on_y() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let (top, _receipt) = submit_top(&ceremony);
+    let tty = ceremony.fixture.workspace.join("tty");
+    fs::write(&tty, "n\n").expect("tty");
+    ceremony_rune(&ceremony)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("diff stat    main...")
+                .and(predicate::str::contains("top.txt"))
+                .and(predicate::str::contains("coverage     clean"))
+                .and(predicate::str::contains("lane         codex"))
+                .and(predicate::str::contains(
+                    "thread       T1                   fixed",
+                ))
+                .and(predicate::str::contains("/top.log"))
+                .and(predicate::str::contains(format!("reviewed_sha  {top}")))
+                .and(predicate::str::contains("generation    2"))
+                .and(predicate::str::contains("declined change/top")),
+        );
+    assert!(!head_is_signed(&ceremony.fixture, "change/top"));
+    assert_eq!(head_commit(&ceremony.fixture, "change/top"), top);
+    ceremony_rune(&ceremony)
+        .args(["sign", "show", "change/top"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("current").and(predicate::str::contains("merge")));
+
+    fs::write(&tty, "y\n").expect("tty");
+    ceremony_rune(&ceremony)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/top"));
+    assert!(head_is_signed(&ceremony.fixture, "change/top"));
+    assert_eq!(parent_commit(&ceremony, "change/top"), top);
+    assert_eq!(
+        commit_message(&ceremony, "change/top").trim(),
+        format!("merge-seal: {{\"reviewed_sha\":\"{top}\",\"generation\":2}}")
+    );
+    // Nothing pushed.
+    assert!(!ceremony.fixture.workspace.join("pushed").exists());
+}
+
+/// The full ceremony on `change/top`: open-seal, a clean ledger, the
+/// merge-seal. Returns the opened head, the merged head, and the body that
+/// carries the nonce.
+fn seal_pair(ceremony: &Ceremony) -> (String, String, String) {
+    let opened = open_top(ceremony);
+    let nonce = nonce_of(&commit_message(ceremony, "change/top"));
+    let body = format!("{BODY}\nOpen-Seal-Nonce: {nonce}\n");
+    // The controller reviewed the sealed head; the owner seals the merge.
+    write_pull_requests(
+        ceremony,
+        &[pull_request(7, "change/top", &opened, false, &body)],
+    );
+    let receipt = receipt(&ceremony.fixture, "top.log", &opened, "exit=0");
+    write_ledger(
+        ceremony,
+        &ledger(
+            &opened,
+            1,
+            1,
+            &serde_json::json!({"id": "T1", "disposition": "rejected", "reason": "by design"}),
+        ),
+    );
+    ceremony_rune(ceremony)
+        .args(["sign", "submit", "change/top", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    let tty = ceremony.fixture.workspace.join("tty");
+    fs::write(&tty, "y\n").expect("tty");
+    ceremony_rune(ceremony)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success();
+    let merged = head_commit(&ceremony.fixture, "change/top");
+    write_pull_requests(
+        ceremony,
+        &[pull_request(7, "change/top", &merged, false, &body)],
+    );
+    (opened, merged, body)
+}
+
+/// A hand-made signed commit above `parent` with `message`, on `bookmark`,
+/// with an extra file when `smuggle` is set.
+fn forged_seal(
+    ceremony: &Ceremony,
+    parent: &str,
+    message: &str,
+    bookmark: &str,
+    smuggle: bool,
+) -> String {
+    run(jj(&ceremony.fixture).args(["new", parent, "-m", message]));
+    if smuggle {
+        fs::write(
+            ceremony
+                .fixture
+                .workspace
+                .join(format!("{}.txt", bookmark.replace('/', "-"))),
+            "x\n",
+        )
+        .expect("file");
+    }
+    run(jj(&ceremony.fixture).args(["sign", "-r", "@"]));
+    run(jj(&ceremony.fixture).args(["bookmark", "set", bookmark, "-r", "@"]));
+    run(jj(&ceremony.fixture).args(["new"]));
+    head_commit(&ceremony.fixture, bookmark)
+}
+
+#[test]
+fn verify_accepts_a_valid_pair_and_rejects_an_inherited_open_seal() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let (opened, merged, body) = seal_pair(&ceremony);
+    ceremony_rune(&ceremony)
+        .args(["sign", "--verify", "--seal", &merged])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("ok   merge-seal")
+                .and(predicate::str::contains("ok   open-seal"))
+                .and(predicate::str::contains(
+                    "exactly one open pull request (1 found)",
+                ))
+                .and(predicate::str::contains("FAIL").not()),
+        );
+    // The other spelling names the ref on --verify.
+    ceremony_rune(&ceremony)
+        .args(["sign", "--verify", &merged, "--seal"])
+        .assert()
+        .success();
+
+    // A fork of the sealed branch with its own pull request, whose body
+    // carries no nonce, inherits nothing.
+    let fork = forged_seal(&ceremony, &opened, "feat: fork", "change/fork", true);
+    write_pull_requests(
+        &ceremony,
+        &[
+            pull_request(7, "change/top", &merged, false, &body),
+            pull_request(8, "change/fork", &fork, false, BODY),
+        ],
+    );
+    ceremony_rune(&ceremony)
+        .args(["sign", "--verify", "--seal", &fork])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "FAIL pull request #7 carrying the nonce has head {}",
+            &merged[..12]
+        )));
+}
+
+#[test]
+fn verify_rejects_a_moved_parent_and_an_unequal_tree() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let (opened, _merged, _body) = seal_pair(&ceremony);
+    let message = format!("merge-seal: {{\"reviewed_sha\":\"{opened}\",\"generation\":1}}");
+    // A merge-seal whose parent is not the reviewed commit it names.
+    let base = head_commit(&ceremony.fixture, "change/base");
+    let moved = forged_seal(&ceremony, &base, &message, "change/moved", false);
+    ceremony_rune(&ceremony)
+        .args(["sign", "--verify", "--seal", &moved])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "FAIL merge-seal {} has sole parent",
+            &moved[..12]
+        )));
+    // A merge-seal above the reviewed commit that changes the tree.
+    let fat = forged_seal(&ceremony, &opened, &message, "change/fat", true);
+    ceremony_rune(&ceremony)
+        .args(["sign", "--verify", "--seal", &fat])
+        .assert()
+        .code(1)
+        .stdout(
+            predicate::str::contains(format!("ok   merge-seal {} has sole parent", &fat[..12]))
+                .and(predicate::str::contains(format!(
+                    "FAIL merge-seal {} keeps the reviewed tree",
+                    &fat[..12]
+                ))),
+        );
 }

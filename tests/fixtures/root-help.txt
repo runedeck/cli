@@ -30,9 +30,11 @@
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
     release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
-    sign        [--amend | --tag <TAG> [COMMIT] | --verify [REF]]     Seal the branch, sign tags, verify against KEYS
+    sign        [--amend | --tag <TAG> | --verify [REF] [--seal]]     Seal the branch, sign tags, verify against KEYS
     sign queue  [<BOOKMARK> --receipt <FILE>] [--prune]               Queue a validated head for the key, or list the queue
-    sign next   | all | show <BOOKMARK> | drop <BOOKMARK>             Sign from the queue base first; inspect or withdraw
+    sign open   <BOOKMARK> [--body-file <FILE>] [--queue]             Open-seal a draft pull request into the owner's name
+    sign submit <BOOKMARK> --receipt <FILE>                           Queue a reviewed head for the merge-seal
+    sign next   | all | show | drop <BOOKMARK> | adopt <N>            Sign from the queue base first; inspect, withdraw, adopt
     import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
     adopt       start|...|finalize|abandon|reseal|doctor              Adopt an upstream rune through block-by-block review
     move        <FROM> <TO> [--root <DIR>]                            Move a reviewed artifact with its provenance

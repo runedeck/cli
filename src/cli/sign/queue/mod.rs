@@ -1,12 +1,18 @@
 //! The signing queue: a session queues a validated head, the owner signs
 //! from the queue base first. Nothing here pushes.
 
-mod repo;
+mod ceremony;
+pub(super) mod gh;
+mod ledger;
+mod open;
+pub(super) mod repo;
 mod store;
 #[cfg(test)]
 mod tests;
 
-use repo::{Head, Repo, SignOutcome, Signing, Verdict};
+use crate::cli::sign::seal::{MergeSeal, Seal};
+use ceremony::Attempt;
+use repo::{Head, Repo, Signing, Verdict};
 use rune::error::{Error, ErrorKind};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -15,7 +21,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
-use store::{Claim, Receipt, Request, Status, Store};
+pub(crate) use open::{adopt, open, repo_slug};
+use store::{Claim, Kind, Receipt, Request, Status, Store};
 
 const SIGN_ATTEMPTS: usize = 3;
 
@@ -60,32 +67,148 @@ pub(crate) fn queue(
     json: bool,
 ) -> Result<i32, Error> {
     match bookmark {
-        Some(bookmark) => submit(bookmark, receipt, repository, json),
+        Some(bookmark) => queue_head(bookmark, receipt, repository, json),
         None if prune => prune_requests(json),
         None => list(json),
     }
 }
 
+/// `rune sign queue <bookmark>`: the CLI-0041 request, the recorded head
+/// signed in place by the owner.
+fn queue_head(
+    bookmark: &str,
+    receipt: Option<&Path>,
+    repository: Option<&Path>,
+    json: bool,
+) -> Result<i32, Error> {
+    let repo = Repo::open(&start_path(repository)?)?;
+    let (head, receipt) = qualify_head(&repo, bookmark, receipt, Kind::Head)?;
+    let request = Request {
+        id: store::new_request_id(&repo.key(), bookmark),
+        repository: repo.key(),
+        workspace: repo.workspace.to_string_lossy().into_owned(),
+        bookmark: bookmark.to_string(),
+        head: head.identity,
+        receipt: Some(receipt),
+        requested_at: store::now(),
+        status: Status::Queued,
+        kind: Kind::Head,
+        open: None,
+        coverage: None,
+        signed_commit: None,
+        claim: None,
+        failure: None,
+    };
+    record_request(&repo, &request, json)
+}
+
+/// `rune sign submit <bookmark>`: admission to the merge-seal. Beyond the
+/// receipt, the ledger the controller published on the pull request must
+/// clear the head at its current generation.
 pub(crate) fn submit(
     bookmark: &str,
     receipt: Option<&Path>,
     repository: Option<&Path>,
     json: bool,
 ) -> Result<i32, Error> {
+    let repo = Repo::open(&start_path(repository)?)?;
+    let (head, receipt) = qualify_head(&repo, bookmark, receipt, Kind::Merge)?;
+    let slug = open::repo_slug(&repo, "origin")?;
+    let mut pull_requests = gh::open_pull_requests(&slug, Some(bookmark))?;
+    let pull_request = match pull_requests.len() {
+        1 => pull_requests.remove(0),
+        0 => {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("no open pull request has head {bookmark}"),
+            ));
+        }
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "{} open pull requests have head {bookmark}",
+                    pull_requests.len()
+                ),
+            ));
+        }
+    };
+    if pull_request.is_draft {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "pull request #{} is a draft: run `rune sign open {bookmark}` first",
+                pull_request.number
+            ),
+        ));
+    }
+    let comment = gh::ledger_comment(&slug, pull_request.number)?.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            format!(
+                "pull request #{} has no ledger comment: wait for the controller",
+                pull_request.number
+            ),
+        )
+    })?;
+    let ledger = ledger::parse(&comment).map_err(|reason| Error::new(ErrorKind::Parse, reason))?;
+    let checks = gh::required_checks(&slug, pull_request.number)?;
+    let coverage = ledger::admit(
+        &ledger,
+        &slug,
+        pull_request.number,
+        &pull_request.base_ref_name,
+        &head.identity.commit_id,
+        &checks,
+    )
+    .map_err(|reason| {
+        Error::new(
+            ErrorKind::Config,
+            format!("{bookmark} is refused: {reason}"),
+        )
+    })?;
+    let request = Request {
+        id: store::new_request_id(&repo.key(), bookmark),
+        repository: repo.key(),
+        workspace: repo.workspace.to_string_lossy().into_owned(),
+        bookmark: bookmark.to_string(),
+        head: head.identity,
+        receipt: Some(receipt),
+        requested_at: store::now(),
+        status: Status::Queued,
+        kind: Kind::Merge,
+        open: None,
+        coverage: Some(coverage),
+        signed_commit: None,
+        claim: None,
+        failure: None,
+    };
+    record_request(&repo, &request, json)
+}
+
+/// The receipt and the head every request needs: the bookmark exists, is
+/// unsigned, and the receipt names it with a passing exit line.
+fn qualify_head(
+    repo: &Repo,
+    bookmark: &str,
+    receipt: Option<&Path>,
+    kind: Kind,
+) -> Result<(Head, Receipt), Error> {
     let receipt_path = receipt.ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
             "a signing request needs --receipt <FILE>: the check log that ends with the exit line",
         )
     })?;
-    let repo = Repo::open(&start_path(repository)?)?;
     let head = repo.head(bookmark)?.ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
             format!("no bookmark {bookmark} in {}", repo.workspace.display()),
         )
     })?;
-    if head.signed {
+    // A merge-seal is a new commit above the reviewed head, so that head
+    // may carry the owner's open-seal already. Signing in place may not.
+    if head.signed && kind == Kind::Head {
         return Err(Error::new(
             ErrorKind::Config,
             format!(
@@ -95,6 +218,10 @@ pub(crate) fn submit(
         ));
     }
     let receipt = qualify_receipt(receipt_path, &head.identity.commit_id)?;
+    Ok((head, receipt))
+}
+
+fn record_request(repo: &Repo, request: &Request, json: bool) -> Result<i32, Error> {
     let store = Store::open()?;
     // Under the repository lock, so two submissions cannot both pass the
     // duplicate check, and no signer is between its checks and its record.
@@ -102,50 +229,51 @@ pub(crate) fn submit(
     let live = observe(&store)?;
     for existing in &live {
         if existing.request.repository == repo.key()
-            && existing.request.bookmark == bookmark
+            && existing.request.bookmark == request.bookmark
             && derive(existing, &live)? != State::Stale
         {
             return Err(Error::new(
                 ErrorKind::Config,
                 format!(
-                    "{bookmark} already has request {}: drop it or let it go stale",
-                    existing.request.id
+                    "{} already has request {}: drop it or let it go stale",
+                    request.bookmark, existing.request.id
                 ),
             ));
         }
     }
-    let request = Request {
-        id: store::new_request_id(&repo.key(), bookmark),
-        repository: repo.key(),
-        workspace: repo.workspace.to_string_lossy().into_owned(),
-        bookmark: bookmark.to_string(),
-        head: head.identity,
-        receipt,
-        requested_at: store::now(),
-        status: Status::Queued,
-        signed_commit: None,
-        claim: None,
-        failure: None,
-    };
-    store.save(&request)?;
+    store.save(request)?;
+    let coverage = request
+        .coverage
+        .as_ref()
+        .map(|coverage| coverage.verdict.clone());
     if json {
         println!(
             "{}",
             serde_json::json!({
                 "queued": true,
+                "kind": request.kind,
                 "id": request.id,
                 "bookmark": request.bookmark,
                 "commit": request.head.commit_id,
+                "coverage": coverage,
                 "next": "rune sign next",
             })
         );
     } else {
-        println!(
-            "queued {} {} at {}: run `rune sign next` at the key",
-            request.id,
-            request.bookmark,
-            short(&request.head.commit_id)
-        );
+        match coverage {
+            Some(coverage) => println!(
+                "queued {} {} at {} ({coverage}): run `rune sign next` at the key",
+                request.id,
+                request.bookmark,
+                short(&request.head.commit_id)
+            ),
+            None => println!(
+                "queued {} {} at {}: run `rune sign next` at the key",
+                request.id,
+                request.bookmark,
+                short(&request.head.commit_id)
+            ),
+        }
     }
     notify(&format!(
         "{} needs your signature: run rune sign next",
@@ -220,9 +348,15 @@ pub(crate) fn names_commit(body: &str, commit_id: &str) -> bool {
 /// The receipt as recorded must still be on disk unchanged when the owner
 /// signs: a request whose receipt was edited or replaced is refused.
 fn receipt_still_holds(request: &Request) -> Result<(), String> {
-    let path = Path::new(&request.receipt.path);
+    let Some(receipt) = &request.receipt else {
+        return match request.kind {
+            Kind::Open => Ok(()),
+            Kind::Head | Kind::Merge => Err("the request records no receipt".to_string()),
+        };
+    };
+    let path = Path::new(&receipt.path);
     let digest = store::file_digest(path).map_err(|error| error.to_string())?;
-    if digest != request.receipt.digest {
+    if digest != receipt.digest {
         return Err(format!(
             "receipt {} changed since the request was queued",
             path.display()
@@ -356,6 +490,7 @@ pub(crate) fn show(
         );
     } else {
         println!("{:<12} {}", "state", state_label(state));
+        println!("{:<12} {}", "kind", kind_label(request.kind));
         println!("{:<12} {}", "id", request.id);
         println!("{:<12} {}", "bookmark", request.bookmark);
         println!("{:<12} {}", "workspace", request.workspace);
@@ -363,8 +498,26 @@ pub(crate) fn show(
         println!("{:<12} {}", "commit", request.head.commit_id);
         println!("{:<12} {}", "change", request.head.change_id);
         println!("{:<12} {}", "author", request.head.author);
-        println!("{:<12} {}", "receipt", request.receipt.path);
-        println!("{:<12} {}", "exit", request.receipt.exit_line);
+        if let Some(receipt) = &request.receipt {
+            println!("{:<12} {}", "receipt", receipt.path);
+            println!("{:<12} {}", "exit", receipt.exit_line);
+        }
+        if let Some(open) = &request.open {
+            println!("{:<12} #{} on {}", "pull", open.pull_request, open.repo);
+            println!("{:<12} {}", "base", open.base);
+        }
+        if let Some(coverage) = &request.coverage {
+            println!(
+                "{:<12} #{} on {}",
+                "pull", coverage.pull_request, coverage.repo
+            );
+            println!("{:<12} {}", "reviewed", coverage.reviewed_sha);
+            println!("{:<12} {}", "generation", coverage.generation);
+            match &coverage.reason {
+                Some(reason) => println!("{:<12} {} ({reason})", "coverage", coverage.verdict),
+                None => println!("{:<12} {}", "coverage", coverage.verdict),
+            }
+        }
         println!("{:<12} {}", "requested", request.requested_at);
         if let Some(signed) = &request.signed_commit {
             println!("{:<12} {signed}", "signed");
@@ -581,23 +734,39 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
     });
     store.save(&request)?;
     let keys = super::keys_fingerprints(&repo.workspace.join("KEYS"))?;
-    let outcome = match sign_with_retry(&repo, &request, &observed, signing) {
-        Ok(()) => match verify_signed_head(&repo, &request, signing, &keys)? {
-            Ok(commit) => {
-                request.status = Status::Signed;
-                request.signed_commit = Some(commit.clone());
-                request.claim = None;
-                store.save(&request)?;
-                Outcome {
-                    id: request.id.clone(),
-                    bookmark: request.bookmark.clone(),
-                    result: "signed".to_string(),
-                    commit: Some(commit),
-                }
+    let live = Live {
+        request: request.clone(),
+        head: Some(head),
+        repo: Some(Rc::clone(&repo)),
+    };
+    let attempt = match request.kind {
+        Kind::Head => {
+            match ceremony::sign_with_retry(&repo, &request.bookmark, &observed, signing)? {
+                Ok(()) => match verify_signed_head(&repo, &request, signing, &keys)? {
+                    Ok(commit) => Attempt::Signed(commit),
+                    Err(reason) => Attempt::Failed(reason),
+                },
+                Err(reason) => Attempt::NotSigned(reason),
             }
-            Err(reason) => record_failure(store, request, &reason)?,
-        },
-        Err(reason) => {
+        }
+        Kind::Open => open::complete_from_queue(&repo, &live, signing, &keys)?,
+        Kind::Merge => merge_seal(&repo, &live, signing, &keys)?,
+    };
+    let outcome = match attempt {
+        Attempt::Signed(commit) => {
+            request.status = Status::Signed;
+            request.signed_commit = Some(commit.clone());
+            request.claim = None;
+            store.save(&request)?;
+            Outcome {
+                id: request.id.clone(),
+                bookmark: request.bookmark.clone(),
+                result: "signed".to_string(),
+                commit: Some(commit),
+            }
+        }
+        Attempt::Failed(reason) => record_failure(store, request, &reason)?,
+        Attempt::NotSigned(reason) => {
             request.claim = None;
             store.save(&request)?;
             Outcome {
@@ -612,6 +781,45 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
         notify(&format!("{} signed", outcome.bookmark));
     }
     Ok(outcome)
+}
+
+/// `next` on a `merge` request: the owner acknowledges the view, then the
+/// merge-seal is written above the reviewed head. Nothing pushes.
+fn merge_seal(
+    repo: &Repo,
+    live: &Live,
+    signing: &Signing,
+    keys: &[String],
+) -> Result<Attempt, Error> {
+    let request = &live.request;
+    let Some(coverage) = &request.coverage else {
+        return Ok(Attempt::Failed(
+            "the request records no coverage".to_string(),
+        ));
+    };
+    print!("{}", ceremony::view(repo, request, &coverage.base)?);
+    if !ceremony::acknowledge(&format!(
+        "sign the merge-seal for {} at {} generation {}?",
+        request.bookmark,
+        short(&coverage.reviewed_sha),
+        coverage.generation
+    ))? {
+        return Ok(Attempt::NotSigned("declined".to_string()));
+    }
+    let seal = MergeSeal {
+        reviewed_sha: coverage.reviewed_sha.clone(),
+        generation: coverage.generation,
+    };
+    let message = seal.message();
+    ceremony::seal_above(
+        repo,
+        &request.bookmark,
+        &coverage.reviewed_sha,
+        &Seal::Merge(seal),
+        &message,
+        signing,
+        keys,
+    )
 }
 
 fn record_failure(store: &Store, mut request: Request, reason: &str) -> Result<Outcome, Error> {
@@ -643,6 +851,11 @@ fn record_signed_head(store: &Store, live: Live, signing: &Signing) -> Result<Ou
     let Some(head) = head else {
         return record_failure(store, request, "bookmark vanished before recording");
     };
+    if request.kind != Kind::Head {
+        // A seal is written by the queue alone: a signature that appeared
+        // on an open or merge request's head came from elsewhere.
+        return record_failure(store, request, "the head was signed outside the queue");
+    }
     let keys = super::keys_fingerprints(&repo.workspace.join("KEYS"))?;
     if let Err(reason) = owner_signature(&repo, &head.identity.commit_id, signing, &keys)? {
         return record_failure(store, request, &reason);
@@ -657,43 +870,6 @@ fn record_signed_head(store: &Store, live: Live, signing: &Signing) -> Result<Ou
         result: "signed".to_string(),
         commit: Some(head.identity.commit_id),
     })
-}
-
-/// Before every attempt the bookmark must still point at the commit
-/// observed under the lock: a head that moved after the claim is stale
-/// and nothing is signed.
-fn sign_with_retry(
-    repo: &Repo,
-    request: &Request,
-    observed: &str,
-    signing: &Signing,
-) -> Result<(), String> {
-    for attempt in 1..=SIGN_ATTEMPTS {
-        let head = repo
-            .head(&request.bookmark)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("bookmark {} vanished", request.bookmark))?;
-        if head.identity.commit_id != observed {
-            return Err(format!(
-                "stale: {} moved to {} before signing",
-                request.bookmark,
-                short(&head.identity.commit_id)
-            ));
-        }
-        match repo
-            .sign(observed, signing)
-            .map_err(|error| error.to_string())?
-        {
-            SignOutcome::Signed => return Ok(()),
-            SignOutcome::Timeout(detail) if attempt < SIGN_ATTEMPTS => {
-                eprintln!("signing timed out (attempt {attempt} of {SIGN_ATTEMPTS}): {detail}");
-            }
-            SignOutcome::Timeout(detail) => return Err(format!("timed out: {detail}")),
-            SignOutcome::Cancelled(detail) => return Err(format!("cancelled: {detail}")),
-            SignOutcome::Failed(detail) => return Err(format!("failed: {detail}")),
-        }
-    }
-    Err("timed out".to_string())
 }
 
 /// After signing, the bookmark must point at a commit that keeps the
@@ -767,15 +943,32 @@ fn derive(entry: &Live, others: &[Live]) -> Result<State, Error> {
     let (Some(repo), Some(head)) = (&entry.repo, &entry.head) else {
         return Ok(State::Stale);
     };
+    // A seal is a new commit above the recorded head, so a signed request
+    // is current only while the bookmark still points at what was signed.
+    if request.status == Status::Signed {
+        return Ok(
+            if request.signed_commit.as_deref() == Some(&head.identity.commit_id) {
+                State::Signed
+            } else {
+                State::Stale
+            },
+        );
+    }
     if !identity_matches(request, head) {
         return Ok(State::Stale);
     }
-    if head.signed {
-        return Ok(if request.status == Status::Signed {
-            State::Signed
-        } else {
-            State::Unverified
-        });
+    // A merge-seal binds the reviewed commit id itself, not an identity a
+    // rewrite may keep: the ledger reviewed that exact commit.
+    if request.kind == Kind::Merge
+        && request
+            .coverage
+            .as_ref()
+            .is_none_or(|coverage| coverage.reviewed_sha != head.identity.commit_id)
+    {
+        return Ok(State::Stale);
+    }
+    if head.signed && request.kind != Kind::Merge {
+        return Ok(State::Unverified);
     }
     for other in others {
         if other.request.id == request.id
@@ -884,6 +1077,14 @@ fn start_path(repository: Option<&Path>) -> Result<PathBuf, Error> {
 
 fn short(commit_id: &str) -> &str {
     &commit_id[..12.min(commit_id.len())]
+}
+
+fn kind_label(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Head => "head",
+        Kind::Open => "open",
+        Kind::Merge => "merge",
+    }
 }
 
 fn state_label(state: State) -> &'static str {

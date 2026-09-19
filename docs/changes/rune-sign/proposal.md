@@ -1,5 +1,5 @@
 ---
-adr: "https://github.com/runedeck/deck/blob/main/docs/decisions/CORE-0013 Attribution Signing and Merge Ceremony.md"
+adr: "https://github.com/runedeck/deck/blob/main/docs/decisions/DECK-0017 Sealed Review Ceremony.md"
 status: proposed
 ---
 

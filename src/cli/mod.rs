@@ -823,6 +823,20 @@ enum Command {
             conflicts_with = "tag"
         )]
         verify: Option<String>,
+
+        /// With --verify: check the ceremony seals beneath REF instead of one
+        /// signature. An open-seal must be signed by a KEYS key, bind this
+        /// repository, and be carried by exactly one open pull request whose
+        /// head is REF. A merge-seal at REF must be an empty child of the
+        /// reviewed commit it names. Exit 0 when every check holds, 1 otherwise.
+        #[arg(
+            long,
+            value_name = "REF",
+            num_args = 0..=1,
+            default_missing_value = "HEAD",
+            requires = "verify"
+        )]
+        seal: Option<String>,
     },
 
     /// Manage the watchlist of rune and deployment locations to monitor
@@ -999,11 +1013,45 @@ enum SignAction {
         #[arg(long)]
         prune: bool,
     },
-    /// Queue a bookmark's head for the owner's key (the verb form of `queue`)
+    /// Queue a reviewed head for the merge-seal
+    ///
+    /// Refused unless the ledger the controller published on the pull request
+    /// clears the head at its current generation: a clean verdict or
+    /// `free-lanes-only` with a reason, every lane terminal, no open or
+    /// owner thread, every required check green, and the receipt present.
     Submit {
         bookmark: String,
+        /// The check receipt, as for `queue`.
         #[arg(long, value_name = "FILE")]
         receipt: Option<QueuePathBuf>,
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
+    },
+    /// Put the owner's name on a draft pull request with an open-seal
+    ///
+    /// Refused unless the bookmark is a session branch with a draft pull
+    /// request at its head and a body that passes `schemas/PULL_REQUEST.mdschema`.
+    /// Shows the branch, base, diff stat, and body, then signs the seal,
+    /// pushes with the guarded push, flips the draft, and writes the nonce
+    /// into the body. With `--queue` the request waits for `rune sign next`.
+    Open {
+        bookmark: String,
+        /// The body when the bookmark names no `docs/changes/<id>/pull-request.md`.
+        #[arg(long, value_name = "FILE")]
+        body_file: Option<QueuePathBuf>,
+        /// Record the request for the owner instead of signing now.
+        #[arg(long)]
+        queue: bool,
+        #[arg(long, value_name = "DIR")]
+        repo: Option<QueuePathBuf>,
+    },
+    /// Admit an outside pull request onto an owner branch (owner-only)
+    ///
+    /// Fetches the pull request head, puts it on `adopt/<number>`, pushes,
+    /// waits for the app's draft, and runs the open flow on it.
+    Adopt {
+        #[arg(value_name = "NUMBER")]
+        number: u64,
         #[arg(long, value_name = "DIR")]
         repo: Option<QueuePathBuf>,
     },
@@ -1868,12 +1916,17 @@ pub fn run() -> i32 {
             tag,
             commit,
             verify,
+            seal,
         } => {
             return exit_code(
                 match action {
-                    None => {
-                        sign::execute(amend, tag.as_deref(), commit.as_deref(), verify.as_deref())
-                    }
+                    None => sign::execute(
+                        amend,
+                        tag.as_deref(),
+                        commit.as_deref(),
+                        verify.as_deref(),
+                        seal.as_deref(),
+                    ),
                     Some(action) => sign::run_queue(action, args.json),
                 },
                 args.json,
@@ -2257,7 +2310,7 @@ fn deck_help(help: &mut String) {
     help_command(
         help,
         "sign",
-        "[--amend | --tag <TAG> [COMMIT] | --verify [REF]]",
+        "[--amend | --tag <TAG> | --verify [REF] [--seal]]",
         "Seal the branch, sign tags, verify against KEYS",
     );
     help_command(
@@ -2268,9 +2321,21 @@ fn deck_help(help: &mut String) {
     );
     help_command(
         help,
+        "sign open",
+        "<BOOKMARK> [--body-file <FILE>] [--queue]",
+        "Open-seal a draft pull request into the owner's name",
+    );
+    help_command(
+        help,
+        "sign submit",
+        "<BOOKMARK> --receipt <FILE>",
+        "Queue a reviewed head for the merge-seal",
+    );
+    help_command(
+        help,
         "sign next",
-        "| all | show <BOOKMARK> | drop <BOOKMARK>",
-        "Sign from the queue base first; inspect or withdraw",
+        "| all | show | drop <BOOKMARK> | adopt <N>",
+        "Sign from the queue base first; inspect, withdraw, adopt",
     );
     help_command(
         help,

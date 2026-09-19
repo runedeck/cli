@@ -2,7 +2,7 @@ use super::repo::{
     SignOutcome, Signing, classify_sign_output, export_refused, has_signature, parse_commit,
     user_value,
 };
-use super::store::{Identity, Receipt, Request, Status, Store, claim_is_dead, split_holder};
+use super::store::{Identity, Kind, Receipt, Request, Status, Store, claim_is_dead, split_holder};
 use super::{exit_status, names_commit, topological};
 use tempfile::TempDir;
 
@@ -20,13 +20,16 @@ fn request(id: &str, repository: &str, at: &str) -> Request {
             description: "feat: x".to_string(),
             parents: vec![],
         },
-        receipt: Receipt {
+        receipt: Some(Receipt {
             path: "r.log".to_string(),
             digest: "d".to_string(),
             exit_line: "exit=0".to_string(),
-        },
+        }),
         requested_at: at.to_string(),
         status: Status::Queued,
+        kind: Kind::Head,
+        open: None,
+        coverage: None,
         signed_commit: None,
         claim: None,
         failure: None,
@@ -229,4 +232,22 @@ fn a_receipt_names_a_commit_by_a_whole_hexadecimal_word() {
         commit
     ));
     assert!(!names_commit("nothing here\n", commit));
+}
+
+#[test]
+fn a_record_written_before_the_ceremony_reads_as_a_head_request() {
+    let record = r#"{
+        "id": "one", "repository": "repo", "workspace": "/nowhere", "bookmark": "change/one",
+        "head": {"change_id": "c", "commit_id": "k", "tree_id": "t", "author": "M <m@example.com>",
+                 "description": "feat: x", "parents": []},
+        "receipt": {"path": "r.log", "digest": "d", "exit_line": "exit=0"},
+        "requested_at": "2026-09-15T10:00:00Z", "status": "queued"
+    }"#;
+    let request: Request = serde_json::from_str(record).expect("old record parses");
+    assert_eq!(request.kind, Kind::Head);
+    assert!(request.open.is_none() && request.coverage.is_none());
+    assert_eq!(
+        request.receipt.as_ref().map(|r| r.path.as_str()),
+        Some("r.log")
+    );
 }
