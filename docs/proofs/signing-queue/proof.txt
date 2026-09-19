@@ -1,0 +1,163 @@
+
+# Scenario: Queue is empty
+❯ rune sign queue; rune sign next
+the signing queue at /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/state/sign-queue is empty
+nothing to sign in /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/state/sign-queue
+
+# Scenario: Head queued after a passing dry run
+❯ rune sign queue change/top --receipt top.log
+queued 26eb6de38df2a642 change/top at 80cbee837ac1: run `rune sign next` at the key
+❯ rune sign submit change/base --receipt base.log
+queued f16c0fde4c4495b1 change/base at 13ec797c81b8: run `rune sign next` at the key
+
+# Scenario: Receipt reports a failure
+❯ rune sign queue change/base --receipt failing.log; echo "exit=$?"
+fatal: receipt failing.log reports `dryrun-exit=1`: the head is not clean
+exit=2
+
+# Scenario: Stack of two
+❯ rune sign queue
+current  f16c0fde4c4495b1 change/base                  13ec797c81b8 /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+blocked  26eb6de38df2a642 change/top                   80cbee837ac1 /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+
+# Scenario: Pinentry timed out once
+❯ printf Timeout > "$FAKE_GPG_FAIL_ONCE"; rune sign next
+signing timed out (attempt 1 of 3): Internal error: Unexpected error from backend
+Caused by:
+1: Could not write object of type commit
+2: Signing error
+3: GPG failed with exit status: 2:
+gpg: signing failed: Timeout
+signed change/base 7a6337aa065473e5b19a2fb7a1a85898af7e576d
+❯ jj log --no-graph -r 'bookmarks(exact:"change/base")' -T 'if(signature, signature.status(), "unsigned")'
+good
+
+# Scenario: Head rewritten by signing an ancestor
+❯ rune sign queue
+signed   f16c0fde4c4495b1 change/base                  13ec797c81b8 /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+current  26eb6de38df2a642 change/top                   80cbee837ac1 /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+
+# Scenario: Every current request signs in order
+❯ rune sign all
+signed change/top 7655e0e259d5e8214fe20710dc0bdfa5fefdac76
+
+# Scenario: Show and JSON
+❯ rune sign show change/top
+state        signed
+id           26eb6de38df2a642
+bookmark     change/top
+workspace    /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+repository   /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git
+commit       80cbee837ac17510b42c1121c21b4f36624393a6
+change       slorkoqxwzqyrnrqzqyxqwknpvpyysou
+author       Model One <model-one@example.com>
+receipt      /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/top.log
+exit         exit=0
+requested    2026-09-15T23:00:22.827Z
+signed       7655e0e259d5e8214fe20710dc0bdfa5fefdac76
+❯ rune sign queue --json | head -c 160
+[
+  {
+    "state": "signed",
+    "id": "f16c0fde4c4495b1",
+    "repository": "/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git"
+
+# Scenario: Head amended after the request
+❯ fresh side; rune sign queue change/side --receipt side.log
+queued 9ce4b97153aedcb9 change/side at 87bbaa3eb98f: run `rune sign next` at the key
+❯ jj describe -r change/side -m 'feat: side, amended' >/dev/null; rune sign show change/side
+Rebased 1 descendant commits.
+Working copy  (@) now at: kkrsrvou 7f974bc5 (no description set)
+Parent commit (@-)      : mnktzyms deb7dc65 change/side | feat: side, amended
+state        stale
+id           9ce4b97153aedcb9
+bookmark     change/side
+workspace    /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+repository   /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git
+commit       87bbaa3eb98ff2cfc7a7f0a2cc7c4ac141087689
+change       mnktzymsrzszwmplswmpqwsrozwvmnxp
+author       Model One <model-one@example.com>
+receipt      /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/side.log
+exit         exit=0
+requested    2026-09-15T23:01:00.402Z
+
+# Scenario: Stale request in the queue
+❯ rune sign next; echo exit=$?
+skipped: stale change/side
+exit=1
+
+# Scenario: Request withdrawn
+❯ rune sign drop change/side
+dropped 9ce4b97153aedcb9 change/side
+
+# Scenario: Pinentry cancelled
+❯ fresh cancel; rune sign queue change/cancel --receipt cancel.log >/dev/null; printf 'Operation cancelled' > "$FAKE_GPG_FAIL_ONCE"; rune sign next; echo exit=$?
+cancelled: Internal error: Unexpected error from backend
+Caused by:
+1: Could not write object of type commit
+2: Signing error
+3: GPG failed with exit status: 2:
+gpg: signing failed: Operation cancelled change/cancel
+exit=1
+❯ rune sign show change/cancel
+state        current
+id           0805d44e2c761755
+bookmark     change/cancel
+workspace    /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+repository   /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git
+commit       9c54059aa1d59b37253d09684962f2f558566a0b
+change       tvvkknyvsznxtmoovysxysnpzxuvozsz
+author       Model One <model-one@example.com>
+receipt      /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/cancel.log
+exit         exit=0
+requested    2026-09-15T23:01:19.247Z
+
+# Scenario: Signature from another key
+❯ FAKE_GPG_KEY=0000000000000000 rune sign next; echo exit=$?
+failed: signature from key 0000000000000000 is not in KEYS change/cancel
+exit=1
+❯ rune sign show change/cancel
+state        failed
+id           0805d44e2c761755
+bookmark     change/cancel
+workspace    /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo
+repository   /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git
+commit       9c54059aa1d59b37253d09684962f2f558566a0b
+change       tvvkknyvsznxtmoovysxysnpzxuvozsz
+author       Model One <model-one@example.com>
+receipt      /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/cancel.log
+exit         exit=0
+requested    2026-09-15T23:01:19.247Z
+failure      signature from key 0000000000000000 is not in KEYS
+
+# Scenario: Two owners at once
+❯ rune sign queue --prune >/dev/null; fresh two; rune sign queue change/two --receipt two.log >/dev/null; two_owners
+fatal: another signer holds /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/repo/.git: process 70091 since 2026-09-15T23:01:35.991Z
+exit=2
+signed change/two 2157e1868ffe0d10aa263b6648b4f6111eff8784
+
+# Scenario: Signer crashed after signing
+❯ fresh late; rune sign queue change/late --receipt late.log >/dev/null; crash_claim late; rune sign next
+signed change/late 90913bbb41ef1d60e107195c1a0601d0652c5a54
+
+# Scenario: Repository names a hostile signing program
+❯ plant_hostile
+signing.backends.gpg.program = "/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.dlvrsJ4siS/hostile"
+❯ fresh safe; rune sign queue change/safe --receipt safe.log >/dev/null; rune sign next; test -e "$PROOF_HOME/pwned" && echo 'hostile program ran' || echo 'hostile program never ran'
+signed change/safe ced1ad34c4514fe45b035b37c0c04eb9504fc2a2
+hostile program never ran
+
+# Scenario: Repository aliases a template keyword
+❯ printf '[template-aliases]\nvalue = %s\n' "'\"forged\"'" >> "$XDG_CONFIG_HOME/jj/repos/$(cat .jj/repo/config-id)/config.toml"; fresh alias; rune sign queue change/alias --receipt alias.log >/dev/null; rune sign next; echo exit=$?
+fatal: the jj config defines template-aliases.value, which changes what jj reports: unset it before signing
+exit=2
+
+# Scenario: Subcommand followed by a ceremony flag
+❯ rune sign next --tag v1; echo exit=$?
+error: unexpected argument '--tag' found
+
+Usage: rune sign next [OPTIONS]
+
+For more information, try '--help'.
+exit=2
+# Done
