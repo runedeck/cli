@@ -1,0 +1,27 @@
+# rumdl configuration. MD013 is off because prose lines wrap at the editor,
+# not at a column count. MD025 is off because it reads the frontmatter title
+# as the document title and demotes every body heading, which breaks the
+# mdschema structure contracts. MD041 is off because change proposals open
+# with frontmatter and no title field.
+[global]
+disable = ["MD013", "MD025", "MD041"]
+# Adopted artifacts carry digest-bound provenance sidecars, so their bytes
+# stay exactly as adopted. Deployed provider trees are rune output.
+exclude = [
+    ".provenance",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".opencode",
+    # Markdown fixtures are test inputs, and the embedded skeleton is a
+    # template payload; neither is this repository's prose.
+    "tests/fixtures",
+    "rune-docs/tests/fixtures",
+    "src/cli/adopt/fixtures",
+    "templates",
+    "rune-docs/templates",
+]
+
+# Nested lists indent four spaces, the repository convention.
+[MD007]
+indent = 4

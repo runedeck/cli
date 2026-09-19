@@ -64,9 +64,9 @@ ADR creation, import, archive publication, and reconciliation coordinate allocat
 
 ## Risks / Trade-offs
 
-- Preserving archive leaves decisions unpublished until reconciliation; health output makes this state visible.
-- Workflow-schema copies can drift from canonical templates; byte comparison makes drift detectable.
-- Required decisions add ceremony to maintenance work; the reasoned exemption keeps omission explicit.
+- Preserving archive leaves decisions unpublished until reconciliation. Health output makes this state visible.
+- Workflow-schema copies can drift from canonical templates. Byte comparison makes drift detectable.
+- Required decisions add ceremony to maintenance work. The reasoned exemption keeps omission explicit.
 - Repository-scoped publication expands transaction recovery beyond specification-root writes.
 
 ## Migration Plan

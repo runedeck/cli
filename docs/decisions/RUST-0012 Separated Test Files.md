@@ -35,7 +35,7 @@ Rust allows tests inline via `#[cfg(test)] mod tests { ... }` at the bottom of t
 
 Every module uses directory form with a sibling test file:
 
-```
+```text
 src/<module>/
     mod.rs       # production code only
     tests.rs     # all tests for this module

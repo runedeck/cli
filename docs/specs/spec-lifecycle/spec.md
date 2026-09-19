@@ -101,7 +101,7 @@ Capability identifiers SHALL support repository-relative path segments such as `
 
 ### Requirement: Ownership-preserving conversion
 
-`rune spec import --openspec` and `rune spec export --openspec` SHALL move artifacts between the selected root and `openspec/` while preserving bytes. Import SHALL record each path, classification, and SHA-256 digest in `.interop/openspec/manifest.yaml`; unknown artifacts SHALL live under `.interop/openspec/files/` until export restores them.
+`rune spec import --openspec` and `rune spec export --openspec` SHALL move artifacts between the selected root and `openspec/` while preserving bytes. Import SHALL record each path, classification, and SHA-256 digest in `.interop/openspec/manifest.yaml`. Unknown artifacts SHALL live under `.interop/openspec/files/` until export restores them.
 
 #### Scenario: Unknown artifact round trip
 

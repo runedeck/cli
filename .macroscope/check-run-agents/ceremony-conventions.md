@@ -21,7 +21,7 @@ showToolCalls: true
 # Workflow and hook review
 
 Review changed GitHub Actions workflows, git hooks, and shell scripts for
-the conventions below. Flag violations in touched code only; do not demand
+the conventions below. Flag violations in touched code only. Do not demand
 unrelated repository-wide cleanup.
 
 ## Trust boundaries
@@ -30,7 +30,7 @@ unrelated repository-wide cleanup.
   execute head code trigger on pull_request, and pull_request_target jobs
   are API-only and never check out the head.
 - Checkouts that execute head code set persist-credentials: false.
-- workflow_call secrets are declared required: true; fork handling lives in
+- workflow_call secrets are declared required: true. Fork handling lives in
   job guards and in GitHub stripping fork secrets, not in the secret
   contract.
 - Third-party actions pin a full commit SHA with a version comment.
@@ -45,18 +45,18 @@ unrelated repository-wide cleanup.
 - Review labels request one round and are consumed when the round ends,
   including failed rounds, and deleted with the workflow token so the
   deletion event triggers nothing.
-- Verdict gates validate the full tuple: verdict value, zero count, empty
+- Verdict checks validate the full tuple: verdict value, zero count, empty
   findings, and a head SHA matched against the live pull request head.
 
 ## Runner and shell
 
-- Paginate gh output with per-page --jq arrays merged through jq -s 'add';
-  the hosted runner's gh predates --slurp.
+- Paginate gh output with per-page --jq arrays merged through jq -s 'add'.
+  The hosted runner's gh predates --slurp.
 - GraphQL bot logins are bare (cursor, macroscopeapp), never the
   REST-style [bot] suffix.
 - Hooks preserve their stdin protocol: extensions run with stdin
   redirected from /dev/null and only when the hook received arguments.
-- Regexes that gate security decisions anchor their match; gitleaks
+- Regexes behind security decisions anchor their match. The gitleaks
   allowlist paths start with ^.
 - Four-space indentation, no tab characters outside Makefile recipes, and
   every text file ends with a newline.

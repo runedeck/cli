@@ -16,7 +16,7 @@
 
 ### Requirement: Segmentation is deterministic
 
-Segmentation SHALL be line-based and reproducible: identical input yields identical blocks and ids. Frontmatter is one block; a fenced code block is atomic; paragraphs split at blank lines; consecutive list items group into one block; consecutive table lines group; headings are their own blocks. Each block SHALL carry an ordinal id per file and a SHA-256 digest of its content.
+Segmentation SHALL be line-based and reproducible: identical input yields identical blocks and ids. Frontmatter is one block. A fenced code block is atomic. Paragraphs split at blank lines. Consecutive list items group into one block. Consecutive table lines group. Headings are their own blocks. Each block SHALL carry an ordinal id per file and a SHA-256 digest of its content.
 
 #### Scenario: Fences are never split
 

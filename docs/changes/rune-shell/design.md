@@ -34,7 +34,7 @@ A direct-action H2 model was rejected because reference skills and router skills
 
 ## Structure
 
-Canonical source follows Agent Skills directly: the directory, frontmatter `name`, and H1 use the same lowercase kebab-case identifier. Top-level frontmatter contains only `name`, `description`, `license`, `compatibility`, `metadata`, and `allowed-tools`; provider transforms introduce provider-specific fields when assembling a target.
+Canonical source follows Agent Skills directly: the directory, frontmatter `name`, and H1 use the same lowercase kebab-case identifier. Top-level frontmatter contains only `name`, `description`, `license`, `compatibility`, `metadata`, and `allowed-tools`. Provider transforms introduce provider-specific fields when assembling a target.
 
 - `RuneShell.md` states the authoring rule in provider-neutral Markdown.
 - Standalone `mdschema` enforces the H1, H2 vocabulary and order, maximum depth, sequential levels, and heading uniqueness.
@@ -65,7 +65,7 @@ Read this before trusting a green `rune validate`. Each requirement names the on
 
 The built-in checker skips any section marked `optional: true` before reading it, which is every Stable shell section except `Instructions`. Their ordering, their permitted children, and their presence therefore go unchecked without the standalone binary. Depth and level continuity still apply to the headings inside them, because those rules walk every heading in the file rather than the declared structure.
 
-Install the standalone checker with `brew install jackchuka/tap/mdschema`; the test suite requires it.
+Install the standalone checker with `brew install jackchuka/tap/mdschema`. The test suite requires it.
 
 ## Risks
 
@@ -74,6 +74,5 @@ Install the standalone checker with `brew install jackchuka/tap/mdschema`; the t
 - Existing skills can contain useful sections outside the vocabulary. Migration moves their content under the closest Stable shell section rather than deleting it.
 - Frontmatter and heading names can drift independently. Rune checks their equality because mdschema cannot compare those values.
 
-[MINT-TEMPLATES]: https://www.mintlify.com/docs/guides/content-templates "Mintlify content templates"
 [MINT-TEXT]: https://www.mintlify.com/docs/create/text "Mintlify heading guidance"
 [AGENTSKILLS]: https://agentskills.io/specification#body-content "Agent Skills specification, Body content"

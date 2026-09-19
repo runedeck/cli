@@ -28,7 +28,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-Rune needs room for local verbs, module-specific workflows, and extension commands without adding a Rust enum variant for every new action. Git solves this by dispatching unknown verbs to `git-<verb>` executables. The same pattern fits Rune because the kernel only needs to provide config, process execution, and dispatch; real capability can live in scripts owned by modules or extensions.
+Rune needs room for local verbs, module-specific workflows, and extension commands without adding a Rust enum variant for every new action. Git solves this by dispatching unknown verbs to `git-<verb>` executables. The same pattern fits Rune because the kernel only needs to provide config, process execution, and dispatch. Real capability can live in scripts owned by modules or extensions.
 
 ## Decision Drivers
 
@@ -58,7 +58,7 @@ If no script is found, Rune prints `error: unknown command 'rune <verb>' (no run
 - The Rust command enum remains focused on kernel services and stable built-ins.
 - External commands receive the same ontology context as exec scripts.
 - Search order makes module-local commands override extensions, and extensions override ambient `PATH`.
-- Script authors own their dependencies and behavior; Rust only dispatches.
+- Script authors own their dependencies and behavior. Rust only dispatches.
 
 ## More Information
 

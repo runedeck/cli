@@ -2,6 +2,7 @@
 adr: "https://github.com/runedeck/deck/blob/main/docs/decisions/CORE-0013 Attribution Signing and Merge Ceremony.md"
 status: proposed
 ---
+
 # Rune Sign
 
 ## Why
@@ -13,7 +14,7 @@ The review ceremony keeps agent commits unsigned and anchors trust in the owner'
 - `rune sign` seals the current branch: empty owner-signed commit, pushed
 - `rune sign --tag <name>` creates, verifies, and pushes an owner-signed annotated tag
 - `rune sign --verify [ref]` checks a seal or tag against `KEYS`, exit code for CI
-- A seal attests only the history beneath it; later pushes unseal
+- A seal attests only the history beneath it. Later pushes unseal
 
 ## Capabilities
 

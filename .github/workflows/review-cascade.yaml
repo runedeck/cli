@@ -6,22 +6,22 @@ name: Review Cascade
 # or in the body.
 on:
     pull_request_target:
-        types: [opened, labeled, unlabeled, ready_for_review]
+        types: [labeled, unlabeled, ready_for_review]
 
 # The body uses the workflow token to read check runs, the live head, and
-# review threads. issues: write lets it consume labels with the same token;
-# those removals emit no events and cannot cancel a lane.
+# review threads. PR label changes need pull-requests: write and issues: write.
+# Workflow-token label removal emits no event and cannot cancel the lane.
 permissions:
     contents: read
     checks: read
-    pull-requests: read
+    pull-requests: write
     issues: write
 
-# Applying or removing a fresh bare review label may cancel a cascade. Every
-# other label re-enters this group without interrupting the active round.
+# A fresh review request replaces the active cascade.
+# Label removal cannot cancel a round after dispatch.
 concurrency:
     group: review-cascade-${{ github.event.pull_request.number }}
-    cancel-in-progress: ${{ contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && github.event.label.name == 'review' }}
+    cancel-in-progress: ${{ github.event.action == 'labeled' && github.event.label.name == 'review' }}
 
 jobs:
     # A queued ready event keeps its label payload after another round
@@ -62,13 +62,12 @@ jobs:
         # label on a fork head runs the cascade, the correctness lane
         # refuses fork heads on its own, and the ordered workflow stops
         # after the free lanes (docs/specs/review-ceremony/spec.md, Fork
-        # pull request scenario). Only the free opened round is held to
-        # same-repository heads, so a fork spends nothing unlabeled.
-        if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''opened'' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
+        # pull request scenario). Nothing starts on open: every round
+        # answers an owner-applied label, so a fork spends nothing unlabeled.
+        if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
+        with:
+            macroscope_correctness_check: ${{ vars.MACROSCOPE_CORRECTNESS_CHECK }}
         secrets:
             RUNEWRIGHT_APP_ID: ${{ secrets.RUNEWRIGHT_APP_ID }}
             RUNEWRIGHT_APP_KEY: ${{ secrets.RUNEWRIGHT_APP_KEY }}
-            # Cursor ignores bot-authored review comments; the cascade posts
-            # its trigger comment with this owner-minted token instead.
-            RUNEWRIGHT_GITHUB_TOKEN: ${{ secrets.RUNEWRIGHT_GITHUB_TOKEN }}

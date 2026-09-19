@@ -11,7 +11,7 @@
 
 ## Walkthroughs
 
-Review sessions per surface; the unbuilt ones double as design contracts:
+Review sessions per surface. The unbuilt ones double as design contracts:
 
 - [TUI](walkthroughs/Tui.md)
 - [Spec](walkthroughs/Spec.md)
@@ -23,4 +23,4 @@ Review sessions per surface; the unbuilt ones double as design contracts:
 
 ## Managed trees
 
-`decisions/` is maintained through `rune adr`, `changes/` and `specs/` through `rune spec`; `rune docs check` verifies the links on this page and everything it reaches.
+`decisions/` is maintained through `rune adr`, `changes/` and `specs/` through `rune spec`. `rune docs check` verifies the links on this page and everything it reaches.

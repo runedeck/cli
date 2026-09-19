@@ -28,7 +28,7 @@ Skills, agents, and rules are authored as markdown with YAML frontmatter — the
 
 ## Decision Drivers
 
-- Authors write one source of truth; deployment targets may differ per provider
+- Authors write one source of truth. Deployment targets may differ per provider
 - Frontmatter carries metadata for tooling but has no function for the target scaffolding — deploying it wastes tokens
 - Reference-style links (`[1]: url`) provide provenance in source but waste tokens in deployed content where the AI never follows them
 - Variant overrides (user/, provider/) must merge with the base via append/prepend/replace modes (per CORE-0018 [3])
@@ -49,7 +49,7 @@ Steps:
 2. **Resolve variant** — check qualifier directories (user/ > provider/model/ > provider/ > base) for overrides
 3. **Merge** — combine base + variant body using the variant's `mode` field (append, prepend, replace)
 4. **Strip** — remove frontmatter delimiters, H1 heading, and reference-style link definitions from the assembled body
-5. **Format** — apply provider-specific output formatting (YAML frontmatter for Claude/Gemini/OpenCode; TOML for Codex agents only, while Codex skills and rules stay markdown)
+5. **Format** — apply provider-specific output formatting (YAML frontmatter for Claude/Gemini/OpenCode, TOML for Codex agents only, while Codex skills and rules stay markdown)
 
 ## Consequences
 

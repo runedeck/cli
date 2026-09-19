@@ -32,15 +32,15 @@ upstream: []
 
 ## Decision Drivers
 
-- CLI-0018 is accepted and carries a script extension contract; discarding it breaks existing middleware
-- Cross-vendor overrides must be pure environment configuration; rune manages no proxies
+- CLI-0018 is accepted and carries a script extension contract. Discarding it breaks existing middleware
+- Cross-vendor overrides must be pure environment configuration. Rune manages no proxies
 - Secrets must never live in config files or appear in launch output
 - Untrusted repositories must not be able to redirect credentials through launch configuration
 
 ## Considered Options
 
 1. **Profile-only launcher**: replace the middleware chain with named env presets.
-2. **Profiles compose with the chain**: a profile contributes `env`, `args`, and `with` entries; the chain machinery stays authoritative for plan composition.
+2. **Profiles compose with the chain**: a profile contributes `env`, `args`, and `with` entries. The chain machinery stays authoritative for plan composition.
 
 ## Decision Outcome
 
@@ -51,10 +51,10 @@ Chosen option: **Option 2.**
 - Profiles resolve from the user config only. Repo-level profile definitions stay out until a restricted merge exists that forbids credential, endpoint, proxy, certificate, `PATH`, loader, `HOME`, and `XDG_*` keys from repository sources.
 - Bare `rune launch` lists known tools with install state and defined profiles.
 - For `ollama`, a profile name with no matching profile is a model: `rune launch llama3@ollama` dispatches `ollama run llama3`.
-- The pre-exec freshness warning (deployment older than the deck) waits until deploy records the source commit in the manifest; age heuristics were rejected.
+- The pre-exec freshness warning (deployment older than the deck) waits until deploy records the source commit in the manifest. Age heuristics were rejected.
 
 ## Consequences
 
-- Existing middleware configuration and flags keep working unchanged; profiles are additive.
-- Dry-run output redacts values of credential-marker keys (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`) in both env lines and wrapped argv; `SENSITIVE_ENV_KEYS` separately blocks middleware from setting loader variables.
-- Cross-vendor launches (Sol inside Claude Code) become a profile with `ANTHROPIC_BASE_URL` + model env pointing at infrastructure the user runs; rune ships commented templates, not endpoints.
+- Existing middleware configuration and flags keep working unchanged. Profiles are additive.
+- Dry-run output redacts values of credential-marker keys (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`) in both env lines and wrapped argv. `SENSITIVE_ENV_KEYS` separately blocks middleware from setting loader variables.
+- Cross-vendor launches (Sol inside Claude Code) become a profile with `ANTHROPIC_BASE_URL` + model env pointing at infrastructure the user runs. Rune ships commented templates, not endpoints.

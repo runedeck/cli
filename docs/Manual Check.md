@@ -42,9 +42,9 @@ rune add --cast development
 5. **Code view shows the real file** — drill into a rule or agent (not just a skill), open the
    Code tab. It renders the actual source bytes, never "source unavailable".
 
-6. **Number keys don't trap you** — in the Code tab press `1` `2`. The footer shows
+6. **Number keys do not trap you** — in the Code tab press `1` `2`. The footer shows
    `count: 12 — press j/k to repeat, Esc to cancel`. Press `Esc` → it clears. Press a letter
-   that isn't a motion → count clears and the letter acts. No stuck "999999" mode.
+   that is not a motion → count clears and the letter acts. No stuck "999999" mode.
 
 7. **Comment with `c` then Enter** — in the Code tab, put the cursor on a line, press `c`,
    type text, press **Enter**. The comment saves and the box closes (last time Enter did
@@ -85,7 +85,7 @@ rune add --cast development
     ```
 
 13. **Spec-driven lifecycle** (the openspec adoption — lives under `docs/`, no `openspec/` folder).
-    Try it in a throwaway copy of the deck so you don't touch the real one:
+    Try it in a throwaway copy of the deck so you do not touch the real one:
 
     ```sh
     D=$(mktemp -d) && cp -R ~/Developer/runedeck/deck/* "$D/" && cd "$D"
@@ -99,9 +99,9 @@ rune add --cast development
     rune spec archive some-other-change --abandon     # the escape hatch: archives without merging
     ```
 
-    The guardrails you approved: `proposal.md` links the ADR for the *why* (doesn't restate it),
+    The guardrails you approved: `proposal.md` links the ADR for the *why* (does not restate it),
     every change ends explicitly merged **or** `--abandon`ed (no silent rot), and the README
-    states the complexity threshold (change folders are for multi-session work; small fixes skip
+    states the complexity threshold (change folders are for multi-session work, small fixes skip
     the ceremony).
 
 ---
@@ -116,4 +116,4 @@ rune add --cast development
 - crex visual idioms folded into the pane TUI (adaptive palette, grouped emoji help, digit-jump).
 - `rune shell` — a crex-style REPL surface mirroring the CLI 1:1. Unrelated to the Stable shell heading convention and the `RuneShell` rule that carries it.
 
-Say the word and I hand these to Sol; otherwise they wait until after your manual check.
+Say the word and I hand these to Sol. Otherwise they wait until after your manual check.

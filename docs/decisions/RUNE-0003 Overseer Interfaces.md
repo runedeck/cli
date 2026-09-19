@@ -37,19 +37,19 @@ rune manages deck state, casts, and deployment history across decks and kinds. C
 
 rune ships two interfaces over one deck-state layer.
 
-**Terminal UI (primary):** vim-keybinding interaction modeled on tuicr; Miller columns for deck, kind, and status navigation; cast composition workflows; a history view following gitui and jjui patterns with batched background log walking, a sliding metadata window, bindings mapped to actions rather than hardcoded keys, and jj graph glyphs parsed rather than hand-drawn.
+**Terminal UI (primary):** vim-keybinding interaction modeled on tuicr. Miller columns for deck, kind, and status navigation. Cast composition workflows. A history view following gitui and jjui patterns with batched background log walking, a sliding metadata window, bindings mapped to actions rather than hardcoded keys, and jj graph glyphs parsed rather than hand-drawn.
 
-**Read-only web dashboard:** axum, htmx, and askama on loopback; inspection only.
+**Read-only web dashboard:** axum, htmx, and askama on loopback. Inspection only.
 
 Both consume the same services layer as CLI commands. Neither mutates state the CLI cannot perform.
 
-gitui and jjui are MIT-licensed. Vendoring specific components with attribution is permitted; adopting patterns is preferred over wholesale copies.
+gitui and jjui are MIT-licensed. Vendoring specific components with attribution is permitted. Adopting patterns is preferred over wholesale copies.
 
 ## Consequences
 
 - Operators get fast keyboard-driven navigation plus a browser view for casual inspection without learning the full CLI
 - Shared services keep behavior consistent across surfaces
 - Two interfaces cost more to build and maintain than a CLI-only tool
-- The TUI carries the complexity of log walking and graph rendering; write workflows stay in the terminal because the dashboard is read-only
+- The TUI carries the complexity of log walking and graph rendering. Write workflows stay in the terminal because the dashboard is read-only
 - Vendored components need license attribution and periodic alignment when upstream UI projects change
-- The batched history walking, sliding metadata window, and cast composition views are decided direction, not yet implemented; the current TUI loads a short synchronous history window
+- The batched history walking, sliding metadata window, and cast composition views are decided direction, not yet implemented. The current TUI loads a short synchronous history window

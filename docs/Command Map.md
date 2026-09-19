@@ -20,14 +20,14 @@ pass. The rest are its plumbing, useful when one stage is being debugged:
   `build/` intact.
 - `deploy` — copies an existing `build/` into provider targets and updates
   each target's `.manifest`.
-- `copy` — verbatim copy with provenance but no transforms; for content that
+- `copy` — verbatim copy with provenance but no transforms. For content that
   must land byte-identical.
 
-Mutating commands hold a per-target lock; see [Exit Codes](Exit%20Codes.md).
+Mutating commands hold a per-target lock. See [Exit Codes](Exit%20Codes.md).
 
 ## Checking health
 
-The five check commands form a ladder; run them in this order when something
+The five check commands form a ladder. Run them in this order when something
 looks wrong:
 
 1. `validate` — is the source well-formed? (schemas, lint)
@@ -39,7 +39,7 @@ looks wrong:
 
 `bench doctor`, `spec doctor`, and `adopt doctor` are the same idea scoped to
 their own subsystems. `adopt doctor` verifies pending external sessions and
-reviewed adopt sidecar digests; legacy review ledgers are migration warnings,
+reviewed adopt sidecar digests. Legacy review ledgers are migration warnings,
 not final authority.
 
 ## Bringing content in
@@ -48,5 +48,5 @@ not final authority.
 - `adopt` — the reviewed path over the same import: a block-by-block external
   session (`start`, `next`, `verdict`, `finalize`) that seals final digests and
   concise review metadata into adopt/v1 sidecars, then removes the temporary
-  block state. Content that will ship to other people goes through `adopt`;
+  block state. Content that will ship to other people goes through `adopt`.
   scratch experiments can use `import`.

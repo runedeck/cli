@@ -30,9 +30,9 @@ rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync
 
 ## Decision Drivers
 
-- Deployment (file routing to provider directories) is a commodity — don't reinvent it
+- Deployment (file routing to provider directories) is a commodity — do not reinvent it
 - Assembly (frontmatter stripping, variant merging, provenance) is our unique value
-- rulesync's lockfile pattern solves distribution in a way our manifest doesn't
+- rulesync's lockfile pattern solves distribution in a way our manifest does not
 - Not all users will have rulesync installed — need a fallback
 
 ## Considered Options
@@ -45,14 +45,14 @@ rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync
 
 Chosen option: **Optional integration**. rune-cli assembles content and deploys with its own minimal deployer (reads provider config, copies files). rulesync is not required. For teams that use rulesync, rune-cli can output assembled content in a format rulesync can consume.
 
-What rulesync handles that we don't need to build:
+What rulesync handles that we do not need to build:
 
 - Routing to 21+ providers beyond our core 4
 - Lockfile-based git package management
 - Hook event name mapping across providers
 - Simulated features for tools with limited native support
 
-What we handle that rulesync doesn't:
+What we handle that rulesync does not:
 
 - Frontmatter stripping and reference link removal
 - Variant merging (base + overlay with append/prepend/replace)
