@@ -15,6 +15,9 @@ rules:
             - review-cursor.yaml
             - review-pragent.yaml
             - thread-resolver.yaml
+            # The seal check reads KEYS and the verifier from the default
+            # branch and fetches the head as objects only.
+            - owner-seal.yaml
             # workflow_run is the only trigger that sees a merge on main; the
             # job checks out the completed run's head, never a PR head.
             - spec-drift.yaml
@@ -52,6 +55,16 @@ rules:
         ignore:
             - attestations.yaml
             - secret-scan.yaml
+    self-repository:
+        # The `$/` form guards against a runtime-cloned action directory. A
+        # local reusable workflow is resolved by the service at the caller's
+        # commit either way, and the Action pinning step in quality.yaml
+        # and the pinned actionlint know the `./` form.
+        ignore:
+            - draft-open.yaml
+            # Consumer entry: the release workflow calls this repository's own
+            # setup-rune action, the same `./` form.
+            - module-release.yaml
     template-injection:
         # The expansion sites are separate triage work.
         ignore:

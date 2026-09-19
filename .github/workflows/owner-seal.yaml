@@ -1,0 +1,162 @@
+name: Owner Seal
+
+# The required owner-seal check (docs/specs/release-ceremony): a ready pull
+# request passes only with a valid open-seal beneath its head and a valid
+# merge-seal at its head. A draft passes without seals.
+#
+# Two jobs report two check runs. `owner-seal/open` is the open-seal alone:
+# the controller reads its conclusion, together with draft == false, as
+# the "ready with a valid open-seal" condition that starts the funnel.
+# `owner-seal` is the whole check the ruleset requires: it fails when the
+# open half failed, then verifies the merge-seal.
+#
+# pull_request_target, deliberately: the workflow file, KEYS, and the
+# verifier come from the default branch, never from the pull request head.
+# The job checks out the default branch and fetches the head as objects
+# only, and nothing from the head runs. A head branch can still define a
+# `pull_request` workflow whose job is named `owner-seal`, and that check
+# run comes from the same GitHub Actions integration id, so a repository
+# ruleset cannot tell the two apart. The real boundary is an organization
+# ruleset `workflows` rule pinned to this file on the default branch of a
+# source repository. Until that rule exists, treat a same-named check run
+# from a `pull_request` event on a head that edits this file as a forgery.
+#
+# The ledger the merge half checks is a check run named `ledger` on
+# `reviewed_sha`, created by the controller under the app named by
+# LEDGER_APP, the reviewing identity. Only the app that created a check
+# run can edit it, so the first line of its output text, `ledger:
+# {"artifact_id":..,"digest":..,"generation":..,"pull_request":..,
+# "reviewed_sha":..}`, is the controller's word and nobody else's. The
+# digest is the sha256 of the ledger artifact, and the merge-seal binds
+# it, so the owner sealed the very record the check reads. No ledger, no
+# pass. A generation bump raises no pull request event, so the
+# controller MUST rerequest the `owner-seal` check run on the head after
+# every ledger write (POST /repos/{repo}/check-runs/{id}/rerequest, which
+# needs checks: write on the app). A label touch by the owner is the
+# manual way to re-run the check without a push.
+on:
+    pull_request_target:
+        types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited, labeled, unlabeled]
+
+permissions: {}
+
+env:
+    LEDGER_APP: runeseer
+
+concurrency:
+    group: owner-seal-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    open:
+        name: owner-seal/open
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            pull-requests: read
+        steps:
+            - name: Draft
+              if: github.event.pull_request.draft
+              run: echo "draft, seals not required yet"
+
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              if: '!github.event.pull_request.draft'
+              with:
+                  ref: ${{ github.event.repository.default_branch }}
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Verify the open-seal
+              if: '!github.event.pull_request.draft'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPOSITORY: ${{ github.repository }}
+                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  BASE_REF: ${{ github.event.pull_request.base.ref }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: |
+                  set -euo pipefail
+                  # The verifier and KEYS are the default branch's. A
+                  # mismatch here means the checkout is not the trusted one.
+                  checked_out=$(git rev-parse HEAD)
+                  trusted=$(git rev-parse "origin/$DEFAULT_BRANCH")
+                  [ "$checked_out" = "$trusted" ] \
+                      || { echo "the trusted checkout $checked_out is not $DEFAULT_BRANCH at $trusted"; exit 1; }
+                  git fetch --quiet origin "pull/$PR_NUMBER/head"
+                  git cat-file -e "$HEAD_SHA^{commit}" \
+                      || { echo "the pull request head $HEAD_SHA was not fetched; rerun the check"; exit 1; }
+                  git cat-file -e "$BASE_SHA^{commit}" || git fetch --quiet origin "$BASE_SHA"
+                  # Every open pull request body: this one must carry the
+                  # nonce, and any other that carries it is reported.
+                  gh api --paginate "repos/$REPOSITORY/pulls?state=open&per_page=100" \
+                      --jq '[.[] | {number, body}]' | jq -s 'add // []' > "$RUNNER_TEMP/open-bodies.json" \
+                      || { echo "could not read the open pull requests; rerun the check"; exit 1; }
+                  bash scripts/verify-seal open \
+                      --head "$HEAD_SHA" --repo "$REPOSITORY" --base "$BASE_REF" --number "$PR_NUMBER" \
+                      --keys KEYS --open-bodies "$RUNNER_TEMP/open-bodies.json" --since "$BASE_SHA"
+
+    seal:
+        name: owner-seal
+        needs: open
+        # always(): a skipped required check reads as satisfied, so this
+        # job runs and fails on its own when the open half failed.
+        if: always()
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            checks: read
+        steps:
+            - name: Draft
+              if: github.event.pull_request.draft
+              run: echo "draft, seals not required yet"
+
+            - name: Open-seal result
+              if: '!github.event.pull_request.draft'
+              env:
+                  OPEN_RESULT: ${{ needs.open.result }}
+              run: |
+                  [ "$OPEN_RESULT" = success ] \
+                      || { echo "the open-seal check ended $OPEN_RESULT; no merge-seal can stand on it"; exit 1; }
+
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              if: '!github.event.pull_request.draft'
+              with:
+                  ref: ${{ github.event.repository.default_branch }}
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Verify the merge-seal
+              if: '!github.event.pull_request.draft'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPOSITORY: ${{ github.repository }}
+                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              run: |
+                  set -euo pipefail
+                  checked_out=$(git rev-parse HEAD)
+                  trusted=$(git rev-parse "origin/$DEFAULT_BRANCH")
+                  [ "$checked_out" = "$trusted" ] \
+                      || { echo "the trusted checkout $checked_out is not $DEFAULT_BRANCH at $trusted"; exit 1; }
+                  git fetch --quiet origin "pull/$PR_NUMBER/head"
+                  git cat-file -e "$HEAD_SHA^{commit}" \
+                      || { echo "the pull request head $HEAD_SHA was not fetched; rerun the check"; exit 1; }
+                  # The merge-seal's sole parent is reviewed_sha; the
+                  # verifier proves that. The ledger lives on that parent.
+                  reviewed=$(git rev-list --parents -n 1 "$HEAD_SHA" | cut -d ' ' -f 2)
+                  # LEDGER_APP is workflow-fixed text, so it may sit inside
+                  # the filter. Pages merge through jq -s; the newest check
+                  # run from the app wins.
+                  ledger=$(gh api --paginate "repos/$REPOSITORY/commits/$reviewed/check-runs?check_name=ledger&per_page=100" \
+                      --jq "[.check_runs[] | select(.app.slug == \"$LEDGER_APP\")]" \
+                      | jq -s -r 'add // [] | max_by(.id) | .output.text // "" | split("\n") | first | select(startswith("ledger: ")) | ltrimstr("ledger: ")') \
+                      || { echo "could not read the check runs on $reviewed; rerun the check"; exit 1; }
+                  [ -n "$ledger" ] \
+                      || { echo "no ledger check run from $LEDGER_APP on reviewed_sha $reviewed; the merge-seal has nothing to bind to"; exit 1; }
+                  printf '%s\n' "$ledger" > "$RUNNER_TEMP/ledger.json"
+                  bash scripts/verify-seal merge --head "$HEAD_SHA" --keys KEYS --ledger "$RUNNER_TEMP/ledger.json"

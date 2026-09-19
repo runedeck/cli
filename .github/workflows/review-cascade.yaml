@@ -4,9 +4,17 @@ name: Review Cascade
 # deliberately: the cascade is API-only and checks out nothing, and fork pull
 # requests need the base-context secrets. Never add a head checkout here
 # or in the body.
+#
+# The ready event, each later push, and a reopen all reach the controller
+# (docs/specs/review-requests, Ready Starts the Funnel): its triage decides
+# whether a paid round starts, and the called workflow reads the event from
+# github.event, which a reusable workflow shares with its caller. The
+# `review` label stays as the owner's way to force a round. Until the
+# controller carries a triage, the called workflow stands down without a
+# live `review` label, so the wider trigger spends nothing today.
 on:
     pull_request_target:
-        types: [labeled, unlabeled, ready_for_review]
+        types: [labeled, unlabeled, ready_for_review, synchronize, reopened]
 
 # The body uses the workflow token to read check runs, the live head, and
 # review threads. PR label changes need pull-requests: write and issues: write.
@@ -24,47 +32,15 @@ concurrency:
     cancel-in-progress: ${{ github.event.action == 'labeled' && github.event.label.name == 'review' }}
 
 jobs:
-    # A queued ready event keeps its label payload after another round
-    # consumed the review label, so readiness re-reads the live labels before
-    # the cascade may start.
-    release:
-        if: github.event.action == 'ready_for_review' && github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'review')
-        runs-on: ubuntu-latest
-        timeout-minutes: 2
-        permissions:
-            contents: read
-            pull-requests: read
-            issues: read
-        outputs:
-            summoned: ${{ steps.live.outputs.summoned }}
-        steps:
-            - id: live
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  # Pages merge through jq -s so a label set past one page
-                  # still counts fully. pipefail plus the explicit failure
-                  # exit keep an API error from reading as a consumed review label.
-                  set -o pipefail
-                  labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
-                      --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
-                      || { echo "could not read the live labels; rerun the check"; exit 1; }
-                  if printf '%s\n' "$labels" | grep -qx review; then
-                      echo "summoned=true" >> "$GITHUB_OUTPUT"
-                  else
-                      echo "summoned=false" >> "$GITHUB_OUTPUT"
-                      echo "the review label was already consumed; the cascade stands down."
-                  fi
-
+    # Fork pull requests keep the owner-summoned free lanes: a review
+    # label on a fork head runs the cascade, the correctness lane
+    # refuses fork heads on its own, and the ordered workflow stops
+    # after the free lanes (docs/specs/lane-configuration/spec.md, Fork
+    # pull request scenario). A draft never starts a round: the free
+    # lanes and the deterministic checks run on it through their own
+    # workflows.
     cascade:
-        needs: release
-        # Fork pull requests keep the owner-summoned free lanes: a review
-        # label on a fork head runs the cascade, the correctness lane
-        # refuses fork heads on its own, and the ordered workflow stops
-        # after the free lanes (docs/specs/review-ceremony/spec.md, Fork
-        # pull request scenario). Nothing starts on open: every round
-        # answers an owner-applied label, so a fork spends nothing unlabeled.
-        if: '!cancelled() && github.event.pull_request.draft == false && ((github.event.action == ''labeled'' && github.event.label.name == ''review'') || (github.event.action == ''ready_for_review'' && needs.release.outputs.summoned == ''true''))'
+        if: github.event.pull_request.draft == false && ((github.event.action == 'labeled' && github.event.label.name == 'review') || contains(fromJSON('["ready_for_review", "synchronize", "reopened"]'), github.event.action))
         uses: runedeck/seer/.github/workflows/review-cascade.yaml@main
         with:
             macroscope_correctness_check: ${{ vars.MACROSCOPE_CORRECTNESS_CHECK }}

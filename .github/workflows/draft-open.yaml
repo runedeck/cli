@@ -1,0 +1,143 @@
+name: Draft Open
+
+# The app opens a draft pull request on the first push of a ceremony branch
+# that passes the deterministic checks (docs/specs/review-ceremony, Draft by
+# the App, Ready by the Owner). The `checks` job calls quality.yaml on the
+# pushed head, and the draft opens only when it passes. The draft carries the
+# session's ceremony body from docs/changes/<id>/pull-request.md when the
+# branch has one, else a placeholder body that passes
+# schemas/PULL_REQUEST.mdschema (tests/draft-open-body proves the
+# placeholder). A branch that ever had a pull request gets no second draft
+# and runs no second quality pass here. Nothing here flips a draft to
+# ready: that is the owner's `rune sign open`. The runewright token is
+# minted for the create call alone, so the pull request opens under the
+# app identity.
+on:
+    push:
+        branches:
+            - "change/**"
+            - "codex/**"
+            - "fable/**"
+
+permissions: {}
+
+# Two pushes to one branch in quick succession must not race to two
+# drafts. The group serializes them and the second finds the first's draft.
+concurrency:
+    group: draft-open-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    existing:
+        if: github.ref_name != github.event.repository.default_branch && !github.event.deleted
+        runs-on: ubuntu-latest
+        timeout-minutes: 2
+        permissions:
+            pull-requests: read
+        outputs:
+            found: ${{ steps.existing.outputs.found }}
+        steps:
+            - name: Find an existing pull request
+              id: existing
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPOSITORY: ${{ github.repository }}
+                  OWNER: ${{ github.repository_owner }}
+                  BRANCH: ${{ github.ref_name }}
+              run: |
+                  set -o pipefail
+                  # state=all: a closed or merged pull request also spends
+                  # the branch's first push. Pages merge through jq -s.
+                  count=$(gh api --paginate "repos/$REPOSITORY/pulls?state=all&head=$OWNER:$BRANCH&per_page=100" \
+                      --jq '[.[].number]' | jq -s 'add // [] | length') \
+                      || { echo "could not read the pull requests for $BRANCH; rerun the workflow"; exit 1; }
+                  if [ "$count" != "0" ]; then
+                      echo "found=true" >> "$GITHUB_OUTPUT"
+                      echo "$BRANCH already has a pull request, so no second draft opens."
+                  else
+                      echo "found=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+    # The deterministic checks on the pushed head. A head that fails them
+    # gets no draft, so no lane runs on a head the ceremony rejects.
+    checks:
+        needs: existing
+        if: needs.existing.outputs.found == 'false'
+        uses: ./.github/workflows/quality.yaml
+        permissions:
+            contents: read
+            pull-requests: read
+
+    open:
+        needs: [existing, checks]
+        if: needs.existing.outputs.found == 'false' && needs.checks.result == 'success'
+        runs-on: ubuntu-latest
+        timeout-minutes: 3
+        permissions:
+            contents: read
+            pull-requests: read
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+
+            - name: Compose the body
+              id: body
+              env:
+                  BRANCH: ${{ github.ref_name }}
+                  HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+              run: |
+                  set -euo pipefail
+                  change_id=${BRANCH#*/}
+                  title=$(printf '%s\n' "$HEAD_MESSAGE" | head -n 1)
+                  [ -n "$title" ] || title="Draft: $BRANCH"
+                  body="$RUNNER_TEMP/pull-request.md"
+                  if [ -f "docs/changes/$change_id/pull-request.md" ]; then
+                      cp "docs/changes/$change_id/pull-request.md" "$body"
+                      echo "body from docs/changes/$change_id/pull-request.md"
+                  else
+                      cat > "$body" <<EOF
+                  Draft for \`$BRANCH\`: the session agent fills this body before \`rune sign open\`.
+
+                  ## Plan
+
+                  Why this shape, one or two sentences.
+
+                  ## Changes
+
+                  - Fill in: verb-first, file-anchored claims the diff upholds.
+
+                  ## Testing
+
+                  - [ ] Fill in: the command run and its outcome.
+
+                  ## Release Notes
+
+                  - N/A
+                  EOF
+                      echo "body from the placeholder template"
+                  fi
+                  printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
+                  printf 'body=%s\n' "$body" >> "$GITHUB_OUTPUT"
+
+            - id: runewright
+              uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+              with:
+                  app-id: ${{ secrets.RUNEWRIGHT_APP_ID }}
+                  private-key: ${{ secrets.RUNEWRIGHT_APP_KEY }}
+                  permission-contents: read
+                  permission-pull-requests: write
+
+            - name: Open the draft
+              env:
+                  GH_TOKEN: ${{ steps.runewright.outputs.token }}
+                  REPOSITORY: ${{ github.repository }}
+                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+                  BRANCH: ${{ github.ref_name }}
+                  TITLE: ${{ steps.body.outputs.title }}
+                  BODY: ${{ steps.body.outputs.body }}
+              run: |
+                  set -euo pipefail
+                  gh pr create --repo "$REPOSITORY" --draft \
+                      --base "$DEFAULT_BRANCH" --head "$BRANCH" \
+                      --title "$TITLE" --body-file "$BODY"
