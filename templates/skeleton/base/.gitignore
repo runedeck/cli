@@ -1,14 +1,26 @@
+# The stack baseline. Copier seeds this file once and the consumer owns it,
+# so add repository patterns below the line; the parity audit checks that
+# every pattern here is still present.
+
+# Build and assembly output
 build/
 dist/
 .DS_Store
 
-# rune-deployed provider trees and review comments
+# rune-deployed provider trees and review comments: rune install output,
+# never source
 .claude/
 .codex/
 .gemini/
 .opencode/
+.agents/
 .rune-comments.yaml
-.drafts
+
+# rune spec runtime state: the transaction journal, the archive lock, and
+# the OpenSpec ownership mirror
+.rune-transaction/
+.rune-archive.lock
+.interop/
 
 # Parallel work, one isolated tree per agent: jj workspaces where the repo is
 # colocated, git worktrees where it is git-only. Both are ignored before any
@@ -16,6 +28,10 @@ dist/
 # git follows the nested .jj store that the outer jj skips.
 .workspaces/
 .worktrees/
+
+# Quarantine: rune repair, reseal, and abandon move evidence here, never
+# delete it
+.trash/
 
 # Entire session data (runtime, not source). The hooks Entire installs into
 # .githooks/ are tracked source; only its runtime data here is ignored.
@@ -26,5 +42,13 @@ dist/
 .specstory/history/
 .specstory/debug/
 
-# Quarantine: rune repair and reseal move evidence here, never delete it
-.trash/
+# Tool caches
+__pycache__/
+.ruff_cache/
+.rumdl_cache/
+
+# Secrets and user overrides
+.env
+config.yaml
+
+# --- repository patterns below ---
