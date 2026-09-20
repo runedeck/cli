@@ -226,7 +226,11 @@ fn lint_names(target: LintTarget<'_>, code_prefix: &str, diagnostics: &mut Vec<S
     if minimum == 0 {
         return;
     }
-    let capability = target.capability.rsplit('/').next().unwrap_or(target.capability);
+    let capability = target
+        .capability
+        .rsplit('/')
+        .next()
+        .unwrap_or(target.capability);
     if name_words(capability) < minimum {
         diagnostics.push(violation(
             target,

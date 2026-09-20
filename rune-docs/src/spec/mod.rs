@@ -527,6 +527,50 @@ fn evaluate_change(spec_root: &SpecRoot, change_dir: &Path) -> Result<ChangeEval
     Ok(evaluation)
 }
 
+/// The purpose a proposal gives a new capability: the text after
+/// `` - `<capability>`: `` under `### New Capabilities`, or `None` when the
+/// proposal has no such bullet.
+fn new_capability_purpose(
+    spec_root: &SpecRoot,
+    change: &str,
+    capability: &str,
+) -> Result<Option<String>, Error> {
+    let proposal = spec_root.changes().join(change).join("proposal.md");
+    if !proposal.is_file() {
+        return Ok(None);
+    }
+    Ok(purpose_from_proposal(&read(&proposal)?, capability))
+}
+
+pub(crate) fn purpose_from_proposal(proposal: &str, capability: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in proposal.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("### ") {
+            in_section = heading.trim().eq_ignore_ascii_case("New Capabilities");
+            continue;
+        }
+        if trimmed.starts_with("## ") {
+            in_section = false;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let Some(rest) = item.strip_prefix(&format!("`{capability}`")) else {
+            continue;
+        };
+        let purpose = rest.trim_start_matches(':').trim();
+        if !purpose.is_empty() {
+            return Some(purpose.to_string());
+        }
+    }
+    None
+}
+
 fn discover_semantic_capabilities(base: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
     let mut capabilities = Vec::new();
     discover_capabilities_below(base, base, &mut capabilities)?;
@@ -577,7 +621,8 @@ fn evaluate_delta(
             }
         }
     } else {
-        CanonicalSpec::new(capability, change)
+        let purpose = new_capability_purpose(spec_root, change, capability)?;
+        CanonicalSpec::new(capability, change, purpose.as_deref())
     };
     let applied = match apply_delta(&mut canonical, &operations, capability) {
         Ok(applied) => applied,

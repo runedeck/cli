@@ -251,7 +251,11 @@ fn a_requirement_over_the_word_cap_is_an_error_at_its_heading() {
     assert_eq!(diagnostics[0].code, "spec-requirement-too-long");
     assert_eq!(diagnostics[0].line, Some(9));
     assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
-    assert!(diagnostics[0].message.contains("120 words"), "{}", diagnostics[0].message);
+    assert!(
+        diagnostics[0].message.contains("120 words"),
+        "{}",
+        diagnostics[0].message
+    );
 }
 
 #[test]

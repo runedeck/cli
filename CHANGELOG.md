@@ -120,6 +120,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Change `rune sign open` to accept a head the owner signed already, because the open-seal is a new commit above it, and to refuse only a signature from a key outside `KEYS`.
+- Change `rune sign open` to read the body and `schemas/PULL_REQUEST.mdschema` from the bookmark's own tree, so `--repo` may point at a workspace on another branch.
+- Change `rune sign adopt` to judge the outside body against the protected branch's schema, never the outside tree's.
+- Change `rune spec archive` to take a new capability's purpose from the proposal's `### New Capabilities` bullet instead of writing a `TBD` placeholder.
+- Change `rune spec doctor` to name the parse issue and its line for a canonical specification it cannot read, instead of `no recognized requirements`.
+- Change `rune promote` to refuse a draft whose provider copies differ, instead of promoting the first copy silently.
+- Change `rune-docs` into a workspace member, so `cargo test --workspace` runs its 149 unit tests in CI and the push hook.
 - Resolve an adopt sidecar subject through one rule in doctor, reseal, repair, and `rune provenance`: the holder directory and the recorded `subject.name` must agree.
 - Report a disagreement between the holder directory and `subject.name` as an integrity error naming both paths.
 - Move orphan reviewed sidecars to `.trash/<stamp>/` and rewrite stale names in `rune adopt reseal`.
@@ -174,6 +181,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix five `rune-docs` unit tests that the three-word name rule broke and that never ran, and the clippy and rustfmt findings the workspace exposed.
 - Fix `rune init` recording `_commit: v0.5.0` in `answers.yaml` without a configured skeleton root, a tag the skeleton never had, which made `copier update` fail in every scaffolded project.
 - Record the skeleton commit the embedded copy equals, `66d1077`, and prefer a release tag when one is set.
 - Refresh the embedded skeleton copy to commit `66d1077`, adding the `owner-seal` and `draft-open` workflows, `scripts/verify-seal`, the rulesets, and the zizmor baseline.

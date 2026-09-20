@@ -184,7 +184,7 @@ fn all_operations_match_the_golden_specification() {
 
 #[test]
 fn new_capability_ignores_removals_and_matches_the_golden_specification() {
-    let mut canonical = super::CanonicalSpec::new("search", "launch-search");
+    let mut canonical = super::CanonicalSpec::new("search", "launch-search", None);
     let operations =
         super::parse_delta(&fixture_text("v1.6.0/cases/new-capability/input/delta.md"))
             .expect("delta fixture must parse");

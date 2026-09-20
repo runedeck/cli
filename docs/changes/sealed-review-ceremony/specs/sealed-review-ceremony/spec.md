@@ -65,16 +65,32 @@ line `Open-Seal-Nonce: <nonce>`. With `--queue` it MUST record a request of kind
 ### Requirement: Open refuses a head that is not a fresh draft
 
 `rune sign open <bookmark>` MUST refuse a bookmark that does not descend from its remote-tracking head, a bookmark
-whose head is already signed, a bookmark with more than one open pull request at its head, a pull request that is
-not a draft, a pull request whose head is not the bookmark's head, and a body that fails
-`schemas/PULL_REQUEST.mdschema` in the workspace.
+whose head carries a signature from a key that is not in `KEYS`, a bookmark with more than one open pull request at
+its head, a pull request that is not a draft, a pull request whose head is not the bookmark's head, and a body that
+fails `schemas/PULL_REQUEST.mdschema`.
 
-#### Scenario: Open refused on a foreign branch, a ready draft, a stale head, two drafts, a bad body, a signed head
+#### Scenario: Open refused on a foreign branch, a ready draft, a stale head, two drafts, a bad body, a foreign key
 
 - **WHEN** the bookmark does not descend from `origin/<bookmark>`, or the pull request is not a draft, or its head
   is not the bookmark's head, or two open pull requests have that head, or the body fails the schema, or the head
-  is signed
+  carries a signature from a key that is not in `KEYS`
 - **THEN** the command exits nonzero, names the refusal, and `origin` still holds the head it held
+
+### Requirement: Open seals above an owner-signed head and reads the branch's body
+
+A head the owner signed already MUST be accepted, because the open-seal is a new commit above it. The body MUST be
+read from `docs/changes/<id>/pull-request.md` in the bookmark's own tree, so the workspace `open` runs in need not
+be on that branch.
+
+#### Scenario: Open accepts an owner-signed head
+
+- **WHEN** the owner ran `jj sign` on the head before `rune sign open`
+- **THEN** the command says the head is already owner-signed and seals above it
+
+#### Scenario: Open reads the body from the branch
+
+- **WHEN** `rune sign open change/x --repo <workspace>` runs from a workspace on another branch
+- **THEN** the body is `docs/changes/x/pull-request.md` as `change/x` commits it, not the working copy's file
 
 ### Requirement: The controller's ledger admits a head to the merge-seal
 

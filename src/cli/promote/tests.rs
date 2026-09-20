@@ -197,3 +197,59 @@ fn a_register_name_with_path_parts_never_reaches_the_deck() {
     assert!(!deck.path().parent().unwrap().join("escaped.md").exists());
     assert!(!deck.path().join("docs/changes").exists());
 }
+
+#[test]
+fn promote_refuses_provider_copies_that_differ() {
+    let (consumer, deck) = consumer_and_deck();
+    // A second deployed provider: the draft lands in both trees.
+    let codex = consumer.path().join(".codex");
+    fs::create_dir_all(codex.join("skills")).unwrap();
+    fs::write(codex.join(".manifest"), "skills: {}\n").unwrap();
+    let created = create(consumer.path(), DraftKind::Skill, "ReviewSpec").unwrap();
+    assert_eq!(created.len(), 2, "{created:?}");
+    fs::write(
+        consumer.path().join(".codex/skills/ReviewSpec/SKILL.md"),
+        "---\nname: ReviewSpec\ndescription: codex says otherwise\n---\n# ReviewSpec\n",
+    )
+    .unwrap();
+
+    let error = execute(
+        consumer.path(),
+        "ReviewSpec",
+        "core",
+        "review-spec-interaction",
+        None,
+    )
+    .unwrap_err();
+    assert!(error.message().contains("differs between"), "{error}");
+    assert!(!deck.path().join("runes/core/skills/ReviewSpec").exists());
+    assert!(
+        !deck
+            .path()
+            .join("docs/changes/review-spec-interaction")
+            .exists()
+    );
+    assert_eq!(
+        Register::load(consumer.path())
+            .unwrap()
+            .by_name("ReviewSpec")
+            .len(),
+        2
+    );
+
+    // Matching copies promote.
+    fs::copy(
+        consumer.path().join(".claude/skills/ReviewSpec/SKILL.md"),
+        consumer.path().join(".codex/skills/ReviewSpec/SKILL.md"),
+    )
+    .unwrap();
+    let done = execute(
+        consumer.path(),
+        "ReviewSpec",
+        "core",
+        "review-spec-interaction",
+        None,
+    )
+    .unwrap();
+    assert_eq!(done.removed.len(), 2);
+}

@@ -149,6 +149,9 @@ fn fixture() -> Option<Fixture> {
         workspace,
     };
     fs::write(&fixture.fail_once, "").expect("flag file");
+    // The body schema is committed at the base, so every branch's tree
+    // carries it: `open` reads it from the head, not the working copy.
+    install_schema(&fixture);
     run(jj(&fixture).args(["describe", "-m", "feat: base"]));
     run(jj(&fixture).args(["bookmark", "set", "change/base", "-r", "@"]));
     run(jj(&fixture).args(["new", "-m", "feat: top"]));
@@ -1256,7 +1259,7 @@ fn open_refuses_the_protected_branch_and_a_branch_without_a_draft() {
 /// Every other refusal of `rune sign open`, in the order the command
 /// checks them, each leaving the head unsigned and the remote untouched.
 #[test]
-fn open_refuses_a_ready_draft_a_stale_head_two_drafts_a_bad_body_a_signed_head_and_a_foreign_branch()
+fn open_refuses_a_ready_draft_a_stale_head_two_drafts_a_bad_body_and_a_foreign_branch_and_seals_above_an_owner_signed_head()
  {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1316,14 +1319,39 @@ fn open_refuses_a_ready_draft_a_stale_head_two_drafts_a_bad_body_a_signed_head_a
         "change/top does not descend from origin/change/top",
     );
     set_remote_ref(&ceremony.fixture, "change/top", &top);
+    // A head the owner signed first (`jj sign`, then `rune sign open`) is
+    // accepted: the open-seal is a new commit above it. The remote still
+    // holds the unsigned commit the session pushed, which is an ancestor
+    // in content but not in history, so the fixture moves the remote ref
+    // to the signed head the way a `jj git push` of it would.
     run(jj(&ceremony.fixture).args(["sign", "-r", "change/top"]));
+    let signed = head_commit(&ceremony.fixture, "change/top");
+    assert_ne!(signed, top);
+    run(git(&ceremony.fixture).args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "push",
+        "--quiet",
+        "--force",
+        "origin",
+        "refs/heads/change/top:refs/heads/change/top",
+    ]));
+    set_remote_ref(&ceremony.fixture, "change/top", &signed);
+    // The rewrite checked out a fresh working copy: put the body back.
+    let body = body_file(&ceremony);
+    write_pull_requests(
+        &ceremony,
+        &[pull_request(7, "change/top", &signed, true, "")],
+    );
     ceremony_rune(&ceremony)
         .args(["sign", "open", "change/top", "--body-file"])
         .arg(&body)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("change/top is already signed"));
-    assert!(!ceremony.gh_dir.join("ready-7").exists());
+        .success()
+        .stderr(predicate::str::contains("already owner-signed"))
+        .stdout(predicate::str::contains("opened change/top"));
+    assert!(ceremony.gh_dir.join("ready-7").exists());
+    assert_eq!(parent_commit(&ceremony, "change/top"), signed);
 }
 
 #[test]
@@ -2164,4 +2192,49 @@ fn verify_rejects_a_moved_parent_and_an_unequal_tree() {
                     &fat[..12]
                 ))),
         );
+}
+
+/// The body comes from `docs/changes/<id>/pull-request.md` as the bookmark
+/// commits it, not from the working copy: the workspace `open` runs in sits
+/// on another change whose copy of the file says something else.
+#[test]
+fn open_reads_the_body_from_the_bookmark_tree_not_the_working_copy() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let fixture = &ceremony.fixture;
+    let change_dir = fixture.workspace.join("docs/changes/top");
+    // Commit the body on change/top, then move the working copy to a
+    // sibling that carries a different body at the same path.
+    run(jj(fixture).args(["edit", "change/top"]));
+    fs::create_dir_all(&change_dir).expect("change dir");
+    fs::write(change_dir.join("pull-request.md"), BODY).expect("body");
+    run(jj(fixture).args(["new", "change/base", "-m", "feat: elsewhere"]));
+    fs::create_dir_all(&change_dir).expect("change dir");
+    fs::write(
+        change_dir.join("pull-request.md"),
+        BODY.replace("Seal the ceremony.", "The wrong body."),
+    )
+    .expect("body");
+    let top = head_commit(fixture, "change/top");
+    run(git(fixture).args([
+        "-c",
+        "core.hooksPath=/dev/null",
+        "push",
+        "--quiet",
+        "--force",
+        "origin",
+        "refs/heads/change/top:refs/heads/change/top",
+    ]));
+    set_remote_ref(fixture, "change/top", &top);
+    write_pull_requests(&ceremony, &[pull_request(7, "change/top", &top, true, "")]);
+    ceremony_rune(&ceremony)
+        .args(["sign", "open", "change/top"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("opened change/top"));
+    let body = fs::read_to_string(ceremony.gh_dir.join("body-7")).expect("body");
+    assert!(body.starts_with("Seal the ceremony."));
+    assert!(!body.contains("The wrong body."));
 }

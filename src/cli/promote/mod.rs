@@ -112,6 +112,33 @@ pub fn execute(
             ),
         ));
     }
+    // One draft may sit in several provider trees. The deck copy is the
+    // first registered one, which is only right when every copy says the
+    // same thing: a divergent copy is a choice the author has to make.
+    let chosen = fs::read(&source_file).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", first.path),
+        )
+    })?;
+    for other in drafts.iter().skip(1) {
+        let path = consumer_root.join(&other.path);
+        let content = fs::read(&path).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", other.path),
+            )
+        })?;
+        if content != chosen {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "draft '{name}' differs between {} and {}; edit them to match or drop one first",
+                    first.path, other.path
+                ),
+            ));
+        }
+    }
 
     let change_dir = deck_root.join("docs").join("changes").join(change);
     if change_dir.exists() {

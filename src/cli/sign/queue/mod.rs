@@ -948,7 +948,7 @@ fn verify_signed_head(
 
 /// The same check as `rune sign --verify`: gpg accepts the signature and
 /// one of its fingerprints is published in `KEYS`.
-fn owner_signature(
+pub(crate) fn owner_signature(
     repo: &Repo,
     commit: &str,
     signing: &Signing,

@@ -206,6 +206,22 @@ impl Repo {
         self.git_stdout(&["cat-file", "commit", commit])
     }
 
+    /// A file's content in a commit's tree, or `None` when the tree has no
+    /// such path. The path is repository-relative with forward slashes.
+    pub(crate) fn file_at(&self, commit: &str, path: &str) -> Result<Option<String>, Error> {
+        let output = self
+            .git()
+            .args(["cat-file", "-e"])
+            .arg(format!("{commit}:{path}"))
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        self.git_stdout(&["show", &format!("{commit}:{path}")])
+            .map(Some)
+    }
+
     /// A commit's identity with its parents as commit ids, straight from
     /// the object: what the seal checks compare.
     pub(crate) fn commit(&self, commit: &str) -> Result<Identity, Error> {

@@ -6,6 +6,11 @@ license = "EUPL-1.2"
 repository = "https://github.com/runedeck/cli"
 description = "Rune Deck toolkit — assemble, validate, and deploy runes (skills, agents, rules) from the deck across AI coding harnesses"
 
+# `rune-docs` is a member, not only a path dependency, so `cargo test
+# --workspace` runs its unit tests: as a bare dependency they never ran.
+[workspace]
+members = ["rune-docs"]
+
 [lib]
 name = "rune"
 path = "src/lib.rs"

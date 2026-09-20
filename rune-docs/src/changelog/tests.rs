@@ -21,8 +21,15 @@ fn a_clean_changelog_has_no_errors() {
 #[test]
 fn a_paragraph_entry_is_an_error_by_length_and_by_wrapping() {
     let wall = format!("- {}", "the command does this and that, ".repeat(10));
-    let content = CLEAN.replace("- Fix the manifest fingerprint after a provenance move", &wall);
-    assert!(rules(&content).contains(&"entry-length".to_string()), "{:?}", lint(&content).errors);
+    let content = CLEAN.replace(
+        "- Fix the manifest fingerprint after a provenance move",
+        &wall,
+    );
+    assert!(
+        rules(&content).contains(&"entry-length".to_string()),
+        "{:?}",
+        lint(&content).errors
+    );
 
     let wrapped = CLEAN.replace(
         "- Fix the manifest fingerprint after a provenance move",
@@ -59,8 +66,11 @@ fn releases_are_shaped_and_newest_first() {
     assert!(rules(&content).contains(&"release-heading".to_string()));
     let content = format!("{CLEAN}\n## [0.6.0] - 2026-08-01\n\n### Added\n\n- Add a thing\n");
     assert!(rules(&content).contains(&"release-order".to_string()));
-    let content = CLEAN.replacen("## [Unreleased]\n\n### Added\n\n- Add `rune draft` for runes under construction (#61)\n\n", "", 1)
-        + "\n## [Unreleased]\n\n### Added\n\n- Add a thing\n";
+    let content = CLEAN.replacen(
+        "## [Unreleased]\n\n### Added\n\n- Add `rune draft` for runes under construction (#61)\n\n",
+        "",
+        1,
+    ) + "\n## [Unreleased]\n\n### Added\n\n- Add a thing\n";
     assert!(rules(&content).contains(&"unreleased-first".to_string()));
 }
 
@@ -71,7 +81,10 @@ fn a_release_holds_one_notice_and_no_other_prose() {
         "First release with the sealed ceremony.\n\nA second paragraph of blog.\n",
     );
     assert!(rules(&content).contains(&"release-prose".to_string()));
-    let content = CLEAN.replace("### Fixed\n\n- Fix", "### Fixed\n\nSome prose here.\n\n- Fix");
+    let content = CLEAN.replace(
+        "### Fixed\n\n- Fix",
+        "### Fixed\n\nSome prose here.\n\n- Fix",
+    );
     assert!(rules(&content).contains(&"prose-in-group".to_string()));
 }
 

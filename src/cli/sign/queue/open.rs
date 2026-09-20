@@ -84,11 +84,24 @@ pub(crate) fn qualify(
             repo.workspace.display()
         ))
     })?;
+    // A head the owner signed before `open` (a `jj sign` first, or an
+    // earlier queue run) is still a session branch: the open-seal goes
+    // above it. A signature from any other key is not.
     if head.signed {
-        return Err(refusal(format!(
-            "{bookmark} is already signed at {}",
+        let signing = Signing::owner(&repo.workspace)?;
+        let keys = owner_keys(repo)?;
+        if let Err(reason) =
+            super::owner_signature(repo, &head.identity.commit_id, &signing, &keys)?
+        {
+            return Err(refusal(format!(
+                "{bookmark} at {} carries a signature that is not the owner's: {reason}",
+                short(&head.identity.commit_id)
+            )));
+        }
+        eprintln!(
+            "{bookmark} at {} is already owner-signed: the open-seal goes above it",
             short(&head.identity.commit_id)
-        )));
+        );
     }
     if let Some(remote_head) = repo.remote_head(REMOTE, bookmark)?
         && remote_head != head.identity.commit_id
@@ -131,8 +144,8 @@ pub(crate) fn qualify(
             short(&head.identity.commit_id)
         )));
     }
-    let body = read_body(repo, bookmark, body_file)?;
-    validate_body(repo, &body)?;
+    let body = read_body(repo, bookmark, &head.identity.commit_id, body_file)?;
+    validate_body(repo, &head.identity.commit_id, &body)?;
     Ok(Candidate {
         repo: slug,
         head,
@@ -155,42 +168,55 @@ pub(crate) fn repo_slug(repo: &Repo, remote: &str) -> Result<String, Error> {
     Ok(seal::repo_slug(&url))
 }
 
-/// The body from the change the branch names, else from `--body-file`.
-fn read_body(repo: &Repo, bookmark: &str, body_file: Option<&Path>) -> Result<String, Error> {
-    let from_change = bookmark
-        .strip_prefix("change/")
-        .map(|id| {
-            repo.workspace
-                .join("docs/changes")
-                .join(id)
-                .join("pull-request.md")
-        })
-        .filter(|path| path.is_file());
-    let path = match (from_change, body_file) {
-        (Some(path), _) => path,
-        (None, Some(path)) => path.to_path_buf(),
-        (None, None) => {
-            return Err(refusal(format!(
-                "no docs/changes/<id>/pull-request.md for {bookmark}: pass --body-file <FILE>"
-            )));
-        }
+/// The body from `docs/changes/<id>/pull-request.md` in the head's own
+/// tree, else from `--body-file`. The head's tree, not the working copy:
+/// the workspace `rune sign open` runs in may sit on another branch, and
+/// the body the draft carries is the one the branch committed.
+fn read_body(
+    repo: &Repo,
+    bookmark: &str,
+    head: &str,
+    body_file: Option<&Path>,
+) -> Result<String, Error> {
+    let from_change = match bookmark.strip_prefix("change/") {
+        Some(id) => repo.file_at(head, &format!("docs/changes/{id}/pull-request.md"))?,
+        None => None,
     };
-    std::fs::read_to_string(&path).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot read the body {}: {error}", path.display()),
-        )
-    })
+    match (from_change, body_file) {
+        (Some(body), _) => Ok(body),
+        (None, Some(path)) => std::fs::read_to_string(path).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read the body {}: {error}", path.display()),
+            )
+        }),
+        (None, None) => Err(refusal(format!(
+            "no docs/changes/<id>/pull-request.md in {bookmark} at {}: commit one on the branch or pass --body-file <FILE>",
+            short(head)
+        ))),
+    }
 }
 
-/// The body against the repository's own `schemas/PULL_REQUEST.mdschema`,
-/// through the standalone checker when it is on PATH and the built-in
-/// subset otherwise.
-fn validate_body(repo: &Repo, body: &str) -> Result<(), Error> {
-    let schema_path = repo.workspace.join("schemas/PULL_REQUEST.mdschema");
-    let schema = std::fs::read_to_string(&schema_path)
-        .map_err(|error| refusal(format!("cannot read {}: {error}", schema_path.display())))?;
-    let errors = match standalone_check(&schema_path, body)? {
+/// The body against `schemas/PULL_REQUEST.mdschema` as the head commits
+/// it, through the standalone checker when it is on PATH and the built-in
+/// subset otherwise. The head's tree, like the body: the workspace may sit
+/// on another branch.
+fn validate_body(repo: &Repo, head: &str, body: &str) -> Result<(), Error> {
+    let schema = repo
+        .file_at(head, "schemas/PULL_REQUEST.mdschema")?
+        .ok_or_else(|| {
+            refusal(format!(
+                "no schemas/PULL_REQUEST.mdschema at {}: the branch carries the body schema",
+                short(head)
+            ))
+        })?;
+    let schema_file = tempfile::Builder::new()
+        .suffix(".mdschema")
+        .tempfile()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write the schema: {error}")))?;
+    std::fs::write(schema_file.path(), &schema)
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot write the schema: {error}")))?;
+    let errors = match standalone_check(schema_file.path(), body)? {
         Some(errors) => errors,
         None => rune::validate::mdschema::check(body, "pull request body", &schema)
             .into_iter()
@@ -412,7 +438,10 @@ pub(crate) fn adopt(number: u64, repository: Option<&Path>, json: bool) -> Resul
     if repo.head(&bookmark)?.is_some() || repo.remote_head(REMOTE, &bookmark)?.is_some() {
         return Err(refusal(format!("{bookmark} already exists: drop it first")));
     }
-    validate_body(&repo, &outside.body)?;
+    // An outside head is not trusted for its own schema: the protected
+    // branch's copy judges the body.
+    let protected = repo.protected_ref(REMOTE)?;
+    validate_body(&repo, &protected, &outside.body)?;
     let fetched = repo.fetch_pull_head(REMOTE, number)?;
     if fetched != outside.head_ref_oid {
         return Err(refusal(format!(

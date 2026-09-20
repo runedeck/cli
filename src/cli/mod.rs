@@ -1104,6 +1104,10 @@ enum SignAction {
         /// Record the request for the owner instead of signing now.
         #[arg(long)]
         queue: bool,
+        /// The repository to open from: any path inside the workspace that
+        /// holds the bookmark (a jj workspace under `.workspaces/` works).
+        /// Defaults to the current directory. The body is read from the
+        /// bookmark's own tree, so the workspace need not be on that branch.
         #[arg(long, value_name = "DIR")]
         repo: Option<QueuePathBuf>,
     },

@@ -30,6 +30,14 @@ const INTEROP_PROJECT: &str = include_str!(concat!(
     "/tests/fixtures/interop/project.md"
 ));
 
+/// The fixtures here use one-word names (`search`, `healthy`): the
+/// three-word name floor is the CLI's concern and its integration tests
+/// cover it. `OnceLock` keeps the first registration, so every test that
+/// needs the rule off calls this and the order does not matter.
+fn name_rule_off() {
+    let _ = set_name_rule_lookup(|_| Ok(Some(0)));
+}
+
 fn write_change(root: &Path, id: &str, tasks: &str, delta: &str) {
     let change = changes_root(root).unwrap().join(id);
     fs::create_dir_all(change.join("specs/search")).unwrap();
@@ -244,6 +252,7 @@ fn archive_merges_added_modified_and_removed_requirements() {
 
 #[test]
 fn nested_capabilities_are_discovered_validated_and_archived() {
+    name_rule_off();
     let root = TempDir::new().unwrap();
     let canonical = root.path().join("docs/specs/payments/card/spec.md");
     fs::create_dir_all(canonical.parent().unwrap()).unwrap();
@@ -411,6 +420,7 @@ fn validation_identifies_opaque_artifacts_without_reading_their_content() {
 
 #[test]
 fn spec_validation_preserves_schema_warning_severity() {
+    name_rule_off();
     let root = TempDir::new().unwrap();
     let canonical = root.path().join("docs/specs/search/spec.md");
     fs::create_dir_all(canonical.parent().unwrap()).unwrap();
@@ -553,6 +563,7 @@ fn validation_diagnostics_serialize_every_nullable_field() {
 
 #[test]
 fn targeted_validation_resolves_nested_capability_prefixes() {
+    name_rule_off();
     let root = TempDir::new().unwrap();
     let canonical = root.path().join("docs/specs/payments/card/spec.md");
     fs::create_dir_all(canonical.parent().unwrap()).unwrap();
@@ -575,6 +586,7 @@ fn targeted_validation_resolves_nested_capability_prefixes() {
 
 #[test]
 fn validation_accepts_well_formed_canonical_and_delta_specs() {
+    name_rule_off();
     let root = TempDir::new().unwrap();
     let canonical = root.path().join("docs/specs/search/spec.md");
     fs::create_dir_all(canonical.parent().unwrap()).unwrap();
@@ -863,6 +875,7 @@ fn spec_doctor_reports_archive_lock_contention() {
 
 #[test]
 fn spec_doctor_passes_a_healthy_tree() {
+    name_rule_off();
     let root = TempDir::new().unwrap();
     write_change(root.path(), "healthy", "- [ ] task\n", DELTA);
     let canonical = root.path().join("docs/specs/search/spec.md");
@@ -1299,4 +1312,53 @@ mod output_fixtures {
             "tests/fixtures/output/doctor-healthy.txt",
         );
     }
+}
+
+#[test]
+fn a_new_capability_takes_its_purpose_from_the_proposal_bullet() {
+    let proposal = "# Launch search\n\n## Capabilities\n\n### New Capabilities\n\n- `search`: find a rune by name across every enabled source.\n- `other-thing`: unrelated.\n\n### Modified Capabilities\n\n- `search`: not this one.\n";
+    assert_eq!(
+        purpose_from_proposal(proposal, "search").as_deref(),
+        Some("find a rune by name across every enabled source.")
+    );
+    assert_eq!(purpose_from_proposal(proposal, "missing"), None);
+    assert_eq!(
+        purpose_from_proposal("# No capabilities section\n", "search"),
+        None
+    );
+    let rendered =
+        CanonicalSpec::new("search", "launch-search", Some("find a rune by name.")).render();
+    assert!(rendered.starts_with(
+        "# search Specification\n\n## Purpose\n\nfind a rune by name.\n\n## Requirements\n"
+    ));
+    let placeholder = CanonicalSpec::new("search", "launch-search", None).render();
+    assert!(placeholder.contains("## Purpose\nTBD - created by archiving change launch-search."));
+}
+
+#[test]
+fn doctor_names_the_parse_issue_of_a_canonical_spec_it_cannot_read() {
+    name_rule_off();
+    let root = TempDir::new().unwrap();
+    let canonical = root.path().join("docs/specs/search/spec.md");
+    fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+    fs::create_dir_all(root.path().join("docs/changes")).unwrap();
+    // A requirement without MUST or SHALL is a parse refusal, not an empty
+    // section: the finding names the line, not "no recognized requirements".
+    fs::write(
+        &canonical,
+        "# Search Specification\n\n## Purpose\n\nFind runes.\n\n## Requirements\n\n### Requirement: Soft Wish\n\nThe system should find runes.\n\n#### Scenario: Wish\n\n- **WHEN** a name is typed\n- **THEN** a rune appears\n",
+    )
+    .unwrap();
+    let doctor = doctor_output(&root.path().to_string_lossy()).unwrap();
+    assert!(doctor.findings.iter().any(|finding| {
+        finding.severity == "error"
+            && finding.path == "docs/specs/search/spec.md:9"
+            && finding.message.contains("must contain SHALL or MUST")
+    }));
+    assert!(
+        !doctor
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("no recognized requirements"))
+    );
 }

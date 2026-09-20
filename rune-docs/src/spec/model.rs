@@ -91,10 +91,19 @@ impl CanonicalSpec {
         }
     }
 
-    pub(super) fn new(capability: &str, change_id: &str) -> Self {
+    /// A canonical specification for a capability that has none yet. The
+    /// purpose comes from the proposal's `### New Capabilities` bullet when
+    /// the change wrote one, else a placeholder that names the change.
+    pub(super) fn new(capability: &str, change_id: &str, purpose: Option<&str>) -> Self {
+        // The placeholder keeps OpenSpec's exact shape (no blank line after
+        // the heading): the oracle fixtures compare it byte for byte.
+        let purpose_section = purpose.map_or_else(
+            || format!("## Purpose\nTBD - created by archiving change {change_id}. Update Purpose after archive."),
+            |purpose| format!("## Purpose\n\n{purpose}"),
+        );
         Self {
             prefix: format!(
-                "# {capability} Specification\n\n## Purpose\nTBD - created by archiving change {change_id}. Update Purpose after archive.\n\n## Requirements\n"
+                "# {capability} Specification\n\n{purpose_section}\n\n## Requirements\n"
             ),
             body: Vec::new(),
             suffix: String::new(),
@@ -167,7 +176,7 @@ impl CanonicalSpec {
         let remainder_start = requirement
             .content
             .find('\n')
-            .map_or(requirement.content.len(), |index| index);
+            .unwrap_or(requirement.content.len());
         let remainder = &requirement.content[remainder_start..];
         requirement.content = format!("### Requirement: {new_name}{remainder}");
         requirement.name = new_name.to_string();

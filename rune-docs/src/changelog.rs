@@ -56,7 +56,6 @@ pub fn check(root: &Path) -> Result<ChangelogReport, String> {
 
 #[derive(Default)]
 struct Release {
-    line: usize,
     version: Option<(u64, u64, u64)>,
     groups_seen: Vec<usize>,
     notice_taken: bool,
@@ -87,7 +86,12 @@ pub fn lint(content: &str) -> ChangelogReport {
         }
         if !title_seen {
             if line != "# Changelog" {
-                push(&mut report, number, "title", format!("the first heading must be `# Changelog`, found `{line}`"));
+                push(
+                    &mut report,
+                    number,
+                    "title",
+                    format!("the first heading must be `# Changelog`, found `{line}`"),
+                );
             }
             title_seen = true;
             continue;
@@ -95,52 +99,27 @@ pub fn lint(content: &str) -> ChangelogReport {
         if let Some(heading) = line.strip_prefix("## ") {
             report.releases += 1;
             in_group = false;
-            let mut next = Release { line: number, ..Release::default() };
-            if heading == "[Unreleased]" {
-                if report.releases != 1 {
-                    push(&mut report, number, "unreleased-first", "`[Unreleased]` must be the first release heading".to_string());
-                }
-            } else if let Some(capture) = RELEASE.captures(line) {
-                let version = (
-                    capture[1].parse().unwrap_or(0),
-                    capture[2].parse().unwrap_or(0),
-                    capture[3].parse().unwrap_or(0),
-                );
-                if let Some(previous) = previous_version
-                    && version >= previous
-                {
-                    push(&mut report, number, "release-order", format!("releases must be newest first, {} follows a lower version", &capture[0][3..]));
-                }
-                previous_version = Some(version);
-                next.version = Some(version);
-            } else {
-                push(&mut report, number, "release-heading", format!("a release heading is `## [X.Y.Z] - YYYY-MM-DD` or `## [Unreleased]`, found `{heading}`"));
-            }
-            release = Some(next);
+            release = Some(lint_release_heading(
+                &mut report,
+                &mut previous_version,
+                number,
+                line,
+                heading,
+            ));
             continue;
         }
         if let Some(group) = line.strip_prefix("### ") {
             in_group = true;
-            let Some(current) = release.as_mut() else {
-                push(&mut report, number, "group-outside-release", format!("`### {group}` before any release heading"));
-                continue;
-            };
-            current.saw_group = true;
-            match GROUPS.iter().position(|known| *known == group) {
-                None => push(&mut report, number, "group-name", format!("`{group}` is not one of {}", GROUPS.join(", "))),
-                Some(position) => {
-                    if current.groups_seen.contains(&position) {
-                        push(&mut report, number, "group-repeated", format!("`{group}` appears twice in one release"));
-                    } else if current.groups_seen.iter().any(|seen| *seen > position) {
-                        push(&mut report, number, "group-order", format!("`{group}` must come before the groups already listed; the order is {}", GROUPS.join(", ")));
-                    }
-                    current.groups_seen.push(position);
-                }
-            }
+            lint_group(&mut report, release.as_mut(), number, group);
             continue;
         }
         if line.starts_with('#') {
-            push(&mut report, number, "heading-depth", "only `##` releases and `###` groups are headings".to_string());
+            push(
+                &mut report,
+                number,
+                "heading-depth",
+                "only `##` releases and `###` groups are headings".to_string(),
+            );
             continue;
         }
         let Some(current) = release.as_mut() else {
@@ -149,26 +128,58 @@ pub fn lint(content: &str) -> ChangelogReport {
         };
         if let Some(entry) = line.strip_prefix("- ") {
             if !in_group {
-                push(&mut report, number, "entry-outside-group", "a change line needs a `###` group above it".to_string());
+                push(
+                    &mut report,
+                    number,
+                    "entry-outside-group",
+                    "a change line needs a `###` group above it".to_string(),
+                );
             }
             report.entries += 1;
             lint_entry(&mut report, number, entry);
             continue;
         }
-        if line.starts_with(' ') || line.starts_with('\t') {
-            push(&mut report, number, "entry-wrapped", "a change is one line; an indented continuation line is a paragraph".to_string());
-            continue;
-        }
-        if in_group {
-            push(&mut report, number, "prose-in-group", "a group holds only `- ` change lines".to_string());
-        } else if current.notice_taken || current.saw_group {
-            push(&mut report, number, "release-prose", "a release holds one notice paragraph at most, then groups".to_string());
-        } else {
-            current.notice_taken = true;
-        }
+        lint_prose_line(&mut report, current, in_group, number, line);
     }
-    let _ = release.map(|current| current.line);
     report
+}
+
+/// A line that is neither a heading nor a change: a wrapped entry, prose
+/// inside a group, or the one notice paragraph a release may carry.
+fn lint_prose_line(
+    report: &mut ChangelogReport,
+    current: &mut Release,
+    in_group: bool,
+    number: usize,
+    line: &str,
+) {
+    let push = |report: &mut ChangelogReport, line: usize, rule: &str, detail: String| {
+        report.errors.push(format!("{line}: {rule}: {detail}"));
+    };
+    if line.starts_with(' ') || line.starts_with('\t') {
+        push(
+            report,
+            number,
+            "entry-wrapped",
+            "a change is one line; an indented continuation line is a paragraph".to_string(),
+        );
+    } else if in_group {
+        push(
+            report,
+            number,
+            "prose-in-group",
+            "a group holds only `- ` change lines".to_string(),
+        );
+    } else if current.notice_taken || current.saw_group {
+        push(
+            report,
+            number,
+            "release-prose",
+            "a release holds one notice paragraph at most, then groups".to_string(),
+        );
+    } else {
+        current.notice_taken = true;
+    }
 }
 
 fn lint_entry(report: &mut ChangelogReport, number: usize, entry: &str) {
@@ -179,14 +190,18 @@ fn lint_entry(report: &mut ChangelogReport, number: usize, entry: &str) {
         ));
     }
     if entry.contains('\u{2014}') {
-        report.errors.push(format!("{number}: entry-dash: no em-dash in a change line"));
+        report
+            .errors
+            .push(format!("{number}: entry-dash: no em-dash in a change line"));
     }
     if ENCODED_PREFIX.is_match(entry) {
         report.errors.push(format!(
             "{number}: entry-prefix: no `type:` prefix, start with the verb (Add, Fix, Change, Remove)"
         ));
     }
-    let text = entry.strip_prefix("**Breaking:**").map_or(entry, str::trim_start);
+    let text = entry
+        .strip_prefix("**Breaking:**")
+        .map_or(entry, str::trim_start);
     let first = text.split_whitespace().next().unwrap_or_default();
     let starts_upper = first.chars().next().is_some_and(char::is_uppercase);
     let article = matches!(first, "The" | "A" | "An" | "This" | "It");
@@ -195,6 +210,114 @@ fn lint_entry(report: &mut ChangelogReport, number: usize, entry: &str) {
             "{number}: entry-verb: start with a capitalized present-tense verb (Add, Fix, Change, Remove), found `{first}`"
         ));
     }
+}
+
+/// One `### Group` heading: known name, listed once, in the Keep a
+/// Changelog order.
+fn lint_group(
+    report: &mut ChangelogReport,
+    release: Option<&mut Release>,
+    number: usize,
+    group: &str,
+) {
+    let push = |report: &mut ChangelogReport, line: usize, rule: &str, detail: String| {
+        report.errors.push(format!("{line}: {rule}: {detail}"));
+    };
+    let Some(current) = release else {
+        push(
+            report,
+            number,
+            "group-outside-release",
+            format!("`### {group}` before any release heading"),
+        );
+        return;
+    };
+    current.saw_group = true;
+    match GROUPS.iter().position(|known| *known == group) {
+        None => push(
+            report,
+            number,
+            "group-name",
+            format!("`{group}` is not one of {}", GROUPS.join(", ")),
+        ),
+        Some(position) => {
+            if current.groups_seen.contains(&position) {
+                push(
+                    report,
+                    number,
+                    "group-repeated",
+                    format!("`{group}` appears twice in one release"),
+                );
+            } else if current.groups_seen.iter().any(|seen| *seen > position) {
+                push(
+                    report,
+                    number,
+                    "group-order",
+                    format!(
+                        "`{group}` must come before the groups already listed; the order is {}",
+                        GROUPS.join(", ")
+                    ),
+                );
+            }
+            current.groups_seen.push(position);
+        }
+    }
+}
+
+/// One `## [X.Y.Z] - date` or `## [Unreleased]` heading: the shape, the
+/// unreleased-first rule, and newest-first ordering.
+fn lint_release_heading(
+    report: &mut ChangelogReport,
+    previous_version: &mut Option<(u64, u64, u64)>,
+    number: usize,
+    line: &str,
+    heading: &str,
+) -> Release {
+    let push = |report: &mut ChangelogReport, line: usize, rule: &str, detail: String| {
+        report.errors.push(format!("{line}: {rule}: {detail}"));
+    };
+    let mut next = Release::default();
+    if heading == "[Unreleased]" {
+        if report.releases != 1 {
+            push(
+                report,
+                number,
+                "unreleased-first",
+                "`[Unreleased]` must be the first release heading".to_string(),
+            );
+        }
+    } else if let Some(capture) = RELEASE.captures(line) {
+        let version = (
+            capture[1].parse().unwrap_or(0),
+            capture[2].parse().unwrap_or(0),
+            capture[3].parse().unwrap_or(0),
+        );
+        if let Some(previous) = *previous_version
+            && version >= previous
+        {
+            push(
+                report,
+                number,
+                "release-order",
+                format!(
+                    "releases must be newest first, {} follows a lower version",
+                    &capture[0][3..]
+                ),
+            );
+        }
+        *previous_version = Some(version);
+        next.version = Some(version);
+    } else {
+        push(
+            report,
+            number,
+            "release-heading",
+            format!(
+                "a release heading is `## [X.Y.Z] - YYYY-MM-DD` or `## [Unreleased]`, found `{heading}`"
+            ),
+        );
+    }
+    next
 }
 
 #[cfg(test)]

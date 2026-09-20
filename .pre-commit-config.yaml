@@ -161,7 +161,7 @@ repos:
 
           - id: cargo-test
             name: cargo test
-            entry: cargo test --all-features
+            entry: cargo test --workspace --all-features
             language: system
             pass_filenames: false
             types: [rust]

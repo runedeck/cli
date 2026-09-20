@@ -4,8 +4,9 @@
 //! `OpenSpec` CLI (never a dependency; absence is not a finding).
 
 use super::{
-    ChangeState, DiagnosticSeverity, SpecLayout, evaluate_change, print_json, read_directories,
-    read_tasks, relative_display, resolve_spec_root, scan_specifications, transaction,
+    ChangeState, DiagnosticSeverity, SpecLayout, evaluate_change, parse_canonical, print_json,
+    read, read_directories, read_tasks, relative_display, resolve_spec_root, scan_specifications,
+    transaction,
 };
 use crate::error::Error;
 use serde::Serialize;
@@ -119,16 +120,30 @@ pub fn doctor_output(source: &str) -> Result<SpecDoctorOutput, Error> {
 
     let specifications = scan_specifications(root)?;
     for specification in &specifications {
-        if specification.requirements == 0 {
-            let spec_path = spec_root
-                .specifications()
-                .join(&specification.capability)
-                .join("spec.md");
-            findings.push(DoctorFinding {
+        if specification.requirements != 0 {
+            continue;
+        }
+        let spec_path = spec_root
+            .specifications()
+            .join(&specification.capability)
+            .join("spec.md");
+        // Zero requirements is either an empty section or a file the parser
+        // refused. The refusal is the finding: name each issue with its line.
+        let display = relative_display(spec_root.repository(), &spec_path);
+        match parse_canonical(&read(&spec_path)?) {
+            Ok(_) => findings.push(DoctorFinding {
                 severity: "warning",
-                path: relative_display(root, &spec_path),
+                path: display,
                 message: "canonical specification has no recognized requirements".to_string(),
-            });
+            }),
+            Err(issues) => findings.extend(issues.into_iter().map(|issue| DoctorFinding {
+                severity: "error",
+                path: match issue.line {
+                    Some(line) => format!("{display}:{line}"),
+                    None => display.clone(),
+                },
+                message: issue.message,
+            })),
         }
     }
 
