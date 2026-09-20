@@ -1,0 +1,61 @@
+Done importing changes from the underlying Git repo.
+Done importing changes from the underlying Git repo.
+
+# Scenario: Head already pushed
+# origin/change/top already holds the head: signing it in place would rewrite a pushed tip.
+❯ rune sign queue change/top --receipt /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.wIcicL4TMz/top.log || true
+fatal: change/top at 9f6653f5353a is already published on origin: signing it in place would rewrite a pushed tip. Sign before you push. To re-sign a published head anyway, run `jj sign -r change/top --ignore-immutable` yourself and force-push under a lease
+❯ rune sign queue
+the signing queue at /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.wIcicL4TMz/state/sign-queue is empty
+
+# Scenario: Remote moved past the head
+# The remote is a descendant of the head: still published, still refused.
+❯ jj new change/top -m 'feat: later' && jj bookmark set change/later -r @ && jj new
+moved
+❯ rune sign queue change/top --receipt /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.wIcicL4TMz/top.log || true
+fatal: change/top at 9f6653f5353a is already published on origin: signing it in place would rewrite a pushed tip. Sign before you push. To re-sign a published head anyway, run `jj sign -r change/top --ignore-immutable` yourself and force-push under a lease
+
+# Scenario: Remote holds another commit
+# origin/change/top points elsewhere: the head is unpublished and the request is recorded.
+❯ rune sign queue change/top --receipt /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.wIcicL4TMz/top.log
+queued 36682075929542ba change/top at 9f6653f5353a: run `rune sign next` at the key
+❯ rune sign drop change/top
+dropped 36682075929542ba change/top
+
+# Scenario: jj refuses an immutable commit
+# A head inside immutable_heads() is jj's own word for published. The queue reports it and never adds --ignore-immutable.
+❯ rune sign queue change/pinned --receipt pinned.log
+queued edd8e5dafe86a85f change/pinned at 4137f8292f27: run `rune sign next` at the key
+❯ rune sign next || true
+refused: change/pinned is immutable, which for a pushed bookmark means the head is published. Sign before you push. Error: Commit 4137f8292f27 is immutable
+Hint: Could not modify commit: qpnqykmv 4137f829 change/pinned | feat: pinned
+Hint: Immutable commits are used to protect shared history.
+Hint: For more information, see:
+      - https://docs.jj-vcs.dev/latest/config/#set-of-immutable-commits
+      - `jj help -k config`, "Set of immutable commits"
+Hint: This operation would rewrite 1 immutable commits. change/pinned
+❯ rune sign drop change/pinned
+dropped edd8e5dafe86a85f change/pinned
+
+# Scenario: Pinentry timed out once
+# The first attempt times out. The retry carries the focus hint.
+❯ rune sign queue change/retried --receipt retried.log
+queued e5df56ba70089413 change/retried at 343df7de8ae6: run `rune sign next` at the key
+❯ rune sign next
+signing timed out (attempt 1 of 3): Internal error: Unexpected error from backend
+Caused by:
+1: Could not write object of type commit
+2: Signing error
+3: GPG failed with exit status: 2:
+gpg: signing failed: Timeout
+Keep the pinentry focused and touch the key as soon as it appears; a touch while another window has focus types an OTP into that window.
+signed change/retried bd5ce5fb79a5d634e7d2c6b0e6708700d08460b6
+   publish with: jj git push --remote origin --bookmark change/retried
+
+# Scenario: Head signed
+# A signed head prints the publication command and runs nothing.
+❯ rune sign queue change/guarded --receipt guarded.log
+queued b31a6d9cf3545bd1 change/guarded at 6f4511a4ef95: run `rune sign next` at the key
+❯ rune sign next
+signed change/guarded de4b6494c1c87c42b404b2cc325ac16474814cf2
+   publish with: jj git push --remote origin --bookmark change/guarded

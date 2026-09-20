@@ -218,8 +218,33 @@ fn qualify_head(
             ),
         ));
     }
+    // Signing in place rewrites the commit. A head the remote already
+    // holds can only be re-signed as a force-push of a published tip, and
+    // jj marks it immutable for the same reason. Sign first, push second.
+    if kind == Kind::Head {
+        refuse_published_head(repo, bookmark, &head.identity.commit_id)?;
+    }
     let receipt = qualify_receipt(receipt_path, &head.identity.commit_id)?;
     Ok((head, receipt))
+}
+
+/// The head is unpublished: `origin/<bookmark>` neither is it nor contains it.
+fn refuse_published_head(repo: &Repo, bookmark: &str, commit: &str) -> Result<(), Error> {
+    let remote = "origin";
+    let Some(published) = repo.remote_head(remote, bookmark)? else {
+        return Ok(());
+    };
+    if published == commit || repo.is_ancestor(commit, &published)? {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "{bookmark} at {} is already published on {remote}: signing it in place would rewrite a pushed tip. Sign before you push. To re-sign a published head anyway, run `jj sign -r {bookmark} --ignore-immutable` yourself and force-push under a lease",
+                short(commit)
+            ),
+        )
+        .with_code("sign.head_published"));
+    }
+    Ok(())
 }
 
 fn record_request(repo: &Repo, request: &Request, json: bool) -> Result<i32, Error> {
@@ -592,6 +617,10 @@ struct Outcome {
     result: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// The publication step that follows a signed head. The queue never
+    /// pushes; the owner does, and this is the exact command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    push: Option<String>,
 }
 
 impl Outcome {
@@ -601,6 +630,7 @@ impl Outcome {
             bookmark: request.bookmark.clone(),
             result: format!("skipped: {}", state_label(state)),
             commit: None,
+            push: None,
         }
     }
 
@@ -684,6 +714,9 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
                 Some(commit) => println!("{} {} {}", outcome.result, outcome.bookmark, commit),
                 None => println!("{} {}", outcome.result, outcome.bookmark),
             }
+            if let Some(push) = &outcome.push {
+                println!("   publish with: {push}");
+            }
         }
     }
     Ok(i32::from(failed))
@@ -759,11 +792,18 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
             request.signed_commit = Some(commit.clone());
             request.claim = None;
             store.save(&request)?;
+            let push = (request.kind == Kind::Head).then(|| {
+                format!(
+                    "jj git push --remote origin --bookmark {}",
+                    request.bookmark
+                )
+            });
             Outcome {
                 id: request.id.clone(),
                 bookmark: request.bookmark.clone(),
                 result: "signed".to_string(),
                 commit: Some(commit),
+                push,
             }
         }
         Attempt::Failed(reason) => record_failure(store, request, &reason)?,
@@ -775,6 +815,7 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
                 bookmark: request.bookmark.clone(),
                 result: reason,
                 commit: None,
+                push: None,
             }
         }
     };
@@ -834,6 +875,7 @@ fn record_failure(store: &Store, mut request: Request, reason: &str) -> Result<O
         bookmark: request.bookmark.clone(),
         result: format!("failed: {reason}"),
         commit: None,
+        push: None,
     })
 }
 
@@ -871,6 +913,7 @@ fn record_signed_head(store: &Store, live: Live, signing: &Signing) -> Result<Ou
         bookmark: request.bookmark.clone(),
         result: "signed".to_string(),
         commit: Some(head.identity.commit_id),
+        push: None,
     })
 }
 

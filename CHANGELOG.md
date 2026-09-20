@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Refuse `rune sign queue` on a head that `origin` already holds or sits above, because signing it in place would rewrite a pushed tip.
+- Report jj's immutable-commit refusal in `rune sign next` without a retry, print the pinentry focus hint on every timeout, and print the `jj git push` line after a signed head.
 - Add `rune draft`, which writes an unmanaged rune into the consumer and tracks it in `.drafts`.
 - List drafts by age in `rune doctor` instead of reporting them as orphans.
 - Add `rune promote`, which moves a draft into the deck with its change stub.

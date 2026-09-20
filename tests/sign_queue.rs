@@ -351,6 +351,55 @@ fn a_request_refuses_a_failing_receipt_a_foreign_receipt_and_a_signed_head() {
         .stderr(predicate::str::contains("already signed"));
 }
 
+/// Signing in place rewrites the commit. A head the remote already holds,
+/// or one beneath the remote head, would come back as a force-push of a
+/// published tip (2026-09-20: `4fa850b9` re-signed sideways to `64fc7e85`).
+#[test]
+fn a_request_refuses_a_head_the_remote_already_holds() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let top = head_commit(&fixture, "change/top");
+    // Outside the workspace: `jj new` below would otherwise snapshot the
+    // receipt into one commit and drop it from the next working copy.
+    let good = fixture.workspace.parent().expect("parent").join("top.log");
+    fs::write(
+        &good,
+        format!("bookmark: x [move sideways from 0000 to {top}]\nexit=0\n"),
+    )
+    .expect("receipt");
+
+    set_remote_ref(&fixture, "change/top", &top);
+    rune(&fixture)
+        .args(["sign", "queue", "change/top", "--receipt"])
+        .arg(&good)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already published"))
+        .stderr(predicate::str::contains("Sign before you push"));
+
+    // The remote moved past the head: still published, still refused.
+    run(jj(&fixture).args(["new", "change/top", "-m", "feat: later"]));
+    let later = run(jj(&fixture).args(["log", "--no-graph", "-r", "@", "-T", "commit_id"]));
+    set_remote_ref(&fixture, "change/top", &later);
+    rune(&fixture)
+        .args(["sign", "queue", "change/top", "--receipt"])
+        .arg(&good)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already published"));
+
+    // The remote holds an unrelated commit: the head is unpublished.
+    let base = head_commit(&fixture, "change/base");
+    set_remote_ref(&fixture, "change/top", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/top", "--receipt"])
+        .arg(&good)
+        .assert()
+        .success();
+}
+
 #[test]
 fn a_moved_head_is_stale_and_is_never_signed() {
     let Some(fixture) = fixture() else {

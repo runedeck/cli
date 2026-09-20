@@ -60,6 +60,9 @@ pub(crate) enum SignOutcome {
     Timeout(String),
     /// The owner cancelled; never retried.
     Cancelled(String),
+    /// jj refused to rewrite the commit: it is in `immutable_heads()`,
+    /// which for a pushed bookmark means the head is published.
+    Immutable(String),
     Failed(String),
 }
 
@@ -839,6 +842,8 @@ pub(crate) fn classify_sign_output(success: bool, stderr: &str) -> SignOutcome {
     let lower = stderr.to_ascii_lowercase();
     if lower.contains("cancel") {
         SignOutcome::Cancelled(stderr.trim().to_string())
+    } else if lower.contains("is immutable") {
+        SignOutcome::Immutable(stderr.trim().to_string())
     } else if lower.contains("timeout") || lower.contains("timed out") {
         SignOutcome::Timeout(stderr.trim().to_string())
     } else {
