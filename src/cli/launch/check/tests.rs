@@ -145,6 +145,84 @@ fn codex_plan_reads_model_arguments() {
 }
 
 #[test]
+fn two_families_get_their_own_credential_and_models() {
+    let mut launch = resolved(
+        "codex",
+        env(&[
+            ("ANTHROPIC_BASE_URL", "http://anthropic.test"),
+            ("ANTHROPIC_AUTH_TOKEN", "anthropic-token"),
+            ("ANTHROPIC_MODEL", "claude-only"),
+            ("OPENAI_BASE_URL", "http://openai.test"),
+            ("OPENAI_API_KEY", "openai-key"),
+        ]),
+        Some("gpt-5.6-sol"),
+    );
+    launch.argv = ["codex", "-m", "gpt-5.6-luna"]
+        .iter()
+        .map(OsString::from)
+        .collect();
+    let checks = plan_checks(&launch, None);
+    assert_eq!(
+        checks,
+        vec![
+            EndpointCheck {
+                base_url: "http://anthropic.test".to_string(),
+                credential_key: Some("ANTHROPIC_AUTH_TOKEN".to_string()),
+                models: vec!["claude-only".to_string()],
+            },
+            EndpointCheck {
+                base_url: "http://openai.test".to_string(),
+                credential_key: Some("OPENAI_API_KEY".to_string()),
+                models: vec!["gpt-5.6-sol".to_string(), "gpt-5.6-luna".to_string()],
+            },
+        ]
+    );
+}
+
+#[test]
+fn middleware_base_url_binds_to_the_running_tool_family() {
+    let mut launch = resolved(
+        "claude",
+        env(&[("ANTHROPIC_MODEL", "kimi-k3")]),
+        Some("kimi-k3"),
+    );
+    launch.base_url = Some("http://proxy.test".to_string());
+    let checks = plan_checks(&launch, None);
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].base_url, "http://proxy.test");
+    assert_eq!(checks[0].models, vec!["kimi-k3".to_string()]);
+}
+
+#[test]
+fn a_credential_under_any_name_is_sent() {
+    let launch = resolved(
+        "claude",
+        env(&[
+            ("ANTHROPIC_BASE_URL", "http://proxy.test"),
+            ("PROXY_TOKEN", "proxy-secret"),
+            ("ANTHROPIC_MODEL", "kimi-k3"),
+        ]),
+        Some("kimi-k3"),
+    );
+    let checks = plan_checks(&launch, None);
+    assert_eq!(checks[0].credential_key.as_deref(), Some("PROXY_TOKEN"));
+}
+
+#[test]
+fn json_report_matches_the_run_shape() {
+    let report = CheckReport {
+        tool: "claude".to_string(),
+        endpoints: Vec::new(),
+        exit_code: EXIT_SERVED,
+    };
+    let json: serde_json::Value = serde_json::from_str(&format_report_json(&report)).expect("json");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "check");
+    assert_eq!(json["tool"], "claude");
+    assert_eq!(json["exit_code"], 0);
+}
+
+#[test]
 fn served_and_missing_models_set_the_exit_code() {
     let (base_url, handle) = stub(200, r#"{"data":[{"id":"kimi-k3"},{"id":"other"}]}"#);
     let launch = resolved(

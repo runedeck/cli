@@ -11,13 +11,33 @@ use std::time::Duration;
 
 const MODELS_PATH: &str = "/v1/models";
 const TIMEOUT: Duration = Duration::from_secs(5);
-const BASE_URL_KEYS: &[&str] = &["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"];
-const CREDENTIAL_KEYS: &[&str] = &[
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
+
+/// One API family the plan can address: the environment key that names its
+/// base URL, the credential keys that family reads in order, the model keys
+/// it reads, and the tool whose route model belongs to it. A plan that
+/// carries both families gets one check per family, each with its own
+/// credential and its own model list.
+struct Family {
+    base_url_key: &'static str,
+    credential_keys: &'static [&'static str],
+    model_keys: &'static [&'static str],
+    tool: &'static str,
+}
+
+const FAMILIES: &[Family] = &[
+    Family {
+        base_url_key: "ANTHROPIC_BASE_URL",
+        credential_keys: &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        model_keys: &["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"],
+        tool: "claude",
+    },
+    Family {
+        base_url_key: "OPENAI_BASE_URL",
+        credential_keys: &["OPENAI_API_KEY"],
+        model_keys: &[],
+        tool: "codex",
+    },
 ];
-const CLAUDE_MODEL_KEYS: &[&str] = &["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"];
 
 /// Exit code when every model id is served.
 pub(crate) const EXIT_SERVED: i32 = 0;
@@ -69,70 +89,81 @@ pub(crate) fn plan_checks(
     model_override: Option<&str>,
 ) -> Vec<EndpointCheck> {
     let env = &resolved.display_env;
-    let base_urls = base_urls(env, resolved.base_url.as_deref());
-    if base_urls.is_empty() {
-        return Vec::new();
-    }
-    let credential_key = CREDENTIAL_KEYS
-        .iter()
-        .find(|key| env_value(env, key).is_some_and(|value| !value.is_empty()))
-        .map(|key| (*key).to_string());
-    let mut models = plan_models(resolved, model_override);
-    models.dedup();
-    base_urls
-        .into_iter()
-        .map(|base_url| EndpointCheck {
+    let mut checks: Vec<EndpointCheck> = Vec::new();
+    for family in FAMILIES {
+        // The middleware base URL (`plan.base_url`) reaches the tool through
+        // its own base URL key, so it belongs to the running tool's family.
+        let base_url = env_value(env, family.base_url_key)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                (family.tool == resolved.tool)
+                    .then(|| resolved.base_url.clone())
+                    .flatten()
+                    .filter(|value| !value.is_empty())
+            });
+        let Some(base_url) = base_url else {
+            continue;
+        };
+        let credential_key = family
+            .credential_keys
+            .iter()
+            .find(|key| env_value(env, key).is_some_and(|value| !value.is_empty()))
+            .map(|key| (*key).to_string())
+            .or_else(|| fallback_credential_key(env));
+        let models = family_models(resolved, family, model_override);
+        checks.push(EndpointCheck {
             base_url,
-            credential_key: credential_key.clone(),
-            models: models.clone(),
-        })
-        .collect()
-}
-
-fn base_urls(env: &[(OsString, OsString)], plan_base_url: Option<&str>) -> Vec<String> {
-    let mut urls: Vec<String> = BASE_URL_KEYS
-        .iter()
-        .filter_map(|key| env_value(env, key))
-        .filter(|value| !value.is_empty())
-        .collect();
-    if let Some(base_url) = plan_base_url
-        && !base_url.is_empty()
-    {
-        urls.push(base_url.to_string());
+            credential_key,
+            models,
+        });
     }
-    urls.dedup();
-    urls
+    checks
 }
 
-fn plan_models(resolved: &ResolvedLaunch, model_override: Option<&str>) -> Vec<String> {
+/// A profile can authenticate under any name (`PROXY_TOKEN`, `GATEWAY_KEY`).
+/// When no family key is set, the first credential-shaped key in the plan
+/// is the one the launched tool would receive, so the check sends it too.
+fn fallback_credential_key(env: &[(OsString, OsString)]) -> Option<String> {
+    env.iter()
+        .map(|(key, value)| (key.to_string_lossy().into_owned(), value))
+        .find(|(key, value)| super::is_credential_env_key(key) && !value.is_empty())
+        .map(|(key, _)| key)
+}
+
+/// The model ids one family's endpoint must serve: the route model when
+/// the running tool belongs to the family, the family's own environment
+/// keys, and for codex the ids on its command line.
+fn family_models(
+    resolved: &ResolvedLaunch,
+    family: &Family,
+    model_override: Option<&str>,
+) -> Vec<String> {
     let mut models = Vec::new();
     let mut push = |value: String| {
         if !value.is_empty() && !models.contains(&value) {
             models.push(value);
         }
     };
-    if let Some(model) = model_override {
-        push(model.to_string());
-    } else if let Some(model) = &resolved.model {
-        push(model.id.clone());
+    let owns_tool = family.tool == resolved.tool;
+    if owns_tool {
+        if let Some(model) = model_override {
+            push(model.to_string());
+        } else if let Some(model) = &resolved.model {
+            push(model.id.clone());
+        }
     }
-    match resolved.tool.as_str() {
-        "claude" => {
-            for key in CLAUDE_MODEL_KEYS {
-                if model_override.is_some() && *key == "ANTHROPIC_MODEL" {
-                    continue;
-                }
-                if let Some(value) = env_value(&resolved.display_env, key) {
-                    push(value);
-                }
-            }
+    for key in family.model_keys {
+        if owns_tool && model_override.is_some() && *key == "ANTHROPIC_MODEL" {
+            continue;
         }
-        "codex" => {
-            for model in codex_argv_models(&resolved.argv) {
-                push(model);
-            }
+        if let Some(value) = env_value(&resolved.display_env, key) {
+            push(value);
         }
-        _ => {}
+    }
+    if owns_tool && resolved.tool == "codex" {
+        for model in codex_argv_models(&resolved.argv) {
+            push(model);
+        }
     }
     models
 }
@@ -294,6 +325,19 @@ fn parse_model_ids(body: &str) -> Option<Vec<String>> {
             .map(str::to_string)
             .collect(),
     )
+}
+
+/// The JSON report, the same shape `rune run --check --json` prints, so one
+/// consumer reads both commands.
+pub(crate) fn format_report_json(report: &CheckReport) -> String {
+    serde_json::json!({
+        "ok": report.exit_code == EXIT_SERVED,
+        "kind": "check",
+        "tool": report.tool,
+        "endpoints": report.endpoints,
+        "exit_code": report.exit_code,
+    })
+    .to_string()
 }
 
 /// The text report: one block per endpoint, one line per model.
