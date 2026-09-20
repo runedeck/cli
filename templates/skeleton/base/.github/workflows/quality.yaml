@@ -5,6 +5,9 @@ on:
         branches: [main]
     pull_request:
         branches: [main]
+    # draft-open.yaml calls this workflow on the first push of a ceremony
+    # branch, so the draft opens only after the deterministic checks pass.
+    workflow_call: {}
 
 concurrency:
     group: quality-${{ github.ref }}
@@ -13,9 +16,6 @@ concurrency:
 permissions:
     contents: read
     pull-requests: read
-
-env:
-    GITLEAKS_VERSION: "8.30.1"
 
 jobs:
     quality:
@@ -54,29 +54,26 @@ jobs:
                   # permission fault must not read as a missing section.
                   body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""') \
                       || { echo "could not read the pull request body (API or permission failure)"; exit 1; }
-                  printf '%s\n' "$body" \
-                      | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}' \
-                      && echo "Release Notes section present." \
-                      || { echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."; exit 1; }
+                  if printf '%s\n' "$body" \
+                      | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}'; then
+                      echo "Release Notes section present."
+                  else
+                      echo "The pull request body needs a '## Release Notes' section with at least one entry ('- N/A' for non-user-facing work)."
+                      exit 1
+                  fi
 
-            # The distro package is too old for `gitleaks git`; install the
-            # pinned upstream release and verify it against the release's
-            # published checksums before executing.
-            # ruff and semgrep serve the universal prek config's type-gated
-            # hooks; rust and ts toolchains are the scaffolded repository's
-            # own concern, and their hooks never fire without their files.
+            # Local hooks, generated CI, and template updates all consume the
+            # same reviewed tool versions and archive digests.
             - name: Install tools
-              run: |
-                  sudo apt-get install -y shellcheck
-                  pipx install ruff semgrep
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-                  tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-                  sudo install gitleaks /usr/local/bin/gitleaks
+              run: bash scripts/install-tools
 
+            # The prek CLI is called directly: the wrapper action logs at
+            # TRACE level and buries the failing hook's output. REQUIRE_GATES
+            # turns a missing linter into a failure instead of a skip.
             - name: Commit-stage checks
-              uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
+              env:
+                  REQUIRE_GATES: "1"
+              run: prek run --all-files
 
             # Scan exactly the commits this event introduces. Without a usable
             # base, gitleaks scans the target history and other hooks inspect all files.
@@ -84,13 +81,16 @@ jobs:
               run: |
                   if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
                       from="${{ github.event.pull_request.base.sha }}"
+                      to="${{ github.event.pull_request.head.sha }}"
                   elif [ -n "${{ github.event.before }}" ] && ! printf '%s' "${{ github.event.before }}" | grep -q '^0*$'; then
                       from="${{ github.event.before }}"
+                      to="${{ github.sha }}"
                   else
                       from=""
+                      to="${{ github.sha }}"
                   fi
                   if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
-                      prek run --stage pre-push --from-ref "$from" --to-ref "${{ github.sha }}"
+                      prek run --stage pre-push --from-ref "$from" --to-ref "$to"
                   else
-                      GITLEAKS_PUSH_TO_REF="${{ github.sha }}" prek run --stage pre-push --all-files
+                      GITLEAKS_PUSH_TO_REF="$to" prek run --stage pre-push --all-files
                   fi

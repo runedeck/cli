@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `rune init` without a configured skeleton root recorded `_commit: v0.5.0` in `answers.yaml`, a tag the skeleton never had, so `copier update` failed in every project it scaffolded. The embedded copy now records the skeleton commit it equals, `66d1077`, and a release tag wins when one is set. The embedded copy is refreshed to that commit and gains the sealed ceremony files: the `owner-seal` and `draft-open` workflows, `scripts/verify-seal`, the rulesets, and the zizmor baseline. The Rust and Python manifests keep the double-quoted `description`, because `rune init` escapes the brief for a basic string.
 - `rune init` sets the executable bit from the file's shebang instead of its directory, so a hook module without one stays 644 and a script with one is executable wherever it lives. The generated project passes ruff's EXE001 and EXE002. The build workflow's `quality` and `scaffold` jobs install their tools through `scripts/install-tools`, which pins ruff. The inline installs they replaced had none, so both checks failed on every pull request.
 - Project scaffolding escapes TOML description values and includes `.gitignore` retrofits in dry-run output.
 - Git subprocesses ignore ambient repository-routing variables exported by hooks, so nested repository operations stay pinned to their intended worktrees.

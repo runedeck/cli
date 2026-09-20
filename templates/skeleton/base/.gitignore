@@ -24,3 +24,6 @@ dist/
 # tracked files are the project binding and configuration only.
 .specstory/history/
 .specstory/debug/
+
+# Quarantine: rune repair and reseal move evidence here, never delete it
+.trash/

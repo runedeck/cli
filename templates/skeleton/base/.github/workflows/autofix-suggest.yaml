@@ -42,7 +42,7 @@ jobs:
                   [ "$draft" = "false" ] || { echo "draft pull requests take no autofix round"; exit 1; }
 
     # A queued ready event keeps its label payload after another round
-    # consumed the summon, so readiness re-reads the live labels before
+    # consumed the review label, so readiness re-reads the live labels before
     # the lane may start.
     release:
         if: github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'review:autofix')
@@ -61,7 +61,7 @@ jobs:
               run: |
                   # Pages merge through jq -s so a label set past one page
                   # still counts fully. pipefail plus the explicit failure
-                  # exit keep an API error from reading as a consumed summon.
+                  # exit keep an API error from reading as a consumed review label.
                   set -o pipefail
                   labels=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" \
                       --jq '[.[].name]' | jq -s -r 'add // [] | .[]') \
@@ -70,7 +70,7 @@ jobs:
                       echo "summoned=true" >> "$GITHUB_OUTPUT"
                   else
                       echo "summoned=false" >> "$GITHUB_OUTPUT"
-                      echo "the summon was already consumed; the lane stands down."
+                      echo "the review label was already consumed; the lane stands down."
                   fi
 
     suggest:

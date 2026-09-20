@@ -31,10 +31,26 @@ fn embedded_skeleton_cache_identity_tracks_attribution_overlay() {
     let without_helper = skeleton_bundle_digest(base_entries);
     let cache_name = embedded_skeleton_cache_name();
     assert!(!cache_name.ends_with(&without_helper));
-    assert!(cache_name.starts_with(&format!("skeleton-{}-v0.5.0-", env!("CARGO_PKG_VERSION"))));
+    let reference = embedded_skeleton_reference();
+    assert!(cache_name.starts_with(&format!(
+        "skeleton-{}-{reference}-",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert_ne!(
         cache_name,
-        format!("skeleton-{}-v0.5.0", env!("CARGO_PKG_VERSION"))
+        format!("skeleton-{}-{reference}", env!("CARGO_PKG_VERSION"))
+    );
+    // A release wins over the commit, and with none set the commit is a
+    // full object id, never a tag that may not exist.
+    assert_eq!(
+        reference,
+        EMBEDDED_SKELETON_RELEASE.unwrap_or(EMBEDDED_SKELETON_COMMIT)
+    );
+    assert_eq!(EMBEDDED_SKELETON_COMMIT.len(), 40);
+    assert!(
+        EMBEDDED_SKELETON_COMMIT
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
     );
 }
 

@@ -1,0 +1,16 @@
+# Declared divergences from the skeleton ceremony template.
+#
+# The consumer-parity workflow in runedeck/skeleton renders templates/base
+# at the consumer's recorded release and at skeleton main, then compares
+# every rendered file with the consumer's copy. A difference is drift
+# unless an entry here declares it. An entry names one path, the reason,
+# and the SHA-256 of both sides at approval time; when either side moves,
+# the entry expires and the difference is drift again until re-approved.
+#
+# The central copy in skeleton lists the differences every consumer is
+# allowed to carry. A consumer appends its own entries to this file; the
+# workflow accepts a consumer entry only when the central file approves the
+# consumer's copy of this file by digest, so a consumer cannot waive its own
+# drift unilaterally.
+version: 1
+entries: []

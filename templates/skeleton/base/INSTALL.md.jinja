@@ -15,20 +15,26 @@ Hooks active (git `core.hooksPath` plus the jj `push` alias when the repo is col
 ## TODO
 
 - [ ] Run `make install`
-- [ ] Install each missing check tool (`prek`, `gitleaks`, `shellcheck`)
-- [ ] Install Copier for template updates
+- [ ] Confirm the repository check tools are available
 - [ ] Run `make validate` and confirm it exits 0
 
 ## Steps
 
 ```sh
+set -e
 make install
-for tool in prek gitleaks shellcheck copier; do
-    command -v "$tool" >/dev/null || brew install "$tool"
+export PATH="$HOME/.local/bin:$PATH"
+missing=false
+for tool in prek gitleaks shellcheck copier ruff semgrep mdschema rumdl typos vale lychee zizmor actionlint; do
+    if ! command -v "$tool"; then
+        printf 'missing tool: %s\n' "$tool" >&2
+        missing=true
+    fi
 done
+[ "$missing" = false ]
 make validate
 ```
 
-Without Homebrew, install each missing tool with the platform's package manager; `gitleaks` needs the upstream release (the Debian and Ubuntu package is too old for `gitleaks git`). Copier is needed only for template installation and updates; repository checks and review workflows continue without it.
+`make install` supports macOS with Homebrew and Linux with Homebrew, apt, dnf, or pacman. It installs the repository check tools, verifies downloaded release archives against their upstream checksum manifests, and activates the git and jj hooks. Copier applies template updates. mdschema validates strict Markdown structure.
 
 EXECUTE NOW: Complete the above TODO list to achieve: hooks wired and `make validate` green.

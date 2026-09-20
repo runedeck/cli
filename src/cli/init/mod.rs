@@ -13,7 +13,18 @@ use std::process::Command;
 use super::validate::templates::InitTemplates;
 
 const EMBEDDED_SKELETON_SOURCE: &str = "https://github.com/runedeck/skeleton.git";
-const EMBEDDED_SKELETON_RELEASE: &str = "v0.5.0";
+/// The skeleton release the embedded copy was taken at, when the skeleton
+/// has tagged one. `None` pins the commit below instead: a tag that does
+/// not exist makes `copier update` fail in every scaffolded project.
+const EMBEDDED_SKELETON_RELEASE: Option<&str> = None;
+/// The skeleton commit the embedded copy equals. `answers.yaml` records it
+/// when no release is set, so `copier update` starts from the truth.
+const EMBEDDED_SKELETON_COMMIT: &str = "66d10770aac1218dd6abe81dddfb685339919c8c";
+
+/// The reference a project scaffolded from the embedded copy records.
+fn embedded_skeleton_reference() -> &'static str {
+    EMBEDDED_SKELETON_RELEASE.unwrap_or(EMBEDDED_SKELETON_COMMIT)
+}
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -569,8 +580,9 @@ fn embedded_skeleton_cache_name() -> String {
             .map(|(path, content)| (path.as_ref(), content.data.as_ref())),
     );
     format!(
-        "skeleton-{}-{EMBEDDED_SKELETON_RELEASE}-{digest}",
-        env!("CARGO_PKG_VERSION")
+        "skeleton-{}-{}-{digest}",
+        env!("CARGO_PKG_VERSION"),
+        embedded_skeleton_reference()
     )
 }
 
@@ -897,7 +909,7 @@ fn resolve_project_context(
         (
             materialize_embedded_skeleton()?,
             EMBEDDED_SKELETON_SOURCE.to_string(),
-            Some(EMBEDDED_SKELETON_RELEASE.to_string()),
+            Some(embedded_skeleton_reference().to_string()),
         )
     };
     let configured_owner = config
