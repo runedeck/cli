@@ -248,4 +248,45 @@ mod tests {
         );
         assert_eq!(repo_slug("/tmp/remote.git"), "/tmp/remote.git");
     }
+
+    /// The seal this crate writes, held against the verifier's own shell:
+    /// the field it reads for the number and the nonce pattern it applies,
+    /// in `scripts/verify-seal` and the embedded skeleton copy alike. The
+    /// first sealed pull request hit two drifts between the two.
+    #[test]
+    fn the_verifier_reads_the_seal_this_crate_writes() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let scripts = [
+            format!("{root}/scripts/verify-seal"),
+            format!("{root}/templates/skeleton/base/scripts/verify-seal"),
+        ];
+        let seal = OpenSeal {
+            repo: "runedeck/cli".to_string(),
+            base: "main".to_string(),
+            pull_request: 67,
+            tree: TREE.to_string(),
+            nonce: nonce().unwrap(),
+        };
+        let message = seal.message();
+        let fields: serde_json::Value =
+            serde_json::from_str(message.strip_prefix(OPEN_PREFIX).unwrap()).unwrap();
+        for path in scripts {
+            let script = std::fs::read_to_string(&path).expect("verify-seal");
+            let pattern = script
+                .lines()
+                .find_map(|line| line.strip_prefix("nonce_pattern='"))
+                .and_then(|rest| rest.strip_suffix('\''))
+                .unwrap_or_else(|| panic!("nonce_pattern in {path}"));
+            let regex = regex::Regex::new(pattern).unwrap();
+            let nonce = fields["nonce"].as_str().unwrap();
+            assert!(
+                regex.is_match(nonce),
+                "{path}: nonce {nonce} does not match {pattern}"
+            );
+            assert!(
+                script.contains("json_field \"$json\" pull_request"),
+                "{path}: the verifier reads pull_request"
+            );
+        }
+    }
 }

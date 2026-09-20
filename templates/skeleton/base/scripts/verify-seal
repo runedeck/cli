@@ -31,7 +31,9 @@
 set -euo pipefail
 
 gpg_program=${VERIFY_SEAL_GPG:-gpg}
-nonce_pattern='^[0-9a-f]{32}$'
+# `rune sign open` writes 32 random bytes as 64 hex characters; the older
+# 32-character form still verifies.
+nonce_pattern='^([0-9a-f]{64}|[0-9a-f]{32})$'
 command=${1:-}
 [ -n "$command" ] || { printf 'usage: verify-seal open|merge [options]\n' >&2; exit 2; }
 shift
@@ -132,7 +134,7 @@ check_open_candidate() {
     [ -n "$seal_repo" ] && [ -n "$seal_base" ] && [ -n "$seal_number" ] && [ -n "$seal_tree" ] && [ -n "$nonce" ] \
         || fail "open-seal $seal is malformed: expected a JSON subject with repo, base, pull_request, tree, and nonce"
     printf '%s' "$nonce" | grep -Eq "$nonce_pattern" \
-        || fail "open-seal $seal carries nonce $nonce, which is not 32 lowercase hex characters"
+        || fail "open-seal $seal carries nonce $nonce, which is not 64 (or the older 32) lowercase hex characters"
     [ "$seal_repo" = "$repo" ] || fail "open-seal $seal binds repository $seal_repo, not $repo"
     [ "$seal_base" = "$base" ] || fail "open-seal $seal binds base $seal_base, not $base"
     [ "$seal_number" = "$number" ] || fail "open-seal $seal binds pull request #$seal_number, not #$number"
