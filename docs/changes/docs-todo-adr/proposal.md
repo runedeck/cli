@@ -16,9 +16,9 @@ See the linked ADR for the decision rationale. This proposal records the change 
 
 ## Capabilities
 
-- docs (new or modified)
-- todo (new or modified)
-- adr (new or modified)
+- docs-link-check (new or modified)
+- docs-todo-tracking (new or modified)
+- architecture-decision-records (new or modified)
 
 ## Impact
 

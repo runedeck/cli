@@ -54,6 +54,9 @@ pub(super) struct DashboardConfig {
 #[serde(default)]
 pub(super) struct SpecConfig {
     pub(super) root: Option<StringOrList>,
+    /// Minimum hyphen-separated words in a change id or capability name.
+    /// Unset means the crate default (3), `0` turns the rule off.
+    pub(super) min_name_words: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]

@@ -359,6 +359,10 @@ pub(crate) fn source_spec_root(config: &str) -> Option<String> {
     source::spec(config).ok()?.root?.joined()
 }
 
+pub(crate) fn source_spec_min_name_words(config: &str) -> Option<usize> {
+    source::spec(config).ok()?.min_name_words
+}
+
 pub(crate) fn source_adr_prefixes(config: &str) -> Option<String> {
     source::adr(config).ok()?.prefixes?.joined()
 }

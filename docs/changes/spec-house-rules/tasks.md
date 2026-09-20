@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add the `lint` module with the keyword, length, and glossary rules, shared by validate and doctor
 - [x] 1.2 Keep the compatibility parser and the OpenSpec v1.6.0 oracle fixtures unchanged
-- [x] 1.3 Convert the cli specifications and deltas to MUST and split `spec-lifecycle` and `commit-attribution`
+- [x] 1.3 Convert the cli specifications and deltas to MUST and split `spec-change-lifecycle` and `model-commit-attribution`
 - [x] 1.4 Switch the delta template and the archive fixtures to MUST
 
 ## 2. Verification

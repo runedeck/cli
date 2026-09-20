@@ -1,6 +1,6 @@
 # Worker instructions
 
-Read the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/skill-readiness/spec.md), [layers](specs/skill-layers/spec.md)), the [ADR](adr.md), and the [acceptance contract](acceptance.md).
+Read the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/codex-skill-readiness/spec.md), [layers](specs/skill-source-layers/spec.md)), the [ADR](adr.md), and the [acceptance contract](acceptance.md).
 The source base is `a9176a18009c4d1e3e979431f0ace761874f76e8`.
 The user authorized implementation and two separate PRs on 2026-09-10.
 

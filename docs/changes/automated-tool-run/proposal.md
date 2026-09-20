@@ -18,9 +18,9 @@ Automation needs a stable coding-tool command that reuses launch profiles and pr
 
 ## Capabilities
 
-- run (new)
-- launch (modified)
-- bench (modified)
+- harness-run-command (new)
+- harness-launch-command (modified)
+- bench-suite-runner (modified)
 
 ## Impact
 

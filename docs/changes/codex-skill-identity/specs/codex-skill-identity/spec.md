@@ -3,7 +3,7 @@
 ## Purpose
 
 Let users trace each selected Codex skill to its source and verify its complete deployed bundle without hiding
-discovery ambiguity. Readiness verification and source-layer checks are the `skill-readiness` and `skill-layers`
+discovery ambiguity. Readiness verification and source-layer checks are the `codex-skill-readiness` and `skill-source-layers`
 capabilities of this change.
 
 ## ADDED Requirements
@@ -15,12 +15,6 @@ deployment path.
 It MUST record the selected source revision or local content digest and the deployed bundle digest.
 The default Codex skill destination MUST be `.agents/skills/<authored-directory>/` with authored case preserved.
 The change MUST preserve explicit target overrides and existing private destinations for other content kinds.
-CLI provider arguments MUST resolve exact names before explicit aliases and unique target-directory matches.
-Ambiguous CLI selectors MUST fail with sorted candidates rather than select a provider by iteration order.
-Readiness MUST compare its recorded source snapshot with current configuration and authored roots derived
-independently from that configuration.
-The comparison MUST bind source selection, effective configuration, builder bytes, and any explicit model override.
-Unavailable cached sources or mismatched snapshots MUST prevent acceptance without fetching sources during inspection.
 
 #### Scenario: Default Codex skill and native agent
 
@@ -34,6 +28,29 @@ Unavailable cached sources or mismatched snapshots MUST prevent acceptance witho
 - **WHEN** the user configures another supported Codex skill destination
 - **THEN** deployment honors that destination
 - **AND** readiness evaluates the actual destination and applicable discovery scope
+
+### Requirement: CSI-01a Provider selectors resolve to one provider
+
+CLI provider arguments MUST resolve exact names before explicit aliases and unique target-directory matches.
+Ambiguous CLI selectors MUST fail with sorted candidates rather than select a provider by iteration order.
+
+#### Scenario: Exact provider name precedes an alias
+
+- **WHEN** a CLI provider argument equals one provider name and an alias of another provider
+- **THEN** the argument resolves to the provider whose exact name it matches
+
+#### Scenario: CLI selector matches several providers
+
+- **WHEN** a CLI provider argument matches no exact name and several aliases or target directories
+- **THEN** the command fails and reports the sorted candidates
+- **AND** it selects no provider by iteration order
+
+### Requirement: CSI-01b Recorded source snapshots match current configuration
+
+Readiness MUST compare its recorded source snapshot with current configuration and authored roots derived
+independently from that configuration.
+The comparison MUST bind source selection, effective configuration, builder bytes, and any explicit model override.
+Unavailable cached sources or mismatched snapshots MUST prevent acceptance without fetching sources during inspection.
 
 #### Scenario: Source content changes after deployment
 

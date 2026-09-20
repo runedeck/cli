@@ -5,7 +5,7 @@ fn target<'target>(repository: &'target Path, path: &'target Path) -> LintTarget
     LintTarget {
         repository,
         path,
-        capability: "search",
+        capability: "rune-name-search",
         change: None,
     }
 }
@@ -230,4 +230,79 @@ fn a_plain_plural_finds_its_singular_entry() {
     );
 
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn a_requirement_over_the_word_cap_is_an_error_at_its_heading() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("docs/specs/search/spec.md");
+    let wall = "The system MUST do one thing and then another thing. ".repeat(12);
+    let content = CLEAN.replace("The system MUST retain this behavior.", wall.trim());
+    let mut diagnostics = Vec::new();
+
+    lint_canonical(
+        target(root.path(), &path),
+        &content,
+        &Glossary::default(),
+        &mut diagnostics,
+    );
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "spec-requirement-too-long");
+    assert_eq!(diagnostics[0].line, Some(9));
+    assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    assert!(diagnostics[0].message.contains("120 words"), "{}", diagnostics[0].message);
+}
+
+#[test]
+fn a_step_over_the_word_cap_is_an_error_and_inline_code_does_not_count() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("docs/changes/x/specs/search/spec.md");
+    let long_step = format!("- **THEN** {}", "a fact ".repeat(16));
+    let content = CLEAN.replace("- **THEN** results appear", long_step.trim_end());
+    let mut diagnostics = Vec::new();
+    lint_delta(
+        target(root.path(), &path),
+        &content,
+        &Glossary::default(),
+        &mut diagnostics,
+    );
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "delta-step-too-long");
+    assert_eq!(diagnostics[0].line, Some(16));
+
+    // Code spans are blanked before counting, so a command-heavy step passes.
+    let coded = format!("- **THEN** `{}` runs", "word ".repeat(40).trim_end());
+    let content = CLEAN.replace("- **THEN** results appear", &coded);
+    let mut diagnostics = Vec::new();
+    lint_delta(
+        target(root.path(), &path),
+        &content,
+        &Glossary::default(),
+        &mut diagnostics,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn short_capability_and_change_names_are_errors_by_the_default_rule() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("docs/changes/add-x/specs/search/spec.md");
+    let mut diagnostics = Vec::new();
+    lint_delta(
+        LintTarget {
+            repository: root.path(),
+            path: &path,
+            capability: "search",
+            change: Some("add-x"),
+        },
+        CLEAN,
+        &Glossary::default(),
+        &mut diagnostics,
+    );
+    let codes: Vec<&str> = diagnostics.iter().map(|d| d.code.as_str()).collect();
+    assert!(codes.contains(&"delta-capability-name-short"), "{codes:?}");
+    assert!(codes.contains(&"change-name-short"), "{codes:?}");
+    assert_eq!(name_words("sign-before-publish-guard"), 4);
+    assert_eq!(name_words("a--b"), 2);
 }

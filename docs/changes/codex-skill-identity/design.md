@@ -2,7 +2,7 @@
 
 ## Context
 
-See [proposal](proposal.md) for scope and the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/skill-readiness/spec.md), [layers](specs/skill-layers/spec.md)) for observable behavior.
+See [proposal](proposal.md) for scope and the requirements ([identity](specs/codex-skill-identity/spec.md), [readiness](specs/codex-skill-readiness/spec.md), [layers](specs/skill-source-layers/spec.md)) for observable behavior.
 The owner selected a staged layout migration on 2026-09-10.
 Use existing `ByKind` support. Defer cross-provider routing by assembled identity.
 This PR uses an independent clone of the recorded CLI base.

@@ -66,7 +66,7 @@ Per-block prompting stays one question per block by design. The harness batches 
 
 ## More Information
 
-No standardized in-toto predicate for human review exists. A custom predicateType is the sanctioned path ([predicate directory][ITPRED]), and the open proposal for a human-review predicate ([in-toto/attestation#77][IT77]) carries the same structure this record uses (reviewer identity, timestamps, per-subject results), leaving room to converge if it lands. TypeURIs are namespaced, unregistered, and SHOULD resolve to a human-readable description ([field types][ITFT]). Publishing the predicate document at the recorded URI is tracked in the adopt-review change. The record follows the monotonic principle from the [new-predicate guidelines][ITNPG]: every block carries an explicit verdict, so deleting an entry can never turn a refusal into an approval.
+No standardized in-toto predicate for human review exists. A custom predicateType is the sanctioned path ([predicate directory][ITPRED]), and the open proposal for a human-review predicate ([in-toto/attestation#77][IT77]) carries the same structure this record uses (reviewer identity, timestamps, per-subject results), leaving room to converge if it lands. TypeURIs are namespaced, unregistered, and SHOULD resolve to a human-readable description ([field types][ITFT]). Publishing the predicate document at the recorded URI is tracked in the adopt-block-review change. The record follows the monotonic principle from the [new-predicate guidelines][ITNPG]: every block carries an explicit verdict, so deleting an entry can never turn a refusal into an approval.
 
 [ITPRED]: https://github.com/in-toto/attestation/tree/main/spec/predicates
 [IT77]: https://github.com/in-toto/attestation/issues/77

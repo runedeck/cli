@@ -4,109 +4,249 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+[0.4.0]: https://github.com/runedeck/rune/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/runedeck/rune/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/runedeck/rune/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/runedeck/rune/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
+
 ## [Unreleased]
 
 ### Added
 
-- `rune draft` writes an unmanaged rune into the consumer and tracks it in `.drafts`, `rune doctor` lists drafts by age instead of reporting orphans, and `rune promote` moves a draft into the deck with its change stub.
-- The sealed review ceremony on `rune sign` (CLI-0042): `rune sign open <bookmark>` refuses a protected branch, a branch without a draft pull request at its head, and a body that fails `schemas/PULL_REQUEST.mdschema`, shows the branch, base, diff stat, and body, signs an empty open-seal commit whose message carries `{repo, base, pull_request, tree, nonce}`, pushes the seal with `git push` under a lease and pinned transport settings (no hook, ssh wrapper, askpass, or credential helper from the repository runs as the owner), flips the draft ready, and appends `Open-Seal-Nonce: <nonce>` to the body. `--queue` leaves it for `rune sign next`. `KEYS` is read from `refs/remotes/origin/main` (or `master`, `trunk`), never from the working tree. `rune sign submit <bookmark>` reads the controller's `ledger` check run on the head through `gh api`, from the `runeseer` app alone, downloads the ledger artifact it names and proves it by the sha256 in the line, and refuses unless the verdict on the head at the current generation is clean or the paid lane stood down with a `free lanes only` coverage, every lane is terminal, no thread is open or disposed `owner`, every required check passes, and the receipt is present. It records the coverage on the request. `rune sign queue <bookmark>` keeps the CLI-0041 in-place signing and no longer aliases `submit`. `rune sign next` prints the diff stat, the disposition table or coverage state, the proof, and the fields it authorizes, takes one `y/N` acknowledgment on the terminal, and signs a merge-seal whose sole parent is `reviewed_sha` and whose message names the generation and the ledger digest. `open`, `next`, and `adopt` fetch the protected branch before reading `KEYS`. `rune sign adopt <number>` puts an outside pull request's head on `adopt/<number>`, seals it with the key, and only then pushes, waits for the app's draft, and readies it. `rune sign --verify --seal <ref> [--pull-request <n>] [--keys-ref <ref>]` verifies both seal kinds for the `owner-seal` check: the open-seal must sit between the pull request's base and the head, name that pull request, and its nonce must be in that body, so a seal in merged history or a nonce pasted into another body never passes. Exits 0, 1, or 2.
-- The signing queue on `rune sign` (CLI-0041): a session queues a validated head with `rune sign queue <bookmark> --receipt <log>`, the owner signs from the queue with `rune sign next` or `rune sign all`, base first under a per-repository lock, with the recorded commit signed rather than the bookmark, the rewritten head checked against the recorded identity, and the signature verified against `KEYS`. Every read goes through git after `jj git export`, because a repository's jj config can redefine what jj renders. Jj runs only `jj sign`, with the owner's user-scope signing settings pinned. `queue` lists requests as current, stale, blocked, claimed, unverified, signed, or failed, and an empty queue names the ledger it read. `show`, `drop`, and `--prune` manage them. The bare ceremony forms are unchanged.
-- `scripts/run-artifact-checks.py run --work-order <label> --attempt <label>`: a receipt binds one attempt of one work order to the frozen snapshot and the verifier identity, and carries a runner-generated `receipt_id`, UTC `started_at` and `completed_at`, `duration_seconds`, and the runner host and PID. Controls cover a worker that rewrites the runner or manifest, a planted receipt, a detached writer, a timeout after success text, an interrupted run, competing finalization, and two receipts with equal labels.
-- `scripts/check-skill-conformance.py`: compares a rendered skills root with the pinned Agent Skills reference validator (`scripts/vendor/skills_ref`, commit `547831f`, Apache-2.0) and classifies each finding as a generic or claude profile difference or a conformance error. It reports authored casing and the Rune `version` field as differences under every profile, fails on a root with no `SKILL.md`, and never renames a source identity. `scripts/check-rendered-conformance <rune>` renders the conformance fixture (every reference field, a companion, a claude variant) with a candidate binary and runs the comparison over every provider root. The skill-readiness workflow runs it.
-- `rune move <from> <to>`: relocate one reviewed skill, agent, or rule inside a repository with its sidecars, rewrite every `subject.name`, and record `runDetails.metadata.transferredFrom: <artifact>@<commit>` (CLI-0037). Decision records keep their own `rune adr` lifecycle.
-- `rune repair [--root <dir>] [--target <dir>] [--dry-run]`: the one command that acts on every doctor finding across a module. It moves orphan reviewed sidecars to `.trash/<stamp>/`, rewrites stale subject names, restores missing managed files from a digest-matching build, and quarantines deployment orphans (CLI-0038).
-- `rune adopt verdict <id> adapt --replacement <text> | --replacement-file <path>`: the approved text rides in the session, finalize proves every block of it is in the edited file, and the text persists under `.provenance/replacements/<sha256>` with a `metadata.replacements` reference in the sidecar (CLI-0039).
-- Portable project scaffolding: `rune init --with <templates>` composes flat embedded templates offline and writes Copier-compatible update metadata. `--lang` and `--purpose` remain compatibility aliases.
-- `rune run [profile@]<tool>` executes Claude, Codex, agy, Grok, and OpenCode noninteractively through the provider layer shared with native bench (CLI-0024, CLI-0025). It accepts prompts from an argument, file, or standard input. Defaults to read-only mode with no timeout. Supports explicit repository, workspace-write, timeout, dry-run, and typed JSON output. And rejects tmux and Docker wrappers. Read-only runs restrict Claude and Grok to `Read`, `Glob`, and `Grep`, because their sandbox and permission settings alone still allow writes through the tool set.
-- Route-specific model metadata keeps provider model and context settings together for both `rune launch` and `rune run` (CLI-0026). Claude routes derive model, maximum context, and automatic compaction settings as one group. Conflicting profile environment keys fail resolution. Fresh installs include `sol@claude` and `grok@claude` profiles for CLIProxyAPI on localhost, with user configuration replacing either route or profile by name.
-- Launch profiles composing with the CLI-0018 middleware chain (CLI-0021): `rune launch sol@claude` applies a named env/args/with preset from `launch.profiles` (profile@tool, like user@host). Env values support `from_env` references so secrets stay out of config. Bare `rune launch` lists tools with install state and profiles. `rune launch <model>@ollama` dispatches `ollama run`.
-- `from_env` profile references fall back to an env file when the variable is unset in the process environment: default `~/.env`, overridable with `rune config set env <path>` or `RUNE_ENV`. Dry-run output redacts credential-marker values (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`).
-- `cliproxy` launch middleware health-checks a local AI-API proxy (default `127.0.0.1:8317`) before launch, so a cross-harness profile warns up front instead of dying on the first request when the proxy is down. Check-only by default. Set `launch.middleware.cliproxy.command` to opt into self-heal, after which the middleware re-probes for up to 5s. Pre-step probing now resolves hostnames, not just IP literals.
-- `rune provider` lists deploy providers (name, enabled state, target, plugin) and `enable`/`disable` write `providers.<name>.enabled` into the local `config.yaml`.
-- `rune todo`: `TODO.txt` at the repo root in todo.txt syntax, with `add`, `do`, `ls` filters (`+project`, `@context`, priority), `obsidian` output, and `import` from Obsidian Tasks markdown through a shared item model that preserves unknown extensions.
-- `rune spec list --sort progress` surfaces least-complete changes first.
-- `rune adr`: decision-record lifecycle under `docs/decisions/` (`new` with per-prefix numbering and a configurable prefix set, `list`, `supersede` with cross-links, `index`).
-- `rune docs check` (broken internal links, unresolved wikilinks, orphan pages, spec-, adr-, and backlog-managed trees exempt) and `rune docs dev` (local `mint dev` shell-out when a `docs.json` exists).
-- Native Rust compatibility with [OpenSpec v1.6.0](https://github.com/Fission-AI/OpenSpec/releases/tag/v1.6.0) across `docs/`, direct `openspec/`, and custom repository-relative roots: stable validation diagnostics, nested capabilities, deterministic delta application, ownership-preserving import and export, recoverable transactions, and optional upstream validation advice.
-- `.rune` schema v2: a `dirs:` section declares workspace members (path, role, required) with strict relative-path validation. `rune todo --all` aggregates task lists across them.
-- Workshop init: under the targets root (or with `--workshop`) `rune init` scaffolds the private/public/assets layout, colocates jj when installed, and never commits automatically. `--spine` adds colocation to plain projects and `--dry-run` prints the full plan, side-effect steps included.
-- Consumer-root validation: a `.rune` root gets `.rune` parsing and per-provider manifest checks instead of module structure errors. Roots carrying both `module.yaml` and `.rune` compose both check sets, and deck roots with `.rune` include the consumer role.
-- Spec lifecycle scaffolding accepts repeated `--capability` flags and `--design`. Proposals list their capabilities, `spec context` and `spec show` include the optional design, and `spec archive --abandon -y` works in scripts.
-- Warning-severity conformance lint in `rune validate` for every `SKILL.md`: name must equal its directory and stay within 64 characters, description within 1024, no reserved words (`claude`, `anthropic`) in names, no angle brackets in frontmatter, a trigger phrase in the description, and a body long enough to instruct. Warnings inform. Only schema errors block.
-- `kebab-case-skills` assembly rule: the full skill-tree normalization (path, frontmatter name, link retargeting), applied to skills only. The agentskills provider enables it because the AgentSkills specification requires lowercase names matching the skill directory. Every other provider deploys authored casing verbatim.
+- Add `rune draft`, which writes an unmanaged rune into the consumer and tracks it in `.drafts`.
+- List drafts by age in `rune doctor` instead of reporting them as orphans.
+- Add `rune promote`, which moves a draft into the deck with its change stub.
+- Add `rune sign open <bookmark>`, which seals a draft pull request and flips it ready (CLI-0042).
+- Refuse `rune sign open` on a protected branch, on a branch with no draft pull request at its head, and on a body that fails `schemas/PULL_REQUEST.mdschema`.
+- Print the branch, the base, the diff stat, and the body before `rune sign open` signs.
+- Sign an empty open-seal commit whose message carries `{repo, base, pull_request, tree, nonce}`.
+- Push the open seal with `git push` under a lease and pinned transport settings, so no repository hook, ssh wrapper, askpass, or credential helper runs as the owner.
+- Append `Open-Seal-Nonce: <nonce>` to the pull request body.
+- Add `rune sign open --queue`, which leaves the seal for `rune sign next`.
+- Read `KEYS` from `refs/remotes/origin/main`, or `master` or `trunk`, never from the working tree.
+- Fetch the protected branch in `rune sign open`, `rune sign next`, and `rune sign adopt` before reading `KEYS`.
+- Add `rune sign submit <bookmark>`, which reads the controller `ledger` check run on the head through `gh api` and accepts it from the `runeseer` app alone (CLI-0042).
+- Download the ledger artifact that the check run names, and prove it by the sha256 in that line.
+- Refuse `rune sign submit` unless the verdict on the head at the current generation is clean, or the paid lane stood down with a `free lanes only` coverage.
+- Refuse `rune sign submit` unless every lane is terminal, no thread is open or disposed `owner`, every required check passes, and the receipt is present.
+- Record the coverage on the request.
+- Change `rune sign queue <bookmark>` to keep the CLI-0041 in-place signing and to stop aliasing `submit` (CLI-0042).
+- Add `rune sign next`, which prints the diff stat, the disposition table or coverage state, the proof, and the fields it authorizes (CLI-0042).
+- Take one `y/N` acknowledgment on the terminal before `rune sign next` signs.
+- Sign a merge-seal whose sole parent is `reviewed_sha` and whose message names the generation and the ledger digest.
+- Add `rune sign adopt <number>`, which puts an outside pull request head on `adopt/<number>`, seals it with the key, then pushes, waits for the app draft, and readies it (CLI-0042).
+- Add `rune sign --verify --seal <ref> [--pull-request <n>] [--keys-ref <ref>]`, which verifies both seal kinds for the `owner-seal` check and exits 0, 1, or 2 (CLI-0042).
+- Require the open-seal to sit between the pull request base and head, to name that pull request, and to carry a nonce that the body holds.
+- Reject a seal found in merged history, and a nonce pasted into another pull request body.
+- Add `rune sign queue <bookmark> --receipt <log>`, which queues a validated head for the owner (CLI-0041).
+- Add `rune sign next` and `rune sign all`, which sign from the queue, base first, under a per-repository lock (CLI-0041).
+- Sign the recorded commit rather than the bookmark, check the rewritten head against the recorded identity, and verify the signature against `KEYS`.
+- Read every value through git after `jj git export`, because a repository jj config can redefine what jj renders.
+- Run only `jj sign` through jj, with the owner user-scope signing settings pinned.
+- List queued requests as current, stale, blocked, claimed, unverified, signed, or failed, and name the ledger that an empty queue read.
+- Add `rune sign show`, `rune sign drop`, and `rune sign --prune` to manage queued requests (CLI-0041).
+- Keep the bare ceremony forms unchanged.
+- Add `scripts/run-artifact-checks.py run --work-order <label> --attempt <label>`, which binds one receipt to one attempt of one work order, the frozen snapshot, and the verifier identity.
+- Record `receipt_id`, UTC `started_at` and `completed_at`, `duration_seconds`, and the runner host and PID in each receipt.
+- Add controls for a rewritten runner or manifest, a planted receipt, a detached writer, a timeout after success text, an interrupted run, competing finalization, and two receipts with equal labels.
+- Add `scripts/check-skill-conformance.py`, which compares a rendered skills root with the pinned Agent Skills reference validator (`scripts/vendor/skills_ref`, commit `547831f`, Apache-2.0).
+- Classify each conformance finding as a generic profile difference, a claude profile difference, or a conformance error.
+- Report authored casing and the Rune `version` field as differences under every profile.
+- Fail `scripts/check-skill-conformance.py` on a root with no `SKILL.md`, and never rename a source identity.
+- Add `scripts/check-rendered-conformance <rune>`, which renders the conformance fixture with a candidate binary and runs the comparison over every provider root.
+- Cover every reference field, a companion, and a claude variant in the conformance fixture.
+- Run `scripts/check-rendered-conformance` from the skill-readiness workflow.
+- Add `rune move <from> <to>`, which relocates one reviewed skill, agent, or rule inside a repository with its sidecars and rewrites every `subject.name` (CLI-0037).
+- Record `runDetails.metadata.transferredFrom: <artifact>@<commit>` on a moved artifact (CLI-0037).
+- Keep decision records on their own `rune adr` lifecycle.
+- Add `rune repair [--root <dir>] [--target <dir>] [--dry-run]`, the one command that acts on every doctor finding across a module (CLI-0038).
+- Move orphan reviewed sidecars to `.trash/<stamp>/`, rewrite stale subject names, restore missing managed files from a digest-matching build, and quarantine deployment orphans (CLI-0038).
+- Add `rune adopt verdict <id> adapt --replacement <text> | --replacement-file <path>`, which carries the approved text in the session (CLI-0039).
+- Prove at finalize that every block of the approved replacement text is in the edited file (CLI-0039).
+- Persist replacement text under `.provenance/replacements/<sha256>` with a `metadata.replacements` reference in the sidecar (CLI-0039).
+- Compose flat embedded templates offline with `rune init --with <templates>`, and write Copier-compatible update metadata.
+- Keep `--lang` and `--purpose` as compatibility aliases.
+- Add `rune run [profile@]<tool>`, which runs Claude, Codex, agy, Grok, and OpenCode noninteractively through the provider layer that native bench shares (CLI-0024, CLI-0025).
+- Accept a `rune run` prompt from an argument, a file, or standard input.
+- Default `rune run` to read-only mode with no timeout, and support explicit repository, workspace-write, timeout, dry-run, and typed JSON output.
+- Reject tmux and Docker wrappers in `rune run`.
+- Restrict Claude and Grok to `Read`, `Glob`, and `Grep` on a read-only run, because their sandbox and permission settings alone still allow writes through the tool set.
+- Keep provider model and context settings together as route-specific model metadata for `rune launch` and `rune run` (CLI-0026).
+- Derive model, maximum context, and automatic compaction settings as one group on a Claude route.
+- Fail resolution on conflicting profile environment keys.
+- Ship `sol@claude` and `grok@claude` profiles for CLIProxyAPI on localhost in a fresh install, and let user configuration replace either route or profile by name.
+- Add launch profiles that compose with the CLI-0018 middleware chain, so `rune launch sol@claude` applies a named env, args, and with preset from `launch.profiles` (CLI-0021).
+- Support `from_env` references in profile env values, so secrets stay out of config.
+- List tools with install state and profiles on bare `rune launch`.
+- Dispatch `ollama run` from `rune launch <model>@ollama`.
+- Fall back to an env file for a `from_env` profile reference when the variable is unset in the process environment, default `~/.env`.
+- Override the env file path with `rune config set env <path>` or `RUNE_ENV`.
+- Redact credential-marker values (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`) in dry-run output.
+- Add the `cliproxy` launch middleware, which health-checks a local AI-API proxy (default `127.0.0.1:8317`) before launch, so a cross-harness profile warns up front.
+- Check only by default, and opt into self-heal with `launch.middleware.cliproxy.command`, after which the middleware re-probes for up to 5s.
+- Resolve hostnames in pre-step probing, not only IP literals.
+- Add `rune provider`, which lists deploy providers by name, enabled state, target, and plugin.
+- Add `rune provider enable` and `rune provider disable`, which write `providers.<name>.enabled` into the local `config.yaml`.
+- Add `rune todo`, which keeps `TODO.txt` at the repository root in todo.txt syntax with `add`, `do`, and `ls` filters (`+project`, `@context`, priority).
+- Add `rune todo obsidian` output and `rune todo import` from Obsidian Tasks markdown, through a shared item model that preserves unknown extensions.
+- Add `rune spec list --sort progress`, which lists least-complete changes first.
+- Add `rune adr`, the decision-record lifecycle under `docs/decisions/`: `new` with per-prefix numbering and a configurable prefix set, `list`, `supersede` with cross-links, and `index`.
+- Add `rune docs check`, which reports broken internal links, unresolved wikilinks, and orphan pages, and exempts spec-, adr-, and backlog-managed trees.
+- Add `rune docs dev`, which shells out to a local `mint dev` when a `docs.json` exists.
+- Add native Rust compatibility with [OpenSpec v1.6.0](https://github.com/Fission-AI/OpenSpec/releases/tag/v1.6.0) across `docs/`, direct `openspec/`, and custom repository-relative roots.
+- Support stable validation diagnostics, nested capabilities, and deterministic delta application in the OpenSpec compatibility layer.
+- Support ownership-preserving import and export, recoverable transactions, and optional upstream validation advice in the OpenSpec compatibility layer.
+- Add `.rune` schema v2, whose `dirs:` section declares workspace members by path, role, and required flag, with strict relative-path validation.
+- Aggregate task lists across workspace members with `rune todo --all`.
+- Scaffold the private, public, and assets workshop layout with `rune init` under the targets root or with `--workshop`, colocate jj when installed, and never commit automatically.
+- Add colocation to a plain project with `rune init --spine`, and print the full plan including side-effect steps with `--dry-run`.
+- Give a `.rune` root `.rune` parsing and per-provider manifest checks instead of module structure errors.
+- Compose both check sets for a root that carries `module.yaml` and `.rune`, and include the consumer role for a deck root with `.rune`.
+- Accept repeated `--capability` flags and `--design` in spec lifecycle scaffolding.
+- List capabilities on a proposal, and include the optional design in `spec context` and `spec show`.
+- Make `spec archive --abandon -y` work in scripts.
+- Add a warning-severity conformance lint in `rune validate` for every `SKILL.md`.
+- Require a skill name to equal its directory and to stay within 64 characters, and a description to stay within 1024 characters.
+- Reject the reserved words `claude` and `anthropic` in a skill name, and angle brackets in frontmatter.
+- Require a trigger phrase in the description and a body long enough to instruct.
+- Keep conformance findings as warnings, because only schema errors block.
+- Add the `kebab-case-skills` assembly rule, the full skill-tree normalization of path, frontmatter name, and link retargeting, applied to skills alone.
+- Enable `kebab-case-skills` on the agentskills provider, because the AgentSkills specification requires lowercase names matching the skill directory.
+- Deploy authored casing verbatim on every other provider.
 
 ### Changed
 
-- Adopt sidecars resolve their subject through one rule in doctor, reseal, repair, and `rune provenance`: the holder directory and the recorded `subject.name` must agree, and a disagreement is an integrity error naming both paths. `rune adopt reseal` moves orphan reviewed sidecars to `.trash/<stamp>/` and rewrites stale names. A local directory source adopted without `--source-url` records `file://<canonical path>`.
-- `rune doctor` and `rune adopt doctor` are read-only and name `rune repair` for a repairable finding, or `rune adopt reseal --artifact <path>` for a reviewed subject whose bytes changed. `.provenance/` readers classify every entry: sidecars, legacy ledgers, the replacement store, and the `source-snapshot.json` deployment evidence, which is validated through its own schema. An unknown file is an error.
-- The authorship check reads separate author and trailer lists from `authors.yaml`. A trailer attribution can no longer validate an author field.
-- `rune adopt` keeps block text, verdict notes, and timestamps in crash-safe external sessions instead of committing `.provenance/review.yaml` ledgers (CLI-0027). Finalize writes final subject digests plus concise reviewer/completion/summary metadata into reviewed adopt/v1 sidecars and deletes the session only after every sidecar is safely replaced. `adopt doctor` verifies sessions and sidecar-to-file integrity, diagnoses legacy ledgers without deleting them, and `reseal` now operates directly on reviewed sidecars.
-- Thirteen modules moved their unit tests into the sibling `tests.rs` that RUST-0012 prescribes. The rest keep an inline `#[cfg(test)] mod tests` and move as they are touched. CLI-0002 records the remainder rather than leaving the standard silently unmet.
-- The library crate is `rune` (`src/lib.rs`), not `commands`. The old name described the binary's job while holding the domain model, so every import read `commands::validate` for something that is not a command. The library and the binary now share the name. The package stays `rune-cli`. This supersedes the crate-root line in CLI-0002.
-- Canonical `SKILL.md` frontmatter carries Agent Skills fields only (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`), and `schemas/skill.schema.yaml` rejects anything else. This supersedes the 0.3.2 note below about `templates/init/skills/.mdschema` whitelisting twelve Claude Code fields: those fields now reach a target through per-provider overlay files during assembly rather than through canonical source.
-- `rune validate` announces missing strict checking once per run rather than once per file, and attributes it to the run rather than to an artifact. An embedded structure schema is written to a temporary file so the standalone `mdschema` binary checks it too. Previously a module without its own on-disk `.mdschema` silently fell back to the reduced built-in checker even where the binary was installed.
-- The built-in structure checker reads shorthand heading declarations (`heading: "## Instructions"`), matching them literally. It previously read only the map form, so every section declared in shorthand went unchecked, including `Instructions` in the skills schema.
-- `rune adopt` is now `rune import`. `adopt` survives as a deprecated alias printing the rename note and is reserved for the harness-driven adoption process.
-- The agentskills provider (`.agents` layout) is opt-in: it deploys only when named with `--provider` or re-enabled via `rune provider enable agentskills`.
-- `rune drift` lists only drifted entries by default. `--all` restores the full listing with a hidden-identical count. Ignored drift (`Expected`) stays visible.
-- Terminal output styles through one truecolor sheet with basic-ANSI and plain fallbacks: `fatal:` lines render red, `doctor` and `spec list` are restyled, `skill show` renders frontmatter as a detail view, and the global `--no-color` reaches every writer.
-- `rune completion install` clears the zsh compinit dump (`ZDOTDIR`-aware, only names compinit produces) so a stale cache cannot ignore the fresh script. `rune skill install --dir` treats the argument as a project root and installs under `.claude/skills/rune/`.
-- `rune --help` opens with a one-line runic wordmark (`ᚱᚢᚾᛖ rune · your runes, deployed`) — cyan sigil, bold word, dim tagline on a TTY, plain text otherwise — replacing the figlet banner.
-- The claude provider deploys skills, agents, and hooks as a skills-directory plugin at `.claude/skills/rune/` (CLI-0020): Claude Code namespaces every skill as `rune:<name>`, hooks register through the generated plugin-root `hooks/hooks.json` instead of settings.json wiring, and `${CLAUDE_PLUGIN_ROOT}` survives deployment with the domain segment added. Rules keep their loose `.claude/rules` path. `plugin: null` in config restores the loose layout. Doctor, drift, and prune manage the plugin root as its own manifest-tracked target.
-
-### Fixed
-
-- `rune init` without a configured skeleton root recorded `_commit: v0.5.0` in `answers.yaml`, a tag the skeleton never had, so `copier update` failed in every project it scaffolded. The embedded copy now records the skeleton commit it equals, `66d1077`, and a release tag wins when one is set. The embedded copy is refreshed to that commit and gains the sealed ceremony files: the `owner-seal` and `draft-open` workflows, `scripts/verify-seal`, the rulesets, and the zizmor baseline. The Rust and Python manifests keep the double-quoted `description`, because `rune init` escapes the brief for a basic string.
-- `rune init` sets the executable bit from the file's shebang instead of its directory, so a hook module without one stays 644 and a script with one is executable wherever it lives. The generated project passes ruff's EXE001 and EXE002. The build workflow's `quality` and `scaffold` jobs install their tools through `scripts/install-tools`, which pins ruff. The inline installs they replaced had none, so both checks failed on every pull request.
-- Project scaffolding escapes TOML description values and includes `.gitignore` retrofits in dry-run output.
-- Git subprocesses ignore ambient repository-routing variables exported by hooks, so nested repository operations stay pinned to their intended worktrees.
-- Scaffold commits include only generated paths, `rune copy` rejects source and destination symlinks, and corrupt deployment manifests require a forced full recovery with atomic manifest writes.
-- `rune release` packages every provider target root, so plugin-mode providers ship both the plugin tree and loose rules in the wrapper.
-- Link retargeting follows a renamed directory into non-Markdown targets (`Scripts/run_eval.py` tracks its tree to `scripts/run_eval.py`) and the reference-definition pass preserves CRLF line endings instead of rewriting them to LF.
-- The skill schema accepts `targets`, `disable-model-invocation`, and `user-invocable`, which assembly already supports. A deck can restrict a skill to named providers or person-only invocation. `disable-model-invocation: true` suppresses the trigger-phrasing warning because the model cannot list that skill. Skill companions inherit the entrypoint's `targets`, so a routed skill deploys no orphan assets into other provider trees.
+- Resolve an adopt sidecar subject through one rule in doctor, reseal, repair, and `rune provenance`: the holder directory and the recorded `subject.name` must agree.
+- Report a disagreement between the holder directory and `subject.name` as an integrity error naming both paths.
+- Move orphan reviewed sidecars to `.trash/<stamp>/` and rewrite stale names in `rune adopt reseal`.
+- Record `file://<canonical path>` for a local directory source adopted without `--source-url`.
+- Make `rune doctor` and `rune adopt doctor` read-only, and name `rune repair` for a repairable finding.
+- Name `rune adopt reseal --artifact <path>` for a reviewed subject whose bytes changed.
+- Classify every `.provenance/` entry: sidecars, legacy ledgers, the replacement store, and the `source-snapshot.json` deployment evidence, which is validated through its own schema.
+- Report an unknown `.provenance/` file as an error.
+- Read separate author and trailer lists from `authors.yaml` in the authorship check, so a trailer attribution can no longer validate an author field.
+- Keep `rune adopt` block text, verdict notes, and timestamps in crash-safe external sessions instead of committing `.provenance/review.yaml` ledgers (CLI-0027).
+- Write final subject digests and concise reviewer, completion, and summary metadata into reviewed adopt/v1 sidecars at finalize.
+- Delete the adopt session only after every sidecar is safely replaced.
+- Verify sessions and sidecar-to-file integrity in `adopt doctor`, and diagnose legacy ledgers without deleting them.
+- Operate `rune adopt reseal` directly on reviewed sidecars.
+- Move thirteen modules to the sibling `tests.rs` that RUST-0012 prescribes for unit tests.
+- Keep an inline `#[cfg(test)] mod tests` in the rest, and move each as it is touched.
+- Record the remainder in CLI-0002 rather than leaving the standard silently unmet.
+- Rename the library crate from `commands` to `rune` (`src/lib.rs`), so the library and the binary share one name.
+- Keep the package name `rune-cli`.
+- Supersede the crate-root line in CLI-0002.
+- Restrict canonical `SKILL.md` frontmatter to the Agent Skills fields `name`, `description`, `license`, `compatibility`, `metadata`, and `allowed-tools`.
+- Reject any other canonical `SKILL.md` frontmatter field in `schemas/skill.schema.yaml`.
+- Supersede the 0.3.2 note about `templates/init/skills/.mdschema` whitelisting twelve Claude Code fields, which now reach a target through per-provider overlay files during assembly.
+- Announce missing strict checking once per `rune validate` run rather than once per file, and attribute it to the run rather than to an artifact.
+- Write an embedded structure schema to a temporary file, so the standalone `mdschema` binary checks it too.
+- Fix the fallback where a module without its own on-disk `.mdschema` silently used the reduced built-in checker although the binary was installed.
+- Read shorthand heading declarations (`heading: "## Instructions"`) in the built-in structure checker, and match them literally.
+- Check sections declared in shorthand, including `Instructions` in the skills schema, which the map-form-only reader skipped.
+- Rename `rune adopt` to `rune import`.
+- Keep `adopt` as a deprecated alias that prints the rename note, and reserve it for the harness-driven adoption process.
+- Make the agentskills provider (`.agents` layout) opt-in, so it deploys only when named with `--provider` or re-enabled with `rune provider enable agentskills`.
+- List only drifted entries in `rune drift` by default, and restore the full listing with a hidden-identical count under `--all`.
+- Keep ignored drift (`Expected`) visible.
+- Render terminal output through one truecolor sheet with basic-ANSI and plain fallbacks.
+- Render `fatal:` lines red, restyle `doctor` and `spec list`, and render `skill show` frontmatter as a detail view.
+- Extend the global `--no-color` flag to every writer.
+- Clear the zsh compinit dump in `rune completion install`, `ZDOTDIR`-aware and limited to names compinit produces, so a stale cache cannot ignore the fresh script.
+- Treat the `rune skill install --dir` argument as a project root, and install under `.claude/skills/rune/`.
+- Open `rune --help` with a one-line runic wordmark (`ᚱᚢᚾᛖ rune · your runes, deployed`), replacing the figlet banner.
+- Render the wordmark as a cyan sigil, a bold word, and a dim tagline on a TTY, and as plain text otherwise.
+- Deploy claude provider skills, agents, and hooks as a skills-directory plugin at `.claude/skills/rune/` (CLI-0020).
+- Namespace every skill as `rune:<name>` in Claude Code, and register hooks through the generated plugin-root `hooks/hooks.json` instead of settings.json wiring.
+- Keep `${CLAUDE_PLUGIN_ROOT}` working after deployment, with the domain segment added.
+- Keep rules on their loose `.claude/rules` path, and restore the loose layout with `plugin: null` in config.
+- Manage the plugin root as its own manifest-tracked target in doctor, drift, and prune.
 
 ### Removed
 
-- `rune doctor --repair` and `rune adopt doctor --repair`. Both doctors are read-only. `rune repair` is the write path and prints the same restore and quarantine actions. Scripts that passed `--repair` fail with a usage error until they move.
-
-## [0.5.0] - 2026-07-17
-
-### Changed
-
-- `rune quest` is now `rune target`. `quest` survives as a hidden alias, `RUNE_TARGETS` replaces `RUNE_QUESTS` (still honored), the config key is `targets`, and legacy state keys keep resolving.
-- Staging from a directory without `.rune` asks before acting on the bound target. Only an interactive yes consents — EOF, closed stdin, and non-interactive runs refuse the redirect.
-- `rune validate` refuses a root without `deck.yaml` or `module.yaml`. `--force` overrides, so a stray run can no longer walk unrelated directories.
-- `rune completion` split into `install [shell]` (writes to the shell's standard location, auto-detects from $SHELL) and `print <shell>`. Nushell joined bash, zsh, fish, and powershell.
-- Human output flows through one shared style layer: `setup`, `config`, and `context` render the same sectioned, glyphed summaries as `status`.
-- Noun subcommands follow CLI-0019: singular canonical (`rune skill`, `rune completion`), plural accepted as hidden aliases (`rune skills add`, `rune completions`), `.rune` stays. The bare noun (`rune skill`, `rune rule`, …) lists that kind with staged markers.
-- Security scanners (gitleaks, semgrep) run only with `rune validate --scan`, the mode commit and push hooks use. Plain `rune validate`, `rune status`, and the TUI stay in-process and fast.
-- `ruff check` honors `validate.exclude`, so a deck can skip linting adopted upstream code it copied verbatim.
-- Skill `name` must be kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), matching the agentskills.io standard the Claude Code loader enforces. `rune validate` now rejects PascalCase skill names at author time instead of letting them fail at load.
+- **Breaking:** Remove `rune doctor --repair` and `rune adopt doctor --repair`, because both doctors are read-only.
+- Print the same restore and quarantine actions from `rune repair`, the write path.
+- Fail a script that passes `--repair` with a usage error until it moves.
 
 ### Fixed
 
-- Prune rejects manifest keys containing path traversal components instead of joining them onto the target, closing a write outside the deploy root via a poisoned `.manifest`.
-- `rune --version` reports the actual build commit: the build script now tracks the resolved git ref, not only `.git/HEAD`.
-- The root help aligns the `init` row with every other command row.
+- Fix `rune init` recording `_commit: v0.5.0` in `answers.yaml` without a configured skeleton root, a tag the skeleton never had, which made `copier update` fail in every scaffolded project.
+- Record the skeleton commit the embedded copy equals, `66d1077`, and prefer a release tag when one is set.
+- Refresh the embedded skeleton copy to commit `66d1077`, adding the `owner-seal` and `draft-open` workflows, `scripts/verify-seal`, the rulesets, and the zizmor baseline.
+- Keep the double-quoted `description` in the Rust and Python manifests, because `rune init` escapes the brief for a basic string.
+- Set the `rune init` executable bit from the file shebang instead of its directory, so a hook module without one stays 644 and a script with one is executable wherever it lives.
+- Pass ruff EXE001 and EXE002 in the generated project.
+- Install the build workflow `quality` and `scaffold` job tools through `scripts/install-tools`, which pins ruff.
+- Fix both checks failing on every pull request, because the inline installs they replaced pinned no ruff version.
+- Escape TOML description values in project scaffolding, and include `.gitignore` retrofits in dry-run output.
+- Ignore ambient repository-routing variables that hooks export in git subprocesses, so a nested repository operation stays pinned to its intended worktree.
+- Limit a scaffold commit to generated paths.
+- Reject a source or destination symlink in `rune copy`.
+- Require a forced full recovery for a corrupt deployment manifest, with atomic manifest writes.
+- Package every provider target root in `rune release`, so a plugin-mode provider ships both the plugin tree and loose rules in the wrapper.
+- Follow a renamed directory into non-Markdown targets during link retargeting, so `Scripts/run_eval.py` tracks its tree to `scripts/run_eval.py`.
+- Preserve CRLF line endings in the reference-definition pass instead of rewriting them to LF.
+- Accept `targets`, `disable-model-invocation`, and `user-invocable` in the skill schema, which assembly already supports.
+- Let a deck restrict a skill to named providers or to person-only invocation.
+- Suppress the trigger-phrasing warning under `disable-model-invocation: true`, because the model cannot list that skill.
+- Inherit the entrypoint `targets` on a skill companion, so a routed skill deploys no orphan assets into other provider trees.
+
+## [0.5.0] - 2026-07-17
 
 ### Added
 
-- Kind-scoped staging: `rune skill add <name>`, `rune agent add <name>`, `rune rule add <name>`, and `rune hook add <name>` resolve bare names against the source deck to fully qualified ids, failing loudly on unknown or cross-domain-ambiguous names (`<domain>/<name>` disambiguates).
-- Spec templates and mdschemas resolve from the source tree first: a file under `templates/spec/` or `schemas/` at the source root overrides the embedded copy, so a repo can track upstream template updates (OpenSpec's included) by replacing the files.
-- `rune context` prints an agent-ready brief of the working context: acting root and role, quest binding, manifest selection, provider deploy state, active changes, and suggested next steps.
-- `rune completion <shell>` generates bash, zsh, fish, and PowerShell completion scripts.
-- `rune skill install|show` ships an agent skill that teaches AI coding CLIs how to drive rune. Install writes it to a harness skills directory (default `~/.claude/skills/rune`).
-- `rune setup [--defaults]` guides first-run configuration: discovers decks under `~/Developer`, persists the choice, and reports quest binding and follow-up steps.
-- `rune spec show <name>` renders one active change (state, proposal, deltas, tasks) or one canonical capability specification.
-- `rune spec doctor` reports relationship health across the change tree: missing proposals or deltas, empty checklists, complete-but-unarchived changes, and malformed archive names.
-- `rune spec list --specs` lists canonical capability specifications with requirement counts. `rune spec ls` is an alias for `rune spec list`.
-- `rune config get|unset|path` round out the config surface for scripting.
-- Kind namespaces list their collection bare: `rune skill` shows the deck's skills with staged markers resolved from the effective selection (casts and globs included).
-- `rune adopt` accepts a local directory and adopts the whole skill tree: `SKILL.md` is aligned to the target name, every other file (markdown companions, worker-agent prompts, scripts, binary assets) is copied byte-for-byte, and each adopted file gets its own regenerated provenance sidecar. The upstream's own `.provenance/` directories are ignored. `--source-url` records upstream attribution when adopting from a local checkout.
-- Native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`, including agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.
-- Spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.
-- `rune doctor` manifest integrity reporting with CI verification and conservative repair that preserves user-modified files.
-- `rune status` one-shot terminal and JSON dashboards for deck content, changes, specifications, validation, and deploy targets.
+- Add kind-scoped staging with `rune skill add <name>`, `rune agent add <name>`, `rune rule add <name>`, and `rune hook add <name>`.
+- Resolve a bare staged name against the source deck to a fully qualified id, and fail loudly on an unknown or cross-domain-ambiguous name, which `<domain>/<name>` disambiguates.
+- Resolve spec templates and mdschemas from the source tree first, so a file under `templates/spec/` or `schemas/` at the source root overrides the embedded copy.
+- Let a repository track upstream template updates, OpenSpec templates included, by replacing those files.
+- Add `rune context`, which prints an agent-ready brief of the working context: acting root and role, quest binding, manifest selection, provider deploy state, active changes, and next steps.
+- Add `rune completion <shell>`, which generates bash, zsh, fish, and PowerShell completion scripts.
+- Add `rune skill install` and `rune skill show`, which ship an agent skill that teaches AI coding CLIs how to drive rune.
+- Write the installed skill to a harness skills directory, default `~/.claude/skills/rune`.
+- Add `rune setup [--defaults]`, which guides first-run configuration, discovers decks under `~/Developer`, persists the choice, and reports quest binding and follow-up steps.
+- Add `rune spec show <name>`, which renders one active change by state, proposal, deltas, and tasks, or one canonical capability specification.
+- Add `rune spec doctor`, which reports missing proposals or deltas, empty checklists, complete-but-unarchived changes, and malformed archive names.
+- Add `rune spec list --specs`, which lists canonical capability specifications with requirement counts.
+- Add `rune spec ls` as an alias for `rune spec list`.
+- Add `rune config get`, `rune config unset`, and `rune config path` to round out the config surface for scripting.
+- List a kind namespace collection bare, so `rune skill` shows the deck skills with staged markers resolved from the effective selection, casts and globs included.
+- Accept a local directory in `rune adopt` and adopt the whole skill tree, aligning `SKILL.md` to the target name.
+- Copy every other file byte-for-byte, including markdown companions, worker-agent prompts, scripts, and binary assets, and regenerate a provenance sidecar for each adopted file.
+- Ignore the upstream `.provenance/` directories.
+- Record upstream attribution with `--source-url` when adopting from a local checkout.
+- Add the native spec-driven change lifecycle under `docs/`: `rune spec propose`, `rune spec list`, `rune spec context`, and `rune spec archive`.
+- Support agent-ready work orders, explicit abandoned archives, and canonical-spec delta merges.
+- Add spec and delta validation through an embedded `.mdschema` contract wired into `rune validate`.
+- Add `rune doctor` manifest integrity reporting, with CI verification and conservative repair that preserves user-modified files.
+- Add `rune status`, a one-shot terminal and JSON dashboard for deck content, changes, specifications, validation, and deploy targets.
+
+### Changed
+
+- Rename `rune quest` to `rune target`, and keep `quest` as a hidden alias.
+- Replace `RUNE_QUESTS` with `RUNE_TARGETS`, and keep honoring `RUNE_QUESTS`.
+- Change the config key to `targets`, and keep resolving legacy state keys.
+- Ask before acting on the bound target when staging from a directory without `.rune`.
+- Consent only on an interactive yes, and refuse the redirect on EOF, closed stdin, and a non-interactive run.
+- Refuse a root without `deck.yaml` or `module.yaml` in `rune validate`, and override with `--force`, so a stray run can no longer walk unrelated directories.
+- Split `rune completion` into `install [shell]`, which writes to the shell standard location and auto-detects from `$SHELL`, and `print <shell>`.
+- Add Nushell beside bash, zsh, fish, and powershell.
+- Route human output through one shared style layer, so `setup`, `config`, and `context` render the same sectioned, glyphed summaries as `status`.
+- Make noun subcommands singular canonical (`rune skill`, `rune completion`) and accept the plural as a hidden alias (`rune skills add`, `rune completions`), per CLI-0019.
+- Keep `.rune` as it is.
+- List that kind with staged markers on the bare noun (`rune skill`, `rune rule`).
+- Run the security scanners gitleaks and semgrep only under `rune validate --scan`, the mode the commit and push hooks use.
+- Keep plain `rune validate`, `rune status`, and the TUI in-process and fast.
+- Honor `validate.exclude` in `ruff check`, so a deck can skip linting adopted upstream code it copied verbatim.
+- Require a kebab-case skill `name` (`^[a-z0-9]+(-[a-z0-9]+)*$`), matching the agentskills.io standard that the Claude Code loader enforces.
+- Reject a PascalCase skill name in `rune validate` at author time instead of letting it fail at load.
+
+### Fixed
+
+- Reject a manifest key containing a path traversal component in prune instead of joining it onto the target, which closes a write outside the deploy root through a poisoned `.manifest`.
+- Report the actual build commit in `rune --version`, because the build script now tracks the resolved git ref, not only `.git/HEAD`.
+- Align the `init` row with every other command row in the root help.
 
 ## [0.4.0] - 2026-07-13
 
@@ -114,169 +254,192 @@ rune 0.4.0 succeeds forge-cli 0.3.x.
 
 ### Added
 
-- The deck lexicon names deck, rune, cast, quest, lore, and artifacts, with `runes:` and `casts:` as consumer-manifest keys.
-- `rune add` eagerly resolves selections to canonical ids, accepts comma-separated rune and cast lists, and rejects ambiguous names.
-- `rune quest` binds the working repository used by quest-aware commands.
-- `rune init` scaffolds projects from composable skeleton archetypes and keeps the single-module scaffold behind `--module`.
-- `rune tui --edit` provides a checkbox cast editor for consumer manifests.
-- TUI code views support line comments, visual selections, a Vim-style comment editor, and in-file search.
-- `rune review list` and `rune review export` expose persisted review comments, and `y` copies rendered comments from the TUI.
-- `.rune` manifests accept HTTPS Git sources pinned to full commit SHAs and reuse a content-addressed local cache.
-- `rune launch` composes coding-tool middleware, `rune exec` runs skill scripts, and external `rune-<verb>` commands extend the CLI.
-- `rune adopt` records upstream digest provenance, and `rune find` ranks local and cached runes by relevance.
-- The `agentskills` provider deploys Agent Skills-compatible `SKILL.md` files under `.agents/skills/`.
-- Model qualifiers resolve through `user/`, provider-model, provider, and base precedence.
-- `rune validate` checks Claude Code plugin manifests and executable hook references.
+- Name deck, rune, cast, quest, lore, and artifacts in the deck lexicon, with `runes:` and `casts:` as consumer-manifest keys.
+- Resolve `rune add` selections to canonical ids eagerly, accept comma-separated rune and cast lists, and reject an ambiguous name.
+- Add `rune quest`, which binds the working repository that quest-aware commands use.
+- Scaffold projects from composable skeleton archetypes in `rune init`, and keep the single-module scaffold behind `--module`.
+- Add `rune tui --edit`, a checkbox cast editor for consumer manifests.
+- Support line comments, visual selections, a Vim-style comment editor, and in-file search in TUI code views.
+- Add `rune review list` and `rune review export`, which expose persisted review comments, and copy rendered comments from the TUI with `y`.
+- Accept HTTPS Git sources pinned to full commit SHAs in a `.rune` manifest, and reuse a content-addressed local cache.
+- Compose coding-tool middleware in `rune launch`, run skill scripts with `rune exec`, and extend the CLI with external `rune-<verb>` commands.
+- Record upstream digest provenance in `rune adopt`, and rank local and cached runes by relevance in `rune find`.
+- Add the `agentskills` provider, which deploys Agent Skills-compatible `SKILL.md` files under `.agents/skills/`.
+- Resolve model qualifiers through `user/`, provider-model, provider, and base precedence.
+- Check Claude Code plugin manifests and executable hook references in `rune validate`.
 
 ### Changed
 
-- The grouped root help organizes flagship deck workflows separately from plumbing commands.
-- Add and drift workflows resolve quest and target defaults consistently and report actionable selection or deployment differences.
-- Validate output uses the grouped drift-style deck report with concise status markers.
-- The default `full` feature ships the TUI and dashboard, so plain `cargo install --path .` installs the complete interface.
-- Dashboard and TUI views share service-layer scanners, builders, and rendering inputs.
-- Consumer installs default their deploy target to the `.rune` source directory.
-- Install refuses confirmed stale source checkouts unless `--allow-stale` is supplied.
+- Organize flagship deck workflows separately from plumbing commands in the grouped root help.
+- Resolve quest and target defaults consistently in add and drift workflows, and report actionable selection or deployment differences.
+- Use the grouped drift-style deck report with concise status markers for validate output.
+- Ship the TUI and dashboard in the default `full` feature, so plain `cargo install --path .` installs the complete interface.
+- Share service-layer scanners, builders, and rendering inputs between dashboard and TUI views.
+- Default a consumer install deploy target to the `.rune` source directory.
+- Refuse a confirmed stale source checkout on install unless `--allow-stale` is supplied.
 
 ### Removed
 
-- Legacy `.forge` manifests, `FORGE_*` environment fallbacks, `~/.config/forge` configuration, and `project.yaml` ontology fallback are unsupported.
+- Remove support for legacy `.forge` manifests, `FORGE_*` environment fallbacks, `~/.config/forge` configuration, and the `project.yaml` ontology fallback.
 
 ### Fixed
 
-- Deck-source validation ignores deploy-target `.manifest` baselines, while single-module targets direct missing-baseline guidance to `rune install`.
-- Qualifier-aware pruning removes inactive base deployments without deleting the selected qualifier output.
-- Source-side provenance verifies both assemble and adopt sidecars against current file digests.
-- Claude skill assembly preserves supported native frontmatter fields and multiline values.
+- Ignore deploy-target `.manifest` baselines in deck-source validation, and direct missing-baseline guidance for a single-module target to `rune install`.
+- Remove an inactive base deployment in qualifier-aware pruning without deleting the selected qualifier output.
+- Verify both assemble and adopt sidecars against current file digests in source-side provenance.
+- Preserve supported native frontmatter fields and multiline values in Claude skill assembly.
 
 ## [0.3.2] - 2026-05-22
 
-### Fixed
-
-- `rune install` now prunes deployed skill, agent, and rule directories absent from source. Stale directories (renamed, folded, or deleted upstream) used to keep loading into Claude / Gemini / Codex / OpenCode sessions, shadowing renames. Pruned content moves to `<target>/.trash/<UTC-ts>/` for recoverability. Restore with `mv`, reclaim with `rm -rf`. Empty parent directories are walked and removed up to but not including the provider target root. Opt out with `--no-prune`. Preview with `--dry-run`. Locally modified files (deployed SHA-256 no longer matches the manifest fingerprint) are skipped with a warning. Pass `--force` to prune them anyway. `rune clean` uses the same quarantine path for consistency. The substring-collision bug in `is_owned_by_module` (which previously matched `Prompts` against `PublishPrompts` and let two modules named `rune-core` at different repositories prune each other's files) is fixed via structured `(host, owner, repo)` equality on the source URI. (#45)
-- `templates/init/.githooks/pre-commit` no longer ships a hand-typed `SCRIPT_SHA` constant. `build.rs` computes `sha256(scripts/validate.sh)` at compile time and emits it as `commands::VALIDATE_SH_SHA`. `rune init` substitutes `${VALIDATE_SH_SHA}` into the template at scaffold time. The pin can no longer go stale: any change to `scripts/validate.sh` triggers a rebuild that ripples through to every fresh `rune init`. `tests/embedded_sha.rs` pins the contract. `src/cli/tests.rs` dispatches every `rune install` / `rune validate` template invocation through clap to catch CLI-shape drift before it ships. A new `template-smoke` CI job scaffolds and runs `make validate` against the generated tree on every PR. (#47, #46)
-- `templates/init/Makefile` drops the stale trailing `.` from `$(RUNE) install .`. The current CLI uses `--source` (default `.`) and rejects positional args, so the previous template made `make install` fail on every freshly scaffolded module. (#46)
-- `markdown_to_toml` now serializes Codex agent `.toml` via the `toml` crate, which picks a safe string form (`"..."`, `"""..."""`, or `'''...'''`) based on body content. The previous implementation interpolated the body directly into a `"""..."""` literal with no escaping, so a body containing `"""\n[section]\nkey = "x"` could break out of the literal and inject arbitrary top-level tables into the deployed agent config. (#43)
-- `rune provenance --target <DIR>` now walks every deployed content file regardless of extension instead of only `.md`. The codex provider produces `.toml` agent files, so the previous `.md`-only filter caused `rune provenance --target ~/.codex` to report "No provenance found" even when every sidecar matched. Sidecars (`.yaml`) and dotfiles (`.DS_Store`, `.manifest`) are still skipped. (#29)
-- `rune init` now deploys all hidden template files (`.pre-commit-config.yaml`, `.gitattributes`, `.gitleaks.toml`, `.gitlab-ci.yml`). The previous near-total dotfile allowlist silently dropped them. Replaced with an OS-junk blocklist (`.DS_Store`, `Thumbs.db`, `Desktop.ini`, `._*` resource forks). (#28)
-- `templates/init/.pre-commit-config.yaml` ruff hook drops `pass_filenames: false`, which was bypassing the `types: [python]` filter and forcing ruff to run on every commit (including markdown-only modules without ruff installed). With the flag gone, prek skips the hook when no Python files are staged. (#33)
-- rune-cli's own root `.pre-commit-config.yaml` drops `--no-git -s .` from the gitleaks entry. The flag bypassed git's gitignore, walking 4 GB of cargo `target/` and hanging at 400% CPU. Default invocation respects gitignore.
-- `templates/init/skills/.mdschema` whitelists 12 Claude Code optional `SKILL.md` frontmatter fields (`when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `paths`, `shell`). Modules that lift those fields from a `SKILL.yaml` sidecar to top-level frontmatter (the natural authoring path now that Claude Code parses them natively) no longer fail validation with `Unknown frontmatter field`. `hooks` is omitted because mdschema lacks an `object` type for the nested map. (#40)
-
 ### Added
 
-- `rune install` reads a `.rune` consumer manifest from `--source` when present, deploying only the artifacts the manifest lists. A consumer repo (not itself a rune module) declares which skills, agents, and rules it wants from which producer modules. `rune install` walks each declared local-path source on disk, filters its content to the requested subset, and runs the standard assemble + deploy pipeline scoped to the consumer's own `.claude/`, `.gemini/`, `.codex/`, `.opencode/` directories. The schema is grouped by source: each entry under `sources:` names a module path, each entry under `artifacts:` lists requested skills/agents/rules per source. Git-URL sources, lockfiles, and plugin auto-enable are deferred to follow-up issues. This iteration supports local-path sources only. (#39)
-- `rune copy` writes SLSA provenance sidecars to `.provenance/` in the target tree (opt-out via `--skip-provenance`)
-- `rune drift` consumes copy provenance sidecars to surface source URI on same-name matches and pair files across renames
-- `rune install` and `rune deploy` accept `--provider <NAME>` (repeatable) to deploy only the named provider(s). Unknown names error with the available list
-- `rune install`, `rune deploy`, and `rune clean` default the source path to `.` when `--source` is omitted
+- Read a `.rune` consumer manifest from `--source` in `rune install` when present, and deploy only the artifacts the manifest lists (#39).
+- Let a consumer repository that is not a rune module declare which skills, agents, and rules it wants from which producer modules.
+- Walk each declared local-path source on disk, and filter its content to the requested subset.
+- Run the standard assemble and deploy pipeline scoped to the consumer `.claude/`, `.gemini/`, `.codex/`, and `.opencode/` directories.
+- Group the schema by source: each entry under `sources:` names a module path, and each entry under `artifacts:` lists the requested skills, agents, and rules.
+- Support local-path sources only in this iteration, and defer Git-URL sources, lockfiles, and plugin auto-enable to follow-up issues.
+- Write SLSA provenance sidecars to `.provenance/` in the target tree from `rune copy`, with `--skip-provenance` to opt out.
+- Consume copy provenance sidecars in `rune drift` to show the source URI on a same-name match, and to pair files across renames.
+- Accept a repeatable `--provider <NAME>` on `rune install` and `rune deploy` to deploy only the named providers, and error on an unknown name with the available list.
+- Default the source path to `.` in `rune install`, `rune deploy`, and `rune clean` when `--source` is omitted.
 
 ### Changed
 
-- Codex agent `.toml` files now include `name`, `model`, and `model_reasoning_effort` fields alongside `description`, and the body is emitted as `developer_instructions` (renamed from `instructions`). The codex provider also defines `effort` tiers (`strong → medium`, `fast → low`, `light → low`) and extends `keep_fields.agents` to retain `model` and `effort` so they flow through assembly. Consumers must rerun `rune install` for deployed agents to pick up the new field names. Per the OpenAI Responses API the `developer` role outranks `user`, so adopted upstream agent content now inherits that elevated trust on Codex. (#43)
-- `manifest::generate_statement` builds the SLSA statement via typed `serde_yaml::to_string` (eliminates YAML injection risk in interpolated fields)
-- Copy provenance subject names and dependency URIs use POSIX path separators regardless of host OS
-- `rune install`, `rune deploy`, `rune clean` refuse to operate on a directory without `module.yaml`. The error names the missing file and the corrective `--source` invocation
-- The YAML deep-merge "type conflict" warning now identifies the conflicting key path and the involved YAML types
-- `rune install --help` lists the available providers, explains the `--target` per-provider join, and shows two example invocations
-- Codex default models refreshed to currently-supported GPT-5 Codex variants in `defaults.yaml` and `config/models.yaml`. (#41, #51)
+- Add `name`, `model`, and `model_reasoning_effort` to Codex agent `.toml` files beside `description`, and rename the body field from `instructions` to `developer_instructions` (#43).
+- Define the codex provider `effort` tiers `strong → medium`, `fast → low`, and `light → low`.
+- Extend `keep_fields.agents` to retain `model` and `effort`, so they flow through assembly.
+- Rerun `rune install` to update deployed agents to the new field names.
+- Note that adopted upstream agent content now inherits the elevated `developer` trust level on Codex, because the OpenAI Responses API ranks `developer` above `user` (#43).
+- Build the `manifest::generate_statement` SLSA statement through typed `serde_yaml::to_string`, which eliminates YAML injection risk in interpolated fields.
+- Use POSIX path separators for copy provenance subject names and dependency URIs regardless of host OS.
+- Refuse to operate on a directory without `module.yaml` in `rune install`, `rune deploy`, and `rune clean`, and name the missing file and the corrective `--source` invocation in the error.
+- Identify the conflicting key path and the involved YAML types in the deep-merge type conflict warning.
+- List the available providers in `rune install --help`, explain the `--target` per-provider join, and show two example invocations.
+- Refresh the Codex default models to currently-supported GPT-5 Codex variants in `defaults.yaml` and `config/models.yaml` (#41, #51).
 
 ### Removed
 
-- All commands drop their positional path arguments. Same positional meant different things across verbs (`rune init <PATH>` wrote into PATH, `rune install <PATH>` read from PATH). Every command now uses named flags (`--source`, `--target`, `--upstream`).
-    - `install`, `deploy`, `clean`, `assemble`, `validate`, `release`: source is `--source <DIR>`, defaults to `.`
-    - `init`: target is `--target <DIR>`, no default (scaffolding requires explicit destination)
-    - `copy`: both `--source <DIR>` and `--target <DIR>` are required
-    - `provenance`: inspection target is `--target <DIR_OR_FILE>` (defaults to `.`). The existing source-URI filter is renamed from `--source` to `--source-uri` to avoid name collision
-    - `drift`: source defaults to `.` via `--source`. The second positional is now `--upstream <DIR>` (renamed from `target` since semantically it is the upstream reference)
+- Remove the positional path argument from every command, because the same positional meant different things across verbs (`rune init <PATH>` wrote into PATH, `rune install <PATH>` read from PATH).
+- Take the source as `--source <DIR>`, default `.`, in `install`, `deploy`, `clean`, `assemble`, `validate`, and `release`.
+- Take the target as `--target <DIR>` in `init`, with no default, because scaffolding requires an explicit destination.
+- Require both `--source <DIR>` and `--target <DIR>` in `copy`.
+- Take the inspection target as `--target <DIR_OR_FILE>`, default `.`, in `provenance`, and rename the source-URI filter from `--source` to `--source-uri` to avoid a name collision.
+- Take the source as `--source`, default `.`, in `drift`, and rename the second positional to `--upstream <DIR>`, because it is semantically the upstream reference.
+
+### Fixed
+
+- Prune deployed skill, agent, and rule directories absent from source in `rune install`, because a stale directory kept loading into Claude, Gemini, Codex, and OpenCode sessions (#45).
+- Move pruned content to `<target>/.trash/<UTC-ts>/`, restorable with `mv` and reclaimable with `rm -rf`.
+- Walk and remove empty parent directories up to but not including the provider target root.
+- Opt out of pruning with `--no-prune`, and preview it with `--dry-run`.
+- Skip a locally modified file with a warning when its deployed SHA-256 no longer matches the manifest fingerprint, and prune it anyway with `--force`.
+- Use the same quarantine path in `rune clean`.
+- Fix the substring collision in `is_owned_by_module` through structured `(host, owner, repo)` equality on the source URI (#45).
+- Stop a module named `rune-core` at one repository from pruning the files of another with the same name, and stop `Prompts` matching `PublishPrompts`.
+- Stop shipping a hand-typed `SCRIPT_SHA` constant in `templates/init/.githooks/pre-commit` (#47, #46).
+- Compute `sha256(scripts/validate.sh)` in `build.rs` at compile time, emit it as `commands::VALIDATE_SH_SHA`, and substitute `${VALIDATE_SH_SHA}` into the template at scaffold time.
+- Rebuild on any change to `scripts/validate.sh`, so the pin can no longer go stale in a fresh `rune init`.
+- Pin the contract in `tests/embedded_sha.rs`.
+- Dispatch every `rune install` and `rune validate` template invocation through clap in `src/cli/tests.rs`, to catch CLI-shape drift before it ships.
+- Add a `template-smoke` CI job, which scaffolds and runs `make validate` against the generated tree on every pull request.
+- Drop the stale trailing `.` from `$(RUNE) install .` in `templates/init/Makefile`, which made `make install` fail on every freshly scaffolded module (#46).
+- Use `--source` (default `.`) in the template, because the current CLI rejects a positional argument.
+- Serialize Codex agent `.toml` in `markdown_to_toml` through the `toml` crate, which picks a safe string form (`"..."`, `"""..."""`, or `'''...'''`) from the body content (#43).
+- Close the injection where a body containing `"""` followed by `[section]` broke out of the literal and injected arbitrary top-level tables into the deployed agent config (#43).
+- Walk every deployed content file in `rune provenance --target <DIR>` regardless of extension instead of only `.md`, because the codex provider produces `.toml` agent files (#29).
+- Keep skipping sidecars (`.yaml`) and dotfiles (`.DS_Store`, `.manifest`).
+- Deploy all hidden template files in `rune init` (`.pre-commit-config.yaml`, `.gitattributes`, `.gitleaks.toml`, `.gitlab-ci.yml`), which the near-total dotfile allowlist silently dropped (#28).
+- Replace the dotfile allowlist with an OS-junk blocklist (`.DS_Store`, `Thumbs.db`, `Desktop.ini`, `._*` resource forks).
+- Drop `pass_filenames: false` from the `templates/init/.pre-commit-config.yaml` ruff hook, which bypassed the `types: [python]` filter and forced ruff to run on every commit (#33).
+- Skip the ruff hook in prek when no Python files are staged.
+- Drop `--no-git -s .` from the gitleaks entry in the rune-cli root `.pre-commit-config.yaml`, because the flag bypassed git gitignore, walked 4 GB of cargo `target/`, and hung at 400% CPU.
+- Respect gitignore on the default gitleaks invocation.
+- Whitelist 12 Claude Code optional `SKILL.md` frontmatter fields in `templates/init/skills/.mdschema` (#40).
+- Accept `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `paths`, and `shell`.
+- Stop failing a module that lifts those fields from a `SKILL.yaml` sidecar to top-level frontmatter with `Unknown frontmatter field`.
+- Omit `hooks`, because mdschema lacks an `object` type for the nested map.
 
 ## [0.3.1] - 2026-04-16
 
 ### Added
 
-- Gemini CLI compatibility: tool remapping, `kebab-case-agents` rule, skill path preservation
-- `GEMINI.md` provider overview for Gemini-side consumers
-- Composite GitHub Action for CI integration (`.github/actions/setup-rune/`)
-- `.gitleaks.toml` for excluding eval baselines from secret scanning
-- GitLab CI template in `templates/init/`
+- Add Gemini CLI compatibility: tool remapping, the `kebab-case-agents` rule, and skill path preservation.
+- Add a `GEMINI.md` provider overview for Gemini-side consumers.
+- Add a composite GitHub Action for CI integration (`.github/actions/setup-rune/`).
+- Add `.gitleaks.toml` to exclude eval baselines from secret scanning.
+- Add a GitLab CI template in `templates/init/`.
 
 ### Changed
 
-- `map_field` uses `serde_yaml` round-trip (handles quoted values and block scalars)
-- Assembly transforms documented in README
-- Heavy scanners (gitleaks, semgrep) moved to `pre-push` stage in init template
+- Use a `serde_yaml` round-trip in `map_field`, which handles quoted values and block scalars.
+- Document the assembly transforms in README.
+- Move the heavy scanners gitleaks and semgrep to the `pre-push` stage in the init template.
 
 ### Fixed
 
-- Trailing newlines preserved during assembly (`.lines()` drop fix)
-- Removed dead `_tool_mappings` parameter from assembly pipeline
-- Removed rune-core-specific `validate-adr` hook from init template
+- Preserve trailing newlines during assembly, fixing the `.lines()` drop.
+- Remove the dead `_tool_mappings` parameter from the assembly pipeline.
+- Remove the rune-core-specific `validate-adr` hook from the init template.
 
 ## [0.3.0] - 2026-04-06
 
 ### Added
 
-- `rune init` scaffolds new modules from embedded templates with SLSA provenance
-- `rune validate` manifest-based drift detection against current templates
-- `.pre-commit-hooks.yaml` makes rune-cli a valid prek hook source (`language: rust`)
-- prek as declarative validation entry point
-- Native YAML, JSON, and trailing whitespace checks in `rune validate`
-- `--source` filter on `rune provenance` command
+- Scaffold new modules from embedded templates with SLSA provenance in `rune init`.
+- Add manifest-based drift detection against current templates in `rune validate`.
+- Add `.pre-commit-hooks.yaml`, which makes rune-cli a valid prek hook source (`language: rust`).
+- Add prek as the declarative validation entry point.
+- Add native YAML, JSON, and trailing whitespace checks in `rune validate`.
+- Add a `--source` filter on the `rune provenance` command.
 
 ### Changed
 
-- `templates/` reorganized: content schemas in `templates/init/`, build helpers in `templates/make/`
+- Reorganize `templates/`: content schemas move to `templates/init/`, and build helpers move to `templates/make/`.
 
 ## [0.2.0] - 2026-04-04
 
 ### Added
 
-- `rune drift` command for upstream comparison with frontmatter key diffing and `--ignore` flag
-- `rune provenance --show-orphans` flag for detecting files without provenance
-- `rune clean` command for removing stale files from previous installs
-- `rune release` command for packaging assembled content as tarballs
-- `rune validate` runs external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks)
-- Skill `user/` subdirectory flattening during assembly (override semantics)
-- mdschema templates for skills, agents, rules, and decisions (embedded via rust-embed)
-- Hash-verified `validate.sh` fallback for pre-commit hooks and CI
-- GitHub Actions release workflow for cross-platform binaries (Linux x86_64, macOS aarch64)
-- `validate.yaml` and `git/pre-commit` templates for consumer modules
-- 31 ADRs migrated to structured-madr frontmatter format
-- JSON Schema files for frontmatter validation
+- Add the `rune drift` command for upstream comparison, with frontmatter key diffing and an `--ignore` flag.
+- Add `rune provenance --show-orphans`, which detects files without provenance.
+- Add the `rune clean` command, which removes stale files from previous installs.
+- Add the `rune release` command, which packages assembled content as tarballs.
+- Run external tools in `rune validate`: shellcheck, cargo fmt, cargo clippy, cargo test, tsc, and gitleaks.
+- Flatten a skill `user/` subdirectory during assembly, with override semantics.
+- Add mdschema templates for skills, agents, rules, and decisions, embedded through rust-embed.
+- Add a hash-verified `validate.sh` fallback for pre-commit hooks and CI.
+- Add a GitHub Actions release workflow for cross-platform binaries (Linux x86_64, macOS aarch64).
+- Add `validate.yaml` and `git/pre-commit` templates for consumer modules.
+- Migrate 31 ADRs to the structured-madr frontmatter format.
+- Add JSON Schema files for frontmatter validation.
 
 ### Changed
 
-- `target::resolve_paths` returns `Result` instead of panicking
-- Validation file lists hardcoded in binary, removed from `defaults.yaml`
-- `ModuleManifest` typed struct for `module.yaml` deserialization
-- `validate.sh` uses `git ls-files` to avoid submodule recursion
-- Rust file walker skips git submodule directories (`.git` file detection)
-- Gitleaks uses `protect --staged` when staged changes exist, `detect` otherwise
+- Return `Result` from `target::resolve_paths` instead of panicking.
+- Hardcode the validation file lists in the binary, and remove them from `defaults.yaml`.
+- Add the typed `ModuleManifest` struct for `module.yaml` deserialization.
+- Use `git ls-files` in `validate.sh` to avoid submodule recursion.
+- Skip git submodule directories in the Rust file walker, detected by the `.git` file.
+- Use gitleaks `protect --staged` when staged changes exist, and `detect` otherwise.
 
 ### Fixed
 
-- Code fence content no longer misidentified as headings in mdschema validation
-- ADR mdschema test uses inert fixture instead of live ADR file
-- Graceful fallback when module config is incompatible with provider defaults
+- Stop misidentifying code fence content as headings in mdschema validation.
+- Use an inert fixture instead of a live ADR file in the ADR mdschema test.
+- Fall back gracefully when a module config is incompatible with provider defaults.
 
 ## [0.1.0] - 2026-03-25
 
 ### Added
 
-- Two-stage assembly and deployment pipeline (assemble → deploy)
-- Provider-specific transforms: kebab-case, tool remapping, TOML conversion
-- SLSA/in-toto provenance sidecars (.yaml) in build/
-- Deployment manifest (.manifest) at target for staleness detection
-- Variant resolution with precedence: user/ > provider/model/ > provider/ > base
-- Frontmatter stripping with configurable keep fields
-- GFM reference link stripping
-- Incremental install with user modification detection
-- INSTALL.md following Mintlify install.md standard
-- 28 ADRs documenting architecture decisions
-
-[0.4.0]: https://github.com/runedeck/rune/compare/v0.3.2...v0.4.0
-[0.3.2]: https://github.com/runedeck/rune/compare/v0.3.1...v0.3.2
-[0.3.1]: https://github.com/runedeck/rune/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/runedeck/rune/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
+- Add the two-stage assembly and deployment pipeline, assemble then deploy.
+- Add provider-specific transforms: kebab-case, tool remapping, and TOML conversion.
+- Write SLSA and in-toto provenance sidecars (`.yaml`) in `build/`.
+- Write a deployment manifest (`.manifest`) at the target for staleness detection.
+- Resolve variants with the precedence `user/`, provider/model, provider, base.
+- Strip frontmatter with configurable keep fields.
+- Strip GFM reference links.
+- Add incremental install with user modification detection.
+- Add `INSTALL.md` following the Mintlify install.md standard.
+- Add 28 ADRs documenting architecture decisions.

@@ -1,0 +1,43 @@
+
+# Scenario: Requirement runs to a wall of text
+# A 191-word requirement statement in a delta is an error at its heading line.
+❯ rune spec validate --source . || true
+error[delta-requirement-too-long]: docs/changes/tighten-search-ranking/specs/rune-name-search/spec.md:3: requirement statement has 192 words; the limit is 100, split it into one requirement per MUST cluster
+
+# Scenario: Step lists a command
+# Inline code does not count: a step with a long command and ten words of prose passes.
+❯ rune spec validate --source .
+specification validation passed
+
+# Scenario: Entry is a paragraph
+# A changelog line of 1,400 characters is a paragraph. One line per change, 200 characters.
+❯ rune docs check || true
+ docs
+   ✓ 4 pages, links resolve
+ changelog
+   ✗ CHANGELOG.md:8: entry-length: 1418 characters; the limit is 200, one line per change, detail goes in the change or the commit
+
+# Scenario: Entry starts with the command name
+# A change line starts with a verb, never with a code span.
+❯ rune docs check || true
+ docs
+   ✓ 4 pages, links resolve
+ changelog
+   ✗ CHANGELOG.md:8: entry-verb: start with a capitalized present-tense verb (Add, Fix, Change, Remove), found ``rune`
+
+# Scenario: Repository keeps no changelog
+# No CHANGELOG.md is no error: the link check alone decides.
+❯ rm CHANGELOG.md; rune docs check
+ docs
+   ✓ 4 pages, links resolve
+
+# Scenario: Two-word capability
+# A change id and a capability need three hyphen-separated words by default.
+❯ rune spec validate --source . || true
+error[delta-capability-name-short]: docs/changes/add-player/specs/cast-player/spec.md: capability 'cast-player' has 2 words; a name needs at least 3 hyphen-separated words
+error[change-name-short]: docs/changes/add-player/specs/cast-player/spec.md: change 'add-player' has 2 words; a change id needs at least 3 hyphen-separated words
+
+# Scenario: Repository turns the rule off
+# spec.min_name_words: 0 in the repository config switches the floor off.
+❯ rune spec validate --source .
+specification validation passed

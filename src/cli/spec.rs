@@ -19,6 +19,11 @@ pub(crate) fn install_hooks() {
             .map(|merged| crate::cli::config::source_spec_root(&merged))
             .map_err(|error| format!("cannot read config for spec.root: {error}"))
     });
+    let _ = rune_docs::spec::set_name_rule_lookup(|root| {
+        crate::cli::config::load_merged_config(root)
+            .map(|merged| crate::cli::config::source_spec_min_name_words(&merged))
+            .map_err(|error| format!("cannot read config for spec.min_name_words: {error}"))
+    });
     rune_docs::sheet::set_no_color(crate::cli::style::global_no_color());
 }
 

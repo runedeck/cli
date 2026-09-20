@@ -106,7 +106,7 @@ Rollback restores only affected claim prefixes and refuses a changed physical ro
 Unrelated claims and foreign additions remain recoverable.
 The user approved this scoped guard and implementation through a PR on 2026-09-10.
 
-The eight requirements in [identity](specs/codex-skill-identity/spec.md), [readiness](specs/skill-readiness/spec.md), and [layers](specs/skill-layers/spec.md) define acceptance.
+The eight requirements in [identity](specs/codex-skill-identity/spec.md), [readiness](specs/codex-skill-readiness/spec.md), and [layers](specs/skill-source-layers/spec.md) define acceptance.
 The [design](design.md) fixes implementation boundaries and report data.
 The [acceptance plan](acceptance.md) binds the checks to those requirements.
 

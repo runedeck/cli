@@ -6,7 +6,7 @@
 - [Crew Parity](Crew%20Parity.md) — capability matrix against crew, pinned with non-goals
 - [Exit Codes](Exit%20Codes.md) — the exit-code and locking contract for scripts and CI
 - [Command Map](Command%20Map.md) — how install/assemble/deploy/copy, the health ladder, and import/adopt relate
-- [Skill authoring](changes/rune-shell/design.md) — the Stable shell heading convention, which checker enforces which part of it, and where the rule lives
+- [Skill authoring](changes/interactive-rune-shell/design.md) — the Stable shell heading convention, which checker enforces which part of it, and where the rule lives
 - [Schemas](Schemas.md) — every schema-shaped file, what it constrains, who loads it, and why the skills schema has three copies
 
 ## Walkthroughs

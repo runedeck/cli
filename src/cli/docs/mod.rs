@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum DocsAction {
-    /// Broken internal links and orphan pages across docs/.
+    /// Broken internal links and orphan pages across docs/, and the shape of CHANGELOG.md.
     Check,
     /// Local preview: shells out to `mint dev` when docs.json exists.
     Dev,
@@ -45,6 +45,9 @@ fn dev(root: &Path) -> Result<i32, Error> {
 fn check_at(root: &Path, json: bool) -> Result<i32, Error> {
     let report =
         rune_docs::links::check(root).map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let changelog = rune_docs::changelog::check(root)
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
+    let failed = !report.broken.is_empty() || !changelog.errors.is_empty();
 
     if json {
         println!(
@@ -53,9 +56,15 @@ fn check_at(root: &Path, json: bool) -> Result<i32, Error> {
                 "pages": report.pages,
                 "broken_links": report.broken,
                 "orphans": report.orphans,
+                "changelog": {
+                    "present": changelog.present,
+                    "releases": changelog.releases,
+                    "entries": changelog.entries,
+                    "errors": changelog.errors,
+                },
             })
         );
-        return Ok(i32::from(!report.broken.is_empty()));
+        return Ok(i32::from(failed));
     }
 
     let sheet = crate::cli::style::Sheet::detect(false);
@@ -82,5 +91,20 @@ fn check_at(root: &Path, json: bool) -> Result<i32, Error> {
             ))
         );
     }
-    Ok(i32::from(!report.broken.is_empty()))
+    if changelog.present {
+        println!("{}", sheet.heading("changelog"));
+        for error in &changelog.errors {
+            println!("{}", sheet.fail(&format!("CHANGELOG.md:{error}")));
+        }
+        if changelog.errors.is_empty() {
+            println!(
+                "{}",
+                sheet.ok(&format!(
+                    "{} releases, {} entries, keep-a-changelog shape",
+                    changelog.releases, changelog.entries
+                ))
+            );
+        }
+    }
+    Ok(i32::from(failed))
 }

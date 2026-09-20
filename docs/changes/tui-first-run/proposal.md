@@ -22,7 +22,7 @@ new user to setup instead of an empty screen. Governing decision: CLI-0036.
 
 ## Capabilities
 
-- tui (new)
+- terminal-dashboard-ui (new)
 
 ## Impact
 

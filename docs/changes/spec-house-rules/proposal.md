@@ -13,15 +13,15 @@ The skeleton's review-ceremony specification grew past three hundred lines, mixe
 
 - `rune spec validate` and `rune spec doctor` report a prose line that uses SHALL, a canonical specification over 150 lines (a delta over that length warns), and an italic defined term with no entry in `docs/specs/glossary.md`.
 - The OpenSpec compatibility parser and its v1.6.0 oracle fixtures are unchanged. Separate tests cover the house rules.
-- The cli's own specifications use MUST. `spec-lifecycle` splits off `spec-interop`, and `commit-attribution` splits off `worktree-identity`, so each capability stays under the limit.
+- The cli's own specifications use MUST. `spec-change-lifecycle` splits off `openspec-tree-interop`, and `model-commit-attribution` splits off `worktree-commit-identity`, so each capability stays under the limit.
 - The scaffolded delta template uses MUST.
 
 ## Capabilities
 
-- spec-lifecycle (modified)
+- spec-change-lifecycle (modified)
 
 ## Impact
 
 - `rune-docs/src/spec/{lint.rs,validate.rs,doctor.rs}`, `rune-docs/templates/spec/delta-spec.md`, `rune-docs/tests/fixtures/spec/*`.
-- `docs/specs/{spec-lifecycle,spec-interop,commit-attribution,worktree-identity}/spec.md`, every active delta, `docs/walkthroughs/Spec.md`.
+- `docs/specs/{spec-change-lifecycle,openspec-tree-interop,model-commit-attribution,worktree-commit-identity}/spec.md`, every active delta, `docs/walkthroughs/Spec.md`.
 - Consumers that lint their specifications with this release convert SHALL to MUST and split any capability over the limit.

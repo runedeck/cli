@@ -89,5 +89,5 @@ otherwise. The two are not equivalent: the built-in checker implements required
 section presence, heading level continuity, and maximum depth, and skips
 optional sections before reading them. Section order, unexpected sections,
 permitted subsection placement, and heading uniqueness exist only in the
-standalone checker. See [Skill authoring](changes/rune-shell/design.md) for the
+standalone checker. See [Skill authoring](changes/interactive-rune-shell/design.md) for the
 requirement-by-requirement split.

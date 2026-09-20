@@ -22,7 +22,7 @@ that follows the host terminal, and single-token overrides. Governing decision: 
 
 ## Capabilities
 
-- theme (new)
+- dashboard-theme-system (new)
 
 ## Impact
 

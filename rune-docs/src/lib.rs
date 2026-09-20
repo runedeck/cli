@@ -18,6 +18,7 @@
 //! either is a deliberate, reviewed decision, never refactor fallout.
 
 pub mod adr;
+pub mod changelog;
 pub mod error;
 #[cfg(feature = "lifecycle")]
 pub mod interop;

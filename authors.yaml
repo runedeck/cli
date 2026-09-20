@@ -1,6 +1,6 @@
 # Commit attribution policy. Human identities and vendor aliases stay explicit.
 # Model identities use matching IDs and an approved harness domain.
-# See docs/specs/commit-attribution/spec.md for the contract.
+# See docs/specs/model-commit-attribution/spec.md for the contract.
 authors:
     - Martin Zeman <N4M3Z@users.noreply.github.com>
     - Claude (claude) <claude@claude.noreply.nexus.local>
