@@ -85,6 +85,13 @@ fn sign_output_is_classified_for_the_retry_rule() {
         SignOutcome::Cancelled(_)
     ));
     assert!(matches!(
+        classify_sign_output(
+            false,
+            "Error: Commit 50a17fae6e02 is immutable\nHint: Could not modify commit"
+        ),
+        SignOutcome::Immutable(_)
+    ));
+    assert!(matches!(
         classify_sign_output(false, "Error: No signing backend configured"),
         SignOutcome::Failed(_)
     ));

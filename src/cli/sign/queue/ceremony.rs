@@ -99,6 +99,11 @@ pub(crate) fn check_seal(
 /// Before every attempt the bookmark must still point at the commit
 /// observed under the lock: a head that moved after the claim is stale
 /// and nothing is signed.
+/// The pinentry waits for the PIN and the card touch for a few seconds
+/// only (the PIN cache is short by design). A touch while another window
+/// has focus types a one-time password there instead.
+pub(crate) const TIMEOUT_HINT: &str = "Keep the pinentry focused and touch the key as soon as it appears; a touch while another window has focus types an OTP into that window.";
+
 pub(crate) fn sign_with_retry(
     repo: &Repo,
     bookmark: &str,
@@ -119,9 +124,17 @@ pub(crate) fn sign_with_retry(
             SignOutcome::Signed => return Ok(Ok(())),
             SignOutcome::Timeout(detail) if attempt < SIGN_ATTEMPTS => {
                 eprintln!("signing timed out (attempt {attempt} of {SIGN_ATTEMPTS}): {detail}");
+                eprintln!("{TIMEOUT_HINT}");
             }
-            SignOutcome::Timeout(detail) => return Ok(Err(format!("timed out: {detail}"))),
+            SignOutcome::Timeout(detail) => {
+                return Ok(Err(format!("timed out: {detail}. {TIMEOUT_HINT}")));
+            }
             SignOutcome::Cancelled(detail) => return Ok(Err(format!("cancelled: {detail}"))),
+            SignOutcome::Immutable(detail) => {
+                return Ok(Err(format!(
+                    "refused: {bookmark} is immutable, which for a pushed bookmark means the head is published. Sign before you push. {detail}"
+                )));
+            }
             SignOutcome::Failed(detail) => return Ok(Err(format!("failed: {detail}"))),
         }
     }
