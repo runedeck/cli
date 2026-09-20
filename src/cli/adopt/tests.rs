@@ -1676,3 +1676,19 @@ fn directory_source_records_canonical_file_url() {
         expected
     );
 }
+
+#[test]
+fn doctor_skips_sibling_checkouts_under_the_module() {
+    let dir = review_module_with_schema();
+    // A jj workspace copy of the module: its sidecars name the module's
+    // own paths as holder, so a walk into it would report every record
+    // as moved. The doctor does not look inside sibling checkouts.
+    let workspace = dir.path().join(".workspaces/other/.provenance");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("bad.yaml"), "provenance: [\n").unwrap();
+    let worktree = dir.path().join(".worktrees/other/.provenance");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("bad.yaml"), "provenance: [\n").unwrap();
+
+    assert_eq!(review::doctor(dir.path(), false).unwrap(), 0);
+}

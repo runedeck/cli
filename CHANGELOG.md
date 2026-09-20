@@ -181,6 +181,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix `rune sign open` signing a seal it cannot push: it pushes through `gh auth git-credential` for that one process, checks the transport before the key touch, and refuses an HTTPS origin with neither a gh login nor a trusted helper.
+- Fix `scripts/verify-seal` (and the embedded skeleton copy) reading the open-seal's pull request as `number` while `rune sign open` writes `pull_request`, so both spellings verify now.
+- Fix `rune sign open` ignoring URL-scoped credential helpers (`credential.https://github.com.helper`), the form `gh auth setup-git` writes.
+- Fix `rune spec import --openspec` converting a repository's only `openspec/` tree into itself instead of `docs/`.
+- Fix `rune adopt doctor` walking into `.workspaces/`, `.worktrees/`, and `.codex-prs/` and reporting their sidecars as moved.
 - Fix five `rune-docs` unit tests that the three-word name rule broke and that never ran, and the clippy and rustfmt findings the workspace exposed.
 - Fix `rune init` recording `_commit: v0.5.0` in `answers.yaml` without a configured skeleton root, a tag the skeleton never had, which made `copier update` fail in every scaffolded project.
 - Record the skeleton commit the embedded copy equals, `66d1077`, and prefer a release tag when one is set.

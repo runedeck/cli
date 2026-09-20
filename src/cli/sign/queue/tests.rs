@@ -2,6 +2,7 @@ use super::repo::{
     SignOutcome, Signing, classify_sign_output, export_refused, has_signature, parse_commit,
     user_value,
 };
+use super::repo::{helper_applies, helper_settings};
 use super::store::{Identity, Kind, Receipt, Request, Status, Store, claim_is_dead, split_holder};
 use super::{exit_status, names_commit, topological};
 use tempfile::TempDir;
@@ -300,4 +301,40 @@ fn the_ledger_is_the_controller_apps_newest_ledger_check_run_and_no_other_app_co
         newest_ledger_line(vec![run(9, "ledger", Some("someone-else"), line(3))].into_iter()),
         None
     );
+}
+
+#[test]
+fn url_scoped_credential_helpers_are_trusted_alongside_the_bare_one() {
+    // `gh auth setup-git` writes the URL-scoped form; a bare one and an
+    // empty reset line are the other shapes `--get-regexp` prints.
+    let listing = "credential.helper osxkeychain\ncredential.https://github.com.helper\ncredential.https://github.com.helper !/opt/homebrew/bin/gh auth git-credential\n";
+    assert_eq!(
+        helper_settings(listing),
+        vec![
+            "credential.helper=osxkeychain".to_string(),
+            "credential.https://github.com.helper=".to_string(),
+            "credential.https://github.com.helper=!/opt/homebrew/bin/gh auth git-credential"
+                .to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_helper_applies_by_scope_prefix_and_never_when_reset() {
+    let url = "https://github.com/runedeck/cli.git";
+    assert!(helper_applies("credential.helper=osxkeychain", url));
+    assert!(helper_applies(
+        "credential.https://github.com.helper=!gh auth git-credential",
+        url
+    ));
+    assert!(!helper_applies(
+        "credential.https://gitlab.example.helper=!glab auth git-credential",
+        url
+    ));
+    assert!(!helper_applies(
+        "credential.https://github.com.helper=",
+        url
+    ));
+    assert!(!helper_applies("credential.helper=", url));
+    assert!(!helper_applies("core.askPass=", url));
 }

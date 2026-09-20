@@ -123,11 +123,14 @@ check_open_candidate() {
     json=$(seal_json "$seal" open-seal)
     seal_repo=$(json_field "$json" repo)
     seal_base=$(json_field "$json" base)
-    seal_number=$(json_field "$json" number)
+    # The seal writes `pull_request` (rune sign open); `number` is the older
+    # spelling and still verifies.
+    seal_number=$(json_field "$json" pull_request)
+    [ -n "$seal_number" ] || seal_number=$(json_field "$json" number)
     seal_tree=$(json_field "$json" tree)
     nonce=$(json_field "$json" nonce)
     [ -n "$seal_repo" ] && [ -n "$seal_base" ] && [ -n "$seal_number" ] && [ -n "$seal_tree" ] && [ -n "$nonce" ] \
-        || fail "open-seal $seal is malformed: expected a JSON subject with repo, base, number, tree, and nonce"
+        || fail "open-seal $seal is malformed: expected a JSON subject with repo, base, pull_request, tree, and nonce"
     printf '%s' "$nonce" | grep -Eq "$nonce_pattern" \
         || fail "open-seal $seal carries nonce $nonce, which is not 32 lowercase hex characters"
     [ "$seal_repo" = "$repo" ] || fail "open-seal $seal binds repository $seal_repo, not $repo"

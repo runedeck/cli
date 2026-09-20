@@ -80,7 +80,12 @@ fails `schemas/PULL_REQUEST.mdschema`.
 
 A head the owner signed already MUST be accepted, because the open-seal is a new commit above it. The body MUST be
 read from `docs/changes/<id>/pull-request.md` in the bookmark's own tree, so the workspace `open` runs in need not
-be on that branch.
+be on that branch. The push MUST run `gh auth git-credential` for its own process and trust only system- and user-scope helpers besides, never a repository-scope one, and `open` MUST refuse before signing when an HTTPS push URL has no credential.
+
+#### Scenario: Open refuses an HTTPS origin with no trusted helper
+
+- **WHEN** the push URL is HTTPS, `gh` is logged out for the host, and no system- or user-scope helper covers it
+- **THEN** the command exits nonzero before the key touch and names `gh auth login` and an SSH remote as the fixes
 
 #### Scenario: Open accepts an owner-signed head
 

@@ -112,6 +112,13 @@ pub(crate) fn qualify(
         )));
     }
     let slug = repo_slug(repo, REMOTE)?;
+    if let Some(url) = repo.push_url(REMOTE)?
+        && !super::repo::transport_can_authenticate(&url)
+    {
+        return Err(refusal(format!(
+            "no credential for {url}: the pinned push runs `gh auth git-credential` and the system and user credential helpers, never a repository-scope one; log in with `gh auth login` or use an SSH remote"
+        )));
+    }
     let mut drafts = gh::open_pull_requests(&slug, Some(bookmark))?;
     let pull_request = match drafts.len() {
         1 => drafts.remove(0),

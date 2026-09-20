@@ -91,6 +91,12 @@ pub fn resolve_spec_root(repository: &Path) -> Result<SpecRoot, Error> {
     root::resolve(repository)
 }
 
+/// Whether the repository selects its spec root through `spec.root`, as
+/// opposed to autodetection over `docs/` and `openspec/`.
+pub fn spec_root_is_configured(repository: &Path) -> Result<bool, Error> {
+    Ok(root::configured_root(repository)?.is_some())
+}
+
 /// Resolve against an explicit `spec.root` value, bypassing the installed
 /// config lookup. For flows that must act before the value is persisted,
 /// such as recording the root only after a successful migration.

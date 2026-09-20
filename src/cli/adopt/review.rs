@@ -85,7 +85,18 @@ pub const REVIEW_PREDICATE_TYPE: &str = "https://runedeck.github.io/attestation/
 const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 const SESSION_FILE: &str = "session.yaml";
 const SESSION_DIRECTORY: &str = "adopt-sessions";
-const SKIP_WALK: &[&str] = &[".git", ".jj", ".trash", manifest::PROVENANCE_DIRECTORY];
+// Sibling checkouts under a repository (jj workspaces, git worktrees, scratch
+// clones) carry their own sidecars whose holder is that checkout, not this
+// one; walking into them reports every record as moved.
+const SKIP_WALK: &[&str] = &[
+    ".git",
+    ".jj",
+    ".trash",
+    ".workspaces",
+    ".worktrees",
+    ".codex-prs",
+    manifest::PROVENANCE_DIRECTORY,
+];
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ReviewRecord {

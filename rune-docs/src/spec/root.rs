@@ -74,11 +74,17 @@ pub(super) fn set_root_config_lookup(lookup: RootConfigLookup) -> bool {
 }
 
 pub(super) fn resolve(root: &Path) -> Result<SpecRoot, Error> {
-    let configured = ROOT_CONFIG_LOOKUP
+    let configured = configured_root(root)?;
+    resolve_with_config(root, configured.as_deref())
+}
+
+/// The `spec.root` the installed config lookup selects, or `None` when the
+/// repository leaves the root to autodetection.
+pub(super) fn configured_root(root: &Path) -> Result<Option<String>, Error> {
+    ROOT_CONFIG_LOOKUP
         .get()
         .map_or(Ok(None), |lookup| lookup(root))
-        .map_err(|message| Error::new(ErrorKind::Config, message))?;
-    resolve_with_config(root, configured.as_deref())
+        .map_err(|message| Error::new(ErrorKind::Config, message))
 }
 
 pub(super) fn resolve_with_config(

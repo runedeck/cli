@@ -353,9 +353,31 @@ impl Repo {
             .args(["-c", "core.gitProxy="])
             .args(["-c", "credential.helper="]);
         for helper in trusted_credential_helpers() {
-            command.arg("-c").arg(format!("credential.helper={helper}"));
+            command.arg("-c").arg(helper);
         }
+        // The seal's own credential for an HTTPS push: `gh auth git-credential`,
+        // named here for this one process. `open` already reads the draft and
+        // flips it ready through the same gh login, so the push grants nothing
+        // that call did not, and no machine-wide helper is needed or read.
+        command.args(["-c", "credential.helper=!gh auth git-credential"]);
         command
+    }
+
+    /// The URL git would connect to for a push to `remote`, after the
+    /// `url.<base>.insteadOf` and `pushInsteadOf` rewrites. `None` when the
+    /// remote is unset.
+    pub(crate) fn push_url(&self, remote: &str) -> Result<Option<String>, Error> {
+        let output = self
+            .git()
+            .args(["remote", "get-url", "--push", remote])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
     }
 
     /// The URL of a remote from the git configuration, `None` when unset.
@@ -745,25 +767,87 @@ fn jj(workspace: &Path) -> Command {
 
 /// Credential helpers from the system and user git config, in that order,
 /// which a push re-applies after resetting the list the repository set.
+/// Whether the pinned transport can authenticate an HTTPS push to `url`:
+/// `gh` is logged in for the host, or a trusted (system or user scope)
+/// credential helper covers it. SSH and local URLs need none. Checked
+/// before the key touch, because a seal that cannot be pushed is a signed
+/// orphan.
+pub(crate) fn transport_can_authenticate(url: &str) -> bool {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return true;
+    }
+    let host = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let gh_logged_in = Command::new("gh")
+        .args(["auth", "status", "--hostname", host])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    gh_logged_in
+        || trusted_credential_helpers()
+            .iter()
+            .any(|setting| helper_applies(setting, url))
+}
+
+/// A `credential[.<url>].helper=<value>` setting with a non-empty value
+/// whose scope, when present, is a prefix of `url`.
+pub(crate) fn helper_applies(setting: &str, url: &str) -> bool {
+    let Some((key, value)) = setting.split_once('=') else {
+        return false;
+    };
+    if value.is_empty() {
+        return false;
+    }
+    match key
+        .strip_prefix("credential.")
+        .and_then(|rest| rest.strip_suffix(".helper"))
+    {
+        Some("") | None if key == "credential.helper" => true,
+        Some(scope) => url.starts_with(scope.trim_end_matches('/')),
+        None => false,
+    }
+}
+
+/// The credential helpers the system and user scopes name, as `key=value`
+/// pairs ready for `-c`. Both the bare `credential.helper` and the
+/// URL-scoped `credential.<url>.helper` form count: `gh auth setup-git`
+/// writes the latter, and a helper that only exists there would leave an
+/// HTTPS push with no credential at all.
 fn trusted_credential_helpers() -> Vec<String> {
     let mut helpers = Vec::new();
     for scope in ["--system", "--global"] {
         let output = Command::new("git")
-            .args(["config", scope, "--get-all", "credential.helper"])
+            .args([
+                "config",
+                scope,
+                "--get-regexp",
+                r"^credential\.(.+\.)?helper$",
+            ])
             .output();
         if let Ok(output) = output
             && output.status.success()
         {
-            helpers.extend(
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_string),
-            );
+            helpers.extend(helper_settings(&String::from_utf8_lossy(&output.stdout)));
         }
     }
     helpers
+}
+
+/// `git config --get-regexp` lines (`key value`, or `key` alone for an
+/// empty value) as `key=value` settings for `-c`.
+pub(crate) fn helper_settings(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.split_once(' ') {
+            Some((key, value)) => format!("{key}={value}"),
+            None => format!("{line}="),
+        })
+        .collect()
 }
 
 fn parse_subjects(listing: &str) -> Vec<(String, String)> {

@@ -166,10 +166,20 @@ fn import_openspec_with_io<I: TransactionIo>(
     configured: Option<&str>,
     io: I,
 ) -> Result<ConversionReport, Error> {
-    let spec_root = match configured {
+    let mut spec_root = match configured {
         Some(configured) => crate::spec::resolve_spec_root_with(Path::new(source), configured)?,
         None => resolve_spec_root(Path::new(source))?,
     };
+    // A repository whose only tree is `openspec/` autodetects that tree as
+    // its root. An import from there into itself is a no-op that leaves a
+    // mirror and a lock behind, so the destination is the native root. A
+    // `spec.root: openspec` set on purpose keeps the in-place ownership mode.
+    if configured.is_none()
+        && spec_root.layout() == crate::spec::SpecLayout::OpenSpec
+        && !crate::spec::spec_root_is_configured(Path::new(source))?
+    {
+        spec_root = crate::spec::resolve_spec_root_with(Path::new(source), "docs")?;
+    }
     let mut transaction = Transaction::acquire_with_io(&spec_root, io)?;
     let plan = preflight_import(&spec_root)?;
     if !plan.writes.is_empty() || !plan.removals.is_empty() {

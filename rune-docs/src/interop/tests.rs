@@ -778,3 +778,33 @@ fn import_retry_after_crash_recovery_reports_success() {
     );
     assert!(!repository.path().join("openspec/project.md").exists());
 }
+
+/// A repository whose only tree is `openspec/` autodetects that tree as its
+/// root. Import still lands in `docs/`: importing a tree into itself would
+/// leave a mirror and a lock inside the source and convert nothing.
+#[test]
+fn import_from_an_autodetected_openspec_root_lands_in_docs() {
+    let repository = TempDir::new().unwrap();
+    crate::spec::set_root_config_lookup(test_config_lookup);
+    seed_openspec(repository.path());
+    assert!(!repository.path().join("docs").exists());
+
+    let report = import_openspec_output(&repository.path().to_string_lossy()).unwrap();
+
+    assert!(
+        report.destination.ends_with("docs"),
+        "{}",
+        report.destination
+    );
+    assert_eq!(
+        fs::read(
+            repository
+                .path()
+                .join("docs/changes/add-widget/proposal.md")
+        )
+        .unwrap(),
+        b"# Widget proposal\n"
+    );
+    assert!(!repository.path().join("openspec/.interop").exists());
+    assert!(!repository.path().join("openspec/changes").exists());
+}

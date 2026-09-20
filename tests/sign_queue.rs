@@ -941,7 +941,10 @@ def load(name, default):
     return json.load(open(p)) if os.path.exists(p) else default
 def state(p):
     return p.get("state", "OPEN")
-if a[:2] == ["pr", "list"]:
+if a[:2] == ["auth", "status"]:
+    # Logged in unless the test drops a `logged-out` marker.
+    sys.exit(1 if os.path.exists(os.path.join(d, "logged-out")) else 0)
+elif a[:2] == ["pr", "list"]:
     prs = load("prs.json", [])
     if "--state" in a and a[a.index("--state") + 1] == "open":
         prs = [p for p in prs if state(p) == "OPEN"]
@@ -2237,4 +2240,40 @@ fn open_reads_the_body_from_the_bookmark_tree_not_the_working_copy() {
     let body = fs::read_to_string(ceremony.gh_dir.join("body-7")).expect("body");
     assert!(body.starts_with("Seal the ceremony."));
     assert!(!body.contains("The wrong body."));
+}
+
+/// The pinned push runs gh's helper and the system and user helpers, never
+/// a repository-scope one. With gh logged out and only a `.git/config`
+/// helper, an HTTPS origin is refused before the key touch, not after the
+/// seal is signed.
+#[test]
+fn open_refuses_an_https_origin_with_only_a_repository_scope_helper() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let fixture = &ceremony.fixture;
+    // Drop the insteadOf rewrite so the push URL is the real HTTPS one, and
+    // give the repository its own helper: the one scope the seal must not
+    // trust. The user and system scopes are empty inside the fixture's
+    // XDG_CONFIG_HOME, so nothing else can vouch for the URL.
+    let instead_of = format!("url.{}.insteadOf", ceremony.remote.display());
+    run(git(fixture).args(["config", "--unset", &instead_of]));
+    run(git(fixture).args(["config", "credential.helper", "!some-repo-helper"]));
+    fs::write(ceremony.gh_dir.join("logged-out"), "").expect("marker");
+    let top = head_commit(fixture, "change/top");
+    write_pull_requests(&ceremony, &[pull_request(7, "change/top", &top, true, "")]);
+    let body = body_file(&ceremony);
+    ceremony_rune(&ceremony)
+        .env("HOME", &ceremony.fixture.xdg_config)
+        .args(["sign", "open", "change/top", "--body-file"])
+        .arg(&body)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no credential for https://github.com/acme/widgets.git",
+        ))
+        .stderr(predicate::str::contains("never a repository-scope one"));
+    assert!(!head_is_signed(fixture, "change/top"));
+    assert!(!ceremony.gh_dir.join("ready-7").exists());
 }
