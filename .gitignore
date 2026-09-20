@@ -1,5 +1,8 @@
-# Rust build artifacts
+# Rust build artifacts, including any parallel target directory a build clone or
+# lint run leaves beside the main one (target2, target-lint)
 /target/
+/target-*/
+/target[0-9]*/
 /bin/
 Cargo.lock
 **/*.rs.bk

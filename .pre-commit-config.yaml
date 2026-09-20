@@ -97,7 +97,7 @@ repos:
             entry: sh -c 'if command -v rune >/dev/null 2>&1; then rune docs check; elif [ -n "${REQUIRE_RUNE:-}" ]; then echo "REQUIRE_RUNE set and rune is absent"; exit 1; fi'
             language: system
             pass_filenames: false
-            files: ^docs/
+            files: ^(docs/|CHANGELOG\.md$)
 
           # Prose and workflow linters. Each hook skips when its binary is
           # absent so a fresh clone stays usable before make install runs;
