@@ -24,8 +24,31 @@ pub(crate) struct RunOptions {
     pub(crate) repository: PathBuf,
     pub(crate) mode: AccessMode,
     pub(crate) timeout: Option<String>,
-    pub(crate) dry_run: bool,
+    pub(crate) plan: RunPlan,
     pub(crate) json: bool,
+}
+
+/// What `rune run` does with the resolved plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunPlan {
+    /// Spawn the tool with the prompt.
+    Execute,
+    /// Print the resolved launch and supervision plan. No spawn.
+    DryRun,
+    /// Verify the plan's model ids against each base URL. No spawn, no prompt.
+    Check,
+}
+
+impl RunPlan {
+    pub(crate) fn from_flags(dry_run: bool, check: bool) -> Self {
+        if check {
+            Self::Check
+        } else if dry_run {
+            Self::DryRun
+        } else {
+            Self::Execute
+        }
+    }
 }
 
 pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
@@ -49,12 +72,16 @@ pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
 
 #[allow(clippy::too_many_lines)]
 fn execute_inner(options: &RunOptions) -> Result<i32, String> {
+    if options.plan == RunPlan::Check {
+        return execute_check(options);
+    }
+    let dry_run = options.plan == RunPlan::DryRun;
     let prompt = read_prompt(options.prompt.as_deref(), options.prompt_file.as_deref())?;
     let system_prompt =
         read_optional_text_file(options.system_prompt_file.as_deref(), "system prompt")?;
     let repository = resolve_repository(&options.repository)?;
     let requested_timeout = options.timeout.as_deref().map(parse_duration).transpose()?;
-    let resolve_args = if options.dry_run {
+    let resolve_args = if dry_run {
         vec![OsString::from("--dry-run")]
     } else {
         Vec::new()
@@ -90,7 +117,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .clone()
         .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
 
-    if options.dry_run || resolved.dry_run {
+    if dry_run || resolved.dry_run {
         let mut dry_run_argv = resolved.argv.clone();
         dry_run_argv[0].clone_from(&binary);
         println!(
@@ -183,6 +210,28 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
             Ok(failure_exit_code(&failure))
         }
     }
+}
+
+/// `--check`: verify the model ids the run would send against each base
+/// URL in the plan. No prompt is read and nothing is spawned. The exit
+/// code is the check's: 0 served, 1 missing, 2 endpoint failure.
+fn execute_check(options: &RunOptions) -> Result<i32, String> {
+    let resolved = launch::resolve(&options.tool, &[])?;
+    let report = launch::check::run_checks(&resolved, options.model.as_deref());
+    if options.json {
+        println!(
+            "{}",
+            json!({
+                "ok": report.exit_code == launch::check::EXIT_SERVED,
+                "kind": "check",
+                "tool": report.tool,
+                "endpoints": report.endpoints,
+            })
+        );
+    } else {
+        println!("{}", launch::check::format_report(&report));
+    }
+    Ok(report.exit_code)
 }
 
 fn read_prompt(argument: Option<&str>, file: Option<&Path>) -> Result<String, String> {

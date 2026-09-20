@@ -634,6 +634,55 @@ fn claude_model_route_generates_atomic_context_settings() {
 }
 
 #[test]
+fn kimi_is_a_built_in_route_that_config_overrides() {
+    let profile = ontology::LaunchProfile {
+        model: Some("kimi".to_string()),
+        ..ontology::LaunchProfile::default()
+    };
+    let mut plan = LaunchPlan::default();
+    let model = apply_profile_model("claude", &profile, &Launch::default(), &mut plan)
+        .expect("model route")
+        .expect("resolved model");
+    assert_eq!(model.id, "kimi-k3");
+    assert_eq!(model.context, 262_144);
+    assert_eq!(model.source, ModelSource::BuiltIn);
+    assert!(
+        plan.env
+            .contains(&(OsString::from("ANTHROPIC_MODEL"), OsString::from("kimi-k3")))
+    );
+
+    let mut launch = Launch::default();
+    launch.models.insert(
+        "kimi".to_string(),
+        LaunchModel {
+            id: "kimi-k3-256k".to_string(),
+            context: 262_144,
+            compact: None,
+        },
+    );
+    let configured = apply_profile_model("claude", &profile, &launch, &mut LaunchPlan::default())
+        .expect("configured route")
+        .expect("resolved configured model");
+    assert_eq!(configured.id, "kimi-k3-256k");
+    assert_eq!(configured.source, ModelSource::Config);
+
+    let error = resolve_model("nope", &Launch::default()).expect_err("unknown route");
+    assert!(error.contains("kimi"), "{error}");
+}
+
+#[test]
+fn check_flag_parses_like_dry_run() {
+    let parsed = parse_cli_tail(
+        &[OsString::from("--check"), OsString::from("--dry-run")],
+        &Launch::default(),
+    )
+    .expect("parse");
+    assert!(parsed.check);
+    assert!(parsed.dry_run);
+    assert!(parsed.args.is_empty());
+}
+
+#[test]
 fn model_route_rejects_profile_owned_generated_environment() {
     let mut profile = ontology::LaunchProfile {
         model: Some("sol".to_string()),

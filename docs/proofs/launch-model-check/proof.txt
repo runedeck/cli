@@ -1,0 +1,60 @@
+
+# Scenario: Profile names the kimi route
+# kimi is a built-in route: kimi-k3 on the Standard tier, overridable by models.kimi in config.
+❯ rune launch kimi@claude --dry-run
+tool: claude
+model: kimi
+model_id: kimi-k3
+model_context: 262144
+model_source: built-in
+argv: claude
+env:
+  ANTHROPIC_MODEL=kimi-k3
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144
+  ANTHROPIC_AUTH_TOKEN=<redacted>
+  ANTHROPIC_BASE_URL=http://127.0.0.1:60039
+  ANTHROPIC_SMALL_FAST_MODEL=kimi-k2.7-code-highspeed
+base_url: <none>
+wrap:
+pre:
+
+# Scenario: Route model and small fast model are served
+# --check asks the plan's base URL for /v1/models with the plan's own credential. No spawn.
+❯ rune launch kimi@claude --check; echo "exit $?"
+tool: claude
+endpoint: http://127.0.0.1:60039/v1/models
+credential: ANTHROPIC_AUTH_TOKEN
+  served   kimi-k3
+  served   kimi-k2.7-code-highspeed
+exit: 0
+exit 0
+
+# Scenario: Run check with a model override
+# rune run shares the check. --model replaces the route id, and the prompt is never read.
+❯ rune run kimi@claude --check --model kimi-k4; echo "exit $?"
+tool: claude
+endpoint: http://127.0.0.1:60039/v1/models
+credential: ANTHROPIC_AUTH_TOKEN
+  served   kimi-k2.7-code-highspeed
+  missing  kimi-k4
+exit: 1
+exit 1
+
+# Scenario: Endpoint refuses the credential
+# A refusal is an endpoint failure, exit 2, never a missing model. The token stays out of the report.
+❯ rune launch stale@claude --check; echo "exit $?"
+tool: claude
+endpoint: http://127.0.0.1:60039/v1/models
+credential: ANTHROPIC_AUTH_TOKEN
+  failed   http://127.0.0.1:60039/v1/models: HTTP 401 (credential refused): {"error":"Invalid API key"}
+exit: 2
+exit 2
+
+# Scenario: Plan carries no base URL
+# A bare tool with no profile has nothing to check.
+❯ rune launch claude --check; echo "exit $?"
+tool: claude
+check: nothing to check (the plan has no base URL)
+exit: 0
+exit 0
