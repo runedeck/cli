@@ -4,7 +4,6 @@
 
 - [x] 1.1 Autodetected `openspec/` root redirects the import destination to `docs`
 - [x] 1.2 `.workspaces`, `.worktrees`, `.codex-prs` in the adoption doctor's skip list
-
 - [x] 1.3 `transport_can_authenticate` and `helper_applies` in `repo.rs`, the preflight in `qualify`, `gh auth git-credential` on the push, URL-scoped helpers in `trusted_credential_helpers`
 - [x] 1.4 `verify-seal` reads `pull_request`, falls back to `number`, in `scripts/` and the embedded skeleton copy
 

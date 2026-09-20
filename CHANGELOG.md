@@ -181,7 +181,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Fix `rune sign open` signing a seal it cannot push: it pushes through `gh auth git-credential` for that one process, checks the transport before the key touch, and refuses an HTTPS origin with neither a gh login nor a trusted helper.
+- Fix `rune sign open` signing a seal it cannot push: the push names `gh auth git-credential` for its own process, and the transport is checked before the key touch.
+- Refuse `rune sign open` on an HTTPS origin with neither a gh login nor a system- or user-scope credential helper.
 - Fix `scripts/verify-seal` (and the embedded skeleton copy) reading the open-seal's pull request as `number` while `rune sign open` writes `pull_request`, so both spellings verify now.
 - Fix `rune sign open` ignoring URL-scoped credential helpers (`credential.https://github.com.helper`), the form `gh auth setup-git` writes.
 - Fix `rune spec import --openspec` converting a repository's only `openspec/` tree into itself instead of `docs/`.
