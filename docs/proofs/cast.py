@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Capture record.sh as an asciinema v2 cast without a pty.
+"""Capture a proof's record.sh as an asciinema v2 cast without a pty.
 
 asciinema needs a pseudo terminal, which a sandbox may refuse. This reads
 the script's combined output in chunks, stamps each chunk with the time
 since start, and writes the same event stream asciinema would.
 
-    RUNE=target/debug/rune python3 cast.py proof.cast
+    RUNE=target/debug/rune python3 docs/proofs/cast.py docs/proofs/<name>/record.sh proof.cast
 """
 
 import json
@@ -18,8 +18,11 @@ WIDTH, HEIGHT = 100, 30
 
 
 def main() -> int:
-    target = sys.argv[1] if len(sys.argv) > 1 else "proof.cast"
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record.sh")
+    if len(sys.argv) < 2:
+        print("usage: cast.py <record.sh> [proof.cast]", file=sys.stderr)
+        return 2
+    script = os.path.abspath(sys.argv[1])
+    target = sys.argv[2] if len(sys.argv) > 2 else "proof.cast"
     env = dict(os.environ, FORCE_COLOR="1", COLUMNS=str(WIDTH), LINES=str(HEIGHT))
     start = time.monotonic()
     header = {
@@ -43,7 +46,7 @@ def main() -> int:
                 cast.write(json.dumps([round(time.monotonic() - start, 3), "o", text]) + "\n")
             status = process.wait()
     if status != 0:
-        print(f"record.sh exited {status}", file=sys.stderr)
+        print(f"{os.path.basename(script)} exited {status}", file=sys.stderr)
     return status
 
 

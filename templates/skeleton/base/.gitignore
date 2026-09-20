@@ -8,6 +8,7 @@ dist/
 .gemini/
 .opencode/
 .rune-comments.yaml
+.drafts
 
 # Parallel work, one isolated tree per agent: jj workspaces where the repo is
 # colocated, git worktrees where it is git-only. Both are ignored before any

@@ -567,6 +567,22 @@ rune repair --target .                # restores missing managed files, quaranti
 
 On a wired home target, doctor also checks the rule-wiring block: delete the generated region from `~/.codex/AGENTS.md` and `rune doctor --target ~/.codex --verify` exits 1 with a `(rule wiring)` finding.
 
+### rune draft and rune promote
+
+In the deployed consumer fixture, with `.rune` naming a local deck:
+
+```sh
+rune draft skill ReviewSpec           # writes skills/ReviewSpec/SKILL.md under each deployed provider, registers it in .drafts
+rune draft --list                     # name, kind, age in days, path; "(missing)" when the file is gone
+rune doctor --target .                # the draft is listed under "drafts", never as an orphan
+rune draft rule ReviewSpec            # refuses: one name means one kind
+rune promote ReviewSpec --domain core --change review-spec-interaction
+                                      # copies the rune into the deck, scaffolds docs/changes/<id>/ through spec propose, then removes the provider copies
+rune draft --drop ReviewSpec          # refuses now: no draft by that name
+```
+
+Failure paths: `--change two-words` refuses before touching anything, `--domain ../x` refuses, an existing change id refuses, and a `.drafts` entry with `..` in its path makes `doctor` and `draft` fail with `doctor.drafts_unreadable` instead of acting on it.
+
 ### rune validate
 
 ```sh

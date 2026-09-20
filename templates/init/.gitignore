@@ -14,6 +14,9 @@ config.yaml
 # Local TUI review comments
 .rune-comments.yaml
 
+# Draft runes under construction (rune draft), local until promoted
+.drafts
+
 # Plans
 docs/plans/
 

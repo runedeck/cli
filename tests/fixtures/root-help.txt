@@ -24,6 +24,8 @@
     status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
     doctor      [--target <DIR>] [--verify]                           Check deployment integrity
     repair      [--root <DIR>] [--target <DIR>] [--dry-run]           Repair doctor findings: trash orphans, rename subjects, restore files
+    draft       <KIND> <NAME> | --list | --drop <NAME>                Write an unmanaged rune into the provider trees and register it in .drafts
+    promote     <NAME> --domain <DOMAIN> --change <ID>                Move a draft into the deck and open its change
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
     graph       export [--source <DIR>]                               Export the artifact graph as Turtle for SHACL validation
     drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift

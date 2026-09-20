@@ -37,9 +37,24 @@ pub(crate) struct TargetReport {
     pub(crate) findings: Vec<Finding>,
 }
 
+/// One `.drafts` entry as doctor reports it: never an orphan, never repaired.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct DraftReport {
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    /// Days since the draft was created, when the stamp parses.
+    pub(crate) age_days: Option<i64>,
+    /// The register lists the path but the file is gone.
+    pub(crate) stale: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DoctorReport {
     pub(crate) targets: Vec<TargetReport>,
+    /// Registered drafts under the consumer root, from `.drafts`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) drafts: Vec<DraftReport>,
     /// Strict Codex skill inventory, present when `--skill-readiness` ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) skill_readiness: Option<rune::skill_readiness::SkillReadiness>,
@@ -71,6 +86,7 @@ pub fn execute_with_skills(
             Ok(report) => report,
             Err(error) if error.code() == MANIFEST_MISSING_CODE => DoctorReport {
                 targets: Vec::new(),
+                drafts: Vec::new(),
                 skill_readiness: None,
                 repair_command: None,
             },
@@ -118,9 +134,69 @@ pub(crate) fn inspect(target: &Path, source_root: &Path) -> Result<DoctorReport,
         .then(|| repair_command(target));
     Ok(DoctorReport {
         targets: reports,
+        drafts: draft_reports(&consumer_root(target))?,
         skill_readiness: None,
         repair_command,
     })
+}
+
+/// The directory that holds `.drafts`: the doctor target when it is the
+/// consumer root, else the parent of a provider directory.
+fn consumer_root(target: &Path) -> PathBuf {
+    if has_regular_manifest(target) {
+        target
+            .parent()
+            .map_or_else(|| target.to_path_buf(), Path::to_path_buf)
+    } else {
+        target.to_path_buf()
+    }
+}
+
+/// Every `.drafts` entry with its age and whether the file still exists.
+/// A register that does not parse is an error, not an empty register: an
+/// unreadable register would turn every draft into an orphan.
+fn draft_reports(root: &Path) -> Result<Vec<DraftReport>, Error> {
+    let register = load_register(root)?;
+    let now = chrono::Utc::now();
+    Ok(register
+        .drafts
+        .iter()
+        .map(|draft| DraftReport {
+            name: draft.name.clone(),
+            kind: draft.kind.clone(),
+            path: draft.path.clone(),
+            age_days: draft.age_days(now),
+            stale: !root.join(&draft.path).is_file(),
+        })
+        .collect())
+}
+
+fn load_register(root: &Path) -> Result<rune::manifest::drafts::Register, Error> {
+    rune::manifest::drafts::Register::load(root).map_err(|message| {
+        Error::new(ErrorKind::Parse, message).with_code("doctor.drafts_unreadable")
+    })
+}
+
+/// Paths inside one provider directory that `.drafts` registers, relative
+/// to that directory. The orphan scan skips them. The register lives in the
+/// directory that holds the provider directory, which is where `rune draft`
+/// writes it.
+fn registered_draft_paths(provider_target: &Path) -> Result<BTreeSet<String>, Error> {
+    let (Some(root), Some(dir_name)) = (
+        provider_target.parent(),
+        provider_target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned()),
+    ) else {
+        return Ok(BTreeSet::new());
+    };
+    let register = load_register(root)?;
+    let prefix = format!("{dir_name}/");
+    Ok(register
+        .paths()
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(&prefix).map(str::to_string))
+        .collect())
 }
 
 /// The repair invocation for a doctor target, quoted for a shell.
@@ -155,7 +231,8 @@ fn exit_status(report: &DoctorReport, verify: bool) -> i32 {
             return 1;
         }
     }
-    let broken = report.targets.iter().any(target_is_broken);
+    let broken = report.targets.iter().any(target_is_broken)
+        || report.drafts.iter().any(|draft| draft.stale);
     i32::from(broken && verify)
 }
 
@@ -470,8 +547,9 @@ pub(crate) fn inspect_target(
     }
 
     let tracked = entries.keys().cloned().collect::<BTreeSet<_>>();
+    let drafts = registered_draft_paths(target)?;
     for orphan in collect_managed_files(target)? {
-        if !tracked.contains(&orphan) {
+        if !tracked.contains(&orphan) && !drafts.contains(&orphan) {
             findings.insert(orphan, IntegrityStatus::Orphan);
         }
     }
@@ -560,6 +638,37 @@ fn collect_managed_files_recursive(
     Ok(())
 }
 
+/// The `.drafts` block: one line per draft, a stale one painted as a failure.
+fn print_drafts(sheet: &crate::cli::style::Sheet, drafts: &[DraftReport]) {
+    if drafts.is_empty() {
+        return;
+    }
+    println!("{}", sheet.heading("drafts"));
+    for draft in drafts {
+        let age = draft
+            .age_days
+            .map_or_else(|| "unknown age".to_string(), |d| format!("{d} days"));
+        if draft.stale {
+            println!(
+                "{}",
+                sheet.fail(&format!(
+                    "stale    {} {} {} {} (file missing; rune draft --drop {})",
+                    draft.name, draft.kind, age, draft.path, draft.name
+                ))
+            );
+        } else {
+            println!(
+                "   {} draft    {} {} {} {}",
+                sheet.dim(DOT_MARK),
+                draft.name,
+                draft.kind,
+                age,
+                draft.path
+            );
+        }
+    }
+}
+
 fn print_human(report: &DoctorReport) {
     if let Some(readiness) = &report.skill_readiness {
         println!(
@@ -630,6 +739,7 @@ fn print_human(report: &DoctorReport) {
             }
         }
     }
+    print_drafts(&sheet, &report.drafts);
     if let Some(command) = &report.repair_command {
         println!(
             "{}",
@@ -754,6 +864,7 @@ mod tests {
                     status: IntegrityStatus::Modified,
                 }],
             }],
+            drafts: Vec::new(),
             skill_readiness: None,
             repair_command: None,
         };
@@ -768,11 +879,62 @@ mod tests {
                     status: IntegrityStatus::Missing,
                 }],
             }],
+            drafts: Vec::new(),
             skill_readiness: None,
             repair_command: Some("rune repair --target target".to_string()),
         };
         assert_eq!(exit_status(&broken, false), 0);
         assert_eq!(exit_status(&broken, true), 1);
+    }
+
+    #[test]
+    fn stale_draft_fails_only_under_verify() {
+        let report = DoctorReport {
+            targets: Vec::new(),
+            drafts: vec![DraftReport {
+                name: "Gone".to_string(),
+                kind: "rule".to_string(),
+                path: ".claude/rules/Gone.md".to_string(),
+                age_days: Some(3),
+                stale: true,
+            }],
+            skill_readiness: None,
+            repair_command: None,
+        };
+        assert_eq!(exit_status(&report, false), 0);
+        assert_eq!(exit_status(&report, true), 1);
+    }
+
+    #[test]
+    fn registered_draft_is_not_an_orphan() {
+        let root = TempDir::new().unwrap();
+        let target = root.path().join(".claude");
+        fs::create_dir_all(target.join("skills/Draft")).unwrap();
+        fs::write(target.join(".manifest"), "skills: {}\n").unwrap();
+        fs::write(target.join("skills/Draft/SKILL.md"), "draft\n").unwrap();
+        fs::write(
+            root.path().join(".drafts"),
+            "drafts:\n  - path: .claude/skills/Draft/SKILL.md\n    kind: skill\n    name: Draft\n    created: 2026-09-20T00:00:00Z\n",
+        )
+        .unwrap();
+        let findings = inspect_target("claude", &target, &HashMap::new()).unwrap();
+        assert!(findings.is_empty(), "{findings:?}");
+
+        fs::remove_file(root.path().join(".drafts")).unwrap();
+        let findings = inspect_target("claude", &target, &HashMap::new()).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].status, IntegrityStatus::Orphan);
+
+        let reports = draft_reports(root.path()).unwrap();
+        assert!(reports.is_empty());
+
+        fs::write(
+            root.path().join(".drafts"),
+            "drafts:\n  - path: ../escape\n    kind: rule\n    name: X\n    created: now\n",
+        )
+        .unwrap();
+        let error = inspect_target("claude", &target, &HashMap::new()).unwrap_err();
+        assert_eq!(error.code(), "doctor.drafts_unreadable");
     }
 
     #[test]

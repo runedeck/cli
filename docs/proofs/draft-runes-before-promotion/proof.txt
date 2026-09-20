@@ -1,0 +1,156 @@
+
+# Scenario: Draft skill in a consumer with deployed providers
+# A draft goes into every provider directory that carries a .manifest, and never into the .manifest itself.
+❯ rune draft skill ReviewSpec
+draft .agents/skills/ReviewSpec/SKILL.md
+draft .claude/skills/ReviewSpec/SKILL.md
+draft .codex/skills/ReviewSpec/SKILL.md
+draft .gemini/skills/ReviewSpec/SKILL.md
+draft .opencode/skills/ReviewSpec/SKILL.md
+registered in .drafts; promote with: rune promote ReviewSpec --domain <domain> --change <id>
+❯ cat .drafts
+drafts:
+- path: .agents/skills/ReviewSpec/SKILL.md
+  kind: skill
+  name: ReviewSpec
+  created: 2026-09-20T09:37:56Z
+- path: .claude/skills/ReviewSpec/SKILL.md
+  kind: skill
+  name: ReviewSpec
+  created: 2026-09-20T09:37:56Z
+- path: .codex/skills/ReviewSpec/SKILL.md
+  kind: skill
+  name: ReviewSpec
+  created: 2026-09-20T09:37:56Z
+- path: .gemini/skills/ReviewSpec/SKILL.md
+  kind: skill
+  name: ReviewSpec
+  created: 2026-09-20T09:37:56Z
+- path: .opencode/skills/ReviewSpec/SKILL.md
+  kind: skill
+  name: ReviewSpec
+  created: 2026-09-20T09:37:56Z
+❯ grep -c ReviewSpec .claude/.manifest || true
+0
+
+# Scenario: Registered draft under a managed directory
+# Doctor lists the draft with its age and reports no orphan for it.
+❯ rune doctor --target .
+ ./.agents (codex)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.claude (claude)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.codex (codex)
+   ok 0 · modified 0 · missing 0 · orphan 0
+ ./.gemini (gemini)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.opencode (opencode)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ drafts
+   ● draft    ReviewSpec skill 0 days .agents/skills/ReviewSpec/SKILL.md
+   ● draft    ReviewSpec skill 0 days .claude/skills/ReviewSpec/SKILL.md
+   ● draft    ReviewSpec skill 0 days .codex/skills/ReviewSpec/SKILL.md
+   ● draft    ReviewSpec skill 0 days .gemini/skills/ReviewSpec/SKILL.md
+   ● draft    ReviewSpec skill 0 days .opencode/skills/ReviewSpec/SKILL.md
+
+# Scenario: Draft name already registered with another kind
+# One name means one kind: --drop and promote act by name.
+❯ rune draft rule ReviewSpec || true
+fatal: 'ReviewSpec' is already a registered skill draft; one name means one kind
+
+# Scenario: Promote refuses before touching anything
+# A change id needs three words, and a domain is one identifier.
+❯ rune promote ReviewSpec --domain core --change review-spec || true
+fatal: change id 'review-spec' must have at least three hyphen-separated lowercase words
+❯ rune promote ReviewSpec --domain ../escape --change review-spec-interaction || true
+fatal: domain '../escape' must be letters, digits, '-' or '_' only
+❯ rune draft --list
+ReviewSpec  skill  0 days  .agents/skills/ReviewSpec/SKILL.md
+ReviewSpec  skill  0 days  .claude/skills/ReviewSpec/SKILL.md
+ReviewSpec  skill  0 days  .codex/skills/ReviewSpec/SKILL.md
+ReviewSpec  skill  0 days  .gemini/skills/ReviewSpec/SKILL.md
+ReviewSpec  skill  0 days  .opencode/skills/ReviewSpec/SKILL.md
+
+# Scenario: Promote a draft skill
+# The rune moves into the deck, spec propose opens the change, and the provider copies go.
+❯ rune promote ReviewSpec --domain core --change review-spec-interaction
+promoted ReviewSpec to /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.K8NAopXIHd/deck/runes/core/skills/ReviewSpec/SKILL.md
+removed .agents/skills/ReviewSpec/SKILL.md
+removed .claude/skills/ReviewSpec/SKILL.md
+removed .codex/skills/ReviewSpec/SKILL.md
+removed .gemini/skills/ReviewSpec/SKILL.md
+removed .opencode/skills/ReviewSpec/SKILL.md
+change stub at /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.K8NAopXIHd/deck/docs/changes/review-spec-interaction
+❯ cat /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.K8NAopXIHd/deck/docs/changes/review-spec-interaction/proposal.md
+---
+adr: "docs/decisions/ADR-XXXX.md"
+status: proposed
+---
+# Review Spec Interaction
+
+## Why
+
+See the linked ADR for the decision rationale. This proposal records the change in scope.
+
+## What Changes
+
+- Add the ReviewSpec skill at `runes/core/skills/ReviewSpec/SKILL.md`, promoted from a `rune draft`.
+- Name compatibility or migration effects.
+
+## Capabilities
+
+- review-spec-interaction (new or modified)
+
+## Impact
+
+- `runes/core/skills/ReviewSpec/SKILL.md` (new).
+❯ rune draft --list
+no drafts
+
+# Scenario: Draft file removed by hand
+# A register entry whose file is gone is a stale draft, and --verify exits nonzero.
+❯ rune draft rule Terse
+draft .agents/rules/Terse.md
+draft .claude/rules/Terse.md
+draft .codex/rules/Terse.md
+draft .gemini/rules/Terse.md
+draft .opencode/rules/Terse.md
+registered in .drafts; promote with: rune promote Terse --domain <domain> --change <id>
+❯ rm .claude/rules/Terse.md
+
+❯ rune doctor --target . --verify || echo "exit $?"
+ ./.agents (codex)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.claude (claude)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.codex (codex)
+   ok 0 · modified 0 · missing 0 · orphan 0
+ ./.gemini (gemini)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.opencode (opencode)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ drafts
+   ● draft    Terse rule 0 days .agents/rules/Terse.md
+   ✗ stale    Terse rule 0 days .claude/rules/Terse.md (file missing; rune draft --drop Terse)
+   ● draft    Terse rule 0 days .codex/rules/Terse.md
+   ● draft    Terse rule 0 days .gemini/rules/Terse.md
+   ● draft    Terse rule 0 days .opencode/rules/Terse.md
+exit 1
+❯ rune draft --drop Terse
+removed .agents/rules/Terse.md
+removed .claude/rules/Terse.md
+removed .codex/rules/Terse.md
+removed .gemini/rules/Terse.md
+removed .opencode/rules/Terse.md
+❯ rune doctor --target . --verify && echo clean
+ ./.agents (codex)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.claude (claude)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.codex (codex)
+   ok 0 · modified 0 · missing 0 · orphan 0
+ ./.gemini (gemini)
+   ok 2 · modified 0 · missing 0 · orphan 0
+ ./.opencode (opencode)
+   ok 2 · modified 0 · missing 0 · orphan 0
+clean

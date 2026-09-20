@@ -1,7 +1,7 @@
 # Behavior proof: signing-queue
 
-`record.sh` holds one scene per scenario of the `signing-queue` delta specification, in the AcceptanceTesting
-driver's grammar. `proof.cast` is its recording against the built binary on 2026-09-15, exit 0. `proof.txt` is the
+`record.sh` holds one scene per scenario of the `signing-queue` delta specification, in the grammar of
+`docs/proofs/driver.sh`. `proof.cast` is its recording against the built binary on 2026-09-15, exit 0. `proof.txt` is the
 transcript `asciinema convert -f txt` wrote from it, and `proof.gif` the render.
 
 Transcript digest (`shasum -a 256 proof.txt`): `83f9c0d5c7f764a54c93ac5bd9f126ac6f4152ef4f7917ca8b1a4559e8ffdaf0`
@@ -15,8 +15,8 @@ agg --theme github-dark --font-size 14 --fps-cap 8 --last-frame-duration 4 proof
 asciinema convert -f txt --overwrite proof.cast proof.txt
 ```
 
-Where asciinema cannot open a pseudo terminal, `cast.py` writes the same cast from the script's output stream:
+Where asciinema cannot open a pseudo terminal, `docs/proofs/cast.py` writes the same cast from the script's output stream:
 
 ```sh
-RUNE=target/debug/rune python3 docs/proofs/signing-queue/cast.py proof.cast
+RUNE=target/debug/rune python3 docs/proofs/cast.py docs/proofs/signing-queue/record.sh proof.cast
 ```

@@ -20,6 +20,7 @@ mod docs;
 mod docs_boundary;
 mod doctor;
 pub(crate) mod dotrune;
+mod draft;
 mod drift;
 mod exec;
 mod find;
@@ -31,6 +32,8 @@ mod ontology;
 mod output;
 mod plugin;
 mod process;
+#[cfg(feature = "spec")]
+mod promote;
 mod provenance;
 mod provider_cmd;
 mod release;
@@ -108,6 +111,53 @@ enum Command {
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
+    },
+
+    /// Write a rune under construction into the consumer, unmanaged, and register it in .drafts
+    Draft {
+        /// The rune kind: skill, agent, or rule
+        #[arg(value_name = "KIND", required_unless_present_any = ["list", "drop"])]
+        kind: Option<String>,
+
+        /// The rune name, such as `ReviewSpec`
+        #[arg(value_name = "NAME", required_unless_present_any = ["list", "drop"])]
+        name: Option<String>,
+
+        /// Consumer root that holds the provider directories. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        target: String,
+
+        /// List the registered drafts with their age
+        #[arg(long, conflicts_with_all = ["kind", "name", "drop"])]
+        list: bool,
+
+        /// Remove every copy of the named draft and its register entry
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["kind", "name", "list"])]
+        drop: Option<String>,
+    },
+
+    /// Move a draft into the deck and create its change stub
+    #[cfg(feature = "spec")]
+    Promote {
+        /// The draft name
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// The deck domain that receives the rune, such as core
+        #[arg(long, value_name = "DOMAIN")]
+        domain: String,
+
+        /// The change id, at least three hyphen-separated words
+        #[arg(long, value_name = "ID")]
+        change: String,
+
+        /// Consumer root that holds the draft. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        target: String,
+
+        /// Deck root. Defaults to the consumer's first deck source in .rune.
+        #[arg(long, value_name = "DIR")]
+        deck: Option<String>,
     },
 
     /// Check deployed manifest integrity (read-only; `rune repair` writes)
@@ -1466,6 +1516,38 @@ pub fn run() -> i32 {
                 args.json,
             );
         }
+        Command::Draft {
+            kind,
+            name,
+            target,
+            list,
+            drop,
+        } => {
+            return exit_code(
+                draft::run(
+                    &target,
+                    kind.as_deref(),
+                    name.as_deref(),
+                    list,
+                    drop.as_deref(),
+                    args.json,
+                ),
+                args.json,
+            );
+        }
+        #[cfg(feature = "spec")]
+        Command::Promote {
+            name,
+            domain,
+            change,
+            target,
+            deck,
+        } => {
+            return exit_code(
+                promote::run(&target, &name, &domain, &change, deck.as_deref(), args.json),
+                args.json,
+            );
+        }
         Command::Doctor {
             target,
             verify,
@@ -2286,6 +2368,18 @@ fn deck_help(help: &mut String) {
         "repair",
         "[--root <DIR>] [--target <DIR>] [--dry-run]",
         "Repair doctor findings: trash orphans, rename subjects, restore files",
+    );
+    help_command(
+        help,
+        "draft",
+        "<KIND> <NAME> | --list | --drop <NAME>",
+        "Write an unmanaged rune into the provider trees and register it in .drafts",
+    );
+    help_command(
+        help,
+        "promote",
+        "<NAME> --domain <DOMAIN> --change <ID>",
+        "Move a draft into the deck and open its change",
     );
     help_command(
         help,
