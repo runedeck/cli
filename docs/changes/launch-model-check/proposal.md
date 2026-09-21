@@ -25,4 +25,4 @@ A launch profile names a model route, and the route names a model id that an end
 ## Impact
 
 - `src/cli/launch/mod.rs`, a new `src/cli/launch/check.rs`, `src/cli/run/mod.rs`, their tests, the `launch` and `run` help text, and the recorded proof under `docs/proofs/launch-model-check/`.
-- The owner's config gains `kimi@claude` and `kimi-run@claude` profiles. That edit is outside the repository.
+- The owner's config gains a `kimi@claude` profile. That edit is outside the repository.
