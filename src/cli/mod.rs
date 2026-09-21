@@ -1958,7 +1958,7 @@ pub fn run() -> i32 {
             return exit_code(exec::execute_cli(&skill, args.json, &rest), args.json);
         }
         Command::Launch { tool, rest } => {
-            return exit_code(launch::execute_cli(&tool, &rest), args.json);
+            return exit_code(launch::execute_cli(&tool, &rest, args.json), args.json);
         }
         Command::Run {
             tool,

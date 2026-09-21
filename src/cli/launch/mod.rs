@@ -33,7 +33,7 @@ const CLAUDE_MODEL_ENV_KEYS: &[&str] = &[
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
 ];
 
-pub fn execute_cli(tool: &str, rest: &[OsString]) -> Result<i32, String> {
+pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, String> {
     if tool.is_empty() {
         let config = ontology::load().map_err(|error| error.to_string())?;
         return Ok(list_tools(&config.launch));
@@ -41,7 +41,11 @@ pub fn execute_cli(tool: &str, rest: &[OsString]) -> Result<i32, String> {
     let resolved = resolve(tool, rest)?;
     if resolved.check {
         let report = check::run_checks(&resolved, None);
-        println!("{}", check::format_report(&report));
+        if json {
+            println!("{}", check::format_report_json(&report));
+        } else {
+            println!("{}", check::format_report(&report));
+        }
         return Ok(report.exit_code);
     }
     if resolved.dry_run {

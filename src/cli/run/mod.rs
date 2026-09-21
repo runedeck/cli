@@ -219,15 +219,7 @@ fn execute_check(options: &RunOptions) -> Result<i32, String> {
     let resolved = launch::resolve(&options.tool, &[])?;
     let report = launch::check::run_checks(&resolved, options.model.as_deref());
     if options.json {
-        println!(
-            "{}",
-            json!({
-                "ok": report.exit_code == launch::check::EXIT_SERVED,
-                "kind": "check",
-                "tool": report.tool,
-                "endpoints": report.endpoints,
-            })
-        );
+        println!("{}", launch::check::format_report_json(&report));
     } else {
         println!("{}", launch::check::format_report(&report));
     }
