@@ -1,7 +1,7 @@
 use super::{
     branch_push_refspec, colon_listing_fingerprints, index_is_clean, run_signing_command,
-    select_default_remote, signature_fingerprints, signing_command_error, signing_failure,
-    tag_push_refspec, tag_reference, tag_target, verified_status_output,
+    select_default_remote, signature_fingerprints, signer_lines, signing_command_error,
+    signing_failure, tag_push_refspec, tag_reference, tag_target, verified_status_output,
 };
 use rune::error::ErrorKind;
 use std::io::{self, Write};
@@ -243,5 +243,37 @@ fn branch_push_refspec_never_uses_upstream_merge_ref_as_destination() {
     assert_eq!(
         branch_push_refspec("review"),
         "refs/heads/review:refs/heads/review"
+    );
+}
+
+#[test]
+fn signer_lines_pin_fingerprints_and_refuse_anything_else() {
+    let keys = "# the owner\nsigner 29dd2145ce7a818929459b2649f08103d3da399e git@martinzeman.net N4M3Z@users.noreply.github.com\n\nsigner 786F851F8AE345F5A98B822EC92F47D08BCD9F72 git@martinzeman.net # primary\n";
+    assert_eq!(
+        signer_lines(keys).unwrap(),
+        vec![
+            "29DD2145CE7A818929459B2649F08103D3DA399E".to_string(),
+            "786F851F8AE345F5A98B822EC92F47D08BCD9F72".to_string(),
+        ]
+    );
+    assert!(
+        signer_lines("trusted 29DD2145CE7A818929459B2649F08103D3DA399E a@b\n")
+            .unwrap_err()
+            .contains("found `trusted`")
+    );
+    assert!(
+        signer_lines("signer ABC a@b\n")
+            .unwrap_err()
+            .contains("not a 40-hex")
+    );
+    assert!(
+        signer_lines("signer 29DD2145CE7A818929459B2649F08103D3DA399E\n")
+            .unwrap_err()
+            .contains("no address")
+    );
+    assert!(
+        signer_lines("# only comments\n")
+            .unwrap_err()
+            .contains("no signer lines")
     );
 }

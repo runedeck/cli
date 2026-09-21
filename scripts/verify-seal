@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Verify the owner's seals on a pull request head (docs/specs/release-ceremony).
+# Verify the owner's seals on a pull request head (docs/specs/owner-release-ceremony,
+# docs/specs/trusted-key-anchor for the KEYS format).
 #
 #   verify-seal open --head SHA --repo OWNER/NAME --base REF --number N \
 #       --keys FILE --open-bodies FILE [--since SHA]
 #   verify-seal merge --head SHA --keys FILE (--ledger FILE | --no-ledger)
 #
 # The open-seal is an empty commit beneath the head whose subject line is
-# `open-seal: {"repo":..,"base":..,"number":N,"tree":..,"nonce":..}`. Only
+# `open-seal: {"repo":..,"base":..,"pull_request":N,"tree":..,"nonce":..}`
+# (`number` is accepted as the earlier spelling of that key). Only
 # the subject is read, so a body that quotes the format cannot shadow a
 # seal, and every candidate subject in the range is tried, so a commit
-# titled like a seal cannot deny the real one. The nonce is 32 lowercase
+# titled like a seal cannot deny the real one. The nonce is 64 lowercase
 # hex characters. The seal names the pull request number, and that pull
 # request's body must carry the nonce. A second body that carries the
 # nonce is reported, never fatal, so another pull request cannot break
@@ -31,8 +33,8 @@
 set -euo pipefail
 
 gpg_program=${VERIFY_SEAL_GPG:-gpg}
-# `rune sign open` writes 32 random bytes as 64 hex characters; the older
-# 32-character form still verifies.
+# rune sign open draws 32 random bytes, so the nonce is 64 hex characters.
+# 32 is the earlier length, kept so a seal made before it grew still verifies.
 nonce_pattern='^([0-9a-f]{64}|[0-9a-f]{32})$'
 command=${1:-}
 [ -n "$command" ] || { printf 'usage: verify-seal open|merge [options]\n' >&2; exit 2; }
@@ -94,13 +96,15 @@ require_empty() {
         || fail "$2 $1 is not an empty commit: its tree differs from its parent's"
 }
 
-# One keyring for every signature check in this run.
+# One keyring for every signature check in this run. KEYS names signers by
+# fingerprint; scripts/trusted-keys fetches each one's bytes (WKD, GitHub,
+# cache) and admits them only when the pinned fingerprint is in the result.
 import_keys() {
     [ -z "$gnupg_home" ] || return 0
     gnupg_home=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:?TMPDIR must be set}}/verify-seal-gpg.XXXXXX")
     chmod 0700 "$gnupg_home"
-    "$gpg_program" --homedir "$gnupg_home" --batch --import "$keys" >/dev/null 2>&1 \
-        || fail "could not import trusted OpenPGP keys from $keys"
+    TRUSTED_KEYS_GPG=$gpg_program bash "$(dirname "$0")/trusted-keys" --keys "$keys" --homedir "$gnupg_home" >/dev/null \
+        || fail "could not resolve the trusted signers in $keys"
 }
 
 # The signature must verify, and its fingerprint must be one KEYS carries.
@@ -125,16 +129,16 @@ check_open_candidate() {
     json=$(seal_json "$seal" open-seal)
     seal_repo=$(json_field "$json" repo)
     seal_base=$(json_field "$json" base)
-    # The seal writes `pull_request` (rune sign open); `number` is the older
-    # spelling and still verifies.
+    # rune sign open writes the number under pull_request. number is the
+    # earlier spelling, kept so a seal made before the rename still verifies.
     seal_number=$(json_field "$json" pull_request)
     [ -n "$seal_number" ] || seal_number=$(json_field "$json" number)
     seal_tree=$(json_field "$json" tree)
     nonce=$(json_field "$json" nonce)
     [ -n "$seal_repo" ] && [ -n "$seal_base" ] && [ -n "$seal_number" ] && [ -n "$seal_tree" ] && [ -n "$nonce" ] \
-        || fail "open-seal $seal is malformed: expected a JSON subject with repo, base, pull_request, tree, and nonce"
+        || fail "open-seal $seal is malformed: expected a JSON subject with repo, base, number, tree, and nonce"
     printf '%s' "$nonce" | grep -Eq "$nonce_pattern" \
-        || fail "open-seal $seal carries nonce $nonce, which is not 64 (or the older 32) lowercase hex characters"
+        || fail "open-seal $seal carries nonce $nonce, which is not 64 lowercase hex characters"
     [ "$seal_repo" = "$repo" ] || fail "open-seal $seal binds repository $seal_repo, not $repo"
     [ "$seal_base" = "$base" ] || fail "open-seal $seal binds base $seal_base, not $base"
     [ "$seal_number" = "$number" ] || fail "open-seal $seal binds pull request #$seal_number, not #$number"

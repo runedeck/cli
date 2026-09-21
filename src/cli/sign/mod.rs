@@ -334,9 +334,72 @@ fn keys_fingerprints_at(repo: &queue::repo::Repo, reference: &str) -> Result<Vec
         .map_err(|error| Error::new(ErrorKind::Config, format!("KEYS at {reference}: {error}")))
 }
 
-/// Every fingerprint (primary and subkey) published in `KEYS`, read via
-/// gpg's stable colon-delimited listing.
+/// Every fingerprint `KEYS` pins. The file is `signer FINGERPRINT ADDRESS...`
+/// lines (skeleton `trusted-key-anchor`): the fingerprint is
+/// the pin and the addresses say where a verifier fetches the bytes. The
+/// cli needs only the pins, because it verifies with the owner's own gpg
+/// keyring, which holds the key. A `KEYS` that is still an armored block
+/// (a consumer before the format change) is read through gpg's listing.
 fn keys_fingerprints(keys_path: &Path) -> Result<Vec<String>, Error> {
+    let content = std::fs::read_to_string(keys_path).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read {}: {error}", keys_path.display()),
+        )
+    })?;
+    if !content.contains("BEGIN PGP PUBLIC KEY BLOCK") {
+        return signer_lines(&content).map_err(|message| {
+            Error::new(
+                ErrorKind::Config,
+                format!("{}: {message}", keys_path.display()),
+            )
+        });
+    }
+    keys_fingerprints_from_armor(keys_path)
+}
+
+/// The pins of a `signer` KEYS file, upper-cased. A line that is not
+/// `signer FINGERPRINT ADDRESS...` is an error, so a typo never widens the
+/// trusted set by falling back to "no pins".
+pub(crate) fn signer_lines(content: &str) -> Result<Vec<String>, String> {
+    let mut pins = Vec::new();
+    for (number, raw) in content.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let keyword = fields.next().unwrap_or("");
+        if keyword != "signer" {
+            return Err(format!(
+                "line {}: a line is `signer <fingerprint> <address>...`, found `{keyword}`",
+                number + 1
+            ));
+        }
+        let fingerprint = fields.next().unwrap_or("").to_ascii_uppercase();
+        if fingerprint.len() != 40 || !fingerprint.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!(
+                "line {}: `{fingerprint}` is not a 40-hex fingerprint",
+                number + 1
+            ));
+        }
+        if fields.next().is_none() {
+            return Err(format!(
+                "line {}: {fingerprint} names no address to fetch it from",
+                number + 1
+            ));
+        }
+        pins.push(fingerprint);
+    }
+    if pins.is_empty() {
+        return Err("no signer lines".to_string());
+    }
+    Ok(pins)
+}
+
+/// Every fingerprint (primary and subkey) in an armored `KEYS` block, read
+/// via gpg's stable colon-delimited listing.
+fn keys_fingerprints_from_armor(keys_path: &Path) -> Result<Vec<String>, Error> {
     let output = Command::new("gpg")
         .args(["--show-keys", "--with-colons"])
         .arg(keys_path)

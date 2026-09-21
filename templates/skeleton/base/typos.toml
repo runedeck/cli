@@ -2,7 +2,7 @@
 # third-party notices are not this repository's prose.
 [files]
 extend-exclude = [
-    "KEYS",
+    "*.asc",
     ".provenance",
     ".claude",
     ".codex",
@@ -13,4 +13,4 @@ extend-exclude = [
 
 [default]
 # Mermaid node identifiers such as BA in fenced diagrams.
-extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\""]
+extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\\bfpr\\b"]

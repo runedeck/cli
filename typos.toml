@@ -2,7 +2,7 @@
 # third-party notices are not this repository's prose.
 [files]
 extend-exclude = [
-    "KEYS",
+    "*.asc",
     ".provenance",
     ".claude",
     ".codex",

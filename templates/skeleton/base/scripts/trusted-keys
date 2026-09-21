@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Build a gpg keyring from a KEYS file (docs/specs/trusted-key-anchor).
+#
+#   trusted-keys --keys FILE --homedir DIR [--offline]
+#
+# KEYS names the trusted signers by fingerprint, one per line:
+#
+#   signer 29DD2145CE7A818929459B2649F08103D3DA399E git@martinzeman.net N4M3Z@users.noreply.github.com
+#   # comments and blank lines are ignored
+#
+# The fingerprint is the pin. Each address names a place the key bytes may
+# come from, tried in order: the Web Key Directory for that address, or
+# https://github.com/<user>.gpg when the address is a GitHub one. After
+# every address, TRUSTED_KEYS_CACHE (a directory of <fingerprint>.asc) is
+# tried, for offline use. Whatever answers is imported into DIR and
+# checked: the pinned fingerprint must appear in the keyring as a primary
+# or a subkey, or the bytes are dropped and the next source is tried.
+# Nothing a fetch returns is trusted on its own; only the pin is.
+#
+# Prints one line per signer, `<fingerprint> <source>`, and exits 0 when every
+# line resolved. TRUSTED_KEYS_GPG names the gpg program; TRUSTED_KEYS_OFFLINE
+# set to any value is the same as --offline (tests and air-gapped runs).
+set -euo pipefail
+
+gpg_program=${TRUSTED_KEYS_GPG:-gpg}
+keys="" homedir="" offline=${TRUSTED_KEYS_OFFLINE:+true}
+offline=${offline:-false}
+while [ $# -gt 0 ]; do
+    case $1 in
+        --keys) keys=$2; shift ;;
+        --homedir) homedir=$2; shift ;;
+        --offline) offline=true ;;
+        *) printf 'trusted-keys: unknown argument %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+[ -n "$keys" ] && [ -n "$homedir" ] || { printf 'usage: trusted-keys --keys FILE --homedir DIR [--offline]\n' >&2; exit 2; }
+[ -f "$keys" ] || { printf 'trusted-keys: no such file %s\n' "$keys" >&2; exit 1; }
+mkdir -p "$homedir"
+chmod 0700 "$homedir"
+cache=${TRUSTED_KEYS_CACHE:-}
+
+# Z-Base-32 of SHA-1 of the lowercased local part, the WKD file name.
+wkd_hash() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | openssl dgst -sha1 -binary \
+        | python3 -c 'import base64,sys; d=sys.stdin.buffer.read(); e=base64.b32encode(d).decode().lower().rstrip("="); print(e.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz234567","ybndrfg8ejkmcpqxot1uwisza345h769")))'
+}
+
+# Import bytes from stdin into a scratch keyring; succeed only when the pin
+# is a primary or subkey fingerprint there, then merge into the real one.
+import_pinned() {
+    local pin=$1 scratch listing
+    scratch=$(mktemp -d "$homedir/scratch.XXXXXX")
+    if ! "$gpg_program" --homedir "$scratch" --batch --quiet --no-autostart --import >/dev/null 2>&1; then
+        command rm -rf "$scratch"; return 1
+    fi
+    # The same listing form verify-seal uses: every primary and subkey
+    # fingerprint, colon-delimited.
+    listing=$("$gpg_program" --homedir "$scratch" --batch --no-autostart --with-colons --with-subkey-fingerprint --fingerprint 2>/dev/null \
+        | awk -F: '$1 == "fpr" { print $10 }')
+    if ! printf '%s\n' "$listing" | grep -Fxq "$pin"; then
+        command rm -rf "$scratch"; return 1
+    fi
+    "$gpg_program" --homedir "$scratch" --batch --no-autostart --export 2>/dev/null \
+        | "$gpg_program" --homedir "$homedir" --batch --quiet --no-autostart --import >/dev/null 2>&1
+    command rm -rf "$scratch"
+}
+
+fetch() {
+    curl -fsSL --max-time 20 "$1" 2>/dev/null
+}
+
+resolve_address() {
+    local pin=$1 address=$2 local_part domain user
+    local_part=${address%@*}; domain=${address#*@}
+    case $domain in
+        users.noreply.github.com|github.com)
+            user=${local_part#*+}
+            if fetch "https://github.com/$user.gpg" | import_pinned "$pin"; then
+                printf '%s github:%s\n' "$pin" "$user"; return 0
+            fi ;;
+        *)
+            if fetch "https://openpgpkey.$domain/.well-known/openpgpkey/$domain/hu/$(wkd_hash "$local_part")?l=$local_part" | import_pinned "$pin"; then
+                printf '%s wkd:%s\n' "$pin" "$address"; return 0
+            fi
+            if fetch "https://$domain/.well-known/openpgpkey/hu/$(wkd_hash "$local_part")?l=$local_part" | import_pinned "$pin"; then
+                printf '%s wkd-direct:%s\n' "$pin" "$address"; return 0
+            fi ;;
+    esac
+    return 1
+}
+
+resolve() {
+    local pin=$1 address
+    shift
+    if [ "$offline" = false ]; then
+        for address in "$@"; do
+            resolve_address "$pin" "$address" && return 0
+        done
+    fi
+    if [ -n "$cache" ] && [ -f "$cache/$pin.asc" ] && import_pinned "$pin" < "$cache/$pin.asc"; then
+        printf '%s cache:%s\n' "$pin" "$cache/$pin.asc"; return 0
+    fi
+    return 1
+}
+
+status=0
+while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    read -r kind fingerprint addresses <<< "$line"
+    [ -n "${kind:-}" ] || continue
+    [ "$kind" = signer ] || { printf 'trusted-keys: %s: a line is "signer <fingerprint> <address>...", found %s\n' "$keys" "$kind" >&2; status=1; continue; }
+    pin=$(printf '%s' "$fingerprint" | tr '[:lower:]' '[:upper:]')
+    [[ "$pin" =~ ^[0-9A-F]{40}$ ]] || { printf 'trusted-keys: %s is not a 40-hex fingerprint\n' "$fingerprint" >&2; status=1; continue; }
+    [ -n "${addresses:-}" ] || { printf 'trusted-keys: %s has no address to fetch it from\n' "$pin" >&2; status=1; continue; }
+    # shellcheck disable=SC2086  # addresses is a space-separated list by format
+    resolve "$pin" $addresses || { printf 'trusted-keys: could not resolve %s from %s (WKD, GitHub, cache)\n' "$pin" "$addresses" >&2; status=1; }
+done < "$keys"
+exit $status
