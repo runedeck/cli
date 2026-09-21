@@ -1,0 +1,10 @@
+# NoEmDash (rule): prose has no em dash, not one. Deslop.EmDashOveruse
+# allows one per paragraph and is off in .vale.ini so one dash reports once.
+# A spaced en dash and a spaced double hyphen are em dashes in disguise.
+extends: existence
+message: "No em dash. Use a comma, a colon, parentheses, or two sentences (rule NoEmDash)."
+level: error
+nonword: true
+scope: sentence
+raw:
+  - '—|\s–\s|\s--\s'

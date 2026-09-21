@@ -1,0 +1,12 @@
+# Deslop (rule): words that are normal once and a tell in a cluster. One
+# "ecosystem" describes npm; three abstract intensifiers in a paragraph
+# describe nothing. Wikipedia (Signs of AI writing) treats this vocabulary
+# as a density signal, so the rule counts, it does not ban. The list is
+# the Tier 2 remainder of kdgbalmer/ai-tells (MIT) after STE and Deslop.
+extends: occurrence
+message: "Three or more AI-frequency words in one paragraph. Cut to the one that carries a fact (rule Deslop)."
+level: warning
+ignorecase: true
+scope: paragraph
+max: 2
+token: '\b(?:crucial|vital|essential|dynamic|innovative|transformative|embrac(?:e|es|ed|ing)|dive\s+deep|navigat(?:e|es|ed|ing)|journey|ecosystem)\b'

@@ -1,0 +1,19 @@
+# Deslop (rule): words at machine-anomalous frequency with no plain
+# technical reading, so one use is already the tell. The list is the
+# Tier 1 remainder of kdgbalmer/ai-tells (MIT, compressed from Wikipedia,
+# Signs of AI writing) after Deslop.SlopVocab and STE.BannedWords.
+# "underscore" is out: it names the character. "elevated" is out: it
+# names a privilege level.
+extends: existence
+message: "'%s' is AI vocabulary. Use the plain word (rule Deslop)."
+level: suggestion
+ignorecase: true
+scope: sentence
+tokens:
+  - multifaceted
+  - showcas(?:e|es|ed|ing)
+  - garner(?:s|ed|ing)?
+  - bolster(?:s|ed|ing)?
+  - enduring
+  - elevat(?:e|es|ing)
+  - unwavering

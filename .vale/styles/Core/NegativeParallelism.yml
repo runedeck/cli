@@ -1,0 +1,13 @@
+# Deslop (rule): "It is not X, it is Y" manufactures an epiphany. Three
+# shapes: "not just X but also Y" in one clause, "not because X, but
+# because Y", and the denial that closes a sentence so the next one can
+# reveal ("It is not a cache. It is a ledger."). Paragraph scope lets the
+# third shape cross the sentence boundary. Replaces Deslop.NotJustScaffold,
+# which is off in .vale.ini.
+extends: existence
+message: "Negative parallelism: state the point directly, drop the denied half (rule Deslop)."
+level: warning
+ignorecase: true
+scope: paragraph
+raw:
+  - "\\bnot\\s+(?:just|only|merely|simply)\\s+.{1,60}?\\s+but\\s+(?:also\\s+|rather\\s+)?|\\bnot\\s+because\\s+.{1,60}?,\\s+but\\s+because\\b|\\b(?:is|was|are|'s|'re)\\s+not\\s+(?:just\\s+|only\\s+|merely\\s+|simply\\s+)?(?:about\\s+)?(?:a|an|the)?\\s*[\\w'-]+(?:\\s+[\\w'-]+){0,4}[.,;:]\\s+(?:it|this|that|they|we|you)\\s*(?:is|are|was|'s|'re)\\s+(?:about\\s+)?"
