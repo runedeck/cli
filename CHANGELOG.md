@@ -184,6 +184,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).
 - Fix `rune sign open` signing a seal it cannot push: the push names `gh auth git-credential` for its own process, and the transport is checked before the key touch.
 - Refuse `rune sign open` on an HTTPS origin with neither a gh login nor a system- or user-scope credential helper.
 - Fix `scripts/verify-seal` (and the embedded skeleton copy) rejecting the 64-character nonce `rune sign open` writes, with a test that parses the seal message through the verifier's own pattern.

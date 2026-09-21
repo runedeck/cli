@@ -469,7 +469,8 @@ class AuthorshipIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(
-                    result.stdout.strip(), model_identity("future-model-2035.12")
+                    result.stdout.strip(),
+                    model_identity("future-model-2035.12", display="Codex Future Model 2035.12"),
                 )
                 head = self.new_head(result.stdout.strip())
                 self.assert_checks(head, passes=True)
@@ -530,7 +531,7 @@ with open(os.environ["FIXTURE_COMMAND_LOG"], "a", encoding="utf-8") as output:
                 "config",
                 "--worktree",
                 "user.name",
-                "Codex (future-model-2035.12)",
+                "Codex Future Model 2035.12 (future-model-2035.12)",
             ],
             commands,
         )
@@ -564,7 +565,7 @@ with open(os.environ["FIXTURE_COMMAND_LOG"], "a", encoding="utf-8") as output:
             commands,
         )
         self.assertFalse(any(command[0] == "git" for command in commands))
-        self.assertIn("Claude (claude-fable-5.2)", result.stdout)
+        self.assertIn("Claude Fable 5.2 (claude-fable-5.2)", result.stdout)
         self.assertIn("claude-fable-5.2@claude.noreply.nexus.local", result.stdout)
 
     def test_make_rejects_invalid_resolution_before_vcs_commands(self):

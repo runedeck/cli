@@ -235,7 +235,7 @@ class IdentityTests(unittest.TestCase):
     def test_resolve_generates_future_model_identity(self):
         self.assertEqual(
             identity.resolve_identity(self.policy, "gpt-6-astra[1m]", "codex"),
-            model_identity(),
+            model_identity(name="Codex Gpt 6 Astra"),
         )
 
     def test_resolve_rejects_unknown_harness_or_model(self):
@@ -395,7 +395,7 @@ class IdentityTests(unittest.TestCase):
                 invoke("resolve", "--model", "gpt-6-astra", "--harness", "codex")[
                     1
                 ].strip(),
-                model_identity(),
+                model_identity(name="Codex Gpt 6 Astra"),
             )
             path.write_text("authors: []\n", encoding="utf-8")
             self.assertEqual(invoke("check-policy")[0], 2)
