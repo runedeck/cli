@@ -104,8 +104,13 @@ fn resolve_with_config(
     let argv = build_argv(&tool, &options.args, &plan);
     let env = process_env(&tool, &plan);
     let display_env = final_env(&tool, &plan);
+    let base_url_env = tool
+        .base_url_env
+        .as_ref()
+        .map(|key| key.to_string_lossy().into_owned());
     Ok(ResolvedLaunch {
         tool: tool.name,
+        base_url_env,
         argv,
         env,
         wrap: plan.wrap,
@@ -161,6 +166,10 @@ pub(crate) struct ResolvedModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedLaunch {
     pub(crate) tool: String,
+    /// The environment key this tool reads its base URL from, when one is
+    /// known (`ANTHROPIC_BASE_URL` for claude, or the configured
+    /// `tools.<name>.base_url_env`).
+    pub(crate) base_url_env: Option<String>,
     pub(crate) argv: Vec<OsString>,
     pub(crate) env: Vec<(OsString, OsString)>,
     pub(crate) model: Option<ResolvedModel>,

@@ -117,6 +117,30 @@ pub(crate) fn plan_checks(
             models,
         });
     }
+    // A tool outside both families (opencode, grok, agy, ollama) still has
+    // an endpoint when the plan carries a base URL: the tool's configured
+    // base URL key, or the middleware base URL. Its route model, or the
+    // `--model` override, is what that endpoint must serve.
+    if !FAMILIES.iter().any(|family| family.tool == resolved.tool) {
+        let base_url = resolved
+            .base_url_env
+            .as_deref()
+            .and_then(|key| env_value(env, key))
+            .filter(|value| !value.is_empty())
+            .or_else(|| resolved.base_url.clone().filter(|value| !value.is_empty()));
+        if let Some(base_url) = base_url {
+            let models = model_override
+                .map(str::to_string)
+                .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()))
+                .into_iter()
+                .collect();
+            checks.push(EndpointCheck {
+                base_url,
+                credential_key: fallback_credential_key(env),
+                models,
+            });
+        }
+    }
     checks
 }
 

@@ -44,6 +44,7 @@ fn resolved(
 ) -> ResolvedLaunch {
     ResolvedLaunch {
         tool: tool.to_string(),
+        base_url_env: None,
         argv: vec![OsString::from(tool)],
         env: display_env.clone(),
         model: model.map(|id| ResolvedModel {
@@ -191,6 +192,46 @@ fn middleware_base_url_binds_to_the_running_tool_family() {
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0].base_url, "http://proxy.test");
     assert_eq!(checks[0].models, vec!["kimi-k3".to_string()]);
+}
+
+#[test]
+fn a_tool_outside_both_families_checks_its_route_model() {
+    let mut launch = resolved(
+        "opencode",
+        env(&[("OPENCODE_TOKEN", "secret")]),
+        Some("proton-lumo/lumo-max"),
+    );
+    launch.base_url = Some("http://proxy.test".to_string());
+    let checks = plan_checks(&launch, None);
+    assert_eq!(
+        checks,
+        vec![EndpointCheck {
+            base_url: "http://proxy.test".to_string(),
+            credential_key: Some("OPENCODE_TOKEN".to_string()),
+            models: vec!["proton-lumo/lumo-max".to_string()],
+        }]
+    );
+    let overridden = plan_checks(&launch, Some("lumo-lite"));
+    assert_eq!(overridden[0].models, vec!["lumo-lite".to_string()]);
+}
+
+#[test]
+fn a_tool_with_a_configured_base_url_key_uses_it() {
+    let mut launch = resolved(
+        "grok",
+        env(&[("GROK_BASE_URL", "http://grok.test")]),
+        Some("grok-4.6"),
+    );
+    launch.base_url_env = Some("GROK_BASE_URL".to_string());
+    let checks = plan_checks(&launch, None);
+    assert_eq!(checks[0].base_url, "http://grok.test");
+    assert_eq!(checks[0].models, vec!["grok-4.6".to_string()]);
+}
+
+#[test]
+fn a_tool_without_any_base_url_has_nothing_to_check() {
+    let launch = resolved("ollama", env(&[]), Some("llama3"));
+    assert!(plan_checks(&launch, None).is_empty());
 }
 
 #[test]
