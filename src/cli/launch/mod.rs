@@ -1,3 +1,5 @@
+pub(crate) mod check;
+
 use crate::cli::dispatch;
 use rune::ontology::{self, DockerConfig, Launch, LaunchModel};
 use serde::{Deserialize, Serialize};
@@ -31,12 +33,21 @@ const CLAUDE_MODEL_ENV_KEYS: &[&str] = &[
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
 ];
 
-pub fn execute_cli(tool: &str, rest: &[OsString]) -> Result<i32, String> {
+pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, String> {
     if tool.is_empty() {
         let config = ontology::load().map_err(|error| error.to_string())?;
         return Ok(list_tools(&config.launch));
     }
     let resolved = resolve(tool, rest)?;
+    if resolved.check {
+        let report = check::run_checks(&resolved, None);
+        if json {
+            println!("{}", check::format_report_json(&report));
+        } else {
+            println!("{}", check::format_report(&report));
+        }
+        return Ok(report.exit_code);
+    }
     if resolved.dry_run {
         println!("{}", resolved.format_dry_run());
         return Ok(0);
@@ -93,8 +104,13 @@ fn resolve_with_config(
     let argv = build_argv(&tool, &options.args, &plan);
     let env = process_env(&tool, &plan);
     let display_env = final_env(&tool, &plan);
+    let base_url_env = tool
+        .base_url_env
+        .as_ref()
+        .map(|key| key.to_string_lossy().into_owned());
     Ok(ResolvedLaunch {
         tool: tool.name,
+        base_url_env,
         argv,
         env,
         wrap: plan.wrap,
@@ -102,6 +118,7 @@ fn resolve_with_config(
         warnings: plan.warnings,
         model,
         dry_run: options.dry_run,
+        check: options.check,
         display_env,
         base_url: plan.base_url,
     })
@@ -112,6 +129,7 @@ struct ParsedLaunchTail {
     middleware: Vec<String>,
     tmux: Option<String>,
     dry_run: bool,
+    check: bool,
     direct: bool,
     args: Vec<OsString>,
 }
@@ -148,10 +166,15 @@ pub(crate) struct ResolvedModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedLaunch {
     pub(crate) tool: String,
+    /// The environment key this tool reads its base URL from, when one is
+    /// known (`ANTHROPIC_BASE_URL` for claude, or the configured
+    /// `tools.<name>.base_url_env`).
+    pub(crate) base_url_env: Option<String>,
     pub(crate) argv: Vec<OsString>,
     pub(crate) env: Vec<(OsString, OsString)>,
     pub(crate) model: Option<ResolvedModel>,
     pub(crate) dry_run: bool,
+    pub(crate) check: bool,
     wrap: Vec<Vec<OsString>>,
     pre: Vec<PreStep>,
     warnings: Vec<String>,
@@ -231,6 +254,7 @@ fn parse_cli_tail(rest: &[OsString], launch: &Launch) -> Result<ParsedLaunchTail
         middleware: launch.default_with.clone(),
         tmux: None,
         dry_run: false,
+        check: false,
         direct: false,
         args: Vec::new(),
     };
@@ -244,6 +268,7 @@ fn parse_cli_tail(rest: &[OsString], launch: &Launch) -> Result<ParsedLaunchTail
                 return Ok(parsed);
             }
             "--dry-run" => parsed.dry_run = true,
+            "--check" => parsed.check = true,
             "--pxpipe" => {
                 clear_default_chain(&mut parsed.middleware, &mut saw_explicit_chain);
                 parsed.middleware.push("pxpipe".to_string());
@@ -425,8 +450,17 @@ fn resolve_model(alias: &str, launch: &Launch) -> Result<(LaunchModel, ModelSour
             context: 131_072,
             compact: None,
         },
+        // Kimi K3 on the Standard tier. The proxy names a `kimi-k3-256k`
+        // route beside `kimi-k3` and publishes no limit; 262144 is the
+        // recorded assumption (CLI decision "Model routes are checked
+        // against the endpoint on demand"). Config `models.kimi` overrides.
+        "kimi" => LaunchModel {
+            id: "kimi-k3".to_string(),
+            context: 262_144,
+            compact: None,
+        },
         _ => {
-            let mut known = vec!["grok", "lumo", "sol", "sol-api"];
+            let mut known = vec!["grok", "kimi", "lumo", "sol", "sol-api"];
             known.extend(launch.models.keys().map(String::as_str));
             known.sort_unstable();
             known.dedup();

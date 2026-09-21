@@ -68,7 +68,7 @@ base64 = "0.22"
 dirs = "6"
 tempfile = "3"
 rune-docs = { path = "rune-docs", optional = true }
-ureq = { version = "3", default-features = false, features = ["rustls"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 signal-hook = "=0.3.18"
 
 [target.'cfg(unix)'.dependencies]

@@ -744,7 +744,7 @@ enum Command {
 
     /// Launch a coding tool with composable environment middleware
     #[command(
-        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch sol@claude\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:8317   # your Anthropic-compatible proxy\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: CLIPROXY_API_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. Unset references fall back to the env file (config key\n  env, default ~/.env). ollama profiles double as models: rune launch\n  llama3@ollama"
+        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  --check           Ask each base URL for its model list and report every\n                    model the plan sends as served or missing; no spawn.\n                    Exit 0 served, 1 missing, 2 endpoint failure\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch sol@claude\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:8317   # your Anthropic-compatible proxy\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: CLIPROXY_API_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. Unset references fall back to the env file (config key\n  env, default ~/.env). ollama profiles double as models: rune launch\n  llama3@ollama"
     )]
     Launch {
         /// Coding tool to launch, such as `claude` or `sol@claude` for a
@@ -759,7 +759,7 @@ enum Command {
 
     /// Run a coding tool noninteractively with supervised output
     #[command(
-        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default."
+        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default."
     )]
     Run {
         /// Coding tool to run, such as `codex` or `sol@claude`.
@@ -804,6 +804,11 @@ enum Command {
         /// Print the resolved launch and supervision plan without spawning.
         #[arg(long)]
         dry_run: bool,
+
+        /// Ask each base URL in the plan for its model list and report every
+        /// model the run would send as served or missing. Sends no prompt.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -1957,7 +1962,7 @@ pub fn run() -> i32 {
             return exit_code(exec::execute_cli(&skill, args.json, &rest), args.json);
         }
         Command::Launch { tool, rest } => {
-            return exit_code(launch::execute_cli(&tool, &rest), args.json);
+            return exit_code(launch::execute_cli(&tool, &rest, args.json), args.json);
         }
         Command::Run {
             tool,
@@ -1971,6 +1976,7 @@ pub fn run() -> i32 {
             mode,
             timeout,
             dry_run,
+            check,
         } => {
             return exit_code(
                 run::execute(&run::RunOptions {
@@ -1984,7 +1990,7 @@ pub fn run() -> i32 {
                     repository: repo,
                     mode,
                     timeout,
-                    dry_run,
+                    plan: run::RunPlan::from_flags(dry_run, check),
                     json: args.json,
                 }),
                 args.json,
