@@ -35,7 +35,7 @@ jobs:
     # Fork pull requests keep the owner-summoned free lanes: a review
     # label on a fork head runs the cascade, the correctness lane
     # refuses fork heads on its own, and the ordered workflow stops
-    # after the free lanes (docs/specs/lane-configuration/spec.md, Fork
+    # after the free lanes (docs/specs/external-lane-configuration/spec.md, Fork
     # pull request scenario). A draft never starts a round: the free
     # lanes and the deterministic checks run on it through their own
     # workflows.

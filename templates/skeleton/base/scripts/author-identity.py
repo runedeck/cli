@@ -215,9 +215,26 @@ def resolve_identity(policy: Policy, model: str, harness: str = "") -> str:
         raise IdentityError("provide a harness for a new model identity")
     if domain not in policy.model_domains:
         raise IdentityError("model domain is not trusted by the policy")
-    identity = f"{harness.title()} ({model}) <{model}@{domain}>"
+    identity = f"{display_name(model, harness)} ({model}) <{model}@{domain}>"
     validate_identity(policy, identity)
     return identity
+
+
+def display_name(model: str, harness: str) -> str:
+    """Spell the model ID as the roster does: `claude-fable-5-1` under the
+    claude harness is `Claude Fable 5.1`, `gpt-6-astra` under codex is
+    `Codex Gpt 6 Astra`. Words title-case, a run of version segments joins
+    with dots, and the harness leads unless the model already names it. The
+    version is the identity; a name that drops it loses the record."""
+    words: list[str] = []
+    for segment in model.split("-"):
+        if segment.isdigit() and words and words[-1].replace(".", "").isdigit():
+            words[-1] = f"{words[-1]}.{segment}"
+        else:
+            words.append(segment.title())
+    if words[0].lower() != harness.lower():
+        words.insert(0, harness.title())
+    return " ".join(words)
 
 
 def main(argv: list[str] | None = None) -> int:

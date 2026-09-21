@@ -120,6 +120,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Change the ceremony files and the embedded skeleton to `60ad8249`: owner-seal messages and nonce, jq guards, versioned display names, `thread-resolver.yaml` retired.
 - Change `rune sign` to read `KEYS` as `signer <fingerprint> <address>...` lines (skeleton `trusted-key-anchor`), with the armored block as a fallback and a malformed line refused.
 - Change `rune sign open` to accept a head the owner signed already, because the open-seal is a new commit above it, and to refuse only a signature from a key outside `KEYS`.
 - Change `rune sign open` to read the body and `schemas/PULL_REQUEST.mdschema` from the bookmark's own tree, so `--repo` may point at a workspace on another branch.

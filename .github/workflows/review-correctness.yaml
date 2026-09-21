@@ -142,7 +142,7 @@ jobs:
                           | jq -s -r 'add // [] | first // empty | .html_url // ""') || job_url=""
                       verdict_line=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?per_page=100" \
                           --jq '[.[] | select(.user.login == "runeseer[bot]") | select(.body | startswith("review/correctness:")) | select(.body | contains(env.HEAD_SHA))]' \
-                          | jq -s -r 'add // [] | last // empty | "\(.body | split("\n") | first) (\(.html_url))"') || verdict_line=""
+                          | jq -s -r 'add // [] | last // empty | "\(.body // "" | split("\n") | first // "") (\(.html_url))"') || verdict_line=""
                       echo "the lane concluded: $conclusion"
                       [ -n "$job_url" ] && echo "lane job: $job_url"
                       if [ -n "$verdict_line" ]; then

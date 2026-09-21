@@ -3,5 +3,5 @@ BRIEF: Assemble, validate, and deploy markdown content across AI coding provider
 NAME: cli
 OWNER: runedeck
 TITLE: Rune CLI
-_commit: 64e7d2c
+_commit: 60ad824
 _src_path: https://github.com/runedeck/skeleton.git

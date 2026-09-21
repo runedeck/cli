@@ -38,10 +38,21 @@ done
 if [ -n "$authors_file" ]; then
     authors_source=$authors_file
 else
-    authors_source="origin/main:authors.yaml"
     authors_file=$(mktemp) || exit 1
     trap 'rm -f -- "$authors_file"' EXIT
     trap 'exit 1' HUP INT TERM
+    if git cat-file -e 'origin/main:authors.yaml' 2>/dev/null; then
+        authors_source="origin/main:authors.yaml"
+    else
+        # First adoption: the trusted base has no policy yet, because this
+        # very range adds it. The policy under check is then the target's
+        # own, which every later push judges against origin/main. Said
+        # aloud so a log never shows a silent self-judgment.
+        git cat-file -e 'origin/main^{commit}' 2>/dev/null \
+            || { echo "check-authorship: cannot resolve origin/main. Fetch origin/main."; exit 1; }
+        authors_source="$to:authors.yaml"
+        echo "check-authorship: origin/main has no authors.yaml; first adoption is judged by $authors_source"
+    fi
     git show "$authors_source" > "$authors_file" \
         || { echo "check-authorship: cannot read $authors_source. Fetch origin/main."; exit 1; }
 fi

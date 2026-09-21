@@ -14,7 +14,6 @@ rules:
             - review-correctness.yaml
             - review-cursor.yaml
             - review-pragent.yaml
-            - thread-resolver.yaml
             # The seal check reads KEYS and the verifier from the default
             # branch and fetches the head as objects only.
             - owner-seal.yaml
@@ -34,7 +33,6 @@ rules:
             - review-correctness.yaml
             - review-cursor.yaml
             - review-pragent.yaml
-            - thread-resolver.yaml
     excessive-permissions:
         # Permission tightening is separate triage work.
         ignore:

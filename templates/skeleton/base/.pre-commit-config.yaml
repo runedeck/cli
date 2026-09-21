@@ -139,6 +139,15 @@ repos:
             pass_filenames: false
             files: ^docs/(changes|specs)/
 
+          # Broken docs links and the CHANGELOG.md shape (one line per change,
+          # Keep a Changelog groups). Same skip rule as spec doctor above.
+          - id: rune-docs-check
+            name: rune docs check
+            entry: sh -c 'if command -v rune >/dev/null 2>&1 && [ -d docs ]; then rune docs check; fi'
+            language: system
+            pass_filenames: false
+            files: ^(docs/|CHANGELOG\.md$)
+
           - id: cargo-test
             name: cargo test
             entry: cargo test --all-features

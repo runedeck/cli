@@ -1,6 +1,6 @@
 name: Owner Seal
 
-# The required owner-seal check (docs/specs/release-ceremony): a ready pull
+# The required owner-seal check (docs/specs/owner-release-ceremony): a ready pull
 # request passes only with a valid open-seal beneath its head and a valid
 # merge-seal at its head. A draft passes without seals.
 #
@@ -146,15 +146,29 @@ jobs:
                   git fetch --quiet origin "pull/$PR_NUMBER/head"
                   git cat-file -e "$HEAD_SHA^{commit}" \
                       || { echo "the pull request head $HEAD_SHA was not fetched; rerun the check"; exit 1; }
+                  # A ready pull request carries no merge-seal until the
+                  # owner runs rune sign next. That is the expected state for
+                  # the whole review, so the check stays red with a message
+                  # that says so and never asks for a rerun. The controller
+                  # waits on quality, not on this check, so the round starts.
+                  case "$(git log -1 --format=%s "$HEAD_SHA")" in
+                      'merge-seal: '*) ;;
+                      *)
+                          echo "head $HEAD_SHA carries no merge-seal yet: the open-seal holds, the review runs, and this check turns green after rune sign next"
+                          exit 1
+                          ;;
+                  esac
                   # The merge-seal's sole parent is reviewed_sha; the
                   # verifier proves that. The ledger lives on that parent.
                   reviewed=$(git rev-list --parents -n 1 "$HEAD_SHA" | cut -d ' ' -f 2)
                   # LEDGER_APP is workflow-fixed text, so it may sit inside
                   # the filter. Pages merge through jq -s; the newest check
-                  # run from the app wins.
+                  # run from the app wins. Every step of the jq path guards
+                  # null, so an empty list yields an empty string and not an
+                  # error the shell reads as a failed API read.
                   ledger=$(gh api --paginate "repos/$REPOSITORY/commits/$reviewed/check-runs?check_name=ledger&per_page=100" \
                       --jq "[.check_runs[] | select(.app.slug == \"$LEDGER_APP\")]" \
-                      | jq -s -r 'add // [] | max_by(.id) | .output.text // "" | split("\n") | first | select(startswith("ledger: ")) | ltrimstr("ledger: ")') \
+                      | jq -s -r '(add // []) | (max_by(.id) // {}) | (.output.text // "") | split("\n") | (first // "") | select(startswith("ledger: ")) | ltrimstr("ledger: ")') \
                       || { echo "could not read the check runs on $reviewed; rerun the check"; exit 1; }
                   [ -n "$ledger" ] \
                       || { echo "no ledger check run from $LEDGER_APP on reviewed_sha $reviewed; the merge-seal has nothing to bind to"; exit 1; }
