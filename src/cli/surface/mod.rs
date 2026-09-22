@@ -618,6 +618,15 @@ pub(crate) fn prepare_clean_state(
     }
 }
 
+/// The Grok install directory under the real home, when it holds a `grok`
+/// executable; `None` when Grok is installed elsewhere or not at all.
+fn grok_install_dir(home: &Path) -> Option<OsString> {
+    let directory = home.join(".grok/bin");
+    let binary = directory.join("grok");
+    let executable = std::fs::metadata(&binary).is_ok_and(|metadata| metadata.is_file());
+    executable.then(|| directory.into_os_string())
+}
+
 fn process_request(
     invocation: &SurfaceInvocation,
     args: Vec<OsString>,
@@ -646,6 +655,19 @@ fn process_request(
                     .push((OsString::from("ANTIGRAVITY_EXECUTABLE_DATA_DIR"), root));
             }
             Surface::Grok => {
+                // `~/.local/bin/grok` is the harness-run shim, and its last
+                // fallback looks for `${HOME}/.grok/bin/grok`. With HOME moved
+                // to the clean root that search is empty, so the real install
+                // directory is named explicitly through the variable the shim
+                // reads first. The shim, and its sandbox, stay in the loop.
+                if std::env::var_os("HARNESS_REAL_BIN_DIR").is_none()
+                    && let Some(real_bin) =
+                        dirs::home_dir().and_then(|home| grok_install_dir(&home))
+                {
+                    request
+                        .env
+                        .push((OsString::from("HARNESS_REAL_BIN_DIR"), real_bin));
+                }
                 request.env.push((OsString::from("HOME"), root));
             }
             Surface::Opencode => {

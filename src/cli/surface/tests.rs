@@ -581,6 +581,63 @@ fn clean_opencode_redirects_xdg_state() {
 }
 
 #[test]
+fn clean_grok_names_the_real_install_directory_for_the_shim() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let home = temporary.path();
+    assert!(grok_install_dir(home).is_none());
+
+    std::fs::create_dir_all(home.join(".grok/bin")).expect("install directory");
+    std::fs::write(home.join(".grok/bin/grok"), "#!/bin/sh\n").expect("grok binary");
+
+    assert_eq!(
+        grok_install_dir(home),
+        Some(home.join(".grok/bin").into_os_string())
+    );
+}
+
+#[test]
+fn clean_grok_moves_home_after_the_shim_target() {
+    let invocation = SurfaceInvocation {
+        surface: Surface::Grok,
+        binary: OsString::from("grok"),
+        extra_args: Vec::new(),
+        env: Vec::new(),
+        repository: PathBuf::from("."),
+        mode: AccessMode::ReadOnly,
+        system_prompt: String::new(),
+        prompt: "Inspect only".to_string(),
+        model: None,
+        native_timeout: None,
+        timeout: None,
+        clean_state_root: Some(PathBuf::from("/clean")),
+    };
+    let request = process_request(&invocation, Vec::new(), None);
+
+    let home = request
+        .env
+        .iter()
+        .position(|(key, _)| key == "HOME")
+        .expect("HOME is set for the clean Grok run");
+    assert_eq!(request.env[home].1, OsString::from("/clean"));
+    if let Some(real_bin) = request
+        .env
+        .iter()
+        .position(|(key, _)| key == "HARNESS_REAL_BIN_DIR")
+    {
+        assert!(
+            real_bin < home,
+            "the shim target is named before HOME moves"
+        );
+        assert!(
+            request.env[real_bin]
+                .1
+                .to_string_lossy()
+                .ends_with(".grok/bin")
+        );
+    }
+}
+
+#[test]
 fn opencode_returns_only_the_last_assistant_message() {
     let events: Vec<OpencodeEvent> = parse_jsonl(concat!(
         "{\"type\":\"text\",\"part\":{\"messageID\":\"msg_1\",\"text\":\"I will read the source first.\"}}\n",
