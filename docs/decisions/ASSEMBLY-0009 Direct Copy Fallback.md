@@ -31,21 +31,21 @@ The assembly pipeline produces a `build/` directory with provider-specific outpu
 ## Decision Drivers
 
 - Users may not have Node.js (rulesync) or provider CLIs installed
-- The deployment step is a flat file copy — no transformation needed
+- The deployment step is a flat file copy: no transformation needed
 - A shell script or trivial binary covers the 4 core providers
 - Direct copy to provider directories must always work
 
 ## Considered Options
 
-1. **Require rulesync** — mandatory Node.js dependency for deployment. Blocks users without Node.js.
-2. **Built-in rune copy** — minimal file copy command reading provider config. Zero external dependencies.
+1. **Require rulesync**: mandatory Node.js dependency for deployment. Blocks users without Node.js.
+2. **Built-in rune copy**: minimal file copy command reading provider config. Zero external dependencies.
 
 ## Decision Outcome
 
 Two commands handle deployment:
 
 - `rune deploy` copies assembled output from `build/` to provider directories with manifest tracking, provenance, and incremental install. This is the normal deployment path after `rune assemble`.
-- `rune copy` copies source files directly to a target directory — no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline is not needed.
+- `rune copy` copies source files directly to a target directory: no assembly, no transforms, no manifest. A raw fallback for environments where the full pipeline is not needed.
 
 ```sh
 rune install .                    # assemble + deploy (convenience wrapper)
@@ -54,7 +54,7 @@ rune deploy .                     # deploy from build/ → provider dirs
 rune copy . --target ~/project    # raw copy, no assembly or transforms
 ```
 
-`rune copy` is deliberately named to signal that it does nothing smart — it copies source files as-is to a single target directory. `rune deploy` is the manifest-tracked deployment path.
+`rune copy` is deliberately named to signal that it does nothing smart: it copies source files as-is to a single target directory. `rune deploy` is the manifest-tracked deployment path.
 
 ## Consequences
 
@@ -65,4 +65,4 @@ rune copy . --target ~/project    # raw copy, no assembly or transforms
 
 ## More Information
 
-[1]: https://github.com/dyoshikawa/rulesync "rulesync — multi-provider AI tool config sync"
+[1]: https://github.com/dyoshikawa/rulesync "rulesync: multi-provider AI tool config sync"

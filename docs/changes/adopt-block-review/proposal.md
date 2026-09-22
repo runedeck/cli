@@ -7,17 +7,17 @@ status: proposed
 
 ## Why
 
-Adoption today is a byte-copy with provenance (`rune import`) plus a skill that asks the model to review "block by block" — but nothing enforces that the review happened or that every block got a verdict. A skill instruction is not a state machine: the model can skip blocks, batch sloppily, or claim completion. The deck's bar for adopted content is a maintainer verdict on every block, enforced through durable workflow state, with the final result validated against a schema. CLI-0027 supersedes this proposal's permanent-ledger storage details.
+Adoption today is a byte-copy with provenance (`rune import`) plus a skill that asks the model to review "block by block": but nothing enforces that the review happened or that every block got a verdict. A skill instruction is not a state machine: the model can skip blocks, batch sloppily, or claim completion. The deck's bar for adopted content is a maintainer verdict on every block, enforced through durable workflow state, with the final result validated against a schema. CLI-0027 supersedes this proposal's permanent-ledger storage details.
 
 ## What Changes
 
 - `rune adopt` stops aliasing `import` and becomes the review state machine:
-    - `rune adopt start <url|path>` — import mechanics (pinned fetch, verbatim copy, adopt/v1 sidecars) plus deterministic segmentation of every adopted markdown file into review blocks. Writes an external temporary session with every verdict pending. The adopt sidecar records `review: pending`.
-    - `rune adopt status [--json]` — in-flight sessions and per-file progress. Designed for dynamic context injection into the adoption skill.
-    - `rune adopt next [--count N] [--json]` — the next pending blocks with id, kind, and content.
-    - `rune adopt verdict <block-id> <keep|adapt|cut> [--note TEXT]` — records one verdict. `adapt` and `cut` require a note.
-    - `rune adopt finalize [--reviewer TEXT]` — refuses while any verdict is pending. Enforces verdict consistency against the edited files (cut content absent, kept content present, adapted content changed). Checks the kind schema. Re-syncs subject digests. Flips sidecars to `review: reviewed`. And removes temporary state after all sidecars are safe.
-    - `rune adopt abandon` — closes a session, moving the imported artifact and temporary session to the trash.
+    - `rune adopt start <url|path>`: import mechanics (pinned fetch, verbatim copy, adopt/v1 sidecars) plus deterministic segmentation of every adopted markdown file into review blocks. Writes an external temporary session with every verdict pending. The adopt sidecar records `review: pending`.
+    - `rune adopt status [--json]`: in-flight sessions and per-file progress. Designed for dynamic context injection into the adoption skill.
+    - `rune adopt next [--count N] [--json]`: the next pending blocks with id, kind, and content.
+    - `rune adopt verdict <block-id> <keep|adapt|cut> [--note TEXT]`: records one verdict. `adapt` and `cut` require a note.
+    - `rune adopt finalize [--reviewer TEXT]`: refuses while any verdict is pending. Enforces verdict consistency against the edited files (cut content absent, kept content present, adapted content changed). Checks the kind schema. Re-syncs subject digests. Flips sidecars to `review: reviewed`. And removes temporary state after all sidecars are safe.
+    - `rune adopt abandon`: closes a session, moving the imported artifact and temporary session to the trash.
 - Review entries are temporary external session state. Permanent adopt/v1 sidecars retain the source pin, final subject digest, reviewed state, reviewer, completion time, and concise summary (CLI-0027).
 - Segmentation is deterministic and line-based: frontmatter is one block. Fenced code blocks are atomic. Paragraphs split at blank lines. Consecutive list items, table rows, and quote lines group. Headings are their own blocks. Block ids are ordinal per file with a content digest recorded beside them.
 - `rune import` gains `--kind agent|rule` placement (`agents/<name>.md`, `rules/<name>.md`) so forge-core agents and rules are adoptable, and artifact names follow `schemas/skill.schema.yaml` with the deck's casing preserved (≤ 64 chars, name equals directory).

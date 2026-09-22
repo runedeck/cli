@@ -30,8 +30,8 @@ Cargo.toml configuration affects compile-time safety, dependency hygiene, and co
 
 ## Considered Options
 
-1. **Default Cargo settings** — minimal configuration, misses compile-time safety checks.
-2. **Strict lint and dependency conventions** — deny unexpected cfgs, dep: prefix, grouped dependencies.
+1. **Default Cargo settings**: minimal configuration, misses compile-time safety checks.
+2. **Strict lint and dependency conventions**: deny unexpected cfgs, dep: prefix, grouped dependencies.
 
 ## Decision Outcome
 

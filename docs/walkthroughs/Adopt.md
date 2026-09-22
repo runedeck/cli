@@ -66,4 +66,4 @@ A skill tree does the same with `--kind skill` (the default) and a directory sou
 
 ## The deck skill
 
-`runes/meta/skills/adopt-artifact` (deck) drives this loop conversationally: it pulls `rune adopt status --json` through dynamic context injection, drafts one question per block, presents them four at a time through AskUserQuestion, and records your answers as verdicts. The CLI still enforces everything — the skill cannot skip a block, and finalize fails honestly when the edits do not match your decisions.
+`runes/meta/skills/adopt-artifact` (deck) drives this loop conversationally: it pulls `rune adopt status --json` through dynamic context injection, drafts one question per block, presents them four at a time through AskUserQuestion, and records your answers as verdicts. The CLI still enforces everything: the skill cannot skip a block, and finalize fails honestly when the edits do not match your decisions.

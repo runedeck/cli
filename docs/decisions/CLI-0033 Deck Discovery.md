@@ -39,11 +39,11 @@ no submission queue.
 
 ## Considered Options
 
-1. **Central registry service** — a curated index with submissions. Infrastructure, moderation,
+1. **Central registry service**: a curated index with submissions. Infrastructure, moderation,
    and a single point of failure before the community exists.
-2. **Curated list file in the cli repository** — simple, but every listing needs a pull request
+2. **Curated list file in the cli repository**: simple, but every listing needs a pull request
    and the list goes stale.
-3. **GitHub topic search** — publishers tag their repository `runedeck-deck`. `rune discover`
+3. **GitHub topic search**: publishers tag their repository `runedeck-deck`. `rune discover`
    searches the topic.
 
 ## Decision Outcome

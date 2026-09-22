@@ -38,10 +38,10 @@ plugins with a manifest that declares actions and event hooks.
 
 ## Considered Options
 
-1. **Keep bare dispatch** — no declarations, no events.
-2. **Manifest plus a post-install event** — a `plugin.yaml` beside each plugin declares name,
+1. **Keep bare dispatch**: no declarations, no events.
+2. **Manifest plus a post-install event**: a `plugin.yaml` beside each plugin declares name,
    description, executable, and subscribed events. Rune fires `post-install`.
-3. **Full plugin marketplace** — discovery, installation, and versioning of plugins. Premature
+3. **Full plugin marketplace**: discovery, installation, and versioning of plugins. Premature
    before the manifest layer exists.
 
 ## Decision Outcome

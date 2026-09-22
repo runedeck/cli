@@ -8,43 +8,43 @@ Skills, agents, and rules are authored once as markdown with YAML frontmatter. r
 
 Copying works until instructions drift. rune-cli adds three things raw copying cannot:
 
-- **Assembly** — strips frontmatter, resolves `user/` overrides, applies provider-specific transforms (kebab-case, tool remapping). The deployed file is clean. The source keeps its metadata.
-- **Provenance** — each deployed file has an [in-toto/SLSA][6] record of what sources produced it. When something breaks, you can trace which source file and which override combined to produce the deployed instruction.
-- **Manifest tracking** — `.manifest` at each target records what was deployed and when. Detects user modifications, skips unchanged files, prunes orphans from renamed sources.
+- **Assembly**: strips frontmatter, resolves `user/` overrides, applies provider-specific transforms (kebab-case, tool remapping). The deployed file is clean. The source keeps its metadata.
+- **Provenance**: each deployed file has an [in-toto/SLSA][6] record of what sources produced it. When something breaks, you can trace which source file and which override combined to produce the deployed instruction.
+- **Manifest tracking**: `.manifest` at each target records what was deployed and when. Detects user modifications, skips unchanged files, prunes orphans from renamed sources.
 
 The `user/` subdirectory lets individuals customize without polluting upstream (git-ignored, merged during assembly). Model qualifier directories (`claude-opus-4/`, `claude-sonnet-4/`) handle the reality that models need different instructions as they evolve.
 
 ## What it does
 
-**Assemble** — Transforms source runes into provider-specific output. Strips frontmatter, removes GFM reference links, resolves variant overrides, applies provider rules (kebab-case filenames, tool name remapping, TOML conversion). Writes provenance sidecars (SLSA/in-toto) alongside each built file.
+**Assemble**: Transforms source runes into provider-specific output. Strips frontmatter, removes GFM reference links, resolves variant overrides, applies provider rules (kebab-case filenames, tool name remapping, TOML conversion). Writes provenance sidecars (SLSA/in-toto) alongside each built file.
 
-**Deploy** — Deploys assembled runes from `build/` to provider target directories. Tracks deployments via `.manifest` dotfiles for incremental installs — skips unchanged files, detects user modifications, overwrites stale content.
+**Deploy** (Deploys assembled runes from `build/` to provider target directories. Tracks deployments via `.manifest` dotfiles for incremental installs) skips unchanged files, detects user modifications, overwrites stale content.
 
-**Install** — Runs assemble + deploy in one step.
+**Install**: Runs assemble + deploy in one step.
 
-**Validate** — Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available. Strict structural checking needs the standalone `mdschema` binary (`brew install jackchuka/tap/mdschema`). Without it, section order, unexpected sections, permitted heading placement, and heading uniqueness go unchecked, and optional sections are skipped entirely.
+**Validate**: Checks deck and rune-source structure, `.mdschema` compliance, and external tools (shellcheck, cargo fmt/clippy, cargo test, tsc, gitleaks) when available. Strict structural checking needs the standalone `mdschema` binary (`brew install jackchuka/tap/mdschema`). Without it, section order, unexpected sections, permitted heading placement, and heading uniqueness go unchecked, and optional sections are skipped entirely.
 
-**Drift** — Compares a rune source against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
+**Drift**: Compares a rune source against an upstream reference. Separates frontmatter from body, reports which keys changed, supports `--ignore` for expected per-project differences.
 
-**Provenance** — Shows the source-to-deployed chain for a file, or scans a directory for verification status grouped by source rune.
+**Provenance**: Shows the source-to-deployed chain for a file, or scans a directory for verification status grouped by source rune.
 
-**Copy** — Copies source runes directly to a target directory without assembly or transforms. No manifest tracking.
+**Copy**: Copies source runes directly to a target directory without assembly or transforms. No manifest tracking.
 
-**Clean** — Removes stale files from previous installs. Compares the current build against deployed targets and deletes runes no longer in the source.
+**Clean**: Removes stale files from previous installs. Compares the current build against deployed targets and deletes runes no longer in the source.
 
-**Release** — Packages assembled runes as release tarballs.
+**Release**: Packages assembled runes as release tarballs.
 
-**Adopt** — Imports an upstream rune into a single-module source with digest-pinned provenance.
+**Adopt**: Imports an upstream rune into a single-module source with digest-pinned provenance.
 
-**Find** — Searches local and watched rune sources by name, trigger text, and description.
+**Find**: Searches local and watched rune sources by name, trigger text, and description.
 
-**Spec lifecycle** — Scaffolds, tracks, validates, and archives capability changes under `docs/`, while keeping ADRs canonical for architectural rationale.
+**Spec lifecycle**: Scaffolds, tracks, validates, and archives capability changes under `docs/`, while keeping ADRs canonical for architectural rationale.
 
-**Doctor** — Verifies deployed manifests against disk and repairs only missing or orphaned managed files, preserving user edits.
+**Doctor**: Verifies deployed manifests against disk and repairs only missing or orphaned managed files, preserving user edits.
 
-**Status** — Renders a one-shot summary of deck content, specifications, changes, validation findings, and deploy targets.
+**Status**: Renders a one-shot summary of deck content, specifications, changes, validation findings, and deploy targets.
 
-**Launch and run** — Resolves named coding-tool profiles for interactive sessions or supervised noninteractive prompts. Fresh installs include `sol@claude` and `grok@claude`, routed through a local CLIProxyAPI at `http://127.0.0.1:8317`. Export `CLIPROXY_API_KEY`, then use either form:
+**Launch and run**: Resolves named coding-tool profiles for interactive sessions or supervised noninteractive prompts. Fresh installs include `sol@claude` and `grok@claude`, routed through a local CLIProxyAPI at `http://127.0.0.1:8317`. Export `CLIPROXY_API_KEY`, then use either form:
 
 ```sh
 rune launch sol@claude
@@ -92,7 +92,7 @@ Copy [`config.example.yaml`](config.example.yaml) to `~/.config/rune/config.yaml
 
 Two words, two jobs. A **qualifier** is the directory (`user/`, `claude/`, `claude-opus-4/`). A **variant** is the file inside it that overrides the base file of the same name. Assembly resolves one qualifier, then merges that variant into the base: its frontmatter keys replace the base keys outright, and its body joins the base body according to its `mode` (`append`, `prepend`, or `replace`, defaulting to `replace`). That key-level replacement is not the deep merge used for configuration files, which is a separate mechanism in `yaml::merge`.
 
-Subdirectories in source are organizational — they flatten at assembly time:
+Subdirectories in source are organizational: they flatten at assembly time:
 
 | Directory         | Purpose                      | Precedence |
 | ----------------- | ---------------------------- | ---------- |

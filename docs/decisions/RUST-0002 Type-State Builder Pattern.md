@@ -23,7 +23,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-Complex objects with required configuration steps are typically built with the builder pattern. Traditional builders use `Option<T>` fields and validate in `build()` — failing at runtime. Rust's type system can enforce required steps at compile time.
+Complex objects with required configuration steps are typically built with the builder pattern. Traditional builders use `Option<T>` fields and validate in `build()`: failing at runtime. Rust's type system can enforce required steps at compile time.
 
 ## Decision Drivers
 
@@ -33,8 +33,8 @@ Complex objects with required configuration steps are typically built with the b
 
 ## Considered Options
 
-1. **Traditional builder with Option fields** — runtime validation in `build()`. Simple but errors only at runtime.
-2. **Type-state generics** — compile-time enforcement via generic parameters. Errors at compile time.
+1. **Traditional builder with Option fields**: runtime validation in `build()`. Simple but errors only at runtime.
+2. **Type-state generics**: compile-time enforcement via generic parameters. Errors at compile time.
 
 ## Decision Outcome
 

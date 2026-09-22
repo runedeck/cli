@@ -23,12 +23,12 @@ upstream: []
 
 ## Context and Problem Statement
 
-Traits in Rust scatter method implementations across files — the struct is defined in one place, trait impls in another. IDE "go to definition" may jump to the trait declaration instead of the implementation. For internal types with no polymorphism, this indirection makes code harder to navigate and understand.
+Traits in Rust scatter method implementations across files: the struct is defined in one place, trait impls in another. IDE "go to definition" may jump to the trait declaration instead of the implementation. For internal types with no polymorphism, this indirection makes code harder to navigate and understand.
 
 ## Considered Options
 
-1. **Trait-heavy design** — extract traits for testability and polymorphism. Scatters implementations across files.
-2. **Concrete structs only** — inherent methods on the struct itself. Every method in one place, findable with a single "go to definition."
+1. **Trait-heavy design**: extract traits for testability and polymorphism. Scatters implementations across files.
+2. **Concrete structs only**: inherent methods on the struct itself. Every method in one place, findable with a single "go to definition."
 
 ## Decision Outcome
 
@@ -42,8 +42,8 @@ Traits are permitted only for:
 
 ## Consequences
 
-- [+] Every method lives on the struct — one place to look
+- [+] Every method lives on the struct: one place to look
 - [+] No scattered impl blocks across files
 - [+] No "where did this method come from?" confusion
-- [+] Simpler refactoring — rename a method, find all callers directly
+- [+] Simpler refactoring: rename a method, find all callers directly
 - [-] Adding polymorphism later requires extracting a trait and updating callers

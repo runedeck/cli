@@ -14,9 +14,9 @@ know by itself arrives as an argument or installed hook: the repo's configured
 ## Modules
 
 - `links`: broken internal links and orphan pages across a repo's `docs/` tree
-- `adr`: `<PREFIX>-<NNNN>` decision records under `docs/decisions/` — scaffold,
+- `adr`: `<PREFIX>-<NNNN>` decision records under `docs/decisions/`, scaffold,
   list, supersede with cross-links, regenerate the index
-- `spec` (feature `lifecycle`): the spec-driven change lifecycle — propose,
+- `spec` (feature `lifecycle`): the spec-driven change lifecycle, propose,
   list, show, doctor, archive with delta merges, plus the read-only scans and
   tree validation
 - `interop` (feature `lifecycle`): converters between the native spec root and

@@ -24,20 +24,20 @@ upstream: []
 
 ## Context and Problem Statement
 
-`Result<T, String>` is the simplest error pattern in Rust — callers get a human-readable message but cannot programmatically distinguish error categories. The Rust community consensus [1] is `thiserror` for libraries, `anyhow` for applications. The standard library uses `std::io::ErrorKind` for structured error discrimination without external dependencies.
+`Result<T, String>` is the simplest error pattern in Rust: callers get a human-readable message but cannot programmatically distinguish error categories. The Rust community consensus [1] is `thiserror` for libraries, `anyhow` for applications. The standard library uses `std::io::ErrorKind` for structured error discrimination without external dependencies.
 
 ## Decision Drivers
 
 - Callers should be able to branch on error category (skip vs abort vs retry)
 - No unnecessary dependencies (no `anyhow`, no `thiserror`)
-- ErrorKind must be cheaply comparable (`Copy` trait — can be passed by value without cloning)
+- ErrorKind must be cheaply comparable (`Copy` trait: can be passed by value without cloning)
 - Source errors must be preserved for debugging
 
 ## Considered Options
 
-1. **`Result<T, String>`** — current approach, simple, no branching possible
-2. **`thiserror` derive macro** — adds a dependency, generates Display/Error impls
-3. **Custom Error struct with ErrorKind enum** — zero dependencies, callers branch on kind, source chain preserved
+1. **`Result<T, String>`**: current approach, simple, no branching possible
+2. **`thiserror` derive macro**: adds a dependency, generates Display/Error impls
+3. **Custom Error struct with ErrorKind enum**: zero dependencies, callers branch on kind, source chain preserved
 
 ## Decision Outcome
 
@@ -73,4 +73,4 @@ pub enum ErrorKind {
 
 ## More Information
 
-[1]: https://blog.rust-lang.org/2024/11/27/Rust-2024-survey-results.html "Rust Survey 2024 — error handling cited as top pain point"
+[1]: https://blog.rust-lang.org/2024/11/27/Rust-2024-survey-results.html "Rust Survey 2024: error handling cited as top pain point"

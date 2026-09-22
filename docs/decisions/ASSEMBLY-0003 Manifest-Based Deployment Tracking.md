@@ -30,19 +30,19 @@ Installing skills, agents, and rules to provider directories is a multi-step pro
 
 ## Decision Drivers
 
-- Incremental installs — skip unchanged files
-- User modification detection — distinguish "rune installed this" from "user edited this"
-- Simple format — no spec overhead for what is fundamentally a hash lookup table
+- Incremental installs: skip unchanged files
+- User modification detection: distinguish "rune installed this" from "user edited this"
+- Simple format: no spec overhead for what is fundamentally a hash lookup table
 
 ## Considered Options
 
-1. **No tracking** — always overwrite everything on install. Simple but destroys user modifications.
-2. **Git-based tracking** — use git status in provider directories. Requires provider directories to be in a repo.
-3. **Manifest dotfile** — per-provider `.manifest` with deployed file hashes. Simple, self-contained.
+1. **No tracking**: always overwrite everything on install. Simple but destroys user modifications.
+2. **Git-based tracking**: use git status in provider directories. Requires provider directories to be in a repo.
+3. **Manifest dotfile**: per-provider `.manifest` with deployed file hashes. Simple, self-contained.
 
 ## Decision Outcome
 
-The manifest is a **deployment record**, not a build artifact. It lives at the target as a `.manifest` dotfile — one per provider directory. Assembly does not produce it. Copy creates it after deploying files.
+The manifest is a **deployment record**, not a build artifact. It lives at the target as a `.manifest` dotfile: one per provider directory. Assembly does not produce it. Copy creates it after deploying files.
 
 ```yaml
 agents:
@@ -69,20 +69,20 @@ On subsequent installs, copy reads `.manifest` from the target and compares:
 | -------------------------- | ------------------------- | --------- | ------------------- |
 | matches                    | matches                   | Unchanged | skip                |
 | matches                    | differs                   | Stale     | copy (safe)         |
-| differs                    | —                         | Modified  | skip (or `--force`) |
-| not in `.manifest`         | —                         | New       | copy                |
+| differs                    |: | Modified  | skip (or `--force`) |
+| not in `.manifest`         |: | New       | copy                |
 
 Source-level staleness (has the source changed since last build?) is detected by comparing provenance sidecars against current source files. See ASSEMBLY-0002.
 
 ### Release tarballs
 
-`rune release` reuses install to stage content, so each provider's `.manifest` lands inside the release tarball at `.{provider}/.manifest`. When end users extract a tarball and `make install`, the manifest copies to `~/.{provider}/.manifest` — exactly where install would have placed it. Round-trip consistent: a tarball is byte-identical to a fresh install of the same module version.
+`rune release` reuses install to stage content, so each provider's `.manifest` lands inside the release tarball at `.{provider}/.manifest`. When end users extract a tarball and `make install`, the manifest copies to `~/.{provider}/.manifest`: exactly where install would have placed it. Round-trip consistent: a tarball is byte-identical to a fresh install of the same module version.
 
 ## Consequences
 
-- [+] Simple format — nested YAML with `fingerprint` and `provenance`, human-readable
-- [+] Lives at the target — survives `build/` cleanup
-- [+] Per-provider — each target directory tracks its own deployments
-- [+] No spec overhead — this is not an attestation, just a cache
-- [+] Ships inside release tarballs — `rune provenance` works against extracted tarballs
+- [+] Simple format: nested YAML with `fingerprint` and `provenance`, human-readable
+- [+] Lives at the target: survives `build/` cleanup
+- [+] Per-provider: each target directory tracks its own deployments
+- [+] No spec overhead: this is not an attestation, just a cache
+- [+] Ships inside release tarballs: `rune provenance` works against extracted tarballs
 - [-] Manifest corruption means full reinstall (acceptable risk)

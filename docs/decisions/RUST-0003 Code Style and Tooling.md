@@ -26,12 +26,12 @@ upstream: []
 
 ## Context and Problem Statement
 
-Consistent formatting and lint configuration across modules prevents style drift and reduces review friction. Code must be maximally explicit — long variable names, long method names, descriptive generic parameters (per RUST-0011). Well-written code does not need comments. If code requires a comment to explain what it does, the names are wrong.
+Consistent formatting and lint configuration across modules prevents style drift and reduces review friction. Code must be maximally explicit: long variable names, long method names, descriptive generic parameters (per RUST-0011). Well-written code does not need comments. If code requires a comment to explain what it does, the names are wrong.
 
 ## Considered Options
 
-1. **Default rustfmt + no clippy** — minimal configuration, allows inconsistency.
-2. **Custom rustfmt + clippy pedantic** — strict formatting and linting, catches more issues at compile time.
+1. **Default rustfmt + no clippy**: minimal configuration, allows inconsistency.
+2. **Custom rustfmt + clippy pedantic**: strict formatting and linting, catches more issues at compile time.
 
 ## Decision Outcome
 
@@ -62,7 +62,7 @@ missing_panics_doc = "allow"
 ### Annotations
 
 - `#[must_use]` on types and functions whose return values should never be silently dropped
-- `#[forbid(unsafe_code)]` via Cargo.toml lints — no exceptions
+- `#[forbid(unsafe_code)]` via Cargo.toml lints, no exceptions
 
 ### Naming
 
@@ -76,4 +76,4 @@ missing_panics_doc = "allow"
 - Sibling test files (`mod.rs` + `tests.rs`), not inline `#[cfg(test)]` blocks
 - Doc tests with runnable examples on every public function
 - `assert_cmd` for binary-level integration tests
-- `proptest` for property-based testing (persistence disabled — no regression files at crate root)
+- `proptest` for property-based testing (persistence disabled: no regression files at crate root)

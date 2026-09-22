@@ -26,20 +26,20 @@ upstream: []
 
 ## Context and Problem Statement
 
-rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync tool (900+ stars, 200+ releases, 21+ providers) that routes rules, skills, agents, hooks, and commands to provider-specific directories. It uses JSONC config, frontmatter-based targeting, and a lockfile for reproducible installs from git repos. rune-cli assembles and validates content — a different concern. The two tools are complementary.
+rulesync (github.com/dyoshikawa/rulesync) is a mature multi-provider config sync tool (900+ stars, 200+ releases, 21+ providers) that routes rules, skills, agents, hooks, and commands to provider-specific directories. It uses JSONC config, frontmatter-based targeting, and a lockfile for reproducible installs from git repos. rune-cli assembles and validates content: a different concern. The two tools are complementary.
 
 ## Decision Drivers
 
-- Deployment (file routing to provider directories) is a commodity — do not reinvent it
+- Deployment (file routing to provider directories) is a commodity: do not reinvent it
 - Assembly (frontmatter stripping, variant merging, provenance) is our unique value
 - rulesync's lockfile pattern solves distribution in a way our manifest does not
-- Not all users will have rulesync installed — need a fallback
+- Not all users will have rulesync installed: need a fallback
 
 ## Considered Options
 
-1. **Require rulesync** — rune-cli outputs to `.rulesync/`, users run `rulesync generate`. Hard dependency on a Node.js tool.
-2. **Ignore rulesync** — rune-cli does its own deployment. Duplicate effort, limited to 4 providers.
-3. **Optional integration** — rune-cli assembles to `build/`, deploys with a minimal built-in deployer. If rulesync is present, can optionally output in rulesync-compatible format for broader provider coverage.
+1. **Require rulesync**: rune-cli outputs to `.rulesync/`, users run `rulesync generate`. Hard dependency on a Node.js tool.
+2. **Ignore rulesync**: rune-cli does its own deployment. Duplicate effort, limited to 4 providers.
+3. **Optional integration**: rune-cli assembles to `build/`, deploys with a minimal built-in deployer. If rulesync is present, can optionally output in rulesync-compatible format for broader provider coverage.
 
 ## Decision Outcome
 

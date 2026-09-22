@@ -28,7 +28,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-`rune launch` composes environment middleware (CLI-0018): an ordered chain of plan patches with `--with`, `--direct`, `--tmux`, and `--dry-run`. Users also want named presets — "launch Claude Code pointed at a different model or endpoint" — selectable per invocation (`rune launch sol@claude`, profile@tool like user@host). A preset mechanism could either replace the middleware chain with a profile-only launcher or layer on top of it.
+`rune launch` composes environment middleware (CLI-0018): an ordered chain of plan patches with `--with`, `--direct`, `--tmux`, and `--dry-run`. Users also want named presets ("launch Claude Code pointed at a different model or endpoint") selectable per invocation (`rune launch sol@claude`, profile@tool like user@host). A preset mechanism could either replace the middleware chain with a profile-only launcher or layer on top of it.
 
 ## Decision Drivers
 

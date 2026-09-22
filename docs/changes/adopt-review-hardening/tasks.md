@@ -9,7 +9,7 @@
 ## 2. Verification
 
 - [x] 2.1 Tests: pending-skip and finalized-deploys on collection, strict inventory, timestamp/transport presence, flag detection with keep gating, doctor tamper case
-- [x] 2.2 cargo fmt, clippy clean in scope, 1032 tests green. Council (codex gpt-5.6-sol xhigh + grok) reviewed the design and its findings drove the implementation — a diff-level council pass is deferred until the shared working copy separates from the parallel bench work
+- [x] 2.2 cargo fmt, clippy clean in scope, 1032 tests green. Council (codex gpt-5.6-sol xhigh + grok) reviewed the design and its findings drove the implementation: a diff-level council pass is deferred until the shared working copy separates from the parallel bench work
 - [x] 2.3 Walkthrough hardening checklist added (docs/walkthroughs/Adopt.md)
 
 ## 3. Follow-up

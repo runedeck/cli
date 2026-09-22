@@ -25,19 +25,19 @@ upstream: []
 
 ## Context and Problem Statement
 
-rulesync [1] defines a mature set of deployment rules for 21+ AI coding providers — directory layouts, file naming, feature routing, and per-target configuration. Rather than inventing our own deployment conventions, we should adopt theirs and acknowledge the source.
+rulesync [1] defines a mature set of deployment rules for 21+ AI coding providers: directory layouts, file naming, feature routing, and per-target configuration. Rather than inventing our own deployment conventions, we should adopt theirs and acknowledge the source.
 
 ## Decision Drivers
 
-- rulesync has 900+ stars, 200+ releases, and 52 contributors — battle-tested conventions
+- rulesync has 900+ stars, 200+ releases, and 52 contributors, battle-tested conventions
 - Reinventing deployment rules wastes effort on a solved problem
 - Alignment with rulesync enables future interoperability
-- Our assembly pipeline is the unique value — deployment rules are commodity
+- Our assembly pipeline is the unique value: deployment rules are commodity
 
 ## Considered Options
 
-1. **Invent own conventions** — define our own directory layouts and target naming. Full control but duplicates solved work.
-2. **Adopt rulesync conventions** — use their layouts and naming, acknowledge the source. Enables interoperability.
+1. **Invent own conventions**: define our own directory layouts and target naming. Full control but duplicates solved work.
+2. **Adopt rulesync conventions**: use their layouts and naming, acknowledge the source. Enables interoperability.
 
 ## Decision Outcome
 
@@ -76,4 +76,4 @@ Examples of conventions adopted from rulesync [1]:
 
 ## More Information
 
-[1]: https://github.com/dyoshikawa/rulesync "rulesync — multi-provider AI tool config sync (MIT, 900+ stars)"
+[1]: https://github.com/dyoshikawa/rulesync "rulesync: multi-provider AI tool config sync (MIT, 900+ stars)"

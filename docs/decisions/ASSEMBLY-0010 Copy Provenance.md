@@ -26,7 +26,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-`rune copy` ([ASSEMBLY-0009](ASSEMBLY-0009 Direct Copy Fallback.md)) copies source files between modules with no provenance, no manifest tracking. Assembly provenance ([ASSEMBLY-0002](ASSEMBLY-0002 Provenance Tracking.md)) covers the source-to-deployed-output pipeline during `rune install`, but those sidecars land in gitignored deployment directories (`.claude/.provenance/`). When content is adopted from one module into another — especially with renaming (`SecretScan` → `SecretsScan`, `TheOpponent` → `DevilsAdvocate`) — there is no machine-verifiable record of lineage in version control.
+`rune copy` ([ASSEMBLY-0009](ASSEMBLY-0009 Direct Copy Fallback.md)) copies source files between modules with no provenance, no manifest tracking. Assembly provenance ([ASSEMBLY-0002](ASSEMBLY-0002 Provenance Tracking.md)) covers the source-to-deployed-output pipeline during `rune install`, but those sidecars land in gitignored deployment directories (`.claude/.provenance/`). When content is adopted from one module into another (especially with renaming (`SecretScan` → `SecretsScan`, `TheOpponent` → `DevilsAdvocate`)) there is no machine-verifiable record of lineage in version control.
 
 `rune drift` only matches by filename. Renamed adoptions are invisible. Manual `upstream:` frontmatter markers have no SHA pinning and drift silently.
 
@@ -38,9 +38,9 @@ upstream: []
 
 ## Considered Options
 
-1. **Extend `rune copy` with provenance sidecars** — write SLSA sidecars to the target module's source tree alongside copied files, using a `copy/v1` build type
-2. **New `rune adopt` command** — dedicated command for cross-module adoption with auto-injected `upstream:` frontmatter and provenance
-3. **Status quo** — hand-maintained `upstream:` frontmatter and `[upstream]:` ref links only
+1. **Extend `rune copy` with provenance sidecars**: write SLSA sidecars to the target module's source tree alongside copied files, using a `copy/v1` build type
+2. **New `rune adopt` command**: dedicated command for cross-module adoption with auto-injected `upstream:` frontmatter and provenance
+3. **Status quo**: hand-maintained `upstream:` frontmatter and `[upstream]:` ref links only
 
 ## Decision Outcome
 
@@ -65,8 +65,8 @@ The copy command loads the source module's `module.yaml` to resolve its reposito
 
 ## Consequences
 
-- [+] Version-controlled provenance — travels with source files in git
-- [+] SHA-pinned lineage — records exact content hash at time of copy
+- [+] Version-controlled provenance: travels with source files in git
+- [+] SHA-pinned lineage: records exact content hash at time of copy
 - [+] Enables `rune drift` to resolve renamed files via provenance sidecars
 - [+] Reuses existing SLSA statement format and `manifest::generate_statement`
 - [-] Two provenance layers to reason about (copy at source, assembly at deploy)

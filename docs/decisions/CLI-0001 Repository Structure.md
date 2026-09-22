@@ -27,8 +27,8 @@ rune-cli is a Rust binary crate that assembles, validates, and deploys AI coding
 
 ## Considered Options
 
-1. **Ad-hoc structure** — let the layout emerge organically. Risks inconsistency as the project grows.
-2. **Documented conventions with upstream references** — explicitly reference CORE ADRs for each structural decision. One place to understand the repo.
+1. **Ad-hoc structure**: let the layout emerge organically. Risks inconsistency as the project grows.
+2. **Documented conventions with upstream references**: explicitly reference CORE ADRs for each structural decision. One place to understand the repo.
 
 ## Decision Outcome
 
@@ -58,7 +58,7 @@ Dual SHA tracking (source + deployed) for incremental installs and orphan cleanu
 
 ### Directory naming
 
-Directories are navigation, not categorization. Every directory name is a routing decision. Qualifier directory names (`claude/`, `opus-4-6/`, `user/`) have functional consequences — a typo silently disables content. Per CORE-0024 [9].
+Directories are navigation, not categorization. Every directory name is a routing decision. Qualifier directory names (`claude/`, `opus-4-6/`, `user/`) have functional consequences: a typo silently disables content. Per CORE-0024 [9].
 
 ### Licensing
 

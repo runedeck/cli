@@ -41,11 +41,11 @@ every render path.
 
 ## Considered Options
 
-1. **Keep the single palette** — no work, light terminals stay unreadable.
-2. **Named theme set with light and dark pairing and token overrides** — a `[theme]` config
+1. **Keep the single palette**: no work, light terminals stay unreadable.
+2. **Named theme set with light and dark pairing and token overrides**: a `[theme]` config
    selects a built-in palette, an automatic mode follows the host appearance where the terminal
    reports it, and single tokens stay overridable.
-3. **User-defined theme files only** — maximum freedom, but every user starts from nothing and
+3. **User-defined theme files only**: maximum freedom, but every user starts from nothing and
    golden tests lose a stable reference.
 
 ## Decision Outcome

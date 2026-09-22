@@ -37,27 +37,27 @@ The Mintlify install.md standard [1] solves this with structured, task-oriented 
 
 ## Considered Options
 
-1. **README.md install section** — human-oriented, no structured success criteria for agents.
-2. **CLAUDE.md install commands** — pollutes behavioral instructions with one-time setup.
-3. **Dedicated INSTALL.md** — separate file with structured format and measurable DONE WHEN criteria.
+1. **README.md install section**: human-oriented, no structured success criteria for agents.
+2. **CLAUDE.md install commands**: pollutes behavioral instructions with one-time setup.
+3. **Dedicated INSTALL.md**: separate file with structured format and measurable DONE WHEN criteria.
 
 ## Decision Outcome
 
-Every repo ships an `INSTALL.md` following the Mintlify install.md standard [1]. This replaces the PAI pattern of separate INSTALL.md + VERIFY.md files — DONE WHEN embeds verification, VERIFY.md is retired.
+Every repo ships an `INSTALL.md` following the Mintlify install.md standard [1]. This replaces the PAI pattern of separate INSTALL.md + VERIFY.md files: DONE WHEN embeds verification, VERIFY.md is retired.
 
 The template lives at `templates/INSTALL.md`.
 
 Format (9 required elements):
 
-1. **H1 Title** — lowercase, hyphenated identifier
-2. **Blockquote Summary** — brief description of what the software does
-3. **Conversational Opening** — "I want you to install [product] for me. Execute all the steps below autonomously."
-4. **OBJECTIVE** — concise goal statement
-5. **DONE WHEN** — specific, measurable success condition
-6. **TODO Section** — markdown checkboxes (3-7 items) listing core tasks
-7. **Detailed Steps** — sequential instructions with explicit commands, task language ("You need to...", "You must...")
-8. **EXECUTE NOW Closing** — "EXECUTE NOW: Complete the above TODO list to achieve: [restate DONE WHEN]"
-9. **llms.txt Reference** — optional link for additional context
+1. **H1 Title**: lowercase, hyphenated identifier
+2. **Blockquote Summary**: brief description of what the software does
+3. **Conversational Opening**: "I want you to install [product] for me. Execute all the steps below autonomously."
+4. **OBJECTIVE**: concise goal statement
+5. **DONE WHEN**: specific, measurable success condition
+6. **TODO Section**: markdown checkboxes (3-7 items) listing core tasks
+7. **Detailed Steps**: sequential instructions with explicit commands, task language ("You need to...", "You must...")
+8. **EXECUTE NOW Closing**: "EXECUTE NOW: Complete the above TODO list to achieve: [restate DONE WHEN]"
+9. **llms.txt Reference**: optional link for additional context
 
 Content rules from the spec:
 
@@ -66,8 +66,8 @@ Content rules from the spec:
 
 ## Consequences
 
-- [+] Predictable location — agents look for `INSTALL.md` in every repo
-- [+] DONE WHEN embeds verification — no separate VERIFY.md needed
+- [+] Predictable location: agents look for `INSTALL.md` in every repo
+- [+] DONE WHEN embeds verification: no separate VERIFY.md needed
 - [+] Does not pollute CLAUDE.md, AGENTS.md, or README.md
 - [+] EXECUTE NOW triggers autonomous agent execution
 - [+] Follows an existing open standard rather than inventing a new convention
@@ -75,5 +75,5 @@ Content rules from the spec:
 
 ## More Information
 
-[1]: https://github.com/mintlify/install-md "Mintlify install.md — standard for LLM-executable installation"
-[2]: https://www.mintlify.com/blog/install-md-standard-for-llm-executable-installation "Mintlify blog — install.md standard (deprecated in favor of skill.md)"
+[1]: https://github.com/mintlify/install-md "Mintlify install.md: standard for LLM-executable installation"
+[2]: https://www.mintlify.com/blog/install-md-standard-for-llm-executable-installation "Mintlify blog: install.md standard (deprecated in favor of skill.md)"

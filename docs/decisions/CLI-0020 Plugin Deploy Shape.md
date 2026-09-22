@@ -27,7 +27,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-Skills deployed loose into `.claude/skills/<name>` load unnamespaced: `/deslop` can collide with bundled or project skills, and nothing brands the deck's content. Claude Code's plugin system namespaces skills as `<plugin>:<skill>`, but the classic route to a plugin is a marketplace install — heavier than `rune skill add … && rune install`, the primary path. The docs also define [skills-directory plugins](https://code.claude.com/docs/en/plugins-reference#skills-directory-plugins): any folder under a skills directory carrying `.claude-plugin/plugin.json` auto-loads as `<name>@skills-dir` with no marketplace and no install step.
+Skills deployed loose into `.claude/skills/<name>` load unnamespaced: `/deslop` can collide with bundled or project skills, and nothing brands the deck's content. Claude Code's plugin system namespaces skills as `<plugin>:<skill>`, but the classic route to a plugin is a marketplace install: heavier than `rune skill add … && rune install`, the primary path. The docs also define [skills-directory plugins](https://code.claude.com/docs/en/plugins-reference#skills-directory-plugins): any folder under a skills directory carrying `.claude-plugin/plugin.json` auto-loads as `<name>@skills-dir` with no marketplace and no install step.
 
 ## Decision Drivers
 

@@ -30,15 +30,15 @@ rune-cli assembles, validates, and deploys markdown content for AI coding tools.
 
 ## Decision Drivers
 
-- Each module has one job — readable in isolation
+- Each module has one job: readable in isolation
 - No module exceeds ~300 lines of production code
 - Every module uses directory form with sibling `tests.rs` (per RUST-0012)
-- Library modules are pure (no I/O) — CLI handlers own the I/O boundary
+- Library modules are pure (no I/O): CLI handlers own the I/O boundary
 
 ## Considered Options
 
-1. **Single module** — everything in one file. Simple for small projects but unreadable as it grows.
-2. **Module-per-concern** — parse, assemble, manifest, provider, validate, target, cli. Each testable in isolation.
+1. **Single module**: everything in one file. Simple for small projects but unreadable as it grows.
+2. **Module-per-concern**: parse, assemble, manifest, provider, validate, target, cli. Each testable in isolation.
 
 ## Decision Outcome
 
@@ -127,8 +127,8 @@ Everything else in the tree is under the line.
 
 `validate` supports two schema formats:
 
-- `.mdschema` — structural validation (headings, sections, required content) per CORE-0005
-- YAML Schema — frontmatter field validation per ASSEMBLY-0006
+- `.mdschema`: structural validation (headings, sections, required content) per CORE-0005
+- YAML Schema: frontmatter field validation per ASSEMBLY-0006
 
 ### Targeting details
 
@@ -149,11 +149,11 @@ Everything else in the tree is under the line.
 
 ### Growth rule
 
-If a module exceeds ~300 lines, split it into internal files within the module directory. If two modules always import each other, merge them. If a module has zero tests, it is probably doing too little — absorb it.
+If a module exceeds ~300 lines, split it into internal files within the module directory. If two modules always import each other, merge them. If a module has zero tests, it is probably doing too little, absorb it.
 
 ### Internal split pattern
 
-When a module grows, add sibling files inside the module directory. `mod.rs` owns the public API and re-exports. Internal files use `pub(super)` — visible within the module, not exported to the crate.
+When a module grows, add sibling files inside the module directory. `mod.rs` owns the public API and re-exports. Internal files use `pub(super)`: visible within the module, not exported to the crate.
 
 ```text
 assemble/
@@ -175,15 +175,15 @@ pub use strip::strip_frontmatter;
 pub use merge::assemble;
 ```
 
-Each internal file is focused — one concern, one file. The module boundary does not change. Only the internal structure grows.
+Each internal file is focused: one concern, one file. The module boundary does not change. Only the internal structure grows.
 
 ## Consequences
 
-- [+] Focused modules — each has one job
+- [+] Focused modules: each has one job
 - [+] Each module testable with external fixtures
-- [+] Library modules minimize I/O — CLI handlers own the boundary
+- [+] Library modules minimize I/O: CLI handlers own the boundary
 - [+] No module does two things
 
 ## More Information
 
-[1]: https://docs.anthropic.com/en/docs/claude-code/skills "Claude Code skills — required frontmatter fields"
+[1]: https://docs.anthropic.com/en/docs/claude-code/skills "Claude Code skills: required frontmatter fields"

@@ -23,7 +23,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-Rust's async/await propagates through call stacks — once a function is async, every caller must be async too (the "function coloring" problem). This adds runtime dependencies, `Send` bounds, and lifetime constraints with no throughput benefit for filesystem operations.
+Rust's async/await propagates through call stacks: once a function is async, every caller must be async too (the "function coloring" problem). This adds runtime dependencies, `Send` bounds, and lifetime constraints with no throughput benefit for filesystem operations.
 
 ## Decision Drivers
 
@@ -34,8 +34,8 @@ Rust's async/await propagates through call stacks — once a function is async, 
 
 ## Considered Options
 
-1. **Async throughout** — tokio runtime, async file I/O. Maximum throughput potential but unnecessary complexity for filesystem operations.
-2. **Synchronous core with async boundaries** — sync by default, async only at explicit I/O boundaries if network calls are needed.
+1. **Async throughout**: tokio runtime, async file I/O. Maximum throughput potential but unnecessary complexity for filesystem operations.
+2. **Synchronous core with async boundaries**: sync by default, async only at explicit I/O boundaries if network calls are needed.
 
 ## Decision Outcome
 

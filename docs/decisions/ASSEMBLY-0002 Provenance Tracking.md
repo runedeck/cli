@@ -25,7 +25,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-When source files are transformed during assembly (frontmatter stripped, variants merged, refs removed), the deployed file no longer matches the source. Debugging "where did this deployed rule come from?" requires tracing the assembly chain. Standard provenance formats exist — in-toto/SLSA for supply chain attestation, SPDX for software bill of materials, W3C PROV for general provenance.
+When source files are transformed during assembly (frontmatter stripped, variants merged, refs removed), the deployed file no longer matches the source. Debugging "where did this deployed rule come from?" requires tracing the assembly chain. Standard provenance formats exist: in-toto/SLSA for supply chain attestation, SPDX for software bill of materials, W3C PROV for general provenance.
 
 ## Decision Drivers
 
@@ -36,15 +36,15 @@ When source files are transformed during assembly (frontmatter stripped, variant
 
 ## Considered Options
 
-1. **in-toto/SLSA attestation** — industry standard for supply chain provenance, JSON-native, cosign/Sigstore tooling
-2. **SPDX 3.0 Build Profile** — SBOM-oriented, designed for component inventory and build provenance
-3. **W3C PROV-inspired YAML** — custom format using PROV vocabulary
+1. **in-toto/SLSA attestation**: industry standard for supply chain provenance, JSON-native, cosign/Sigstore tooling
+2. **SPDX 3.0 Build Profile**: SBOM-oriented, designed for component inventory and build provenance
+3. **W3C PROV-inspired YAML**: custom format using PROV vocabulary
 
 ## Decision Outcome
 
 Chosen option: **in-toto/SLSA v1.0**, serialized as YAML. in-toto is the industry standard for build provenance [1], purpose-built for tracking "these inputs were transformed into this output by this builder." SLSA builds on in-toto with a structured `buildDefinition` that captures resolved dependencies with per-file digests [2].
 
-Provenance is a **build record** — it answers "what sources produced this built file?" Each assembled file in `build/` gets a `.yaml` sidecar containing the SLSA statement.
+Provenance is a **build record**: it answers "what sources produced this built file?" Each assembled file in `build/` gets a `.yaml` sidecar containing the SLSA statement.
 
 Sidecars deploy alongside content to per-directory `.provenance/` subdirectories at the target (e.g., `~/.claude/agents/.provenance/SystemArchitect.yaml`). The `.manifest` references each sidecar via its `provenance` field. `rune provenance` reads these to verify deployed integrity.
 
@@ -84,15 +84,15 @@ For standardized in-toto `.link` attestations, `in-toto-run` can wrap `rune asse
 
 ## Consequences
 
-- [+] Industry standard — cosign/Sigstore tooling for verification
-- [+] Compact — one self-contained statement per output file
+- [+] Industry standard: cosign/Sigstore tooling for verification
+- [+] Compact: one self-contained statement per output file
 - [+] Source hashes enable source-level staleness detection
 - [+] YAML serialization consistent with ecosystem
-- [+] Sidecars deploy to `.provenance/` subdirs — referenced by `.manifest`, used by `rune provenance`
+- [+] Sidecars deploy to `.provenance/` subdirs: referenced by `.manifest`, used by `rune provenance`
 - [-] in-toto envelope adds structural overhead vs flat hashes
 
 ## More Information
 
-[1]: https://in-toto.io/ "in-toto — framework for securing software supply chains"
+[1]: https://in-toto.io/ "in-toto: framework for securing software supply chains"
 [2]: https://slsa.dev/spec/v1.0/provenance "SLSA Provenance v1.0 Specification"
-[3]: https://github.com/in-toto/in-toto "in-toto CLI — in-toto-run wraps commands as an observer to produce .link attestations"
+[3]: https://github.com/in-toto/in-toto "in-toto CLI: in-toto-run wraps commands as an observer to produce .link attestations"

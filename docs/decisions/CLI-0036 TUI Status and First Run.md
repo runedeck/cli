@@ -43,11 +43,11 @@ setup. Rune needs the same three things without a second configuration surface.
 
 ## Considered Options
 
-1. **Surface tokens per theme** — add background and text tones to every palette. Six palettes
+1. **Surface tokens per theme**: add background and text tones to every palette. Six palettes
    to maintain, and custom overrides grow.
-2. **A light flag per theme with derived surfaces** — the five tones keep the meaning, one bit
+2. **A light flag per theme with derived surfaces**: the five tones keep the meaning, one bit
    picks the surface set, and the TUI derives the rest.
-3. **Terminal default backgrounds** — paint no backgrounds and inherit the terminal. Selection
+3. **Terminal default backgrounds**: paint no backgrounds and inherit the terminal. Selection
    and diff highlights lose contrast on unknown backgrounds.
 
 ## Decision Outcome

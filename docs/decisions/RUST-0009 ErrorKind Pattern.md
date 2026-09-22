@@ -28,8 +28,8 @@ upstream: []
 
 ## Considered Options
 
-1. **`Result<T, String>` everywhere** — simple but no programmatic error discrimination.
-2. **`Error` struct with `ErrorKind`** — callers branch on kind, follows std::io::ErrorKind convention.
+1. **`Result<T, String>` everywhere**: simple but no programmatic error discrimination.
+2. **`Error` struct with `ErrorKind`**: callers branch on kind, follows std::io::ErrorKind convention.
 
 ## Decision Outcome
 
@@ -59,7 +59,7 @@ impl Error {
 }
 ```
 
-`#[non_exhaustive]` allows adding variants without breaking callers. No `thiserror`, no `anyhow` — zero dependencies for error handling.
+`#[non_exhaustive]` allows adding variants without breaking callers. No `thiserror`, no `anyhow`: zero dependencies for error handling.
 
 ### When to use which
 

@@ -39,11 +39,11 @@ for example "no herdr server is running at PATH. Run `herdr` to start or attach 
 
 ## Considered Options
 
-1. **Message conventions only** — ask authors to include repair advice in message text.
+1. **Message conventions only**: ask authors to include repair advice in message text.
    Unenforceable and invisible to JSON consumers.
-2. **Structured code and fix command** — extend the error type with a stable `code` and an optional
+2. **Structured code and fix command**: extend the error type with a stable `code` and an optional
    `fix_command`, and render once at the CLI edge.
-3. **Per-command ad hoc JSON** — each command shapes its own error output. Divergent and unstable.
+3. **Per-command ad hoc JSON**: each command shapes its own error output. Divergent and unstable.
 
 ## Decision Outcome
 

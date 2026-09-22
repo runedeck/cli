@@ -37,8 +37,8 @@ Tests that validate markdown processing need readable test data. Inline string l
 
 ## Considered Options
 
-1. **Inline string literals** — test data as escaped strings in Rust. Unreadable for markdown content.
-2. **External fixture files with testing feature** — real markdown files loaded via `include_str!`, shared utilities behind feature flag.
+1. **Inline string literals**: test data as escaped strings in Rust. Unreadable for markdown content.
+2. **External fixture files with testing feature**: real markdown files loaded via `include_str!`, shared utilities behind feature flag.
 
 ## Decision Outcome
 
@@ -90,4 +90,4 @@ pub struct TestDispatcher {
 - [+] Fixtures are readable markdown files, not escaped strings
 - [+] Golden output enables snapshot-style testing with clear diffs
 - [+] Test utilities shared without shipping in release
-- [-] `include_str!` resolves at compile time — fixture path changes require recompilation
+- [-] `include_str!` resolves at compile time: fixture path changes require recompilation

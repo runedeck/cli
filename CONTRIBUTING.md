@@ -27,10 +27,10 @@ cargo test -- test_name
 
 Read `docs/decisions/` for the full ADR collection. Key decisions:
 
-- **ASSEMBLY-0004** — two-stage pipeline (assemble → deploy) with intermediate build/
-- **ASSEMBLY-0002** — SLSA/in-toto provenance sidecars
-- **ASSEMBLY-0003** — deployment manifest (.manifest at target)
-- **CLI-0006** — INSTALL.md following Mintlify standard
+- **ASSEMBLY-0004**: two-stage pipeline (assemble → deploy) with intermediate build/
+- **ASSEMBLY-0002**: SLSA/in-toto provenance sidecars
+- **ASSEMBLY-0003**: deployment manifest (.manifest at target)
+- **CLI-0006**: INSTALL.md following Mintlify standard
 
 The README has a pipeline diagram.
 
