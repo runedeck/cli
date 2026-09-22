@@ -12,7 +12,7 @@ fn conversion_report_output_is_frozen() {
     };
     let json = format!("{}\n", render_report_json(&report).unwrap());
     assert_report_fixture(&json, "tests/fixtures/output/conversion-report.json");
-    let sheet = crate::sheet::Sheet::detect();
+    let sheet = crate::sheet::Sheet::plain();
     assert_report_fixture(
         &render_report(&report, &sheet),
         "tests/fixtures/output/conversion-report.txt",

@@ -46,6 +46,13 @@ pub struct Sheet {
 }
 
 impl Sheet {
+    /// A sheet with no color, for output that is compared byte for byte.
+    pub fn plain() -> Self {
+        Self {
+            depth: Depth::Plain,
+        }
+    }
+
     pub fn detect() -> Self {
         let colored = !NO_COLOR.load(Ordering::Relaxed)
             && std::env::var_os("NO_COLOR").is_none()

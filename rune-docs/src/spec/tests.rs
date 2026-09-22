@@ -1186,7 +1186,7 @@ mod output_fixtures {
             }),
             "tests/fixtures/output/change-list.json",
         );
-        let sheet = crate::sheet::Sheet::detect();
+        let sheet = crate::sheet::Sheet::plain();
         assert_matches_fixture(
             &render_change_list(&summaries, &sheet),
             "tests/fixtures/output/change-list.txt",
