@@ -759,7 +759,7 @@ enum Command {
 
     /// Run a coding tool noninteractively with supervised output
     #[command(
-        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default."
+        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default.\n\nPROFILE ARGUMENTS:\n  The run sets the print, output, permission, tool, model, and directory\n  flags itself. A profile value for one of them is dropped with a warning,\n  never passed through. Codex --config and claude --settings are filtered\n  per key: model and access keys are dropped, everything else stays."
     )]
     Run {
         /// Coding tool to run, such as `codex` or `sol@claude`.

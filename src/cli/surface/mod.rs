@@ -119,41 +119,267 @@ fn is_short_option(option: &str) -> bool {
     option.len() == 2 && option.starts_with('-') && !option.starts_with("--")
 }
 
-fn extra_arg_matches(argument: &OsString, option: &str) -> bool {
-    let argument = argument.to_string_lossy();
-    argument == option
-        || argument.starts_with(&format!("{option}="))
-        || (is_short_option(option) && argument.starts_with(option))
+fn surface_name(surface: Surface) -> &'static str {
+    match surface {
+        Surface::Claude => "claude",
+        Surface::Codex => "codex",
+        Surface::Agy => "agy",
+        Surface::Grok => "grok",
+        Surface::Opencode => "opencode",
+    }
 }
 
-fn reject_owned_args(
-    invocation: &SurfaceInvocation,
-    owned_options: &[&str],
-) -> Result<(), SurfaceFailure> {
-    let conflicts: Vec<String> = invocation
-        .extra_args
-        .iter()
-        .filter(|argument| {
-            owned_options
-                .iter()
-                .any(|option| extra_arg_matches(argument, option))
-        })
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect();
-    if conflicts.is_empty() {
-        return Ok(());
+/// The flags of one surface that stand alone, so a following token is never
+/// their value. Everything else the surface owns takes a value. Spellings
+/// are not portable: `-p` is claude's print switch and codex's profile.
+fn boolean_options(surface: Surface) -> &'static [&'static str] {
+    match surface {
+        Surface::Claude => &[
+            "-p",
+            "--print",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+        ],
+        Surface::Codex => &[
+            "--json",
+            "--oss",
+            "--ignore-rules",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ],
+        Surface::Grok => &["--always-approve", "--no-plan"],
+        Surface::Agy => &["--dangerously-skip-permissions"],
+        Surface::Opencode => &["--print", "--disable-slash-commands"],
     }
-    Err(SurfaceFailure::Arguments(format!(
-        "automated {} execution owns these profile arguments: {}; remove them from the launch profile",
-        match invocation.surface {
-            Surface::Claude => "claude",
-            Surface::Codex => "codex",
-            Surface::Agy => "agy",
-            Surface::Grok => "grok",
-            Surface::Opencode => "opencode",
-        },
-        conflicts.join(", ")
-    )))
+}
+
+/// One profile argument after parsing: the option it names, the value it
+/// carries inline (`--flag=value`, `-fvalue`), and whether the value came
+/// attached. A token that names no owned option is `None`.
+struct OwnedArg {
+    option: &'static str,
+    inline: Option<String>,
+}
+
+fn owned_arg(token: &OsString, owned: &[&'static str]) -> Option<OwnedArg> {
+    let text = token.to_string_lossy();
+    for option in owned {
+        if text == *option {
+            return Some(OwnedArg {
+                option,
+                inline: None,
+            });
+        }
+        if option.starts_with("--") {
+            if let Some(rest) = text.strip_prefix(option)
+                && let Some(value) = rest.strip_prefix('=')
+            {
+                return Some(OwnedArg {
+                    option,
+                    inline: Some(value.to_string()),
+                });
+            }
+        } else if is_short_option(option)
+            && let Some(rest) = text.strip_prefix(option)
+        {
+            // `-cvalue` and `-c=value` both attach the value to the short flag.
+            let value = rest.strip_prefix('=').unwrap_or(rest);
+            return Some(OwnedArg {
+                option,
+                inline: Some(value.to_string()),
+            });
+        }
+    }
+    None
+}
+
+/// A value shown in a warning: one line, control characters escaped, long
+/// values cut, so a profile cannot forge or hide a warning.
+fn shown(value: &str) -> String {
+    let mut out: String = value
+        .chars()
+        .take(120)
+        .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+        .collect();
+    if value.chars().count() > 120 {
+        out.push('…');
+    }
+    out
+}
+
+/// The profile arguments the automated run keeps, and one warning line per
+/// argument it drops. The run owns the flags in `owned_options`, so a
+/// profile value for one of them is dropped with a warning instead of
+/// refusing the run. Codex `-c key=value` and claude `--settings` are
+/// filtered at the key level by the surface's `keyed` hook.
+#[derive(Debug, Default)]
+pub(crate) struct FilteredArgs {
+    pub(crate) kept: Vec<OsString>,
+    pub(crate) warnings: Vec<String>,
+}
+
+/// A key-level decision for one owned option and its value: `None` means
+/// no key-level opinion (drop whole with the generic warning),
+/// `Some((replacement, warnings))` keeps `replacement` under the same option
+/// when it is `Some` and always emits `warnings`.
+type Keyed = Option<(Option<String>, Vec<String>)>;
+
+fn filter_profile_args(
+    invocation: &SurfaceInvocation,
+    owned: &[&'static str],
+    booleans: &[&'static str],
+    keyed: &dyn Fn(&str, &str) -> Keyed,
+) -> FilteredArgs {
+    let name = surface_name(invocation.surface);
+    let mut filtered = FilteredArgs::default();
+    let args = &invocation.extra_args;
+    let mut index = 0;
+    while index < args.len() {
+        let Some(arg) = owned_arg(&args[index], owned) else {
+            filtered.kept.push(args[index].clone());
+            index += 1;
+            continue;
+        };
+        let takes_value = !booleans.contains(&arg.option);
+        // A value in the next token, unless that token is itself a flag: an
+        // owned option with a missing value must not swallow its neighbor.
+        let next_is_value = takes_value
+            && arg.inline.is_none()
+            && args
+                .get(index + 1)
+                .is_some_and(|next| !next.to_string_lossy().starts_with('-'));
+        let value = arg
+            .inline
+            .clone()
+            .or_else(|| next_is_value.then(|| args[index + 1].to_string_lossy().into_owned()));
+        let attached = arg.inline.is_some();
+        match value.as_deref().and_then(|v| keyed(arg.option, v)) {
+            Some((replacement, mut notes)) => {
+                if let Some(replacement) = replacement {
+                    if attached && arg.option.starts_with("--") {
+                        filtered
+                            .kept
+                            .push(OsString::from(format!("{}={replacement}", arg.option)));
+                    } else {
+                        filtered.kept.push(OsString::from(arg.option));
+                        filtered.kept.push(OsString::from(replacement));
+                    }
+                }
+                filtered.warnings.append(&mut notes);
+            }
+            None => filtered.warnings.push(match value.as_deref() {
+                Some(v) if !v.is_empty() => format!(
+                    "automated {name} execution owns {}; the profile value {} is dropped",
+                    arg.option,
+                    shown(v)
+                ),
+                _ => format!(
+                    "automated {name} execution owns {}; the profile flag is dropped",
+                    arg.option
+                ),
+            }),
+        }
+        index += 1 + usize::from(next_is_value);
+    }
+    filtered
+}
+
+/// No key-level handling: every owned option is dropped whole.
+fn drop_whole(_: &str, _: &str) -> Keyed {
+    None
+}
+
+/// Codex config keys the run owns, matched on the first path segment so
+/// `sandbox_workspace_write.network_access` falls under `sandbox_workspace_write`.
+const CODEX_OWNED_KEYS: &[&str] = &[
+    "model",
+    "model_provider",
+    "sandbox_mode",
+    "sandbox_workspace_write",
+    "approval_policy",
+    "cwd",
+    "shell_environment_policy",
+    "mcp_servers",
+];
+
+/// Codex `-c key=value`: keep keys the run does not set, drop the rest.
+fn codex_config_key(option: &str, assignment: &str) -> Keyed {
+    if option != "-c" && option != "--config" {
+        return None;
+    }
+    let Some((key, value)) = assignment.split_once('=') else {
+        return Some((
+            None,
+            vec![format!(
+                "automated codex execution dropped {option} {}: expected key=value",
+                shown(assignment)
+            )],
+        ));
+    };
+    let key = key.trim();
+    let head = key.split('.').next().unwrap_or(key);
+    if CODEX_OWNED_KEYS.contains(&head) {
+        Some((
+            None,
+            vec![format!(
+                "automated codex execution owns config key {key}; the profile value {} is dropped",
+                shown(value)
+            )],
+        ))
+    } else {
+        Some((Some(assignment.to_string()), Vec::new()))
+    }
+}
+
+/// Claude settings keys that change permissions, hooks, tools, plugins, or
+/// the model. Everything else, `env` included, stays.
+const CLAUDE_OWNED_SETTINGS: &[&str] = &[
+    "permissions",
+    "hooks",
+    "allowedTools",
+    "disallowedTools",
+    "enabledPlugins",
+    "model",
+    "sandbox",
+];
+
+/// Claude `--settings <json>`: keep `env` and unknown keys, drop the keys
+/// the run owns, and drop a value that is not an inline JSON object (a
+/// file path would load unfiltered settings).
+fn claude_settings_key(option: &str, json: &str) -> Keyed {
+    if option != "--settings" {
+        return None;
+    }
+    let Ok(serde_json::Value::Object(mut settings)) =
+        serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return Some((
+            None,
+            vec![format!(
+                "automated claude execution dropped --settings {}: only an inline JSON object is filtered",
+                shown(json)
+            )],
+        ));
+    };
+    let mut warnings = Vec::new();
+    for key in CLAUDE_OWNED_SETTINGS {
+        if let Some(value) = settings.remove(*key) {
+            warnings.push(format!(
+                "automated claude execution owns settings key {key}; the profile value {} is dropped",
+                shown(&value.to_string())
+            ));
+        }
+    }
+    if settings.is_empty() {
+        warnings.push(
+            "automated claude execution dropped --settings: nothing remains after the owned keys"
+                .to_string(),
+        );
+        return Some((None, warnings));
+    }
+    Some((
+        Some(serde_json::Value::Object(settings).to_string()),
+        warnings,
+    ))
 }
 
 fn combined_prompt(invocation: &SurfaceInvocation) -> String {
@@ -562,28 +788,6 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
 }
 
 fn invoke_claude(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    reject_owned_args(
-        invocation,
-        &[
-            "-p",
-            "--print",
-            "--output-format",
-            "--permission-mode",
-            "--model",
-            "--append-system-prompt",
-            "--system-prompt",
-            "--dangerously-skip-permissions",
-            "--allow-dangerously-skip-permissions",
-            "--allowedTools",
-            "--allowed-tools",
-            "--disallowedTools",
-            "--disallowed-tools",
-            "--tools",
-            "--add-dir",
-            "--settings",
-            "--setting-sources",
-        ],
-    )?;
     let output = require_success(run_process_request(&process_request(
         invocation,
         claude_args(invocation),
@@ -654,29 +858,6 @@ fn read_codex_final_message(
 }
 
 fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    reject_owned_args(
-        invocation,
-        &[
-            "-s",
-            "--sandbox",
-            "-C",
-            "--cd",
-            "-m",
-            "--model",
-            "--json",
-            "--ignore-rules",
-            "-o",
-            "--output-last-message",
-            "-c",
-            "--config",
-            "-p",
-            "--profile",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--add-dir",
-            "--oss",
-            "--local-provider",
-        ],
-    )?;
     let scratch = create_scratch_directory("codex")?;
     let result = (|| {
         let final_message_path = scratch.join("last-message.txt");
@@ -809,30 +990,6 @@ fn grok_final_text(stdout: &str) -> Result<String, SurfaceFailure> {
 }
 
 fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    reject_owned_args(
-        invocation,
-        &[
-            "--cwd",
-            "--prompt-file",
-            "--output-format",
-            "--sandbox",
-            "--permission-mode",
-            "-m",
-            "--model",
-            "--always-approve",
-            "--worktree",
-            "--system-prompt-override",
-            "--system-prompt",
-            "--allow",
-            "--allowedTools",
-            "--allowed-tools",
-            "--deny",
-            "--disallowedTools",
-            "--disallowed-tools",
-            "--tools",
-            "--no-plan",
-        ],
-    )?;
     let scratch = create_scratch_directory("grok")?;
     let result = (|| {
         let prompt_path = scratch.join("prompt.txt");
@@ -857,22 +1014,6 @@ fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFa
 }
 
 fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    reject_owned_args(
-        invocation,
-        &[
-            "-p",
-            "--print",
-            "--prompt",
-            "--print-timeout",
-            "--output-format",
-            "--sandbox",
-            "--mode",
-            "--model",
-            "--dangerously-skip-permissions",
-            "--disable-slash-commands",
-            "--add-dir",
-        ],
-    )?;
     let mut args = vec![
         OsString::from("--sandbox"),
         OsString::from("--mode"),
@@ -927,33 +1068,6 @@ struct AgyUsage {
 }
 
 fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    reject_owned_args(
-        invocation,
-        &[
-            "--dir",
-            "--format",
-            "-m",
-            "--model",
-            "--auto",
-            "--attach",
-            "--command",
-            "-c",
-            "--continue",
-            "-s",
-            "--session",
-            "--fork",
-            "--share",
-            "-i",
-            "--interactive",
-            "-f",
-            "--file",
-            "--port",
-            "-p",
-            "--password",
-            "-u",
-            "--username",
-        ],
-    )?;
     let mut args = vec![
         OsString::from("run"),
         OsString::from("--dir"),
@@ -1005,6 +1119,113 @@ fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, Surfa
     })
 }
 
+/// The flags the automated run sets itself for each surface. A profile
+/// value for one of them is dropped with a warning, never passed through.
+fn owned_options(surface: Surface) -> &'static [&'static str] {
+    match surface {
+        Surface::Claude => &[
+            "-p",
+            "--print",
+            "--output-format",
+            "--permission-mode",
+            "--model",
+            "--append-system-prompt",
+            "--system-prompt",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+            "--allowedTools",
+            "--allowed-tools",
+            "--disallowedTools",
+            "--disallowed-tools",
+            "--tools",
+            "--add-dir",
+            "--settings",
+            "--setting-sources",
+        ],
+        Surface::Codex => &[
+            "-s",
+            "--sandbox",
+            "-C",
+            "--cd",
+            "-m",
+            "--model",
+            "--json",
+            "--ignore-rules",
+            "-o",
+            "--output-last-message",
+            "-c",
+            "--config",
+            "-p",
+            "--profile",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--add-dir",
+            "--oss",
+            "--local-provider",
+        ],
+        Surface::Grok => &[
+            "--cwd",
+            "--prompt-file",
+            "--output-format",
+            "--sandbox",
+            "--permission-mode",
+            "-m",
+            "--model",
+            "--always-approve",
+            "--worktree",
+            "--system-prompt-override",
+            "--system-prompt",
+            "--allow",
+            "--allowedTools",
+            "--allowed-tools",
+            "--deny",
+            "--disallowedTools",
+            "--disallowed-tools",
+            "--tools",
+            "--no-plan",
+        ],
+        Surface::Agy => &[
+            "-p",
+            "--print",
+            "--prompt",
+            "--print-timeout",
+            "--output-format",
+            "--sandbox",
+            "--mode",
+            "--model",
+            "--dangerously-skip-permissions",
+            "--disable-slash-commands",
+            "--add-dir",
+        ],
+        Surface::Opencode => &[
+            "--dir",
+            "--format",
+            "-m",
+            "--model",
+            "--auto",
+            "--attach",
+            "--command",
+            "-c",
+            "--continue",
+            "-s",
+            "--session",
+            "--fork",
+            "--share",
+            "-i",
+            "--interactive",
+            "-f",
+            "--file",
+            "--port",
+            "-p",
+            "--password",
+            "-u",
+            "--username",
+        ],
+    }
+}
+
+/// Run the surface. The caller filters the profile arguments first with
+/// [`filter_surface_args`]; this function passes `extra_args` through as
+/// given.
 pub(crate) fn invoke_surface(
     invocation: &SurfaceInvocation,
 ) -> Result<SurfaceReply, SurfaceFailure> {
@@ -1014,6 +1235,18 @@ pub(crate) fn invoke_surface(
         Surface::Agy => invoke_agy(invocation),
         Surface::Grok => invoke_grok(invocation),
         Surface::Opencode => invoke_opencode(invocation),
+    }
+}
+
+/// The filtered profile arguments for a surface, with the key-level hook
+/// that surface understands.
+pub(crate) fn filter_surface_args(invocation: &SurfaceInvocation) -> FilteredArgs {
+    let owned = owned_options(invocation.surface);
+    let booleans = boolean_options(invocation.surface);
+    match invocation.surface {
+        Surface::Claude => filter_profile_args(invocation, owned, booleans, &claude_settings_key),
+        Surface::Codex => filter_profile_args(invocation, owned, booleans, &codex_config_key),
+        _ => filter_profile_args(invocation, owned, booleans, &drop_whole),
     }
 }
 
