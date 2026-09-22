@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Require the owner's signature on every commit a direct push adds to the
+# protected branch (docs/specs/owner-release-ceremony, Owner Direct Push).
+#
+#   verify-range-signatures --head SHA --keys FILE [--from SHA]
+#
+# The range is --from..--head, or every commit reachable from --head when
+# --from is empty or the zero id (a new branch). Each commit in the range
+# MUST carry a signature whose fingerprint KEYS names. Model commits that
+# reached the branch through a pull request are outside the range and stay
+# unsigned. The first failing commit is the refusal, exit 1. A range with
+# no commits passes. VERIFY_SEAL_GPG names the gpg program, as verify-seal.
+set -euo pipefail
+
+gpg_program=${VERIFY_SEAL_GPG:-gpg}
+head="" from="" keys=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --head) head=$2 ;;
+        --from) from=$2 ;;
+        --keys) keys=$2 ;;
+        *) printf 'verify-range-signatures: unknown option %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift 2
+done
+[ -n "$head" ] && [ -n "$keys" ] \
+    || { printf 'usage: verify-range-signatures --head SHA --keys FILE [--from SHA]\n' >&2; exit 2; }
+
+gnupg_home=""
+trap '[ -z "$gnupg_home" ] || command rm -rf "$gnupg_home"' EXIT
+
+fail() {
+    printf '%s\n' "$1"
+    exit 1
+}
+
+case "$from" in
+    '' | 0000000000000000000000000000000000000000) revisions=$head ;;
+    *) revisions="$from..$head" ;;
+esac
+range=$(git rev-list "$revisions") || fail "cannot list the commits in $revisions"
+if [ -z "$range" ]; then
+    printf 'owner signatures: no commits in %s\n' "$revisions"
+    exit 0
+fi
+
+gnupg_home=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:?TMPDIR must be set}}/verify-range-gpg.XXXXXX")
+chmod 0700 "$gnupg_home"
+TRUSTED_KEYS_GPG=$gpg_program bash "$(dirname "$0")/trusted-keys" --keys "$keys" --homedir "$gnupg_home" >/dev/null \
+    || fail "could not resolve the trusted signers in $keys"
+allowed=$("$gpg_program" --homedir "$gnupg_home" --batch --with-colons --fingerprint \
+    | awk -F: '$1 == "fpr" { print $10 }')
+[ -n "$allowed" ] || fail "$keys carries no OpenPGP fingerprint"
+
+count=0
+while read -r commit; do
+    output=$(GNUPGHOME="$gnupg_home" git -c gpg.format=openpgp -c gpg.program="$gpg_program" \
+        verify-commit --raw "$commit" 2>&1) \
+        || fail "commit $commit has no valid signature: a direct push to the protected branch carries the owner's signature on every commit it adds. Sign it (jj sign -r <rev>) or open a pull request."
+    signer=$(printf '%s\n' "$output" | awk '/^\[GNUPG:\] VALIDSIG / { print $3; exit }')
+    [ -n "$signer" ] || fail "commit $commit produced no valid signature fingerprint"
+    printf '%s\n' "$allowed" | grep -Fxq "$signer" \
+        || fail "commit $commit was signed by fingerprint $signer, which KEYS does not carry"
+    count=$((count + 1))
+done <<< "$range"
+printf 'owner signatures ok: %s commit(s) in %s signed by KEYS\n' "$count" "$revisions"

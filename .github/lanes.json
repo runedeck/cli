@@ -1,0 +1,34 @@
+{
+    "lanes": [
+        {
+            "id": "codex",
+            "login": "chatgpt-codex-connector[bot]",
+            "name": "Codex",
+            "kind": "free"
+        },
+        {
+            "id": "cursor",
+            "login": "cursor[bot]",
+            "name": "Cursor Bugbot",
+            "kind": "free"
+        },
+        {
+            "id": "coderabbit",
+            "login": "coderabbitai[bot]",
+            "name": "CodeRabbit",
+            "kind": "paid"
+        },
+        {
+            "id": "macroscope",
+            "login": "macroscopeapp[bot]",
+            "name": "Macroscope",
+            "kind": "paid"
+        },
+        {
+            "id": "runeseer",
+            "login": "runeseer[bot]",
+            "name": "Runeseer",
+            "kind": "paid"
+        }
+    ]
+}

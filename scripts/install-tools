@@ -39,6 +39,7 @@ version_output() {
                 SEMGREP_ENABLE_VERSION_CHECK=0 semgrep --version 2>&1
             ;;
         actionlint) actionlint --version 2>&1 | head -n 1 ;;
+        dcg) dcg --version 2>&1 | tr -d '\033' ;;
         *) "$1" --version 2>&1 ;;
     esac
 }
@@ -64,7 +65,12 @@ all_tools_match() {
         && tool_matches_version vale "$VALE_VERSION" \
         && tool_matches_version lychee "$LYCHEE_VERSION" \
         && tool_matches_version zizmor "$ZIZMOR_VERSION" \
-        && tool_matches_version actionlint "$ACTIONLINT_VERSION"
+        && tool_matches_version actionlint "$ACTIONLINT_VERSION" \
+        && tool_matches_version rg "$RG_VERSION" \
+        && tool_matches_version fd "$FD_VERSION" \
+        && tool_matches_version yq "$YQ_VERSION" \
+        && tool_matches_version jq "$JQ_VERSION" \
+        && tool_matches_version dcg "$DCG_VERSION"
 }
 
 brew_install() {
@@ -153,7 +159,7 @@ verified_archive() {
             && curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-connrefused "$archive_url" -o "$archive_name" \
             && printf '%s  %s\n' "$expected_digest" "$archive_name" > selected-checksum \
             && digest_matches selected-checksum \
-            && tar -xzf "$archive_name" \
+            && tar -xf "$archive_name" \
             && extracted_binary=$(find . -type f -name "$binary_name" -perm -u+x -print -quit) \
             && [ -n "$extracted_binary" ] \
             && mkdir -p "$INSTALL_DIRECTORY" \
@@ -161,6 +167,32 @@ verified_archive() {
     ); then
         command rm -rf "$scratch_directory"
         fail "could not install verified archive $archive_name: digest or extraction failed"
+    fi
+
+    command rm -rf "$scratch_directory"
+    export PATH="$INSTALL_DIRECTORY:$PATH"
+}
+
+# A release that is one bare executable, not an archive: download it,
+# check the digest, install it under the tool's command name.
+verified_binary() {
+    local binary_url=$1
+    local asset_name=$2
+    local expected_digest=$3
+    local binary_name=$4
+    local scratch_directory
+    scratch_directory=$(mktemp -d "${TMPDIR:-/tmp}/rune-tools.XXXXXX")
+
+    if ! (
+        cd "$scratch_directory" \
+            && curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-connrefused "$binary_url" -o "$asset_name" \
+            && printf '%s  %s\n' "$expected_digest" "$asset_name" > selected-checksum \
+            && digest_matches selected-checksum \
+            && mkdir -p "$INSTALL_DIRECTORY" \
+            && install -m 0755 "$asset_name" "$INSTALL_DIRECTORY/$binary_name"
+    ); then
+        command rm -rf "$scratch_directory"
+        fail "could not install verified binary $asset_name: digest check failed"
     fi
 
     command rm -rf "$scratch_directory"
@@ -302,6 +334,70 @@ install_actionlint() {
         "$archive_name" "$digest" actionlint
 }
 
+install_rg() {
+    tool_matches_version rg "$RG_VERSION" && return
+    local archive_name digest
+    archive_name="ripgrep-${RG_VERSION}-$(rust_target musl).tar.gz"
+    digest=$(archive_digest rg "$(platform)" "$(architecture)")
+    log "Installing digest-verified rg $RG_VERSION"
+    verified_archive \
+        "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" rg
+}
+
+install_fd() {
+    tool_matches_version fd "$FD_VERSION" && return
+    local archive_name digest
+    archive_name="fd-v${FD_VERSION}-$(rust_target musl).tar.gz"
+    digest=$(archive_digest fd "$(platform)" "$(architecture)")
+    log "Installing digest-verified fd $FD_VERSION"
+    verified_archive \
+        "https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" fd
+}
+
+install_yq() {
+    tool_matches_version yq "$YQ_VERSION" && return
+    local asset_name digest
+    asset_name="yq_$(platform)_$(architecture)"
+    digest=$(archive_digest yq "$(platform)" "$(architecture)")
+    log "Installing digest-verified yq $YQ_VERSION"
+    verified_binary \
+        "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${asset_name}" \
+        "$asset_name" "$digest" yq
+}
+
+install_jq() {
+    tool_matches_version jq "$JQ_VERSION" && return
+    local asset_name digest system_name
+    case "$(platform)" in
+        darwin) system_name=macos ;;
+        *) system_name=linux ;;
+    esac
+    asset_name="jq-${system_name}-$(architecture)"
+    digest=$(archive_digest jq "$(platform)" "$(architecture)")
+    log "Installing digest-verified jq $JQ_VERSION"
+    verified_binary \
+        "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/${asset_name}" \
+        "$asset_name" "$digest" jq
+}
+
+# dcg publishes gnu for linux arm64 and musl for linux amd64.
+install_dcg() {
+    tool_matches_version dcg "$DCG_VERSION" && return
+    local archive_name digest target
+    case "$(platform):$(architecture)" in
+        linux:arm64) target=$(rust_target gnu) ;;
+        *) target=$(rust_target musl) ;;
+    esac
+    archive_name="dcg-${target}.tar.xz"
+    digest=$(archive_digest dcg "$(platform)" "$(architecture)")
+    log "Installing digest-verified dcg $DCG_VERSION"
+    verified_archive \
+        "https://github.com/Dicklesworthstone/destructive_command_guard/releases/download/v${DCG_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" dcg
+}
+
 install_linters() {
     install_rumdl
     install_typos
@@ -309,6 +405,11 @@ install_linters() {
     install_lychee
     install_zizmor
     install_actionlint
+    install_rg
+    install_fd
+    install_yq
+    install_jq
+    install_dcg
 }
 
 verify_tools() {
@@ -327,6 +428,11 @@ verify_tools() {
     tool_matches_version lychee "$LYCHEE_VERSION" || failures+=("lychee $LYCHEE_VERSION")
     tool_matches_version zizmor "$ZIZMOR_VERSION" || failures+=("zizmor $ZIZMOR_VERSION")
     tool_matches_version actionlint "$ACTIONLINT_VERSION" || failures+=("actionlint $ACTIONLINT_VERSION")
+    tool_matches_version rg "$RG_VERSION" || failures+=("rg $RG_VERSION")
+    tool_matches_version fd "$FD_VERSION" || failures+=("fd $FD_VERSION")
+    tool_matches_version yq "$YQ_VERSION" || failures+=("yq $YQ_VERSION")
+    tool_matches_version jq "$JQ_VERSION" || failures+=("jq $JQ_VERSION")
+    tool_matches_version dcg "$DCG_VERSION" || failures+=("dcg $DCG_VERSION")
 
     [ "${#failures[@]}" -eq 0 ] \
         || fail "setup finished without the pinned toolchain: ${failures[*]}"

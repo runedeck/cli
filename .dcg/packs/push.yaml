@@ -1,0 +1,38 @@
+# Push policy (SKEL-0009, skill VersionControl). dcg loads .dcg/packs/*.yaml
+# from the repository root, so this pack binds only inside jj-colocated
+# runedeck repositories. Split from repo.yaml on 2026-09-21.
+# Validate: dcg pack validate .dcg/packs/push.yaml
+schema_version: 1
+id: rune.push
+name: Rune Push Policy
+version: 1.1.0
+
+description: |
+  Bare git push bypasses the gated jj push, which runs prek and checks
+  authorship and signatures on the exact outgoing range.
+
+keywords:
+  - git
+
+destructive_patterns:
+  - name: git-push-skips-checks
+    # Global options before the subcommand: those with a value (-C dir,
+    # -c key=val, --git-dir dir, quoted or not) and the flag-only ones
+    # (--no-pager, -p, --bare, --no-optional-locks, and the rest).
+    pattern: '^(?:/\S+/)?git\s+(?:(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env|--list-cmds|--attr-source)(?:=\S+|\s+(?:"[^"]*"|''[^'']*''|\S+))|--no-pager|--paginate|-[pP]|--bare|--no-replace-objects|--no-lazy-fetch|--no-optional-locks|--no-advice|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs|--html-path|--man-path|--info-path)\s+)*push(\s|$)'
+    severity: high
+    description: This repository is jj-colocated. Use the gated `jj push`.
+    explanation: |
+      The gated jj push alias runs prek and signs the push. A bare git
+      push skips the authorship check, the lint hooks, and signing.
+      Run `jj push -b <bookmark>` instead.
+    executables:
+      - git
+
+safe_patterns:
+  - name: git-push-dry-run
+    # `--dry-run` as its own argument, anywhere after push, with or
+    # without git global options in front. A refspec such as
+    # `fix--dry-run` does not qualify.
+    pattern: '^(?:/\S+/)?git\s+(?:\S+\s+)*?push(?:\s+(?:"[^"]*"|''[^'']*''|\S+))*?\s+(?:--dry-run|-n)(?:\s|$)'
+    description: A dry run changes nothing on the remote.

@@ -1,7 +1,7 @@
 version: 1
 base:
     source: https://github.com/runedeck/skeleton.git
-    release: 5e4657bffc4b52d2f9de49ef1c749d874bf0beed
+    release: 6374d8fccf0643b1925da0a384b46f02e8ef905a
 overlay:
     owner: runedeck/cli
     name: model-identity-policy

@@ -1,0 +1,89 @@
+# One line per case: DECISION RULE COMMAND. DECISION is DENY or ALLOW. RULE is
+# the pack rule that must match (pack.id:pattern) for a DENY, or `-` for an
+# ALLOW. scripts/test-dcg-packs runs each command through `dcg test
+# --format json` from the repository root under .dcg/test-config.toml and
+# compares decision and rule. Every safe pattern has a case that would match
+# its destructive rule without it, so removing an exemption fails the run.
+
+# rune.search
+DENY  rune.search:grep-use-rg        grep -r pattern .
+DENY  rune.search:find-use-fd        find . -name '*.md'
+DENY  rune.search:grep-alt-forms     /usr/bin/grep pattern file
+DENY  rune.search:grep-alt-forms     xargs grep pattern
+DENY  rune.search:find-use-fd|rune.search:find-alt-forms  busybox find . -name x
+DENY  rune.search:find-use-fd|rune.search:find-alt-forms  /usr/bin/find . -name x
+ALLOW -                              grep --version
+ALLOW -                              find --help
+ALLOW -                              git grep pattern
+
+# rune.parsers
+DENY  rune.parsers:yaml-needs-yq     awk '/name/' deck.yaml
+DENY  rune.parsers:json-needs-jq     sed -n '/id:/p' config.json
+ALLOW -                              sed -n '10,20p' config.json
+ALLOW -                              sed -n '10,20p' README.md
+
+# rune.secrets
+DENY  rune.secrets:casual-secret-read  cat .env
+DENY  rune.secrets:casual-secret-read  head ~/.ssh/id_rsa
+DENY  rune.secrets:casual-secret-read  less server.pem
+DENY  rune.secrets:casual-secret-read  tail -n 5 secrets.key
+DENY  rune.secrets:casual-secret-read  cat /Users/me/Library/Keychains/login.keychain-db
+DENY  rune.secrets:casual-secret-read  cat .env.example .env
+DENY  rune.secrets:casual-secret-read  cat .env .env.example
+DENY  rune.secrets:casual-secret-read  cat .env.template.production
+ALLOW -                              cat .env.example
+ALLOW -                              head -n 20 .env.example .env.sample
+
+# rune.push
+DENY  rune.push:git-push-skips-checks  git push origin main
+DENY  rune.push:git-push-skips-checks  git -C ../deck push
+DENY  rune.push:git-push-skips-checks  git -C "../path with spaces" push origin main
+DENY  rune.push:git-push-skips-checks  git --no-pager push origin main
+DENY  rune.push:git-push-skips-checks  /usr/bin/git push
+DENY  rune.push:git-push-skips-checks  git push origin HEAD:refs/heads/fix--dry-run
+ALLOW -                              git push --dry-run origin main
+ALLOW -                              git -C ../deck push --dry-run origin main
+ALLOW -                              git push origin main --dry-run
+
+# rune.provenance
+DENY  rune.provenance:provenance-shell-write      rm runes/core/skills/X/.provenance/SKILL.md.yaml
+DENY  rune.provenance:provenance-shell-write      touch .provenance/x.yaml
+DENY  rune.provenance:provenance-shell-write|rune.parsers:yaml-needs-yq  sed -i '' s/a/b/ .provenance/x.yaml
+DENY  rune.provenance:provenance-shell-write      sed -i '' s/a/b/ .provenance/x.txt
+DENY  rune.provenance:provenance-copy-destination cp x.yaml .provenance/x.yaml
+DENY  rune.provenance:provenance-copy-destination mv a.yaml runes/x/.provenance/a.yaml
+DENY  rune.provenance:provenance-redirect-write   echo x > .provenance/x.yaml
+DENY  rune.provenance:provenance-redirect-write   echo x >> .provenance/x.yaml
+ALLOW -                              cp .provenance/x.yaml /tmp/claude/x.yaml
+ALLOW -                              cat .provenance/x.yaml
+# The push dry-run exemption no longer reaches a provenance redirect on the
+# same line. Before the split both rules shared repo.yaml and this passed.
+DENY  rune.provenance:provenance-redirect-write   git push --dry-run origin main > .provenance/x.yaml
+
+# runner: dcg echoes the command, so a command that prints "Matched:" must
+# not be read as a denial
+ALLOW -                              printf 'Matched: fake.rule'
+
+# rune.rtk
+DENY  rune.rtk:rtk-wraps-harness     rtk codex exec -m gpt-5.5
+DENY  rune.rtk:rtk-wraps-harness     cd x && rtk rune install
+DENY  rune.rtk:rtk-wraps-harness     rtk grok -p "hi"
+DENY  rune.rtk:rtk-wraps-harness     rtk claude -p "hi"
+ALLOW -                              rtk git status
+ALLOW -                              rtk cargo build
+ALLOW -                              codex exec "hi"
+ALLOW -                              rtk pipx run x
+
+# rune.homebrew
+DENY  rune.homebrew:brew-no-pipe     brew info --json rune | jq .
+DENY  rune.homebrew:brew-no-pipe     brew audit x | head -n 1
+DENY  rune.homebrew:brew-no-pipe     /opt/homebrew/bin/brew info rune | head -n 1
+DENY  rune.homebrew:brew-no-pipe     brew info x| head
+DENY  rune.homebrew:brew-no-pipe     cd /tmp && brew audit f.rb 2>&1 | head -5
+ALLOW -                              brew --prefix | head -n 1
+ALLOW -                              brew --version
+ALLOW -                              brew info rune || true
+ALLOW -                              brew info rune > /tmp/claude/brew.txt 2>&1
+ALLOW -                              brew info --json=v2 x >| /tmp/claude/brew.json 2>&1
+ALLOW -                              brew info --json=v2 x > /tmp/claude/brew.json 2>&1; jq ".a | .b" /tmp/claude/brew.json
+ALLOW -                              brew a && b | c

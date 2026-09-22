@@ -1,0 +1,11 @@
+# Isolated dcg configuration for scripts/test-dcg-packs. It loads only the
+# core packs and this repository's packs, so a fixture decision never
+# depends on the host's ~/.config/dcg/ packs or policy. dcg still discovers
+# the repository .dcg.toml beside it, so the fixtures see the same
+# enforcement a contributor does. Selected with DCG_CONFIG by the runner.
+[general]
+check_updates = false
+
+[packs]
+enabled = ["core"]
+custom_paths = [".dcg/packs/*.yaml"]

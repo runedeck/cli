@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Replay .dcg/fixtures.txt through `dcg test --format json` from the
+repository root under the isolated .dcg/test-config.toml and compare the
+decision and the matched rule with the expected ones.
+
+Usage: scripts/test-dcg-packs [--print]
+
+Exit 1 when a decision or a rule differs, when dcg fails or answers with a
+schema this script does not read, or when the fixture file has no case.
+`--print` writes one line per fixture, which is the before/after table for
+a pack refactor.
+"""
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / ".dcg" / "fixtures.txt"
+CONFIG = ROOT / ".dcg" / "test-config.toml"
+SCHEMA = 1
+
+
+def decide(command):
+    env = dict(os.environ, DCG_CONFIG=str(CONFIG))
+    run = subprocess.run(
+        ["dcg", "test", "--format", "json", command],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )
+    if run.returncode not in (0, 1, 2) or not run.stdout.strip():
+        return "ERROR", f"exit {run.returncode}: {run.stderr.strip()[:200]}"
+    try:
+        report = json.loads(run.stdout)
+    except json.JSONDecodeError:
+        return "ERROR", "dcg test did not answer with JSON"
+    if report.get("schema_version") != SCHEMA:
+        return "ERROR", f"dcg test schema {report.get('schema_version')}, this script reads {SCHEMA}"
+    decision = report.get("decision")
+    if decision == "allow":
+        return "ALLOW", "-"
+    if decision == "deny":
+        return "DENY", report.get("rule_id") or "?"
+    return "ERROR", f"decision {decision!r}"
+
+
+def cases():
+    for number, line in enumerate(FIXTURES.read_text().splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split(None, 2)
+        if len(parts) != 3 or parts[0] not in ("DENY", "ALLOW"):
+            sys.exit(f"{FIXTURES}:{number}: expected 'DECISION RULE COMMAND'")
+        yield parts
+
+
+def main():
+    show = "--print" in sys.argv
+    failures = 0
+    total = 0
+    for expected, rule, command in cases():
+        total += 1
+        got, matched = decide(command)
+        # A `|` in RULE lists the rules that overlap on this command; any of
+        # them is the expected attribution.
+        wrong = got != expected or (expected == "DENY" and matched not in rule.split("|"))
+        mark = f"  <-- expected {expected} {rule}" if wrong else ""
+        if show or wrong:
+            print(f"{got:5} {matched:45} {command}{mark}")
+        failures += wrong
+    if total == 0:
+        sys.exit(f"{FIXTURES}: no case")
+    print(f"{total} cases, {failures} wrong")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

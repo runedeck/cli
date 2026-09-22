@@ -2,10 +2,15 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# The branches a direct push must sign every added commit for. A commit that
+# reached them through a pull request is outside the pushed range.
+PROTECTED = ("main", "master", "trunk")
 
 
 def run(*arguments, cwd=None, capture=True, content=None):
@@ -58,7 +63,64 @@ def live_target(git_directory, remote, bookmark):
     return entries[0][0] if entries else ""
 
 
+def strip_harness_git_config():
+    """Drop the git config a harness injects through the environment.
+
+    GIT_CONFIG_COUNT/KEY_n/VALUE_n and GIT_CONFIG_PARAMETERS reach every
+    git the hook and the validators run. They are the caller's transport
+    settings, never part of the change, so they are removed before the
+    checks rather than allowed by value.
+    """
+    for name in list(os.environ):
+        if name in ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT") or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            del os.environ[name]
+
+
+def require_owner_signatures(snapshot, bookmark, head, old):
+    """A direct push to a protected branch signs every commit it adds.
+
+    The verifier and KEYS come from the trusted default branch in the
+    snapshot, never from the pushed head, so a push cannot carry the rule
+    that judges it.
+    """
+    if bookmark not in PROTECTED:
+        return
+    trusted = "refs/remotes/origin/main"
+    tools = snapshot / ".owner-signatures"
+    tools.mkdir()
+
+    def staged(path):
+        # Until the verifier reaches the default branch, the push that
+        # carries it is judged by its own copy: there is no trusted rule yet,
+        # and the copy still demands the owner's signature on that push.
+        probe = subprocess.run(
+            ["git", "show", f"{trusted}:{path}"], cwd=snapshot, text=True, capture_output=True, check=False,
+        )
+        if probe.returncode == 0:
+            return probe.stdout.strip()
+        print(f"owner signatures: {trusted} carries no {path}; using the pushed head's copy")
+        return run("git", "show", f"{head}:{path}", cwd=snapshot)
+
+    for name in ("verify-range-signatures", "trusted-keys"):
+        script = tools / name
+        script.write_text(staged(f"scripts/{name}") + "\n")
+        script.chmod(0o755)
+    keys = tools / "KEYS"
+    keys.write_text(staged("KEYS") + "\n")
+    try:
+        run(
+            "bash", str(tools / "verify-range-signatures"),
+            "--head", head, "--keys", str(keys), "--from", old or "",
+            cwd=snapshot, capture=False,
+        )
+    finally:
+        for path in tools.iterdir():
+            path.unlink()
+        tools.rmdir()
+
+
 def main(arguments):
+    strip_harness_git_config()
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("-b", "--bookmark", required=True, action="append")
     parser.add_argument("--remote", default="origin")
@@ -135,6 +197,7 @@ def main(arguments):
                 "Validation changed the checkout. Apply those fixes before pushing.\n"
                 + changes
             )
+        require_owner_signatures(snapshot, bookmark, head, old)
 
     if (
         target(workspace, bookmark) != head

@@ -1,0 +1,34 @@
+# Homebrew output policy (SKEL-0009, skill RTK and brew probes). dcg loads
+# .dcg/packs/*.yaml from the repository root, so this rule binds every agent
+# that works in this repository.
+# Validate: dcg pack validate .dcg/packs/homebrew.yaml
+schema_version: 1
+id: rune.homebrew
+name: Rune Homebrew Policy
+version: 1.1.0
+
+description: |
+  Rejects a pipe after a brew command.
+  Homebrew installs vendored Ruby gems lazily at the start of many
+  commands. A pipe reader that exits early kills that install and
+  leaves Homebrew unable to boot.
+
+keywords:
+  - brew
+
+destructive_patterns:
+  - name: brew-no-pipe
+    # Whole-command rule: no `executables` scope, because dcg 0.14 scopes
+    # an executable-bound rule to its own pipeline segment, which never
+    # holds the pipe. `\|(?!\|)` keeps shell OR (`||`) out of it. The probe
+    # exemption (--version, --prefix, --cellar, --repository load no gems) is
+    # a lookahead here, because a separate safe pattern is not consulted for
+    # a whole-command match.
+    pattern: '(^|[;&]\s*)(\S*/)?brew\b(?!\s+(--version|--prefix|--cellar|--repository)(\s|$))([^|;&]|>&[0-9]|&>|>\|)*(?<![>|])\|(?!\|)'
+    severity: high
+    description: Do not pipe brew output. Redirect it to a file and read the file.
+    explanation: |
+      Many brew commands (audit, style, livecheck, `info --json`, test-bot)
+      install vendored gems first. When the pipe reader exits early, SIGPIPE
+      interrupts the gem build and every later brew command fails at boot.
+      Write `brew <cmd> > /tmp/claude/brew.txt 2>&1` and read the file.

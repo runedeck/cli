@@ -1,0 +1,40 @@
+# Structured parser policy (SKEL-0009, rule UseEfficientCLI). dcg loads
+# .dcg/packs/*.yaml from the repository root, so this pack binds every agent
+# that works in this repository. Split from toolpolicy.yaml on 2026-09-21.
+# One rule per format, so a host can relax YAML and JSON separately when
+# only one of yq and jq is installed.
+# Validate: dcg pack validate .dcg/packs/parsers.yaml
+schema_version: 1
+id: rune.parsers
+name: Rune Structured Parsers
+version: 1.1.0
+
+description: |
+  YAML goes through yq and JSON through jq. Line tools break on
+  indentation, quoting, and multi-line values, and the breakage is silent.
+
+keywords:
+  - awk
+  - sed
+
+destructive_patterns:
+  - name: yaml-needs-yq
+    pattern: '\b(awk|sed)\b[^|;&]*\.ya?ml\b'
+    severity: high
+    description: Parse YAML with yq, never awk or sed.
+    explanation: |
+      Line tools break on indentation, quoting, and multi-line values,
+      and the breakage is silent. yq parses the structure.
+
+  - name: json-needs-jq
+    pattern: '\b(awk|sed)\b[^|;&]*\.json\b'
+    severity: high
+    description: Parse JSON with jq, never awk or sed.
+    explanation: |
+      Line tools break on quoting, nesting, and escaped strings, and
+      the breakage is silent. jq parses the structure.
+
+safe_patterns:
+  - name: sed-range-view
+    pattern: '\bsed\s+-n\s+.?[0-9]+,[0-9]+p.?\s'
+    description: A pure line-range view extracts nothing structural.

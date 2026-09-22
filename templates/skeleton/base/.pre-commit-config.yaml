@@ -170,6 +170,17 @@ repos:
             pass_filenames: false
             stages: [pre-push]
 
+          # Every dcg pack validates and each fixture in .dcg/fixtures.txt keeps
+          # its decision and its rule, so a pack edit cannot silently admit
+          # what it used to deny. Where dcg is absent the skip is printed, and
+          # it fails under REQUIRE_GATES (CI).
+          - id: check-dcg-packs
+            name: dcg packs validate and fixtures hold
+            entry: sh -c 'if command -v dcg >/dev/null 2>&1; then for p in .dcg/packs/*.yaml; do dcg pack validate "$p" >/dev/null || { dcg pack validate "$p"; exit 1; }; done && python3 scripts/test-dcg-packs; elif [ -n "${REQUIRE_GATES:-}" ]; then echo "REQUIRE_GATES set and dcg is absent"; exit 1; else echo "dcg is absent, pack fixtures not replayed"; fi'
+            language: system
+            files: ^(\.dcg/|\.dcg\.toml$|scripts/test-dcg-packs$|scripts/tool-versions$)
+            pass_filenames: false
+
           # The same rules as the ci/authorship workflow, applied before the
           # push so a bad identity fails as a local amend, not a CI rewrite.
           - id: check-authorship

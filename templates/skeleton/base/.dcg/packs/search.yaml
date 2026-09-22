@@ -1,0 +1,57 @@
+# Search tool policy (SKEL-0009, rule UseEfficientCLI). dcg loads
+# .dcg/packs/*.yaml from the repository root, so this pack binds every agent
+# that works in this repository. Split from toolpolicy.yaml on 2026-09-21.
+# Validate: dcg pack validate .dcg/packs/search.yaml
+schema_version: 1
+id: rune.search
+name: Rune Search Tools
+version: 1.0.0
+
+description: |
+  Redirects grep and find to rg and fd. The denial text tells the agent
+  the replacement. The correction costs one turn.
+
+keywords:
+  - grep
+  - find
+
+destructive_patterns:
+  - name: grep-use-rg
+    pattern: '^grep\b'
+    severity: high
+    description: Use rg (ripgrep) instead of grep.
+    explanation: |
+      rg is faster, respects .gitignore, and prints file and line by
+      default. Replace `grep -r pattern .` with `rg pattern`.
+      `git grep` stays allowed.
+    executables:
+      - grep
+
+  - name: find-use-fd
+    pattern: '^find\s+\S'
+    severity: high
+    description: Use fd instead of find.
+    explanation: |
+      fd is faster and respects .gitignore. Replace
+      `find . -name "*.md"` with `fd -e md`. Destructive find flags
+      are already covered by the core.filesystem pack.
+    executables:
+      - find
+
+  - name: grep-alt-forms
+    pattern: '(^/(usr/)?bin/|\bxargs\s+(-\S+\s+)*|\bbusybox\s+)grep\b'
+    severity: high
+    description: Use rg (ripgrep) instead of grep, in any invocation form.
+
+  - name: find-alt-forms
+    pattern: '(^/(usr/)?bin/|\bbusybox\s+)find\s+\S'
+    severity: high
+    description: Use fd instead of find, in any invocation form.
+
+safe_patterns:
+  - name: grep-version-probe
+    pattern: '^grep\s+--(version|help)\b'
+    description: Version and help probes stay allowed.
+  - name: find-version-probe
+    pattern: '^find\s+--(version|help)\b'
+    description: Version and help probes stay allowed.

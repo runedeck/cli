@@ -122,6 +122,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Sync the ceremony files to skeleton `6374d8fc` through `copier update`: seven dcg packs with fixtures, `.dcg.toml`, the lane table, the direct-push signature check, admin-role rulesets.
 - Change the correctness caller to skeleton `5e4657bf`: the controller runs on every same-repository push, draft or ready, so the green draft starts the review round.
 - Change the ceremony files and the embedded skeleton to `60ad8249`: owner-seal messages and nonce, jq guards, versioned display names, `thread-resolver.yaml` retired.
 - Change `rune sign` to read `KEYS` as `signer <fingerprint> <address>...` lines (skeleton `trusted-key-anchor`), with the armored block as a fallback and a malformed line refused.

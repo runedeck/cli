@@ -1,0 +1,38 @@
+# rtk passthrough guard (SKEL-0009, rule UseEfficientCLI). dcg loads .dcg/packs/*.yaml from the
+# repository root, so this rule binds every agent that works in this repository.
+#
+# rtk compresses output only for tools it has a filter for (git, cargo, ls).
+# In front of a coding harness or supervisor it passes the command through
+# unfiltered, so the run gains nothing, and it defeats every permission and
+# sandbox rule written for the bare command: `rtk` is not a wrapper Claude Code
+# strips before rule matching, so `rtk codex ...` matches no `codex *` rule.
+# The rtk PreToolUse hook never emits this form itself; it appears only when a
+# session types the prefix by habit. Blocked so the habit shows up instead of
+# silently bypassing the rules.
+#
+# Validate: dcg pack validate .dcg/packs/rtk.yaml
+# Schema: https://github.com/Dicklesworthstone/destructive_command_guard/blob/main/docs/pack.schema.yaml
+schema_version: 1
+id: rune.rtk
+name: rtk Passthrough
+version: 1.0.0
+
+description: |
+  Stops rtk from wrapping programs it cannot filter, where the prefix only
+  hides the command from permission and sandbox rules.
+
+# A command is evaluated against this pack only if it contains this keyword.
+keywords:
+  - rtk
+
+destructive_patterns:
+  - name: rtk-wraps-harness
+    pattern: (^|[;&|]\s*)rtk\s+(?:codex|claude|grok|opencode|agy|pi|rune)\b
+    severity: high
+    description: rtk has no filter for this program. The prefix only defeats rule matching.
+    explanation: |
+      rtk passes programs it cannot filter straight through, so this run
+      gains nothing. It also hides the command from every `codex *`,
+      `grok *`, or `rune *` permission and sandbox rule, because Claude
+      Code does not strip `rtk` before matching. Drop the prefix and run
+      the bare command.

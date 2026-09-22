@@ -1,0 +1,47 @@
+# Provenance write policy (SKEL-0009, skill AdoptArtifact). dcg loads
+# .dcg/packs/*.yaml from the repository root, so this pack binds only inside
+# runedeck repositories. Split from repo.yaml on 2026-09-21.
+# Validate: dcg pack validate .dcg/packs/provenance.yaml
+schema_version: 1
+id: rune.provenance
+name: Rune Provenance Writes
+version: 1.1.0
+
+description: |
+  Shell writes into .provenance/ destroy digest-bound adoption evidence.
+  Adoption tooling owns these files. Reads are permitted.
+
+keywords:
+  - provenance
+
+destructive_patterns:
+  - name: provenance-shell-write
+    # In-place editors and deleters on any operand under .provenance/.
+    pattern: '\b(rm|unlink|truncate|touch|tee|sed\s+-[a-zA-Z]*i[^ ]*|perl\s+-[a-zA-Z]*i[^ ]*)\b[^|;&]*\.provenance/'
+    severity: high
+    description: .provenance/ holds digest-bound evidence. Do not rewrite it from the shell.
+    explanation: |
+      Provenance sidecars bind source and file digests. A shell write
+      invalidates the digests, exactly like the rumdl fmt incident.
+      Adoption tooling owns these files. Refresh them through
+      AdoptArtifact, never by direct edits.
+
+  - name: provenance-copy-destination
+    # cp, mv, install, rsync: only when the last operand is under
+    # .provenance/. A copy out of .provenance/ is a read and passes.
+    pattern: '\b(cp|mv|install|rsync)\b[^|;&]*\s\S*\.provenance/\S*\s*([;&|]|$)'
+    severity: high
+    description: .provenance/ holds digest-bound evidence. Do not copy or move files into it.
+    explanation: |
+      A copy or move into .provenance/ replaces a digest-bound sidecar.
+      Adoption tooling owns these files. Refresh them through
+      AdoptArtifact, never by direct writes.
+
+  - name: provenance-redirect-write
+    pattern: '>>?[^|;&]*\.provenance/'
+    severity: high
+    description: .provenance/ holds digest-bound evidence. Do not redirect output into it.
+    explanation: |
+      A redirect into .provenance/ overwrites or extends a digest-bound
+      sidecar. Adoption tooling owns these files. Refresh them through
+      AdoptArtifact, never by direct writes.

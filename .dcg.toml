@@ -1,0 +1,19 @@
+# Repository dcg policy (SKEL-0009). dcg discovers this file at the repository
+# root and applies it as enforcement only: it can add a deny, never relax one,
+# and it cannot load packs. The packs themselves load through the host config
+# glob `.dcg/packs/*.yaml`. The host may relax rune.search and rune.parsers to a
+# warning where rg, fd, yq, or jq are missing. The rules below need no tool, so
+# the repository pins them to deny whatever the host says.
+#
+# Entries are per rule. dcg 0.14.4 honors a per-rule deny for an external pack
+# from this file and ignores a per-pack one (checked 2026-09-22 with
+# `dcg explain --format json`). Needs dcg 0.14 or newer. Older dcg ignores
+# this file.
+# Reference: https://github.com/Dicklesworthstone/destructive_command_guard/blob/main/docs/configuration.md
+[policy.rules]
+"rune.secrets:casual-secret-read" = "deny"
+"rune.push:git-push-skips-checks" = "deny"
+"rune.provenance:provenance-shell-write" = "deny"
+"rune.provenance:provenance-redirect-write" = "deny"
+"rune.rtk:rtk-wraps-harness" = "deny"
+"rune.homebrew:brew-no-pipe" = "deny"
