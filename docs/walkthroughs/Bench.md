@@ -13,7 +13,7 @@ rune bench doctor
 Expected: the workspace resolves (discovered checkout or the `bench` config
 list), suite tiers list with their members, models.yaml parses, and each
 enabled provider reports readiness. `bench` is a list of checkouts in priority
-order — the first is the primary, every entry contributes its suites, and a
+order: the first is the primary, every entry contributes its suites, and a
 suite's results stay in the checkout that owns it. Wire the private
 downstream once:
 
@@ -85,7 +85,7 @@ rune bench dashboard
 
 Expected: `artifacts/dashboard.html` built from every suite and version under
 the results root (echo-smoke runs excluded), state in the URL hash. The file
-is gitignored — it embeds questions and answers.
+is gitignored: it embeds questions and answers.
 
 ## Boundaries worth seeing fail
 

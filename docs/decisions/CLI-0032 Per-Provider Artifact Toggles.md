@@ -39,10 +39,10 @@ Users run several harnesses and want different rune sets in each, from one comma
 
 ## Considered Options
 
-1. **Hand-edited include lists** — the status quo. No per-provider dimension, error-prone edits.
-2. **Consumer-side provider overlays with kind verbs** — `.rune` gains per-provider exclude and
+1. **Hand-edited include lists**: the status quo. No per-provider dimension, error-prone edits.
+2. **Consumer-side provider overlays with kind verbs**: `.rune` gains per-provider exclude and
    include overlays, and the kind commands gain `on` and `off`.
-3. **Deck-side frontmatter targeting only** — the author decides, the consumer cannot. Author
+3. **Deck-side frontmatter targeting only**: the author decides, the consumer cannot. Author
    targeting already exists and answers a different question.
 
 ## Decision Outcome

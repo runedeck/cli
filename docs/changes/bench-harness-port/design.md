@@ -37,13 +37,13 @@ the spec commands already use.
 `bench.root` in user config points at a bench checkout (default discovery:
 `~/Developer/runedeck/bench`, then a `bench/` sibling of the deck). Inside it:
 
-- `suites/` — committed sample suites (public).
-- `suites/user/` — local, gitignored.
-- `suites/private/` — held-out suites, tracked only in a private downstream
+- `suites/`: committed sample suites (public).
+- `suites/user/`, local, gitignored.
+- `suites/private/`: held-out suites, tracked only in a private downstream
   checkout. Autodetected when present, or pointed at directly via
   `bench.private_root` when the private checkout lives elsewhere.
-- `bench/models.yaml` — the model registry (unchanged format).
-- `results/` — cache and outputs (unchanged layout).
+- `bench/models.yaml`: the model registry (unchanged format).
+- `results/`: cache and outputs (unchanged layout).
 
 rune never copies private suite content into the public workspace: a run of a
 private-tier suite defaults its results root (cache, results, reports) to
@@ -58,21 +58,21 @@ directories.
 
 Exact reimplementation of the contract, in `src/cli/bench/`:
 
-- `suite.rs` — serde types + validation matching the zod schema. Unknown fields
+- `suite.rs`: serde types + validation matching the zod schema. Unknown fields
   ignored. SuiteId derivation (id, file stem, slugified name).
-- `scoring.rs` — `is_correct`: lowercase substring, negatives first and
+- `scoring.rs`: `is_correct`: lowercase substring, negatives first and
   overriding. The 11 upstream test cases replicated.
-- `cache.rs` — signature normalization (trim, lowercase+sort answers), SHA-1
+- `cache.rs`: signature normalization (trim, lowercase+sort answers), SHA-1
   12-hex hash, cache filename and payload with exact key order, gather/resume
   from both prior results and cache entries, system-prompt mismatch hard error.
-- `run.rs` — per-model plan (reuse then execute), fair-interleave ordering,
+- `run.rs`: per-model plan (reuse then execute), fair-interleave ordering,
   worker pool of `concurrency` threads with `stagger_ms` start offsets,
   per-invoke timeout, errors never cached.
-- `report.rs` — results JSON, markdown report, summary JSON with the upstream
+- `report.rs`: results JSON, markdown report, summary JSON with the upstream
   field set and sort (successRate desc, averageDuration asc, error runs in the
   denominator). JSON pretty-printed with 2-space indent to match
   `JSON.stringify(..., null, 2)`.
-- `registry.rs` — models.yaml parsing with the same hard errors (duplicate ids,
+- `registry.rs`: models.yaml parsing with the same hard errors (duplicate ids,
   temperature on CLI providers, base_url required for openai-compatible,
   `${ENV}` expansion for enabled models only), provider-specific concurrency
   defaults.
@@ -84,7 +84,7 @@ unversioned), `negative_answers`/`negativeAnswers`, `result`, `error`, and
 `humanPending` are omitted when absent, never null. Numbers go through a
 `JsNumber` serializer: integer-valued floats below 1e21 print as plain
 integers (ECMAScript decimal notation), non-integral values use serde_json's
-shortest form — which diverges from ECMAScript only in its exponential zones
+shortest form: which diverges from ECMAScript only in its exponential zones
 (below ~1e-6, at 1e21 and above). No emitted metric reaches those zones while
 provider costs are zero, and the compat spec records the limitation.
 
@@ -123,7 +123,7 @@ shapes as the TS implementation.
 `dashboard.rs` ports `build-dashboard.ts`: embed the template
 (`dashboard-template.html` carried in the bench workspace, not in the rune
 binary, so the dashboard evolves with the data repo), scan `results/`, inject
-the results JSON, write `artifacts/dashboard.html` (gitignored — it embeds
+the results JSON, write `artifacts/dashboard.html` (gitignored, it embeds
 answers).
 
 ## Doctor and audit
@@ -131,7 +131,7 @@ answers).
 - `doctor`: bench workspace found, suite tiers readable, models.yaml parses,
   per-provider readiness (binary on PATH / endpoint reachable), private tier
   wiring status.
-- `audit`: the README-documented suite checks — canonical answers self-score,
+- `audit`: the README-documented suite checks: canonical answers self-score,
   negatives must not substring-collide with answers, dangerously short tokens
   flagged. Run before shipping a suite.
 

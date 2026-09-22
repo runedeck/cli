@@ -44,11 +44,11 @@ Those writes need review, verification, and a durable record.
 
 ## Considered Options
 
-1. **Boolean first-run flag with immediate apply** — herdr's model. Simple, but it marks completion
+1. **Boolean first-run flag with immediate apply**: herdr's model. Simple, but it marks completion
    before verification and hides the writes.
-2. **Plan-then-apply wizard with a versioned setup record** — the wizard prints every planned write,
+2. **Plan-then-apply wizard with a versioned setup record**: the wizard prints every planned write,
    asks once, applies, verifies, and only then records completion with a version number.
-3. **No wizard, documentation only** — no new code, but new users keep failing at the first
+3. **No wizard, documentation only**: no new code, but new users keep failing at the first
    unconfigured command.
 
 ## Decision Outcome

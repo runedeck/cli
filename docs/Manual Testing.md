@@ -691,7 +691,7 @@ rune bench run --suite tier1-sample --models echo-smoke --runs 1 --version smoke
 #   {"results": ..., "records": N, "reused": N, "errored": 0} — errored runs exit 1
 ```
 
-`bench` in `~/.config/rune/config.yaml` is a list of workspace checkouts, each added with `rune config set bench <path>`. With no list configured, the runedeck/bench checkout is discovered automatically. The first entry is the primary (registry, dashboard). Every entry contributes its suites (`suites/`, `suites/user/`, `suites/private/`), a later checkout never duplicates a stem an earlier one provides, and a suite's results and cache stay in the checkout that owns it — private-suite runs never write into the public tree. `--suite` accepts a path or a bare name with 2-char prefix matching. Results, cache, and summaries are byte-compatible with the bun harness in the bench repo, and the two runners resume from each other's caches. Judged suites still run via the bun harness (`bun run bench -- run …`). `rune bench` names that clearly when pointed at one.
+`bench` in `~/.config/rune/config.yaml` is a list of workspace checkouts, each added with `rune config set bench <path>`. With no list configured, the runedeck/bench checkout is discovered automatically. The first entry is the primary (registry, dashboard). Every entry contributes its suites (`suites/`, `suites/user/`, `suites/private/`), a later checkout never duplicates a stem an earlier one provides, and a suite's results and cache stay in the checkout that owns it: private-suite runs never write into the public tree. `--suite` accepts a path or a bare name with 2-char prefix matching. Results, cache, and summaries are byte-compatible with the bun harness in the bench repo, and the two runners resume from each other's caches. Judged suites still run via the bun harness (`bun run bench -- run …`). `rune bench` names that clearly when pointed at one.
 
 ### rune provider
 
@@ -742,7 +742,7 @@ Expected:
 
 - `import` on a directory reprocesses every ADR (README.md excluded) in filename order, assigning sequential ids in the destination prefix
 - `adopt` takes one file per session, exactly like AdoptArtifact. Finalize validates against the decisions mdschema and seals the review record beside the ADR
-- `rune validate` flags imported records whose frontmatter still misses required schema fields — import warns, validate enforces
+- `rune validate` flags imported records whose frontmatter still misses required schema fields: import warns, validate enforces
 
 ### rune docs
 

@@ -29,7 +29,7 @@ upstream: []
 
 Skills, agents, and rules are authored as markdown with YAML frontmatter. Each AI coding provider expects files in
 different directories, with different naming conventions, different body formats, and different metadata. Raw file
-copying works initially but breaks down as the instruction set grows — you end up with duplicated files across
+copying works initially but breaks down as the instruction set grows: you end up with duplicated files across
 providers, no way to trace which source produced a deployed instruction, and no mechanism to detect when someone edited
 a deployed file directly instead of updating the source. The system needs a clear separation between content
 transformation (assembly) and file placement (deployment), with provenance tracking at every step.
@@ -43,9 +43,9 @@ transformation (assembly) and file placement (deployment), with provenance track
 
 ## Considered Options
 
-1. **Single-stage direct deploy** — transform and copy in one pass. No intermediate output to inspect.
-2. **Two-stage with build directory** — assembly produces inspectable output, deployment copies it.
-3. **External tool only** — delegate everything to rulesync or similar. No control over assembly transforms.
+1. **Single-stage direct deploy**: transform and copy in one pass. No intermediate output to inspect.
+2. **Two-stage with build directory**: assembly produces inspectable output, deployment copies it.
+3. **External tool only**: delegate everything to rulesync or similar. No control over assembly transforms.
 
 ## Decision Outcome
 
@@ -73,18 +73,18 @@ source/         -->    assemble    -->    build/          -->    provider dirs
 
 Transforms source content into provider-specific output:
 
-1. Parse frontmatter — extract name, targets, description, model, tools
-2. Resolve variant — check qualifier directories (user/ > provider/model/ > provider/ > base)
-3. Merge — combine base + variant body using variant's `mode` (append, prepend, replace)
-4. Strip frontmatter — remove `---` delimiters, H1 heading from body
-5. Strip reference links — remove `[N]: url` definitions and `[N]` inline markers
-6. Format per provider — YAML frontmatter (Claude/Gemini/OpenCode), TOML for Codex agents only (skills and rules stay
+1. Parse frontmatter: extract name, targets, description, model, tools
+2. Resolve variant: check qualifier directories (user/ > provider/model/ > provider/ > base)
+3. Merge: combine base + variant body using variant's `mode` (append, prepend, replace)
+4. Strip frontmatter: remove `---` delimiters, H1 heading from body
+5. Strip reference links: remove `[N]: url` definitions and `[N]` inline markers
+6. Format per provider: YAML frontmatter (Claude/Gemini/OpenCode), TOML for Codex agents only (skills and rules stay
    markdown), kebab-case names (Gemini/OpenCode), tool remapping (Gemini)
-7. Write sidecar — `.yaml` companion preserving stripped frontmatter + provenance
+7. Write sidecar: `.yaml` companion preserving stripped frontmatter + provenance
 
 Output structure:
 
-Source (repository — qualifier directories for variant resolution):
+Source (repository: qualifier directories for variant resolution):
 
 ```text
 repository/
@@ -112,7 +112,7 @@ repository/
 
 Resolution precedence (highest first): `user/` > `provider/model/` > `provider/` > base.
 
-This applies uniformly to all content kinds including skill companions. Subdirectories are flattened at assembly — the
+This applies uniformly to all content kinds including skill companions. Subdirectories are flattened at assembly, the
 prefix is stripped from the output path:
 
 ```text
@@ -197,8 +197,8 @@ agents/SecurityArchitect.md       build/claude/agents/SecurityArchitect.md    (Y
 
 ## Consequences
 
-- [+] Assembly is a pure function — testable without filesystem side effects
+- [+] Assembly is a pure function: testable without filesystem side effects
 - [+] `build/` directory is inspectable before deployment
-- [+] Deployment is decoupled — replaceable by rulesync, native CLIs, or `rune copy`
+- [+] Deployment is decoupled: replaceable by rulesync, native CLIs, or `rune copy`
 - [+] Provenance tracks the full transform chain
 - [-] Two-stage adds a build step vs. direct copy (direct copy remains as fallback per ASSEMBLY-0009)

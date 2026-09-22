@@ -26,12 +26,12 @@ upstream: []
 
 ## Context and Problem Statement
 
-Rust's `#[cfg()]` attributes silently compile away code when the condition is false. A typo like `#[cfg(feature = "tesitng")]` silently drops the gated code with no compiler warning. This is especially dangerous when combined with feature-gated test utilities — a misspelled feature name means tests silently disappear.
+Rust's `#[cfg()]` attributes silently compile away code when the condition is false. A typo like `#[cfg(feature = "tesitng")]` silently drops the gated code with no compiler warning. This is especially dangerous when combined with feature-gated test utilities: a misspelled feature name means tests silently disappear.
 
 ## Considered Options
 
-1. **Default behavior** — unexpected cfgs produce a warning. Easy to miss in CI output.
-2. **Deny unexpected cfgs** — compile error on unrecognized cfg values. Catches typos immediately.
+1. **Default behavior**: unexpected cfgs produce a warning. Easy to miss in CI output.
+2. **Deny unexpected cfgs**: compile error on unrecognized cfg values. Catches typos immediately.
 
 ## Decision Outcome
 

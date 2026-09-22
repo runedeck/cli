@@ -18,15 +18,15 @@ Every file below lives in `schemas/` and is compiled into the binary by
 `src/cli/validate/schema.rs`, which serves it through `embedded_schema(kind)`.
 A file of the same name on disk beside the artifact wins over the embedded copy.
 
-- `skill.schema.yaml` — `SKILL.md` frontmatter. Agent Skills fields only:
+- `skill.schema.yaml`: `SKILL.md` frontmatter. Agent Skills fields only:
   `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`.
   `additionalProperties` is false, so a provider-specific field in canonical
   source is an error rather than a silent pass. Provider fields arrive during
   assembly instead, through the per-provider overlay files.
-- `agent.schema.yaml` — agent frontmatter.
-- `rule.schema.yaml` — rule frontmatter.
-- `module.schema.yaml` — `module.yaml`.
-- `rune-adr.schema.json` — decision records. The only one written as JSON,
+- `agent.schema.yaml`, agent frontmatter.
+- `rule.schema.yaml`, rule frontmatter.
+- `module.schema.yaml`, `module.yaml`.
+- `rune-adr.schema.json`: decision records. The only one written as JSON,
   because it is consumed by tooling outside this repository.
 
 ## Structure schemas
@@ -34,12 +34,12 @@ A file of the same name on disk beside the artifact wins over the embedded copy.
 The Stable shell is compiled in by `src/cli/validate/templates.rs` through
 `embedded_mdschema(kind)`:
 
-- `schemas/skill.mdschema` — the canonical Stable shell. See below.
+- `schemas/skill.mdschema`: the canonical Stable shell. See below.
 
 The remaining schemas are deployed into a scaffolded module and compiled in by
 `src/cli/validate/templates.rs`:
 
-- `templates/init/skills/.mdschema` — the scaffold's skill schema. As an
+- `templates/init/skills/.mdschema`: the scaffold's skill schema. As an
   on-disk schema, it overrides the embedded Stable shell for that module.
 - `templates/init/agents/.mdschema`
 - `templates/init/rules/.mdschema`

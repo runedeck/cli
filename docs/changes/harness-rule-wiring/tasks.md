@@ -22,4 +22,4 @@
 
 - [ ] 4.1 Manual Testing + Command Map updates
 - [ ] 4.2 Comment corrections on forge-cli#92. Close forge-cli#90 as shipped
-- [ ] 4.3 Inline the RTK primer into ~/.codex/AGENTS.md (the @ line never expands) — user's file, do with approval
+- [ ] 4.3 Inline the RTK primer into ~/.codex/AGENTS.md (the @ line never expands): user's file, do with approval

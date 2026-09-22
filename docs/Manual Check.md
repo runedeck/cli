@@ -1,7 +1,7 @@
-# Manual check — rune since v0.4.0
+# Manual check: rune since v0.4.0
 
 Everything below is landed and installed. The binary `rune --version` still prints the old
-commit hash `646715f` — that is a known cosmetic `build.rs` stamp bug, not a stale binary.
+commit hash `646715f`: that is a known cosmetic `build.rs` stamp bug, not a stale binary.
 Behaviour is current: `rune --help` shows `spec`, `status`, `doctor`, and the rest of the grouped commands.
 
 Setup (once):
@@ -23,48 +23,48 @@ rune add --cast development
 
 ## A. Regressions to confirm fixed (the bugs you hit last time)
 
-1. **init makes a real commit** — `git -C ~/Agents/check-1 log --oneline` shows one
+1. **init makes a real commit**: `git -C ~/Agents/check-1 log --oneline` shows one
    `chore: scaffold from skeleton` commit (last time the repo was commitless).
 
-2. **CLI output is legible** — `rune quest` / `rune add` above printed
+2. **CLI output is legible**: `rune quest` / `rune add` above printed
    `bound quest 'check-1' → …` and `staged cast 'development' … / next: rune install`,
    not a bare `--source` dump.
 
-3. **Open the TUI** — `cd ~/Agents/check-1 && rune tui`.
+3. **Open the TUI**, `cd ~/Agents/check-1 && rune tui`.
    - **Footer everywhere**: every section (Decks / list / detail / `--edit`) shows a hint bar
      at the bottom. Last time list/edit modes were blank.
-   - **No warning bleed**: the rune list is clean — no `warning: cannot determine git freshness`
+   - **No warning bleed**: the rune list is clean, no `warning: cannot determine git freshness`
      text overwriting rows.
 
-4. **`rune tui --edit`** — the checkbox editor shows a footer
+4. **`rune tui --edit`**: the checkbox editor shows a footer
    `Space toggle · j/k move · n/p deck · I install · q quit`. Tick a few, press `I`.
 
-5. **Code view shows the real file** — drill into a rule or agent (not just a skill), open the
+5. **Code view shows the real file**: drill into a rule or agent (not just a skill), open the
    Code tab. It renders the actual source bytes, never "source unavailable".
 
-6. **Number keys do not trap you** — in the Code tab press `1` `2`. The footer shows
+6. **Number keys do not trap you**: in the Code tab press `1` `2`. The footer shows
    `count: 12 — press j/k to repeat, Esc to cancel`. Press `Esc` → it clears. Press a letter
    that is not a motion → count clears and the letter acts. No stuck "999999" mode.
 
-7. **Comment with `c` then Enter** — in the Code tab, put the cursor on a line, press `c`,
+7. **Comment with `c` then Enter**: in the Code tab, put the cursor on a line, press `c`,
    type text, press **Enter**. The comment saves and the box closes (last time Enter did
-   nothing — it was a vim-modal needing `:w`). Esc cancels.
+   nothing: it was a vim-modal needing `:w`). Esc cancels.
 
-8. **Comment box looks like tuicr** — the inline comment box has the `│` border prefix and a
+8. **Comment box looks like tuicr**: the inline comment box has the `│` border prefix and a
    kind badge, ported from tuicr's renderer.
 
-9. **Cursor survives fullscreen / tab 2** — set the cursor on a line, toggle fullscreen, switch
+9. **Cursor survives fullscreen / tab 2**: set the cursor on a line, toggle fullscreen, switch
    to the Diff tab and back. The cursor stays on the same logical line (last time it got lost).
 
-10. **Provenance shows the full SLSA payload** — open the Provenance (`v`) tab on a deployed
+10. **Provenance shows the full SLSA payload**: open the Provenance (`v`) tab on a deployed
     rune. It renders predicate type, builder id, every subject/material sha256 digest,
-    invocation, and metadata — the complete in-toto statement, scrollable.
+    invocation, and metadata: the complete in-toto statement, scrollable.
 
 ---
 
 ## B. New commands to explore
 
-11. **`rune status`** — from the deck or a consumer, a one-shot dashboard:
+11. **`rune status`**: from the deck or a consumer, a one-shot dashboard:
 
     ```sh
     rune status --source ~/Developer/runedeck/deck
@@ -74,7 +74,7 @@ rune add --cast development
     Changes (progress bars), Specifications, and Deploy targets. `rune status --json` for the
     machine form.
 
-12. **`rune doctor`** — deployment integrity, never touches your edits:
+12. **`rune doctor`**: deployment integrity, never touches your edits:
 
     ```sh
     cd ~/Agents/check-1 && rune install >/dev/null && rune doctor --target .
@@ -84,7 +84,7 @@ rune add --cast development
     rune repair --target .                 # restores missing, quarantines orphans; leaves your edit
     ```
 
-13. **Spec-driven lifecycle** (the openspec adoption — lives under `docs/`, no `openspec/` folder).
+13. **Spec-driven lifecycle** (the openspec adoption: lives under `docs/`, no `openspec/` folder).
     Try it in a throwaway copy of the deck so you do not touch the real one:
 
     ```sh
@@ -109,11 +109,11 @@ rune add --cast development
 ## Known follow-ups (not blocking your check)
 
 - `rune --version` prints a stale commit hash (cosmetic `build.rs` rerun gap).
-- The pre-commit hook hard-depends on `rune` being on PATH — breaks a fresh clone / CI.
+- The pre-commit hook hard-depends on `rune` being on PATH: breaks a fresh clone / CI.
 
-## Still queued (your "Both, sequenced" pick — not yet built)
+## Still queued (your "Both, sequenced" pick: not yet built)
 
 - crex visual idioms folded into the pane TUI (adaptive palette, grouped emoji help, digit-jump).
-- `rune shell` — a crex-style REPL surface mirroring the CLI 1:1. Unrelated to the Stable shell heading convention and the `RuneShell` rule that carries it.
+- `rune shell`: a crex-style REPL surface mirroring the CLI 1:1. Unrelated to the Stable shell heading convention and the `RuneShell` rule that carries it.
 
 Say the word and I hand these to Sol. Otherwise they wait until after your manual check.

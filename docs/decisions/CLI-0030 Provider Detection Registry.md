@@ -42,10 +42,10 @@ its detection data influences where setup writes.
 
 ## Considered Options
 
-1. **Keep fixed lists** — no new surface, but five commands keep diverging.
-2. **Remote hot-updated manifests** — herdr's model. Flexible, but unauthenticated remote data
+1. **Keep fixed lists**: no new surface, but five commands keep diverging.
+2. **Remote hot-updated manifests**: herdr's model. Flexible, but unauthenticated remote data
    would steer local writes.
-3. **Bundled registry with bounded evidence** — one registry inside the signed release, read-only
+3. **Bundled registry with bounded evidence**: one registry inside the signed release, read-only
    probes, one explain command.
 
 ## Decision Outcome

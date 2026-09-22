@@ -1,4 +1,4 @@
-# rune — tour and manual review plan
+# rune: tour and manual review plan
 
 ## What rune is
 
@@ -11,10 +11,10 @@ deploys it, tracking exactly what landed so it can detect drift and clean up.
 
 | Term | Meaning |
 |---|---|
-| **rune** | one instruction file — a skill, an agent, a rule, or a hook |
+| **rune** | one instruction file: a skill, an agent, a rule, or a hook |
 | **deck** | a collection of runes (`runes/<domain>/` under a `deck.yaml` root) |
 | **cast** | a named selection of runes across domains, for a use case (e.g. `development`) |
-| **target** | the project you are currently working on — the repo rune deploys *into* |
+| **target** | the project you are currently working on: the repo rune deploys *into* |
 | **`.rune`** | a consumer project's manifest: which deck, which runes/casts |
 | **`.manifest`** | rune's record (per provider dir) of what it deployed, for drift/clean/doctor |
 
@@ -37,7 +37,7 @@ names `~/.config/rune/config.yaml`. Completions actually complete `rune sp<TAB>`
 
 ---
 
-## Part 1 — the flagship consumer flow
+## Part 1: the flagship consumer flow
 
 ```sh
 rune init N4M3Z/tour-1 --brief "Tour run"      # scaffold; --lang rust|shell|python
@@ -58,7 +58,7 @@ rune doctor --target .                            # ok / modified / missing / or
 **Review:**
 
 - `rune add` from a directory without `.rune` asks before staging into the bound
-  target. EOF and non-interactive runs refuse — nothing lands elsewhere without consent.
+  target. EOF and non-interactive runs refuse: nothing lands elsewhere without consent.
 - `rune skill add <name>` resolves the bare name to `<domain>/skills/<name>`. A name that
   exists in two domains errors listing both, and `<domain>/<name>` disambiguates.
 - `rune context` names the acting root and role (consumer/deck/module/plain), the
@@ -70,7 +70,7 @@ rune doctor --target .                            # ok / modified / missing / or
 
 ---
 
-## Part 2 — the TUI (`rune tui`)
+## Part 2: the TUI (`rune tui`)
 
 Launch from a target or `rune tui --source <deck>`. `?` opens the keymap.
 
@@ -87,7 +87,7 @@ cursor survives fullscreen and tab switches. Comment ranges export with source l
 
 ---
 
-## Part 3 — deck authoring and integrity
+## Part 3: deck authoring and integrity
 
 ```sh
 rune status --source <deck>       # one-shot dashboard: decks, runes, casts, changes, validate
@@ -107,7 +107,7 @@ gets a sidecar. `--dry-run` prints the plan without writing.
 
 ---
 
-## Part 4 — the spec lifecycle
+## Part 4: the spec lifecycle
 
 ```sh
 rune spec propose add-widget --capability widgets
@@ -121,7 +121,7 @@ rune spec archive add-widget      # refuses unchecked tasks; --abandon to drop
 
 Templates and mdschemas are overridable: drop replacements under `templates/spec/` or
 `schemas/` at the source root and `spec propose`/`validate` prefer them over the embedded
-copies — copying updated upstream templates in is a plain file replace.
+copies: copying updated upstream templates in is a plain file replace.
 
 **Review:** `show` disambiguates a name that is both a change and a spec by listing both
 forms. `doctor` flags a change without proposal or delta as an error, an empty checklist
@@ -130,7 +130,7 @@ otherwise. Try each in a throwaway copy of the deck.
 
 ---
 
-## Part 5 — plumbing
+## Part 5, plumbing
 
 ```sh
 rune assemble --source <deck>          # transform into build/ without deploying
@@ -144,7 +144,7 @@ rune find <query> · rune watch <cmd>   # relevance search over watched location
 
 ## Suggested order
 
-1. Setup block, then Part 1 end-to-end with a fresh slug — the 80% path.
+1. Setup block, then Part 1 end-to-end with a fresh slug: the 80% path.
 2. Part 2 TUI, pressing every key.
 3. Part 3 against the real deck (read-only commands are safe, adopt into a scratch module).
 4. Part 4 in a temp copy of the deck.

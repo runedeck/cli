@@ -36,9 +36,9 @@ When `rune install` deploys assembled content to provider directories, a previou
 
 ## Considered Options
 
-1. **Always overwrite** — simple but destroys user modifications without warning.
-2. **Always skip modified** — safe but leaves stale content with no way to force update.
-3. **Detect and choose** — manifest comparison detects modifications, user picks action per mode.
+1. **Always overwrite**: simple but destroys user modifications without warning.
+2. **Always skip modified**: safe but leaves stale content with no way to force update.
+3. **Detect and choose**: manifest comparison detects modifications, user picks action per mode.
 
 ## Decision Outcome
 
@@ -50,7 +50,7 @@ Compare the deployed file's current hash against the manifest's `deployed` diges
 | Modified   | No                                    | Prompt or skip            |
 | New        | No manifest entry                     | Write                     |
 
-Conflict detection runs across all target providers — a file might be unchanged in `.claude/` but modified in `.gemini/`. Each target is checked independently.
+Conflict detection runs across all target providers: a file might be unchanged in `.claude/` but modified in `.gemini/`. Each target is checked independently.
 
 When reporting conflicts, print the provenance chain so the user can trace what produced the deployed file:
 
@@ -86,4 +86,4 @@ Overwrite everything. No prompts, no skips.
 - [+] Per-target detection catches modifications in any provider directory
 - [+] CI gets deterministic behavior (skip + report)
 - [+] `--force` available for clean reinstalls
-- [-] Partial installs possible — user must resolve skipped files manually
+- [-] Partial installs possible: user must resolve skipped files manually

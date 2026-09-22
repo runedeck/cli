@@ -36,8 +36,8 @@ upstream: []
 
 ## Considered Options
 
-1. **No interactive mode** — force-or-skip only. Simple but no middle ground for conflict resolution.
-2. **Interactive prompts + future TUI** — phased approach starting with stdin prompts, graduating to ratatui.
+1. **No interactive mode**: force-or-skip only. Simple but no middle ground for conflict resolution.
+2. **Interactive prompts + future TUI**: phased approach starting with stdin prompts, graduating to ratatui.
 
 ## Decision Outcome
 
@@ -63,4 +63,4 @@ Candidate crates: `ratatui` for terminal rendering, `crossterm` for input handli
 - [+] Per-file control without --force-or-nothing
 - [+] Visual feedback for multi-provider deployments
 - [-] TUI adds dependencies and complexity
-- [-] Deferred — not available in v0.1.0
+- [-] Deferred: not available in v0.1.0

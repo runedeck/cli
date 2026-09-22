@@ -31,8 +31,8 @@ Optional functionality should be compile-time selectable. Cargo features control
 
 ## Considered Options
 
-1. **No features** — everything always compiled. Simple but no way to reduce binary size or dependencies.
-2. **Layered feature hierarchy** — atomic, composable features with dep: prefix convention.
+1. **No features**: everything always compiled. Simple but no way to reduce binary size or dependencies.
+2. **Layered feature hierarchy**: atomic, composable features with dep: prefix convention.
 
 ## Decision Outcome
 
@@ -52,7 +52,7 @@ testing = ["dep:tempfile", "dep:assert_cmd"]
 
 ### Conventions
 
-- `default` pulls `full` — `cargo install` gets the core pipeline, TUI, and dashboard
+- `default` pulls `full`: `cargo install` gets the core pipeline, TUI, and dashboard
 - Individual features are atomic and composable
 - Optional dependencies use `dep:` prefix to prevent implicit feature leakage
 - `testing` gates test utilities that live in `src/` (per RUST-0004)

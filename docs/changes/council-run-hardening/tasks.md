@@ -25,8 +25,8 @@
 
 ## 3. Shared infrastructure
 
-- [ ] 3.1 One path-confinement helper (adopt, deploy, doctor) — adopt's contained_path hardened and sidecar resolvers centralized in manifest. Deploy/doctor still carry their own copies
-- [ ] 3.2 One atomic-replace API used by all writers — config::write_atomic is the canonical one. Review-record and bench writers not yet migrated
+- [ ] 3.1 One path-confinement helper (adopt, deploy, doctor): adopt's contained_path hardened and sidecar resolvers centralized in manifest. Deploy/doctor still carry their own copies
+- [ ] 3.2 One atomic-replace API used by all writers: config::write_atomic is the canonical one. Review-record and bench writers not yet migrated
 - [x] 3.3 Atomic assemble: staging tree + swap, previous build restored on a failed swap
 - [x] 3.4 Target lock for install/deploy/doctor --repair, with an exclusivity test
 - [x] 3.5 Exit-code contract documented (docs/Exit Codes.md)

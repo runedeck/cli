@@ -25,7 +25,7 @@ upstream: []
 
 ## Context and Problem Statement
 
-Module validation hardcodes frontmatter field requirements, naming patterns, and content markers as Rust match arms. Frontmatter validation is a solved problem — JSON Schema is the standard for defining "this YAML must have these fields with these types." Tools like `check-jsonschema`, `yq`, and `ajv-cli` already validate YAML against JSON Schema. No custom validation code is needed for frontmatter.
+Module validation hardcodes frontmatter field requirements, naming patterns, and content markers as Rust match arms. Frontmatter validation is a solved problem: JSON Schema is the standard for defining "this YAML must have these fields with these types." Tools like `check-jsonschema`, `yq`, and `ajv-cli` already validate YAML against JSON Schema. No custom validation code is needed for frontmatter.
 
 ## Decision Drivers
 
@@ -37,13 +37,13 @@ Module validation hardcodes frontmatter field requirements, naming patterns, and
 
 ## Considered Options
 
-1. **Hardcoded Rust validation** — frontmatter checks as match arms in Rust. Fast but requires recompilation to change rules.
-2. **JSON Schema validation** — external schema files checked by standard tools. Editable without recompilation.
-3. **Custom YAML DSL** — invent a validation language. Maximum flexibility but no ecosystem tooling.
+1. **Hardcoded Rust validation**: frontmatter checks as match arms in Rust. Fast but requires recompilation to change rules.
+2. **JSON Schema validation**: external schema files checked by standard tools. Editable without recompilation.
+3. **Custom YAML DSL**: invent a validation language. Maximum flexibility but no ecosystem tooling.
 
 ## Decision Outcome
 
-Ship JSON Schema files per content type, authored as YAML (YAML is a superset of JSON — tools like `check-jsonschema` accept both). The spec is called "JSON Schema" but the schema files are `.schema.yaml` for consistency with the rest of the ecosystem.
+Ship JSON Schema files per content type, authored as YAML (YAML is a superset of JSON: tools like `check-jsonschema` accept both). The spec is called "JSON Schema" but the schema files are `.schema.yaml` for consistency with the rest of the ecosystem.
 
 ### Schema files
 
@@ -98,7 +98,7 @@ Tool precedence: prefer external tools when installed (`yq`, `check-jsonschema`,
 
 ## Consequences
 
-- [+] JSON Schema is universal — anyone can read, edit, validate with any tool
+- [+] JSON Schema is universal: anyone can read, edit, validate with any tool
 - [+] No custom validation code for frontmatter
 - [+] Schema files are self-documenting
 - [+] Works with or without external tools installed

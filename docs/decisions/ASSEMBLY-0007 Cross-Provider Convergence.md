@@ -38,8 +38,8 @@ This convergence changes what rune-cli needs to do over time.
 
 ## Considered Options
 
-1. **Full provider abstraction** — build a thick deployment layer covering every provider difference. Maximizes coverage but most code becomes dead weight as providers converge.
-2. **Assembler + validator with transitional deployment** — invest in durable capabilities, treat deployment as temporary scaffolding.
+1. **Full provider abstraction**: build a thick deployment layer covering every provider difference. Maximizes coverage but most code becomes dead weight as providers converge.
+2. **Assembler + validator with transitional deployment**: invest in durable capabilities, treat deployment as temporary scaffolding.
 
 ## Decision Outcome
 

@@ -28,8 +28,8 @@ Rust allows tests inline via `#[cfg(test)] mod tests { ... }` at the bottom of t
 
 ## Considered Options
 
-1. **Inline cfg(test) blocks** — tests at the bottom of source files. Mixes production and test code.
-2. **Sibling tests.rs files** — dedicated test files alongside production code. Clean separation.
+1. **Inline cfg(test) blocks**: tests at the bottom of source files. Mixes production and test code.
+2. **Sibling tests.rs files**: dedicated test files alongside production code. Clean separation.
 
 ## Decision Outcome
 

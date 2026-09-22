@@ -29,8 +29,8 @@ Rust convention uses single letters for generic parameters (`T`, `S`, `E`, `K`, 
 
 ## Considered Options
 
-1. **Single-letter generics** — Rust convention. Requires comments to explain meaning.
-2. **Descriptive generic names** — self-documenting code, no comments needed.
+1. **Single-letter generics**: Rust convention. Requires comments to explain meaning.
+2. **Descriptive generic names**: self-documenting code, no comments needed.
 
 ## Decision Outcome
 
@@ -59,7 +59,7 @@ The name should describe what the parameter represents, not abbreviate it:
 | `F`        | `Handler`, `Callback` |
 | `R`        | `Response`       |
 
-Standard trait bounds (`T: Display`, `T: Send + Sync`) are the exception — single letters are acceptable when the bound itself documents the intent.
+Standard trait bounds (`T: Display`, `T: Send + Sync`) are the exception: single letters are acceptable when the bound itself documents the intent.
 
 ## Consequences
 
