@@ -1,0 +1,17 @@
+
+# Scenario: Claude profile turns agent teams off
+# The --settings object carries only env, so it reaches the tool unchanged and nothing is dropped.
+❯ rune run teams-off@claude --repo . 'hello' 2>&1
+argv: --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-5.6-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}
+
+# Scenario: Profile sets a permission mode and a permission grant
+# The run owns --permission-mode and the settings key permissions: both are dropped with a warning, env stays, the run continues.
+❯ rune run widening@claude --repo . 'hello' 2>&1
+warning: automated claude execution owns --permission-mode; the profile value acceptEdits is dropped
+warning: automated claude execution owns settings key permissions; the profile value {"allow":["Bash"]} is dropped
+argv: --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-5.6-sol --settings {"env":{"X":"1"}}
+
+# Scenario: Profile carries an unowned flag
+# A flag the run does not set passes through untouched.
+❯ rune run plain@claude --repo . 'hello' 2>&1
+argv: --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-5.6-sol --verbose

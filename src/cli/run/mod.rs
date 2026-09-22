@@ -1,7 +1,8 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    Surface, SurfaceFailure, SurfaceInvocation, invoke_surface, prepare_clean_state,
+    Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface,
+    prepare_clean_state,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -160,6 +161,16 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
     };
 
+    // Profile arguments the run owns are dropped here, once, and each drop
+    // is a warning on stderr and in the JSON result.
+    let filtered = filter_surface_args(&invocation);
+    for warning in &filtered.warnings {
+        eprintln!("warning: {warning}");
+    }
+    let invocation = SurfaceInvocation {
+        extra_args: filtered.kept,
+        ..invocation
+    };
     let started = std::time::Instant::now();
     match invoke_surface(&invocation) {
         Ok(reply) => {
@@ -194,6 +205,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
                             "total_tokens": Value::Null,
                         },
                         "completion_tokens": reply.completion_tokens,
+                        "warnings": filtered.warnings,
                     })
                 );
             } else {

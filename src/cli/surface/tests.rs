@@ -1,11 +1,10 @@
 use super::*;
 
-#[test]
-fn automated_provider_rejects_profile_owned_flags() {
-    let invocation = SurfaceInvocation {
-        surface: Surface::Codex,
-        binary: OsString::from("codex"),
-        extra_args: vec![OsString::from("--sandbox=workspace-write")],
+fn invocation(surface: Surface, extra_args: &[&str]) -> SurfaceInvocation {
+    SurfaceInvocation {
+        surface,
+        binary: OsString::from(surface_name(surface)),
+        extra_args: extra_args.iter().map(OsString::from).collect(),
         env: Vec::new(),
         repository: PathBuf::from("."),
         mode: AccessMode::ReadOnly,
@@ -15,14 +14,167 @@ fn automated_provider_rejects_profile_owned_flags() {
         native_timeout: None,
         timeout: None,
         clean_state_root: None,
-    };
+    }
+}
 
+fn strings(args: &[OsString]) -> Vec<String> {
+    args.iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn owned_profile_flag_is_dropped_with_a_warning_not_a_refusal() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Codex,
+        &["--sandbox=workspace-write", "--search"],
+    ));
+    assert_eq!(strings(&filtered.kept), ["--search"]);
+    assert_eq!(filtered.warnings.len(), 1);
+    assert!(
+        filtered.warnings[0].contains("owns --sandbox"),
+        "{}",
+        filtered.warnings[0]
+    );
+}
+
+#[test]
+fn owned_flag_drops_its_separate_value_too() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--permission-mode", "acceptEdits", "--verbose"],
+    ));
+    assert_eq!(strings(&filtered.kept), ["--verbose"]);
+    assert_eq!(filtered.warnings.len(), 1);
+}
+
+#[test]
+fn codex_config_keeps_keys_the_run_does_not_set() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Codex,
+        &[
+            "--config",
+            "model=\"gpt-6-astra\"",
+            "--config",
+            "model_reasoning_effort=\"ultra\"",
+        ],
+    ));
     assert_eq!(
-            reject_owned_args(&invocation, &["-s", "--sandbox"]),
-            Err(SurfaceFailure::Arguments(
-                "automated codex execution owns these profile arguments: --sandbox=workspace-write; remove them from the launch profile".to_string()
-            ))
-        );
+        strings(&filtered.kept),
+        ["--config", "model_reasoning_effort=\"ultra\""]
+    );
+    assert_eq!(filtered.warnings.len(), 1);
+    assert!(filtered.warnings[0].contains("config key model"));
+}
+
+#[test]
+fn claude_settings_keeps_env_and_drops_permissions() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"},"permissions":{"allow":["Bash"]}}"#,
+        ],
+    ));
+    let kept = strings(&filtered.kept);
+    assert_eq!(kept[0], "--settings");
+    let settings: serde_json::Value = serde_json::from_str(&kept[1]).expect("json");
+    assert_eq!(settings["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"], "0");
+    assert!(settings.get("permissions").is_none());
+    assert_eq!(filtered.warnings.len(), 1);
+    assert!(filtered.warnings[0].contains("settings key permissions"));
+}
+
+#[test]
+fn claude_settings_with_only_owned_keys_is_dropped_whole() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--settings", r#"{"permissions":{"allow":["Bash"]}}"#],
+    ));
+    assert!(filtered.kept.is_empty());
+    assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
+    assert!(filtered.warnings[1].contains("nothing remains"));
+}
+
+#[test]
+fn attached_short_and_equals_forms_are_owned_too() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Codex,
+        &[
+            "-csandbox_mode=\"danger-full-access\"",
+            "-c=approval_policy=\"never\"",
+            "--config=model_reasoning_effort=\"high\"",
+        ],
+    ));
+    assert_eq!(
+        strings(&filtered.kept),
+        ["--config=model_reasoning_effort=\"high\""]
+    );
+    assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
+}
+
+#[test]
+fn equals_form_of_an_owned_flag_is_dropped() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--permission-mode=acceptEdits", "--verbose"],
+    ));
+    assert_eq!(strings(&filtered.kept), ["--verbose"]);
+    assert_eq!(filtered.warnings.len(), 1);
+}
+
+#[test]
+fn an_owned_flag_with_a_missing_value_does_not_swallow_its_neighbor() {
+    let filtered = filter_surface_args(&invocation(Surface::Claude, &["--model", "--verbose"]));
+    assert_eq!(strings(&filtered.kept), ["--verbose"]);
+    assert!(filtered.warnings[0].contains("the profile flag is dropped"));
+}
+
+#[test]
+fn arity_is_per_surface() {
+    // `-p` is codex's --profile, which takes a value, and claude's print switch, which does not.
+    let codex = filter_surface_args(&invocation(Surface::Codex, &["-p", "work", "--search"]));
+    assert_eq!(strings(&codex.kept), ["--search"]);
+    let claude = filter_surface_args(&invocation(Surface::Claude, &["-p", "--verbose"]));
+    assert_eq!(strings(&claude.kept), ["--verbose"]);
+}
+
+#[test]
+fn nested_codex_sandbox_keys_are_owned_by_prefix() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Codex,
+        &["-c", "sandbox_workspace_write.network_access=true"],
+    ));
+    assert!(filtered.kept.is_empty(), "{:?}", filtered.kept);
+    assert!(filtered.warnings[0].contains("config key sandbox_workspace_write.network_access"));
+}
+
+#[test]
+fn claude_settings_path_is_dropped_not_loaded() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--settings", "/home/me/wide-open.json"],
+    ));
+    assert!(filtered.kept.is_empty());
+    assert!(filtered.warnings[0].contains("only an inline JSON object is filtered"));
+}
+
+#[test]
+fn warnings_escape_control_characters_and_name_the_value() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--model", "evil\nwarning: forged"],
+    ));
+    assert_eq!(filtered.warnings.len(), 1);
+    assert!(!filtered.warnings[0].contains('\n'));
+    assert!(filtered.warnings[0].contains("evil"));
+}
+
+#[test]
+fn unowned_profile_args_pass_through_untouched() {
+    let filtered = filter_surface_args(&invocation(Surface::Grok, &["--effort", "high"]));
+    assert_eq!(strings(&filtered.kept), ["--effort", "high"]);
+    assert!(filtered.warnings.is_empty());
 }
 
 #[test]
@@ -104,7 +256,7 @@ fn grok_read_only_limits_tools_and_denies_writes() {
 }
 
 #[test]
-fn automated_providers_reject_read_only_bypass_arguments() {
+fn automated_providers_drop_read_only_bypass_arguments() {
     for (surface, argument) in [
         (Surface::Claude, "--dangerously-skip-permissions"),
         (
@@ -121,27 +273,17 @@ fn automated_providers_reject_read_only_bypass_arguments() {
         (Surface::Opencode, "--attach=http://127.0.0.1:4096"),
         (Surface::Opencode, "-mproton-lumo/lumo-max"),
     ] {
-        let invocation = SurfaceInvocation {
-            surface,
-            binary: OsString::from("missing-surface-binary"),
-            extra_args: vec![OsString::from(argument)],
-            env: Vec::new(),
-            repository: PathBuf::from("."),
-            mode: AccessMode::ReadOnly,
-            system_prompt: String::new(),
-            prompt: "Inspect only".to_string(),
-            model: None,
-            native_timeout: None,
-            timeout: None,
-            clean_state_root: None,
-        };
-
+        let filtered = filter_surface_args(&invocation(surface, &[argument]));
         assert!(
-            matches!(
-                invoke_surface(&invocation),
-                Err(SurfaceFailure::Arguments(_))
-            ),
-            "{surface:?} accepted {argument}"
+            filtered.kept.is_empty(),
+            "{surface:?} kept {argument}: {:?}",
+            filtered.kept
+        );
+        assert_eq!(
+            filtered.warnings.len(),
+            1,
+            "{surface:?} {argument}: {:?}",
+            filtered.warnings
         );
     }
 }
