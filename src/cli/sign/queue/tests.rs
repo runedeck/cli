@@ -4,7 +4,8 @@ use super::repo::{
 };
 use super::repo::{helper_applies, helper_settings};
 use super::store::{Identity, Kind, Receipt, Request, Status, Store, claim_is_dead, split_holder};
-use super::{exit_status, names_commit, topological};
+use super::{exit_status, names_commit, notifier_commands, topological};
+use std::process::Command;
 use tempfile::TempDir;
 
 fn request(id: &str, repository: &str, at: &str) -> Request {
@@ -337,4 +338,44 @@ fn a_helper_applies_by_scope_prefix_and_never_when_reset() {
     ));
     assert!(!helper_applies("credential.helper=", url));
     assert!(!helper_applies("core.askPass=", url));
+}
+
+#[test]
+fn notifiers_carry_the_message_the_mark_and_a_fallback() {
+    let icon = std::path::Path::new("/tmp/rune/icon.png");
+    let commands = notifier_commands("main needs your signature", Some(icon));
+    let programs: Vec<String> = commands
+        .iter()
+        .map(|command| command.get_program().to_string_lossy().into_owned())
+        .collect();
+    if cfg!(target_os = "macos") {
+        assert_eq!(programs, ["terminal-notifier", "alerter", "osascript"]);
+    } else {
+        assert_eq!(programs, ["notify-send"]);
+    }
+    for command in &commands {
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains("main needs your signature")),
+            "{args:?}"
+        );
+        assert!(args.iter().any(|arg| arg.contains("rune")), "{args:?}");
+    }
+    let with_icon: Vec<&Command> = commands
+        .iter()
+        .filter(|command| command.get_args().any(|arg| arg == icon.as_os_str()))
+        .collect();
+    assert!(
+        !with_icon.is_empty(),
+        "at least one notifier takes the icon path"
+    );
+    assert!(
+        notifier_commands("quiet", None)
+            .iter()
+            .all(|command| command.get_args().all(|arg| arg != icon.as_os_str()))
+    );
 }

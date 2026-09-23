@@ -1144,25 +1144,102 @@ fn state_label(state: State) -> &'static str {
     }
 }
 
+/// The mark from runedeck.ai, rendered from the site favicon, written to
+/// the cache once so the notifiers that take an icon path can show it.
+const ICON_PNG: &[u8] = include_bytes!("../../../../assets/rune-icon.png");
+const NOTIFICATION_TITLE: &str = "ᚱᚢᚾᛖ rune";
+const NOTIFICATION_SUBTITLE: &str = "sign";
+
 /// Best effort: the owner may be away from the terminal. A failure to
-/// notify is never an error.
+/// notify is never an error. The first notifier that starts wins.
 fn notify(message: &str) {
     if std::env::var_os("RUNE_NO_NOTIFY").is_some_and(|value| !value.is_empty()) {
         return;
     }
-    let attempt = if cfg!(target_os = "macos") {
-        Command::new("osascript")
-            .arg("-e")
-            .arg(format!(
-                "display notification \"{}\" with title \"rune sign\"",
-                message.replace('"', "'")
-            ))
-            .status()
+    let icon = notification_icon();
+    for mut command in notifier_commands(message, icon.as_deref()) {
+        if command.spawn().is_ok() {
+            return;
+        }
+    }
+}
+
+fn notification_icon() -> Option<PathBuf> {
+    let directory = dirs::cache_dir()?.join("rune");
+    let path = directory.join("icon.png");
+    if !path.is_file() {
+        fs::create_dir_all(&directory).ok()?;
+        fs::write(&path, ICON_PNG).ok()?;
+    }
+    Some(path)
+}
+
+/// The notifiers to try, best first. On macOS `terminal-notifier` and
+/// `alerter` carry the icon, a subtitle, and a sound; `osascript` is the
+/// fallback that every machine has and shows the Script Editor icon. On
+/// other systems `notify-send` takes the icon directly.
+fn notifier_commands(message: &str, icon: Option<&Path>) -> Vec<Command> {
+    let mut commands = Vec::new();
+    if cfg!(target_os = "macos") {
+        let mut notifier = Command::new("terminal-notifier");
+        notifier
+            .args([
+                "-title",
+                NOTIFICATION_TITLE,
+                "-subtitle",
+                NOTIFICATION_SUBTITLE,
+            ])
+            .args([
+                "-message",
+                message,
+                "-sound",
+                "default",
+                "-group",
+                "rune-sign",
+            ]);
+        if let Some(icon) = icon {
+            notifier
+                .arg("-appIcon")
+                .arg(icon)
+                .arg("-contentImage")
+                .arg(icon);
+        }
+        commands.push(notifier);
+
+        let mut alerter = Command::new("alerter");
+        alerter
+            .args([
+                "--title",
+                NOTIFICATION_TITLE,
+                "--subtitle",
+                NOTIFICATION_SUBTITLE,
+            ])
+            .args(["--message", message, "--sound", "default"])
+            .args(["--group", "rune-sign", "--timeout", "8"]);
+        if let Some(icon) = icon {
+            alerter
+                .arg("--app-icon")
+                .arg(icon)
+                .arg("--content-image")
+                .arg(icon);
+        }
+        commands.push(alerter);
+
+        let mut osascript = Command::new("osascript");
+        osascript.arg("-e").arg(format!(
+            "display notification \"{}\" with title \"{NOTIFICATION_TITLE}\" subtitle \"{NOTIFICATION_SUBTITLE}\" sound name \"default\"",
+            message.replace('"', "'")
+        ));
+        commands.push(osascript);
     } else {
-        Command::new("notify-send")
-            .arg("rune sign")
-            .arg(message)
-            .status()
-    };
-    let _ = attempt;
+        let mut send = Command::new("notify-send");
+        send.args(["-a", "rune"]);
+        if let Some(icon) = icon {
+            send.arg("-i").arg(icon);
+        }
+        send.arg(format!("{NOTIFICATION_TITLE} {NOTIFICATION_SUBTITLE}"))
+            .arg(message);
+        commands.push(send);
+    }
+    commands
 }
