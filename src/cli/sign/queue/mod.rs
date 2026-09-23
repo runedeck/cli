@@ -1157,7 +1157,8 @@ fn notify(message: &str) {
         return;
     }
     let icon = notification_icon();
-    for mut command in notifier_commands(message, icon.as_deref()) {
+    let activate = notification_target();
+    for mut command in notifier_commands(message, icon.as_deref(), activate.as_deref()) {
         if command.spawn().is_ok() {
             return;
         }
@@ -1174,11 +1175,54 @@ fn notification_icon() -> Option<PathBuf> {
     Some(path)
 }
 
+/// The app a click on the banner activates: the terminal the owner typed
+/// the command in. `RUNE_NOTIFY_APP` names a bundle id outright; otherwise
+/// macOS hands every process the launching app's `__CFBundleIdentifier`,
+/// then `TERM_PROGRAM` and the terminals' own markers decide, and Terminal
+/// is the last resort. Without a target a click opens Script Editor.
+fn notification_target() -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let env = |key: &str| std::env::var(key).ok().filter(|value| !value.is_empty());
+    if let Some(bundle) = env("RUNE_NOTIFY_APP").or_else(|| env("__CFBundleIdentifier")) {
+        return Some(bundle);
+    }
+    let by_program = match env("TERM_PROGRAM").as_deref() {
+        Some("ghostty") => Some("com.mitchellh.ghostty"),
+        Some("iTerm.app") => Some("com.googlecode.iterm2"),
+        Some("WezTerm") => Some("com.github.wez.wezterm"),
+        Some("kitty") => Some("net.kovidgoyal.kitty"),
+        Some("Alacritty") => Some("org.alacritty"),
+        Some("vscode") => Some("com.microsoft.VSCode"),
+        Some("zed") => Some("dev.zed.Zed"),
+        Some("Apple_Terminal") => Some("com.apple.Terminal"),
+        _ => None,
+    };
+    let by_marker = if env("GHOSTTY_RESOURCES_DIR").is_some() {
+        Some("com.mitchellh.ghostty")
+    } else if env("ITERM_SESSION_ID").is_some() {
+        Some("com.googlecode.iterm2")
+    } else if env("KITTY_PID").is_some() {
+        Some("net.kovidgoyal.kitty")
+    } else {
+        None
+    };
+    Some(
+        by_program
+            .or(by_marker)
+            .unwrap_or("com.apple.Terminal")
+            .to_string(),
+    )
+}
+
 /// The notifiers to try, best first. On macOS `terminal-notifier` and
-/// `alerter` carry the icon, a subtitle, and a sound; `osascript` is the
-/// fallback that every machine has and shows the Script Editor icon. On
-/// other systems `notify-send` takes the icon directly.
-fn notifier_commands(message: &str, icon: Option<&Path>) -> Vec<Command> {
+/// `alerter` carry the icon, a subtitle, a sound, and the app a click
+/// activates; `osascript` is the fallback that every machine has and
+/// shows the Script Editor icon. On other systems `notify-send` takes the
+/// icon directly. With an activation target the banner wears that app's
+/// icon and the runedeck mark rides as the content image.
+fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>) -> Vec<Command> {
     let mut commands = Vec::new();
     if cfg!(target_os = "macos") {
         let mut notifier = Command::new("terminal-notifier");
@@ -1204,6 +1248,9 @@ fn notifier_commands(message: &str, icon: Option<&Path>) -> Vec<Command> {
                 .arg("-contentImage")
                 .arg(icon);
         }
+        if let Some(bundle) = activate {
+            notifier.args(["-activate", bundle]);
+        }
         commands.push(notifier);
 
         let mut alerter = Command::new("alerter");
@@ -1217,11 +1264,13 @@ fn notifier_commands(message: &str, icon: Option<&Path>) -> Vec<Command> {
             .args(["--message", message, "--sound", "default"])
             .args(["--group", "rune-sign", "--timeout", "8"]);
         if let Some(icon) = icon {
-            alerter
-                .arg("--app-icon")
-                .arg(icon)
-                .arg("--content-image")
-                .arg(icon);
+            alerter.arg("--content-image").arg(icon);
+            if activate.is_none() {
+                alerter.arg("--app-icon").arg(icon);
+            }
+        }
+        if let Some(bundle) = activate {
+            alerter.args(["--sender", bundle]);
         }
         commands.push(alerter);
 

@@ -343,7 +343,11 @@ fn a_helper_applies_by_scope_prefix_and_never_when_reset() {
 #[test]
 fn notifiers_carry_the_message_the_mark_and_a_fallback() {
     let icon = std::path::Path::new("/tmp/rune/icon.png");
-    let commands = notifier_commands("main needs your signature", Some(icon));
+    let commands = notifier_commands(
+        "main needs your signature",
+        Some(icon),
+        Some("com.mitchellh.ghostty"),
+    );
     let programs: Vec<String> = commands
         .iter()
         .map(|command| command.get_program().to_string_lossy().into_owned())
@@ -374,8 +378,38 @@ fn notifiers_carry_the_message_the_mark_and_a_fallback() {
         "at least one notifier takes the icon path"
     );
     assert!(
-        notifier_commands("quiet", None)
+        notifier_commands("quiet", None, None)
             .iter()
             .all(|command| command.get_args().all(|arg| arg != icon.as_os_str()))
     );
+}
+
+#[test]
+fn a_click_activates_the_terminal_the_owner_typed_in() {
+    let commands = notifier_commands("signed", None, Some("com.mitchellh.ghostty"));
+    if cfg!(target_os = "macos") {
+        let args: Vec<Vec<String>> = commands
+            .iter()
+            .map(|command| {
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .collect();
+        assert!(
+            args[0]
+                .windows(2)
+                .any(|pair| pair == ["-activate", "com.mitchellh.ghostty"])
+        );
+        assert!(
+            args[1]
+                .windows(2)
+                .any(|pair| pair == ["--sender", "com.mitchellh.ghostty"])
+        );
+        assert!(
+            !args[1].iter().any(|arg| arg == "--app-icon"),
+            "the sender's icon wins"
+        );
+    }
 }

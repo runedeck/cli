@@ -128,6 +128,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter`, with `osascript` and `notify-send` as fallbacks.
+- Open the terminal the owner typed in when the `rune sign` banner is clicked (`RUNE_NOTIFY_APP`, else the launching app, else `TERM_PROGRAM`), instead of Script Editor.
 - Change `rune run` to drop the profile arguments it owns with a warning instead of refusing, and to filter codex `--config` and claude `--settings` per key.
 - Change every em dash in the prose to a comma, a colon, or parentheses, so `Core.NoEmDash` passes on every file CI lints, and exempt the sealed upstream text of ASSEMBLY-0012.
 - Sync the ceremony files to skeleton `6374d8fc` through `copier update`: seven dcg packs with fixtures, `.dcg.toml`, the lane table, the direct-push signature check, admin-role rulesets.
