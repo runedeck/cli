@@ -409,7 +409,23 @@ fn copy_optional_auth_file(
     }
 }
 
+/// The clean Codex configuration keeps the route: the top-level
+/// `model_provider`, when the file sets one, and every `[model_providers.*]`
+/// table reduced to its transport fields. Every table is kept because the
+/// provider the run uses may be chosen at launch (`codex-proxy` passes
+/// `--config model_provider="cliproxyapi"`), and a provider the file names
+/// without a table is a Codex built-in such as `openai`, which needs none.
 fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFailure> {
+    const ROUTE_KEYS: [&str; 8] = [
+        "name",
+        "base_url",
+        "wire_api",
+        "env_key",
+        "http_headers",
+        "env_http_headers",
+        "query_params",
+        "auth",
+    ];
     let text = std::fs::read_to_string(source).map_err(|error| {
         SurfaceFailure::Io(format!(
             "cannot read Codex route configuration {}: {error}",
@@ -422,47 +438,36 @@ fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFa
             source.display()
         ))
     })?;
-    let provider_name = config
-        .get("model_provider")
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| {
-            SurfaceFailure::Arguments("Codex clean state requires model_provider".to_string())
-        })?;
-    let provider = config
-        .get("model_providers")
-        .and_then(toml::Value::as_table)
-        .and_then(|providers| providers.get(provider_name))
-        .and_then(toml::Value::as_table)
-        .ok_or_else(|| {
-            SurfaceFailure::Arguments(format!(
-                "Codex provider configuration not found: {provider_name}"
-            ))
-        })?;
-    let mut clean_provider = toml::map::Map::new();
-    for key in [
-        "name",
-        "base_url",
-        "wire_api",
-        "env_key",
-        "http_headers",
-        "env_http_headers",
-        "query_params",
-    ] {
-        if let Some(value) = provider.get(key) {
-            clean_provider.insert(key.to_string(), value.clone());
-        }
+    let mut clean = toml::map::Map::new();
+    if let Some(provider_name) = config.get("model_provider").and_then(toml::Value::as_str) {
+        clean.insert(
+            "model_provider".to_string(),
+            toml::Value::String(provider_name.to_string()),
+        );
     }
     let mut providers = toml::map::Map::new();
-    providers.insert(
-        provider_name.to_string(),
-        toml::Value::Table(clean_provider),
-    );
-    let mut clean = toml::map::Map::new();
-    clean.insert(
-        "model_provider".to_string(),
-        toml::Value::String(provider_name.to_string()),
-    );
-    clean.insert("model_providers".to_string(), toml::Value::Table(providers));
+    for (name, provider) in config
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flatten()
+    {
+        let Some(provider) = provider.as_table() else {
+            continue;
+        };
+        let clean_provider: toml::map::Map<String, toml::Value> = ROUTE_KEYS
+            .iter()
+            .filter_map(|key| {
+                provider
+                    .get(*key)
+                    .map(|value| ((*key).to_string(), value.clone()))
+            })
+            .collect();
+        providers.insert(name.clone(), toml::Value::Table(clean_provider));
+    }
+    if !providers.is_empty() {
+        clean.insert("model_providers".to_string(), toml::Value::Table(providers));
+    }
     let rendered = toml::to_string(&toml::Value::Table(clean)).map_err(|error| {
         SurfaceFailure::Arguments(format!("cannot render Codex clean configuration: {error}"))
     })?;

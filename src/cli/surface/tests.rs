@@ -343,6 +343,36 @@ fn clean_codex_config_keeps_only_route_fields() {
 }
 
 #[test]
+fn clean_codex_config_keeps_every_provider_table_and_a_builtin_provider_name() {
+    // The live shape: a built-in provider at the top, and the proxy provider
+    // that `codex-proxy` selects at launch, with its auth command.
+    let directory = tempfile::tempdir().expect("tempdir");
+    let source = directory.path().join("source.toml");
+    let target = directory.path().join("clean.toml");
+    std::fs::write(
+        &source,
+        "model = \"gpt-6-astra\"\nmodel_provider = \"openai\"\n[memories]\ngenerate_memories = true\n[model_providers.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\nname = \"cliproxyapi\"\nwire_api = \"responses\"\n[model_providers.cliproxyapi.auth]\ncommand = \"/usr/bin/sed\"\nargs = [\"-n\", \"s/^KEY=//p\", \"/home/me/.env\"]\n",
+    )
+    .expect("write config");
+
+    copy_codex_route_config(&source, &target).expect("copy clean config");
+    let clean: toml::Value = toml::from_str(&std::fs::read_to_string(target).expect("read"))
+        .expect("clean config parses");
+
+    assert_eq!(clean["model_provider"].as_str(), Some("openai"));
+    assert_eq!(
+        clean["model_providers"]["cliproxyapi"]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
+    assert_eq!(
+        clean["model_providers"]["cliproxyapi"]["auth"]["command"].as_str(),
+        Some("/usr/bin/sed")
+    );
+    assert!(clean.get("model").is_none());
+    assert!(clean.get("memories").is_none());
+}
+
+#[test]
 fn clean_claude_overrides_system_prompt() {
     let invocation = SurfaceInvocation {
         surface: Surface::Claude,

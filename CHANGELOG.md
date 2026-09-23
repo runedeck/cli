@@ -194,6 +194,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix `rune run --clean-harness-state` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth`, and a built-in provider such as `openai` needs no table.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
 - Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).
 - Fix `rune sign open` signing a seal it cannot push: the push names `gh auth git-credential` for its own process, and the transport is checked before the key touch.
