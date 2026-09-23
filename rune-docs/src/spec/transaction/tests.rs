@@ -91,8 +91,14 @@ impl TransactionIo for InjectedIo {
         if let Some((replacement_path, replacement_content)) = &self.replacement_before_quarantine
             && replacement_path == source
         {
-            fs::remove_file(source)?;
-            fs::write(source, replacement_content)?;
+            // Replace through a file created while the source still exists,
+            // so the new inode never equals the old one. Unlink-then-create
+            // reuses the freed inode number on ext4, and the identity check
+            // then cannot see the swap; the sha check catches it instead,
+            // with a different message than this test asserts.
+            let staged = source.with_extension("replacement");
+            fs::write(&staged, replacement_content)?;
+            fs::rename(&staged, source)?;
         }
         let is_archive_move = source.is_dir()
             && destination
