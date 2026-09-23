@@ -450,7 +450,7 @@ impl CodexSkillFixture {
             &fingerprint,
             &[],
             "rune-cli",
-            "https://runedeck.dev/assemble/v1",
+            "https://runedeck.ai/assemble/v1",
             "1.0.0",
             "https://github.com/example/module",
         );
@@ -606,7 +606,7 @@ fn codex_migration_preserves_yaml_that_looks_like_provenance() {
         "authored",
         &[],
         "author",
-        "https://runedeck.dev/assemble/v1",
+        "https://runedeck.ai/assemble/v1",
         "1",
         "source",
     );
@@ -907,7 +907,7 @@ fn write_provenance_fixture(file: &Path, subject: &str, body: &str, source: &str
             &manifest::content_sha256(body),
             &[],
             "rune-cli",
-            "https://runedeck.dev/assemble/v1",
+            "https://runedeck.ai/assemble/v1",
             "1.0.0",
             source,
         ),
