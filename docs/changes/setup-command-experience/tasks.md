@@ -25,7 +25,7 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Test plan-only mode, apply order, and the versioned setup record
+- [x] 4.1 Test plan-only mode, apply order, and the versioned setup record
 - [ ] 4.2 Test check exit codes, defaults output, reset backup and restore, and reference drift
 - [ ] 4.3 Test lifecycle states, explain evidence, and the protected `modified` state
-- [ ] 4.4 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests
+- [x] 4.4 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests

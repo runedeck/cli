@@ -10,4 +10,4 @@
 
 - [x] 2.1 `vale`, `rumdl`, `typos`, `lychee --offline`, `actionlint`, and `zizmor` pass under the merged configs
 - [x] 2.2 `rune spec validate copier-consumer-sync` passes
-- [ ] 2.3 First Quality run on main is green and the first weekly parity run reports no cli drift
+- [x] 2.3 First Quality run on main is green and the first weekly parity run reports no cli drift

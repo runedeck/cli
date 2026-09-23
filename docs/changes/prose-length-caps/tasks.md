@@ -22,4 +22,4 @@
 
 - [ ] 4.1 Archive moves `adr.md` to `docs/decisions/` with the next free CLI number
 - [x] 4.2 Rename the 21 change ids and 35 capabilities under three words in this repository
-- [ ] 4.3 Skeleton: `rune-docs-check` hook `files:` includes `CHANGELOG.md`
+- [x] 4.3 Skeleton: `rune-docs-check` hook `files:` includes `CHANGELOG.md`

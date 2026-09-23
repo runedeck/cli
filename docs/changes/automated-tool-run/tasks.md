@@ -24,5 +24,5 @@
 
 - [x] 4.1 Run focused launch, provider, run, and command-help tests
 - [x] 4.2 Run focused compilation and Clippy without the independent docs feature
-- [ ] 4.3 Run the default-feature suite after the independent docs work compiles
+- [x] 4.3 Run the default-feature suite after the independent docs work compiles
 - [ ] 4.4 Complete safe provider smoke tests and independent Grok and Opus review

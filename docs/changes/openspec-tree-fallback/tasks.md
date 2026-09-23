@@ -19,5 +19,5 @@
 ## 4. Verification
 
 - [x] 4.1 Unit tests: configured-root override, non-interactive note writes nothing, configured/native trees skip the offer, malformed config untouched, symlinked roots refused, move removes the source tree
-- [ ] 4.2 `cargo fmt`, `cargo clippy --all-targets`, full test suite green
+- [x] 4.2 `cargo fmt`, `cargo clippy --all-targets`, full test suite green
 - [x] 4.3 Manual Testing spec section documents the fallback and cross-check

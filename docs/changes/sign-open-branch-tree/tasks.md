@@ -13,7 +13,7 @@
 - [x] 2.1 `tests/sign_queue.rs`: owner-signed head sealed above, body read from the branch not the working copy
 - [x] 2.2 Unit tests for the purpose lookup, the doctor finding, and the divergent promote
 - [x] 2.3 `cargo test --workspace --all-features`, clippy, and rustfmt clean in the mirror
-- [ ] 2.4 Both prek stages in an isolated clone
+- [x] 2.4 Both prek stages in an isolated clone
 
 ## 3. Record
 

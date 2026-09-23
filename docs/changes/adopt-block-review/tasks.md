@@ -21,5 +21,5 @@
 - [ ] 3.2 Span-anchored consistency (content multisets today, duplicate-blind, see CLI-0023 consequences)
 - [ ] 3.3 `rune doctor` check for pending-review adoptions
 - [ ] 3.4 Publish the predicate description at the recorded TypeURI (runedeck.github.io/attestation/adoption-review/v1)
-- [ ] 3.5 Description-length warning (agentskills: ≤ 1024 chars, no angle brackets) in `rune validate`
+- [x] 3.5 Description-length warning (agentskills: ≤ 1024 chars, no angle brackets) in `rune validate`
 - [ ] 3.6 Strict-spec export shape: anthropics/skills' validator allowlists exactly {name, description, license, allowed-tools, metadata, compatibility}. Claude Code extensions (version, argument-hint, context, agent, when_to_use, …) must move into `metadata` or be stripped when releasing for other harnesses

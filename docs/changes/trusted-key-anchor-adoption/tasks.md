@@ -9,7 +9,7 @@
 
 - [x] 2.1 `signer_lines_pin_fingerprints_and_refuse_anything_else`, and `sign_queue` passes on the new `KEYS`
 - [x] 2.2 `cargo test --workspace --all-features` (1495), clippy, rustfmt
-- [ ] 2.3 Both prek stages in an isolated clone
+- [x] 2.3 Both prek stages in an isolated clone
 
 ## 3. Record
 

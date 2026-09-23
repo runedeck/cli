@@ -15,4 +15,4 @@
 - [x] 2.2 Test native argument forwarding, including Claude Code resume arguments
 - [x] 2.3 Test route replacement, generated-setting conflicts, provenance, and redaction
 - [x] 2.4 Verify focused formatting, compilation, Clippy, and launch tests
-- [ ] 2.5 Run the default-feature suite after the independent docs work compiles
+- [x] 2.5 Run the default-feature suite after the independent docs work compiles
