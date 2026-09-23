@@ -353,7 +353,7 @@ fn notifiers_carry_the_message_the_mark_and_a_fallback() {
         .map(|command| command.get_program().to_string_lossy().into_owned())
         .collect();
     if cfg!(target_os = "macos") {
-        assert_eq!(programs, ["terminal-notifier", "alerter", "osascript"]);
+        assert_eq!(programs, ["terminal-notifier", "/bin/sh", "osascript"]);
     } else {
         assert_eq!(programs, ["notify-send"]);
     }
@@ -402,14 +402,29 @@ fn a_click_activates_the_terminal_the_owner_typed_in() {
                 .windows(2)
                 .any(|pair| pair == ["-activate", "com.mitchellh.ghostty"])
         );
+        assert!(args[1].iter().any(|arg| arg == "alerter"), "{:?}", args[1]);
         assert!(
-            args[1]
-                .windows(2)
-                .any(|pair| pair == ["--sender", "com.mitchellh.ghostty"])
+            !args[1].iter().any(|arg| arg == "--sender"),
+            "no impersonation"
         );
+        assert!(args[1][1].contains("@CONTENTCLICKED") && args[1][1].contains("open -b"));
+        let env: Vec<(String, String)> = commands[1]
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
         assert!(
-            !args[1].iter().any(|arg| arg == "--app-icon"),
-            "the sender's icon wins"
+            env.contains(&(
+                "RUNE_NOTIFY_OPEN".to_string(),
+                "com.mitchellh.ghostty".to_string()
+            )),
+            "{env:?}"
         );
     }
 }

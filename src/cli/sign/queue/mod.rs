@@ -1217,11 +1217,10 @@ fn notification_target() -> Option<String> {
 }
 
 /// The notifiers to try, best first. On macOS `terminal-notifier` and
-/// `alerter` carry the icon, a subtitle, a sound, and the app a click
-/// activates; `osascript` is the fallback that every machine has and
-/// shows the Script Editor icon. On other systems `notify-send` takes the
-/// icon directly. With an activation target the banner wears that app's
-/// icon and the runedeck mark rides as the content image.
+/// `alerter` carry the runedeck mark, a subtitle, a sound, and open the
+/// owner's terminal on a click; `osascript` is the fallback that every
+/// machine has and shows the Script Editor icon. On other systems
+/// `notify-send` takes the icon directly.
 fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>) -> Vec<Command> {
     let mut commands = Vec::new();
     if cfg!(target_os = "macos") {
@@ -1253,24 +1252,36 @@ fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>)
         }
         commands.push(notifier);
 
-        let mut alerter = Command::new("alerter");
-        alerter
-            .args([
-                "--title",
-                NOTIFICATION_TITLE,
-                "--subtitle",
-                NOTIFICATION_SUBTITLE,
-            ])
-            .args(["--message", message, "--sound", "default"])
-            .args(["--group", "rune-sign", "--timeout", "8"]);
+        // alerter prints one token when the banner is dismissed
+        // (`@CONTENTCLICKED`, `@ACTIONCLICKED`, `@CLOSED`, `@TIMEOUT`), so a
+        // one-line shell reads it and opens the owner's terminal on a click.
+        // The banner is alerter's own, with the runedeck mark as its icon;
+        // impersonating the terminal through `--sender` needs that app's
+        // notification permission, which a terminal never asked for, and
+        // the banner then never shows.
+        let mut alerter = Command::new("/bin/sh");
+        alerter.args([
+            "-c",
+            r#"out=$("$0" "$@"); case "$out" in @CONTENTCLICKED|@ACTIONCLICKED) [ -n "${RUNE_NOTIFY_OPEN:-}" ] && exec open -b "$RUNE_NOTIFY_OPEN" ;; esac"#,
+            "alerter",
+            "--title",
+            NOTIFICATION_TITLE,
+            "--subtitle",
+            NOTIFICATION_SUBTITLE,
+            "--message",
+            message,
+            "--sound",
+            "default",
+            "--group",
+            "rune-sign",
+            "--timeout",
+            "600",
+        ]);
         if let Some(icon) = icon {
-            alerter.arg("--content-image").arg(icon);
-            if activate.is_none() {
-                alerter.arg("--app-icon").arg(icon);
-            }
+            alerter.arg("--app-icon").arg(icon);
         }
         if let Some(bundle) = activate {
-            alerter.args(["--sender", bundle]);
+            alerter.env("RUNE_NOTIFY_OPEN", bundle);
         }
         commands.push(alerter);
 
