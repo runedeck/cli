@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with the `[TAG]: <iri>` definitions a document copies, and `--json`.
+- Read defined terms from `ontology/rune.ttl` (or the `ontology` path in `deck.yaml`) in `rune spec validate` and `rune spec doctor`, falling back to `glossary.md` only when no ontology file exists.
+- Fail validation on an unreadable ontology, an undeclared prefix, two terms of one kind whose labels match without case, or an ontology with no labeled term.
+- Report `term-reference-missing` when the first italic use of an ontology term carries no `[TAG]`, and `term-reference-unresolved` when the tag is undefined or names another IRI.
+- Apply the term reference rules in `rune validate` to `docs/decisions` and `runes` of a deck, and to the record and rune directories of a module, when the root has an ontology.
 - Refuse `rune sign queue` on a head that `origin` already holds or sits above, because signing it in place would rewrite a pushed tip.
 - Report jj's immutable-commit refusal in `rune sign next` without a retry, print the pinentry focus hint on every timeout, and print the `jj git push` line after a signed head.
 - Add `rune launch --check` and `rune run --check`, which ask each base URL in the plan for its model list and report every model the plan sends as served or missing, without spawning.

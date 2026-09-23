@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `spec::lint`: the runedeck house rules as a layer over the compatibility parser. Validate and doctor report a prose line that uses `SHALL` (`spec-shall-keyword`, `delta-shall-keyword`), a canonical specification over 150 lines (`spec-too-long`, and `delta-too-long` as a warning), and an italic defined term with no `- **term**: definition` entry in `<specs>/glossary.md` (`spec-term-undefined`, `delta-term-undefined`). The parser still accepts `SHALL` and `MUST`, and the OpenSpec v1.6.0 oracle fixtures are unchanged.
 
+- `spec::terms`: the term source behind the italic-term rule. An `ontology/rune.ttl` (labeled classes, properties, and SKOS concepts) replaces `glossary.md` when present. The first italic use of a term must cite it (`term-reference-missing`, `term-reference-unresolved`). `glossary` prints the term list, and `lint_documents` applies the reference rules to files outside the specification tree, where plain emphasis is not a term.
+
 ### Changed
 
 - The scaffolded delta template and the archive fixtures use MUST.

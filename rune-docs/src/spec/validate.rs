@@ -3,8 +3,9 @@
 //! interop artifacts surfaced as warnings. One pipeline serves `validate`,
 //! archive preflight, and doctor, so acceptance cannot differ by command.
 
-use super::lint::{self, Glossary, LintTarget};
+use super::lint::{self, LintTarget};
 use super::templates::{DELTA_SPEC_MDSCHEMA, SPEC_MDSCHEMA};
+use super::terms::Terms;
 use super::{
     DiagnosticSeverity, PrefixMatch, SpecRoot, SpecViolation, changes_root,
     discover_capabilities_below, evaluate_change, load_with_override, parse_canonical,
@@ -104,7 +105,7 @@ pub(super) fn validate_spec_target(
         "schemas/delta-spec.mdschema",
         DELTA_SPEC_MDSCHEMA,
     )?;
-    let glossary = Glossary::load(repository, spec_root.specifications());
+    let terms = Terms::load(repository, spec_root.specifications())?;
     let mut diagnostics = Vec::new();
 
     match &target {
@@ -120,7 +121,7 @@ pub(super) fn validate_spec_target(
                     &capability,
                     &spec_path,
                     &spec_schema,
-                    &glossary,
+                    &terms,
                     mdschema_check,
                     &mut diagnostics,
                 )?;
@@ -131,7 +132,7 @@ pub(super) fn validate_spec_target(
                     &change_dir,
                     &spec_schema,
                     &delta_schema,
-                    &glossary,
+                    &terms,
                     false,
                     mdschema_check,
                     &mut diagnostics,
@@ -145,7 +146,7 @@ pub(super) fn validate_spec_target(
                 &spec_root.changes().join(change),
                 &spec_schema,
                 &delta_schema,
-                &glossary,
+                &terms,
                 true,
                 mdschema_check,
                 &mut diagnostics,
@@ -157,7 +158,7 @@ pub(super) fn validate_spec_target(
                 capability,
                 &spec_root.specifications().join(capability).join("spec.md"),
                 &spec_schema,
-                &glossary,
+                &terms,
                 mdschema_check,
                 &mut diagnostics,
             )?;
@@ -167,11 +168,40 @@ pub(super) fn validate_spec_target(
     Ok(diagnostics)
 }
 
+/// The term rules alone, over documents outside the specification tree
+/// (decision records, runes). The term source is the repository's ontology;
+/// a repository without one has nothing to cite, so the result is empty.
+pub fn lint_documents(repository: &Path, paths: &[PathBuf]) -> Result<Vec<SpecViolation>, Error> {
+    let specifications = resolve_spec_root(repository).map_or_else(
+        |_| repository.join("docs/specs"),
+        |spec_root| spec_root.specifications().to_path_buf(),
+    );
+    let terms = Terms::load(repository, &specifications)?;
+    let mut diagnostics = Vec::new();
+    if terms.source() != super::terms::TermSource::Ontology {
+        return Ok(diagnostics);
+    }
+    for path in paths {
+        lint::lint_document(
+            LintTarget {
+                repository,
+                path,
+                capability: None,
+                change: None,
+            },
+            &read(path)?,
+            &terms,
+            &mut diagnostics,
+        );
+    }
+    Ok(diagnostics)
+}
+
 /// The prose lints alone, over every canonical specification and active
 /// delta. Doctor reports these beside its relationship findings.
 pub(super) fn lint_tree(spec_root: &SpecRoot) -> Result<Vec<SpecViolation>, Error> {
     let repository = spec_root.repository();
-    let glossary = Glossary::load(repository, spec_root.specifications());
+    let terms = Terms::load(repository, spec_root.specifications())?;
     let mut diagnostics = Vec::new();
     let mut capabilities = Vec::new();
     discover_capabilities_below(
@@ -184,11 +214,11 @@ pub(super) fn lint_tree(spec_root: &SpecRoot) -> Result<Vec<SpecViolation>, Erro
             LintTarget {
                 repository,
                 path: &spec_path,
-                capability: &capability,
+                capability: Some(&capability),
                 change: None,
             },
             &read(&spec_path)?,
-            &glossary,
+            &terms,
             &mut diagnostics,
         );
     }
@@ -206,11 +236,11 @@ pub(super) fn lint_tree(spec_root: &SpecRoot) -> Result<Vec<SpecViolation>, Erro
                 LintTarget {
                     repository,
                     path: &delta_path,
-                    capability: &capability,
+                    capability: Some(&capability),
                     change: Some(change),
                 },
                 &read(&delta_path)?,
-                &glossary,
+                &terms,
                 &mut diagnostics,
             );
         }
@@ -300,7 +330,7 @@ fn validate_canonical(
     capability: &str,
     path: &Path,
     schema: &str,
-    glossary: &Glossary,
+    terms: &Terms,
     mdschema_check: MdschemaCheck,
     diagnostics: &mut Vec<SpecViolation>,
 ) -> Result<(), Error> {
@@ -332,11 +362,11 @@ fn validate_canonical(
         LintTarget {
             repository,
             path,
-            capability,
+            capability: Some(capability),
             change: None,
         },
         &content,
-        glossary,
+        terms,
         diagnostics,
     );
     Ok(())
@@ -348,7 +378,7 @@ fn validate_change(
     change_dir: &Path,
     spec_schema: &str,
     delta_schema: &str,
-    glossary: &Glossary,
+    terms: &Terms,
     validate_referenced_canonical_schema: bool,
     mdschema_check: MdschemaCheck,
     diagnostics: &mut Vec<SpecViolation>,
@@ -380,11 +410,11 @@ fn validate_change(
             LintTarget {
                 repository: spec_root.repository(),
                 path: &delta_path,
-                capability: &capability,
+                capability: Some(&capability),
                 change: Some(change),
             },
             &content,
-            glossary,
+            terms,
             diagnostics,
         );
     }

@@ -11,7 +11,7 @@ use console::Style;
 use rune::error::{Error, ErrorKind};
 use rune::result::ActionResult;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Said once when strict structural checking did not run, whatever the reason.
 ///
@@ -261,6 +261,7 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
         let deck = rune::deck::load(module_root).map_err(Error::config)?;
         let mut aggregate = ValidationReport::default();
         check_spec_lifecycle(module_root, &mut aggregate)?;
+        check_terms(module_root, &["docs/decisions", "runes"], &mut aggregate)?;
         for deck_entry in deck.entries {
             let mut deck_entry_report = match validate_module(&deck_entry.root, false, scan) {
                 Ok(result) => result,
@@ -402,6 +403,11 @@ fn validate_module(
     }
 
     check_spec_lifecycle(module_root, &mut report)?;
+    check_terms(
+        module_root,
+        &["docs/decisions", "agents", "rules", "skills"],
+        &mut report,
+    )?;
 
     plugin::check_plugin_scaffolding(module_root, &mut report);
 
@@ -434,6 +440,80 @@ fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Re
     }
 }
 
+/// Every italic term in the decision records and runes exists in the
+/// ontology and cites it. A root without an ontology has nothing to cite.
+fn check_terms(
+    root: &Path,
+    directories: &[&str],
+    report: &mut ValidationReport,
+) -> Result<(), Error> {
+    #[cfg(not(feature = "spec"))]
+    {
+        let _ = directories;
+        if root.join("ontology/rune.ttl").is_file() {
+            report.warn(
+                "terms",
+                "ontology present; term checks skipped (built without the spec feature)"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+    #[cfg(feature = "spec")]
+    {
+        let ontology = rune_docs::spec::ontology_path(root)
+            .map_err(|error| Error::config(error.message().to_string()))?;
+        if !ontology.is_file() {
+            return Ok(());
+        }
+        let mut paths = Vec::new();
+        for directory in directories {
+            collect_markdown(&root.join(directory), &mut paths)?;
+        }
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let violations = super::spec::lint_documents(root, &paths)?;
+        report_spec_violations("terms", violations, report);
+        Ok(())
+    }
+}
+
+/// Markdown files below `directory`, skipping generated and foreign trees.
+#[cfg(feature = "spec")]
+fn collect_markdown(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Error> {
+    const SKIPPED: [&str; 7] = [
+        ".provenance",
+        ".workspaces",
+        ".worktrees",
+        "archive",
+        "build",
+        "node_modules",
+        "target",
+    ];
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(directory)
+        .map_err(|error| Error::io(format!("cannot read {}: {error}", directory.display())))?;
+    let mut entries = entries
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| Error::io(format!("directory entry error: {error}")))?;
+    entries.sort_by_key(std::fs::DirEntry::path);
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name();
+        if path.is_dir() {
+            if !SKIPPED.contains(&name.to_string_lossy().as_ref()) {
+                collect_markdown(&path, paths)?;
+            }
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "spec")]
 fn check_spec_lifecycle_with_validator(
     module_root: &Path,
@@ -441,9 +521,21 @@ fn check_spec_lifecycle_with_validator(
     validator: fn(&Path) -> Result<Vec<super::spec::SpecViolation>, Error>,
 ) -> Result<(), Error> {
     let violations = validator(module_root)?;
+    report_spec_violations("specifications", violations, report);
+    Ok(())
+}
+
+/// Record spec-layer diagnostics under one item: a pass when the list is
+/// empty, else one violation per finding with its path and line.
+#[cfg(feature = "spec")]
+fn report_spec_violations(
+    item: &str,
+    violations: Vec<super::spec::SpecViolation>,
+    report: &mut ValidationReport,
+) {
     if violations.is_empty() {
-        report.pass("specifications");
-        return Ok(());
+        report.pass(item);
+        return;
     }
     for violation in violations {
         let detail = violation.line.map_or_else(
@@ -476,7 +568,6 @@ fn check_spec_lifecycle_with_validator(
         );
         report.record(violation.path, status, Some(detail));
     }
-    Ok(())
 }
 
 fn append_report(aggregate: &mut ValidationReport, mut report: ValidationReport) {

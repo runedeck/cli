@@ -76,15 +76,17 @@ A missing executable produces no finding. A failure or timeout is advisory and d
 
 ## House rules
 
-`rune spec validate` and `rune spec doctor` apply three rules beyond the OpenSpec parser, which still accepts SHALL and MUST:
+`rune spec validate` and `rune spec doctor` apply three rules beyond the OpenSpec parser, which still accepts `SHALL` and `MUST`:
 
-- Every normative statement uses MUST. A prose line with SHALL fails with `spec-shall-keyword`.
+- Every normative statement uses `MUST`. A prose line with `SHALL` fails with `spec-shall-keyword`.
 - A canonical specification stays under 150 lines, or it splits into capabilities. A delta over the limit warns.
-- A term marked in *italics* has a `- **term**: definition` entry in `docs/specs/glossary.md`. A plain plural matches its singular.
+- A term marked in *italics* is an ontology term: its `rdfs:label` in `ontology/rune.ttl` (or the file `deck.yaml` names under `ontology`). A plain plural matches its singular. Without an ontology, a `- **term**: definition` entry in `docs/specs/glossary.md` serves.
+- The first italic use of a term in a file cites it, `*term* [TAG]`, and the file defines `[TAG]: <iri>`. `rune spec glossary` prints every term with its tag and definition line.
 
 ```sh
 rune spec validate            # house rules run with the structural checks
 rune spec doctor              # the same findings beside relationship health
+rune spec glossary            # every term, its tag, and the definition line to paste
 ```
 
 ## Review checklist
@@ -94,7 +96,7 @@ rune spec doctor              # the same findings beside relationship health
 - [ ] Import and export restore unknown text and binary artifacts byte for byte.
 - [ ] `rune spec validate --json` retains every diagnostic field, including `null` values.
 - [ ] Completed archive and import retries preserve results without extra writes.
-- [ ] A SHALL line, a 151-line specification, and an undefined italic term each fail validation with the named rule.
+- [ ] A `SHALL` line, a 151-line specification, and an undefined italic term each fail validation with the named rule.
 
 The executable fixtures and recovery checks are in [Manual Testing](../Manual Testing.md#spec).
 

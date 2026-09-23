@@ -24,7 +24,25 @@ pub(crate) fn install_hooks() {
             .map(|merged| crate::cli::config::source_spec_min_name_words(&merged))
             .map_err(|error| format!("cannot read config for spec.min_name_words: {error}"))
     });
+    let _ = rune_docs::spec::set_ontology_lookup(deck_ontology_path);
     rune_docs::sheet::set_no_color(crate::cli::style::global_no_color());
+}
+
+/// The `ontology` key of `deck.yaml`, when the root is a deck that names one.
+fn deck_ontology_path(root: &Path) -> Result<Option<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct OntologyKey {
+        ontology: Option<String>,
+    }
+    let manifest = root.join("deck.yaml");
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&manifest)
+        .map_err(|error| format!("cannot read {}: {error}", manifest.display()))?;
+    serde_yaml::from_str::<OntologyKey>(&text)
+        .map(|key| key.ontology)
+        .map_err(|error| format!("cannot read ontology from {}: {error}", manifest.display()))
 }
 
 pub(crate) fn propose(
@@ -48,6 +66,18 @@ pub(crate) fn show(source: &str, name: &str, json: bool) -> Result<i32, Error> {
 
 pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> {
     rune_docs::spec::context(source, id, json).map_err(|error| convert(&error))
+}
+
+pub(crate) fn glossary(source: &str, json: bool) -> Result<i32, Error> {
+    rune_docs::spec::glossary(source, json).map_err(|error| convert(&error))
+}
+
+/// Term diagnostics for documents outside the specification tree.
+pub(crate) fn lint_documents(
+    repository: &Path,
+    paths: &[std::path::PathBuf],
+) -> Result<Vec<SpecViolation>, Error> {
+    rune_docs::spec::lint_documents(repository, paths).map_err(|error| convert(&error))
 }
 
 pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {

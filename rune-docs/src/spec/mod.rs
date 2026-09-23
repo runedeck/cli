@@ -53,6 +53,7 @@ mod parse;
 mod root;
 mod tasks;
 mod templates;
+mod terms;
 pub(crate) mod transaction;
 mod validate;
 
@@ -65,9 +66,14 @@ pub use commands::{
 };
 pub use doctor::{SpecDoctorOutput, doctor, doctor_output, render_doctor};
 pub use lint::{
-    DEFAULT_MIN_NAME_WORDS, GLOSSARY_FILE, MAX_REQUIREMENT_WORDS, MAX_SPEC_LINES, MAX_STEP_WORDS,
-    min_name_words, name_words, set_name_rule_lookup,
+    DEFAULT_MIN_NAME_WORDS, MAX_REQUIREMENT_WORDS, MAX_SPEC_LINES, MAX_STEP_WORDS, min_name_words,
+    name_words, set_name_rule_lookup,
 };
+pub use terms::{
+    DEFAULT_ONTOLOGY_FILE, GLOSSARY_FILE, GlossaryOutput, GlossaryTerm, Term, TermKind, TermSource,
+    Terms, glossary, glossary_output, ontology_path, render_glossary, set_ontology_lookup,
+};
+pub use validate::lint_documents;
 pub use validate::{
     MdschemaCheck, MdschemaDiagnostic, render_diagnostics, validate, validate_output,
     validate_spec_tree,

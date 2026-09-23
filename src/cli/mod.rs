@@ -994,6 +994,13 @@ enum SpecAction {
         source: String,
     },
 
+    /// Print every defined term: the ontology's labels, comments, and reference tags
+    Glossary {
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
     /// Validate the specification tree or one change or capability
     Validate {
         /// Active change or canonical capability. Omit to validate the tree.
@@ -2260,7 +2267,7 @@ fn spec_help(help: &mut String) {
         help_command(
             help,
             "spec",
-            "propose | list | show | doctor | archive | context",
+            "propose | list | show | glossary | doctor | archive",
             "Spec-driven change lifecycle under docs/",
         );
     }
@@ -2813,6 +2820,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
             | SpecAction::List { source, .. }
             | SpecAction::Show { source, .. }
             | SpecAction::Doctor { source, .. }
+            | SpecAction::Glossary { source, .. }
             | SpecAction::Validate { source, .. }
             | SpecAction::Archive { source, .. }
             | SpecAction::Context { source, .. } => source.clone(),
@@ -2857,6 +2865,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         SpecAction::Show { name, source } => spec::show(&source, &name, json),
         SpecAction::Doctor { source } => spec::doctor(&source, json),
         SpecAction::Validate { name, source } => spec::validate(&source, name.as_deref(), json),
+        SpecAction::Glossary { source } => spec::glossary(&source, json),
         SpecAction::Archive {
             change_id,
             yes,
