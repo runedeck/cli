@@ -11,7 +11,7 @@ export DECK=~/Developer/runedeck/deck
 export PATH="$HOME/.cargo/bin:$PATH"
 cd ~/Developer/runedeck/cli
 cargo install --path .
-rune --version        # rune 0.5.0 (<commit>) built <timestamp> — the hash tracks HEAD
+rune --version        # rune 0.6.0 (<commit>) built <timestamp> — the hash tracks HEAD
 rune --help           # runic wordmark, then groups: Flow, Spec, Deck, Plumbing
 ```
 
