@@ -21,7 +21,7 @@ pub(crate) struct RunOptions {
     pub(crate) system_prompt_file: Option<PathBuf>,
     pub(crate) binary: Option<PathBuf>,
     pub(crate) model: Option<String>,
-    pub(crate) clean_harness_state: bool,
+    pub(crate) clean: bool,
     pub(crate) repository: PathBuf,
     pub(crate) mode: AccessMode,
     pub(crate) timeout: Option<String>,
@@ -138,7 +138,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     resolved.run_pre_steps();
 
     let clean_state = options
-        .clean_harness_state
+        .clean
         .then(|| tempfile::Builder::new().prefix("rune-clean-").tempdir())
         .transpose()
         .map_err(|error| format!("cannot create clean harness state: {error}"))?;
@@ -195,8 +195,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
                         "model": invocation.model,
                         "text": reply.text,
                         "duration_ms": started.elapsed().as_millis(),
-                        "clean_harness_state": options.clean_harness_state,
-                        "clean_harness_state_scope": "supported_user_and_project_state",
+                        "clean": options.clean,
                         "usage": {
                             "input_tokens": Value::Null,
                             "cache_creation_input_tokens": Value::Null,
