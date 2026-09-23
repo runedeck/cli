@@ -334,6 +334,7 @@ fn clean_codex_config_keeps_only_route_fields() {
     let clean = std::fs::read_to_string(target).expect("read clean config");
 
     assert!(clean.contains("model_provider = \"proxy\""));
+    assert!(clean.contains("[model_providers.proxy]"));
     assert!(clean.contains("env_key = \"PROXY_KEY\""));
     assert!(clean.contains("http_headers"));
     assert!(clean.contains("env_http_headers"));
@@ -343,7 +344,7 @@ fn clean_codex_config_keeps_only_route_fields() {
 }
 
 #[test]
-fn clean_codex_config_keeps_every_provider_table_and_a_builtin_provider_name() {
+fn clean_codex_config_names_the_single_custom_provider_and_never_the_source_default() {
     // The live shape: a built-in provider at the top, and the proxy provider
     // that `codex-proxy` selects at launch, with its auth command.
     let directory = tempfile::tempdir().expect("tempdir");
@@ -359,7 +360,11 @@ fn clean_codex_config_keeps_every_provider_table_and_a_builtin_provider_name() {
     let clean: toml::Value = toml::from_str(&std::fs::read_to_string(target).expect("read"))
         .expect("clean config parses");
 
-    assert_eq!(clean["model_provider"].as_str(), Some("openai"));
+    assert_eq!(
+        clean["model_provider"].as_str(),
+        Some("cliproxyapi"),
+        "one custom table names the route in the file, because codex drops a global --config once the subcommand has its own"
+    );
     assert_eq!(
         clean["model_providers"]["cliproxyapi"]["base_url"].as_str(),
         Some("http://127.0.0.1:8317/v1")
@@ -367,6 +372,13 @@ fn clean_codex_config_keeps_every_provider_table_and_a_builtin_provider_name() {
     assert_eq!(
         clean["model_providers"]["cliproxyapi"]["auth"]["command"].as_str(),
         Some("/usr/bin/sed")
+    );
+    assert_eq!(
+        clean["model_providers"]["cliproxyapi"]["auth"]["args"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "the auth command's arguments are the credential source"
     );
     assert!(clean.get("model").is_none());
     assert!(clean.get("memories").is_none());
@@ -695,4 +707,24 @@ fn opencode_rejects_mixed_identified_and_unidentified_text() {
             "opencode text event has no messageID".to_string()
         ))
     );
+}
+
+#[test]
+fn clean_codex_config_with_two_custom_providers_names_none() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let source = directory.path().join("source.toml");
+    let target = directory.path().join("clean.toml");
+    std::fs::write(
+        &source,
+        "model_provider = \"openai\"\n[model_providers.a]\nbase_url = \"http://a\"\n[model_providers.b]\nbase_url = \"http://b\"\n",
+    )
+    .expect("write config");
+
+    copy_codex_route_config(&source, &target).expect("copy clean config");
+    let clean: toml::Value = toml::from_str(&std::fs::read_to_string(target).expect("read"))
+        .expect("clean config parses");
+
+    assert!(clean.get("model_provider").is_none(), "{clean}");
+    assert!(clean["model_providers"].get("a").is_some());
+    assert!(clean["model_providers"].get("b").is_some());
 }

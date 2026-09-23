@@ -127,6 +127,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Rename `rune run --clean-harness-state` to `--clean`; the old spelling stays as a hidden alias for one release.
 - Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter`, with `osascript` and `notify-send` as fallbacks.
 - Open the terminal the owner typed in when the `rune sign` banner is clicked (`RUNE_NOTIFY_APP`, else the launching app, else `TERM_PROGRAM`), instead of Script Editor.
 - Change `rune run` to drop the profile arguments it owns with a warning instead of refusing, and to filter codex `--config` and claude `--settings` per key.
@@ -196,7 +197,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Fix `rune run --clean-harness-state` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth`, and a built-in provider such as `openai` needs no table.
+- Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
 - Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).
 - Fix `rune sign open` signing a seal it cannot push: the push names `gh auth git-credential` for its own process, and the transport is checked before the key touch.

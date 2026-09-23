@@ -786,8 +786,8 @@ enum Command {
         model: Option<String>,
 
         /// Hide supported user-level harness state. Project context can remain visible.
-        #[arg(long)]
-        clean_harness_state: bool,
+        #[arg(long = "clean", alias = "clean-harness-state")]
+        clean: bool,
 
         /// Repository or working directory supplied to the coding tool.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -1978,7 +1978,7 @@ pub fn run() -> i32 {
             system_prompt_file,
             binary,
             model,
-            clean_harness_state,
+            clean,
             repo,
             mode,
             timeout,
@@ -1993,7 +1993,7 @@ pub fn run() -> i32 {
                     system_prompt_file,
                     binary,
                     model,
-                    clean_harness_state,
+                    clean_harness_state: clean,
                     repository: repo,
                     mode,
                     timeout,

@@ -409,12 +409,16 @@ fn copy_optional_auth_file(
     }
 }
 
-/// The clean Codex configuration keeps the route: the top-level
-/// `model_provider`, when the file sets one, and every `[model_providers.*]`
-/// table reduced to its transport fields. Every table is kept because the
-/// provider the run uses may be chosen at launch (`codex-proxy` passes
-/// `--config model_provider="cliproxyapi"`), and a provider the file names
-/// without a table is a Codex built-in such as `openai`, which needs none.
+/// The clean Codex configuration keeps the route: every `[model_providers.*]`
+/// table reduced to its transport fields and `auth`, and a top-level
+/// `model_provider` that names the one custom table when the file defines
+/// exactly one. The file-level name is never copied from the source. Codex
+/// drops a global `--config` (the form `codex-proxy` uses, before the
+/// subcommand) as soon as the subcommand carries its own `--config` flags,
+/// so a profile's `model_reasoning_effort` silently sent the clean run to
+/// the built-in `openai` route with no credential. With one custom table
+/// the file names it, and no flag order can undo that. With several, or
+/// none, the launch-time choice stands and the built-in default applies.
 fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFailure> {
     const ROUTE_KEYS: [&str; 8] = [
         "name",
@@ -439,13 +443,8 @@ fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFa
         ))
     })?;
     let mut clean = toml::map::Map::new();
-    if let Some(provider_name) = config.get("model_provider").and_then(toml::Value::as_str) {
-        clean.insert(
-            "model_provider".to_string(),
-            toml::Value::String(provider_name.to_string()),
-        );
-    }
     let mut providers = toml::map::Map::new();
+    let mut custom_provider: Option<String> = None;
     for (name, provider) in config
         .get("model_providers")
         .and_then(toml::Value::as_table)
@@ -463,7 +462,16 @@ fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFa
                     .map(|value| ((*key).to_string(), value.clone()))
             })
             .collect();
+        custom_provider = match (custom_provider, providers.is_empty()) {
+            (None, true) => Some(name.clone()),
+            _ => None,
+        };
         providers.insert(name.clone(), toml::Value::Table(clean_provider));
+    }
+    if providers.len() == 1
+        && let Some(name) = custom_provider
+    {
+        clean.insert("model_provider".to_string(), toml::Value::String(name));
     }
     if !providers.is_empty() {
         clean.insert("model_providers".to_string(), toml::Value::Table(providers));
