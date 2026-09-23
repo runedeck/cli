@@ -1163,6 +1163,12 @@ fn notify(message: &str) {
             return;
         }
     }
+    // No banner is better than a banner whose click lands in Script Editor,
+    // which is where `osascript` sends it. The terminal already shows the
+    // message; say once how to get banners.
+    if cfg!(target_os = "macos") {
+        eprintln!("no notifier found: `brew install vjeantet/tap/alerter` for banners");
+    }
 }
 
 fn notification_icon() -> Option<PathBuf> {
@@ -1179,7 +1185,7 @@ fn notification_icon() -> Option<PathBuf> {
 /// the command in. `RUNE_NOTIFY_APP` names a bundle id outright; otherwise
 /// macOS hands every process the launching app's `__CFBundleIdentifier`,
 /// then `TERM_PROGRAM` and the terminals' own markers decide, and Terminal
-/// is the last resort. Without a target a click opens Script Editor.
+/// is the last resort.
 fn notification_target() -> Option<String> {
     if !cfg!(target_os = "macos") {
         return None;
@@ -1218,9 +1224,9 @@ fn notification_target() -> Option<String> {
 
 /// The notifiers to try, best first. On macOS `terminal-notifier` and
 /// `alerter` carry the runedeck mark, a subtitle, a sound, and open the
-/// owner's terminal on a click; `osascript` is the fallback that every
-/// machine has and shows the Script Editor icon. On other systems
-/// `notify-send` takes the icon directly.
+/// owner's terminal on a click. `osascript` is deliberately absent: its
+/// banner belongs to Script Editor and a click opens that. On other
+/// systems `notify-send` takes the icon directly.
 fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>) -> Vec<Command> {
     let mut commands = Vec::new();
     if cfg!(target_os = "macos") {
@@ -1284,13 +1290,6 @@ fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>)
             alerter.env("RUNE_NOTIFY_OPEN", bundle);
         }
         commands.push(alerter);
-
-        let mut osascript = Command::new("osascript");
-        osascript.arg("-e").arg(format!(
-            "display notification \"{}\" with title \"{NOTIFICATION_TITLE}\" subtitle \"{NOTIFICATION_SUBTITLE}\" sound name \"default\"",
-            message.replace('"', "'")
-        ));
-        commands.push(osascript);
     } else {
         let mut send = Command::new("notify-send");
         send.args(["-a", "rune"]);

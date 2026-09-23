@@ -341,7 +341,7 @@ fn a_helper_applies_by_scope_prefix_and_never_when_reset() {
 }
 
 #[test]
-fn notifiers_carry_the_message_the_mark_and_a_fallback() {
+fn notifiers_carry_the_message_and_the_mark_and_never_osascript() {
     let icon = std::path::Path::new("/tmp/rune/icon.png");
     let commands = notifier_commands(
         "main needs your signature",
@@ -353,7 +353,7 @@ fn notifiers_carry_the_message_the_mark_and_a_fallback() {
         .map(|command| command.get_program().to_string_lossy().into_owned())
         .collect();
     if cfg!(target_os = "macos") {
-        assert_eq!(programs, ["terminal-notifier", "/bin/sh", "osascript"]);
+        assert_eq!(programs, ["terminal-notifier", "/bin/sh"]);
     } else {
         assert_eq!(programs, ["notify-send"]);
     }

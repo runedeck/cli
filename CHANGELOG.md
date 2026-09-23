@@ -128,7 +128,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - Rename `rune run --clean-harness-state` to `--clean`, and the JSON field to `clean`. The old spelling and the `_scope` field are gone.
-- Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter`, with `osascript` and `notify-send` as fallbacks.
+- Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter` on macOS and `notify-send` elsewhere.
+- Drop the `osascript` notification fallback, whose banner belongs to Script Editor; without a notifier `rune sign` prints an install hint instead.
 - Open the terminal the owner typed in when the `rune sign` banner is clicked (`RUNE_NOTIFY_APP`, else the launching app, else `TERM_PROGRAM`), instead of Script Editor.
 - Show the `rune sign` banner as alerter's own with the runedeck mark, never as an impersonated terminal, because the impersonated app's missing notification permission hid the banner.
 - Change `rune run` to drop the profile arguments it owns with a warning instead of refusing, and to filter codex `--config` and claude `--settings` per key.
