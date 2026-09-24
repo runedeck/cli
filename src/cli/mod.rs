@@ -24,6 +24,9 @@ mod draft;
 mod drift;
 mod exec;
 mod find;
+// Group 3 of review-and-proof gives `rune review parts` its callers.
+#[allow(dead_code)]
+mod closure;
 mod graph;
 mod init;
 pub(crate) mod install;

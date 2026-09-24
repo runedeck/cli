@@ -258,3 +258,99 @@ fn graph_export_without_a_context_is_unchanged() {
         "{turtle}"
     );
 }
+
+/// A proof README becomes a `rune:Proof` with a proves edge per proven
+/// scene while its transcript matches; a drifted transcript keeps the
+/// node and drops every edge.
+#[test]
+fn graph_export_emits_proofs_bound_to_their_transcript() {
+    let dir = lifecycle_deck();
+    let root = dir.path();
+    let proof = root.join("docs/proofs/sample-proof");
+    fs::create_dir_all(&proof).expect("proof dir");
+    fs::write(
+        proof.join("proof.txt"),
+        "## sample-capability#thing-is-checked/thing-enters-the-graph\n$ true\n## Told to a model\nanswer\n",
+    )
+    .expect("transcript");
+    let digest = {
+        use sha2::Digest as _;
+        format!(
+            "{:x}",
+            sha2::Sha256::digest(fs::read(proof.join("proof.txt")).unwrap())
+        )
+    };
+    let readme = format!(
+        "---\ntype: proof\nchange: sample-change\nhead: 0123456789abcdef\nrecorded: 2026-09-24\ntranscript: {digest}\nscenes:\n  - scenario: sample-capability#thing-is-checked/thing-enters-the-graph\n    kind: check\n  - scenario: sample-capability#thing-is-checked/told-to-a-model\n    kind: instruction\n    model: claude-opus-5-5\n  - scenario: sample-capability#thing-is-checked/still-open\n    kind: unproven\n---\n\n# Proof\n"
+    );
+    fs::write(proof.join("README.md"), &readme).expect("readme");
+
+    let output = Command::cargo_bin("rune")
+        .expect("binary")
+        .args(["graph", "export", "--source"])
+        .arg(root)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let turtle = String::from_utf8(output).expect("utf8");
+    assert!(turtle.contains("<https://runedeck.ai/id/proof/sample-proof> a rune:Proof ;"));
+    assert!(turtle.contains("rune:change <https://runedeck.ai/id/change/sample-change> ;"));
+    assert!(turtle.contains("rune:head \"0123456789abcdef\" ;"));
+    assert!(turtle.contains("rune:proves <https://runedeck.ai/id/commit/0123456789abcdef> ;"));
+    assert!(turtle.contains("rune:transcriptMatches true ;"));
+    assert!(turtle.contains(
+        "rune:proves <https://runedeck.ai/id/sample-capability#thing-is-checked/thing-enters-the-graph> ;"
+    ));
+    assert!(turtle.contains(
+        "rune:proves <https://runedeck.ai/id/sample-capability#thing-is-checked/told-to-a-model> ;"
+    ));
+    assert!(turtle.contains("rune:recordedWith \"claude-opus-5-5\" ;"));
+    assert!(!turtle.contains(
+        "rune:proves <https://runedeck.ai/id/sample-capability#thing-is-checked/still-open>"
+    ));
+    assert!(turtle.contains(
+        "rune:scenario <https://runedeck.ai/id/sample-capability#thing-is-checked/still-open> ;"
+    ));
+    assert!(turtle.contains("rune:kind \"unproven\" ;"));
+
+    fs::write(proof.join("proof.txt"), "drifted\n").expect("drift");
+    let output = Command::cargo_bin("rune")
+        .expect("binary")
+        .args(["graph", "export", "--source"])
+        .arg(root)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let turtle = String::from_utf8(output).expect("utf8");
+    assert!(turtle.contains("<https://runedeck.ai/id/proof/sample-proof> a rune:Proof ;"));
+    assert!(turtle.contains("rune:transcriptMatches false ;"));
+    assert!(!turtle.contains("rune:proves"));
+}
+
+/// A malformed proof README fails `rune spec validate` and names the field.
+#[test]
+fn spec_validate_refuses_a_malformed_proof() {
+    let dir = lifecycle_deck();
+    let root = dir.path();
+    let proof = root.join("docs/proofs/bad-proof");
+    fs::create_dir_all(&proof).expect("proof dir");
+    fs::write(
+        proof.join("README.md"),
+        "---\ntype: proof\nchange: sample-change\nrecorded: 2026-09-24\ntranscript: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\nscenes:\n  - scenario: sample-capability#thing-is-checked/told-to-a-model\n    kind: instruction\n---\n",
+    )
+    .expect("readme");
+    Command::cargo_bin("rune")
+        .expect("binary")
+        .args(["spec", "validate", "--source"])
+        .arg(root)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("error[proof-frontmatter-invalid]"))
+        .stdout(predicate::str::contains(
+            "sample-capability#thing-is-checked/told-to-a-model: an instruction scene names the model",
+        ));
+}

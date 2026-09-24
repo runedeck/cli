@@ -20,7 +20,7 @@
 //! title, relation, and source path of each node, as before.
 
 mod context;
-mod lifecycle;
+pub(crate) mod lifecycle;
 
 use std::fmt::Write as _;
 use std::fs;
@@ -70,6 +70,7 @@ fn render(root: &Path) -> Result<String, Error> {
     render_rules(root, &mut body)?;
     lifecycle::render_changes(root, context.as_ref(), &mut body, &mut used)?;
     lifecycle::render_capabilities(root, &mut body)?;
+    lifecycle::render_proofs(root, &mut body, &mut used)?;
     let mut out = String::new();
     let _ = writeln!(out, "@prefix rune:    <{NS}> .");
     let _ = writeln!(out, "@prefix dcterms: <{DCTERMS}> .");
@@ -234,7 +235,7 @@ fn sorted_dirs(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 
 /// The record identifier prefix of a file name: `DECK-0005 Title.md`
 /// yields `DECK-0005`.
-fn record_id(name: &str) -> Option<String> {
+pub(crate) fn record_id(name: &str) -> Option<String> {
     let prefix = name.split_whitespace().next()?;
     let prefix = prefix.strip_suffix(".md").unwrap_or(prefix);
     let (letters, digits) = prefix.split_once('-')?;
@@ -261,7 +262,7 @@ fn related_ids(text: &str) -> Vec<String> {
 /// The items of a frontmatter list key, each as written: an inline
 /// `[a, b]` list, a block list, or one scalar. A scalar that contains a
 /// comma stays one item; the YAML parser owns the split.
-fn list_values(text: &str, key: &str) -> Vec<String> {
+pub(crate) fn list_values(text: &str, key: &str) -> Vec<String> {
     let Some((yaml, _)) = split_frontmatter(text) else {
         return Vec::new();
     };
@@ -295,6 +296,17 @@ fn iri(identifier: &str) -> String {
 /// records and capabilities that share the bare `/id/` space.
 fn iri_change(identifier: &str) -> String {
     format!("<{ID}change/{}>", encode(identifier))
+}
+
+/// A full IRI reference for a proof under `/id/proof/`, named by its
+/// directory.
+fn iri_proof(identifier: &str) -> String {
+    format!("<{ID}proof/{}>", encode(identifier))
+}
+
+/// A full IRI reference for a commit under `/id/commit/`.
+fn iri_commit(sha: &str) -> String {
+    format!("<{ID}commit/{}>", encode(sha))
 }
 
 /// A full IRI reference for `identifier#fragment` under `/id/`. An IRI

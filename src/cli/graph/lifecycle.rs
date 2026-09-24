@@ -15,8 +15,8 @@ use rune::parse::{frontmatter_body, frontmatter_value};
 
 use super::context::{Context, Used};
 use super::{
-    escape, iri, iri_change, iri_fragment, list_values, record_id, relative, render_record,
-    sorted_dirs,
+    escape, iri, iri_change, iri_commit, iri_fragment, iri_proof, list_values, record_id, relative,
+    render_record, sorted_dirs,
 };
 
 /// Emit every change under `docs/changes/` and `docs/changes/archive/`,
@@ -142,9 +142,56 @@ fn render_capability(
         escape(&relative(root, &spec))
     );
 
+    for heading in spec_headings(&text) {
+        match heading {
+            Heading::Requirement { slug, title } => {
+                let requirement_node = iri_fragment(name, &slug);
+                let _ = writeln!(out, "{requirement_node} a rune:Requirement ;");
+                let _ = writeln!(out, "    dcterms:title \"{}\" ;", escape(&title));
+                let _ = writeln!(out, "    dcterms:isPartOf {node} .\n");
+            }
+            Heading::Scenario {
+                requirement,
+                slug,
+                title,
+            } => {
+                let scenario_node = iri_fragment(name, &format!("{requirement}/{slug}"));
+                let _ = writeln!(out, "{scenario_node} a rune:Scenario ;");
+                let _ = writeln!(out, "    dcterms:title \"{}\" ;", escape(&title));
+                let _ = writeln!(
+                    out,
+                    "    dcterms:isPartOf {} .\n",
+                    iri_fragment(name, &requirement)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A requirement or scenario heading of a specification, with the slug
+/// the exporter mints for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Heading {
+    Requirement {
+        slug: String,
+        title: String,
+    },
+    Scenario {
+        requirement: String,
+        slug: String,
+        title: String,
+    },
+}
+
+/// The requirement and scenario headings of a specification, outside
+/// fences, in order. A scenario under a requirement whose slug is empty
+/// is dropped, and so is a scenario before any requirement.
+pub fn spec_headings(text: &str) -> Vec<Heading> {
+    let mut headings = Vec::new();
     let mut requirement: Option<String> = None;
     let mut fenced = false;
-    for line in frontmatter_body(&text).lines() {
+    for line in frontmatter_body(text).lines() {
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
@@ -159,10 +206,10 @@ fn render_capability(
                 requirement = None;
                 continue;
             }
-            let requirement_node = iri_fragment(name, &slug);
-            let _ = writeln!(out, "{requirement_node} a rune:Requirement ;");
-            let _ = writeln!(out, "    dcterms:title \"{}\" ;", escape(title));
-            let _ = writeln!(out, "    dcterms:isPartOf {node} .\n");
+            headings.push(Heading::Requirement {
+                slug: slug.clone(),
+                title: title.to_string(),
+            });
             requirement = Some(slug);
         } else if let Some(title) = line.strip_prefix("#### Scenario:") {
             let Some(parent) = requirement.as_deref() else {
@@ -173,15 +220,95 @@ fn render_capability(
             if slug.is_empty() {
                 continue;
             }
-            let scenario_node = iri_fragment(name, &format!("{parent}/{slug}"));
-            let _ = writeln!(out, "{scenario_node} a rune:Scenario ;");
-            let _ = writeln!(out, "    dcterms:title \"{}\" ;", escape(title));
+            headings.push(Heading::Scenario {
+                requirement: parent.to_string(),
+                slug,
+                title: title.to_string(),
+            });
+        }
+    }
+    headings
+}
+
+/// The scenario keys of a capability's specification,
+/// `<capability>#<requirement-slug>/<scenario-slug>`, in order.
+pub fn scenario_keys(capability: &str, text: &str) -> Vec<String> {
+    spec_headings(text)
+        .into_iter()
+        .filter_map(|heading| match heading {
+            Heading::Scenario {
+                requirement, slug, ..
+            } => Some(format!("{capability}#{requirement}/{slug}")),
+            Heading::Requirement { .. } => None,
+        })
+        .collect()
+}
+
+/// Emit one `rune:Proof` per proof README under `docs/proofs/`, with a
+/// proves edge to every scene whose kind is not `unproven` and whose
+/// section the transcript holds, only while `proof.txt` hashes to the
+/// recorded transcript. A proof whose transcript drifted keeps its node
+/// and loses its edges, which is what the deck's acceptance shape refuses.
+pub fn render_proofs(root: &Path, out: &mut String, used: &mut Used) -> Result<(), Error> {
+    let proofs = rune::proof::find(root).map_err(|error| Error::io(error.to_string()))?;
+    for proof in proofs {
+        let Some(name) = proof.dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let node = iri_proof(name);
+        let fm = &proof.frontmatter;
+        let matches = proof.transcript_matches();
+        let _ = writeln!(out, "{node} a rune:Proof ;");
+        let _ = writeln!(out, "    dcterms:identifier \"{}\" ;", escape(name));
+        let _ = writeln!(out, "    rune:change {} ;", iri_change(&fm.change));
+        used.note("xsd");
+        let _ = writeln!(
+            out,
+            "    rune:recorded \"{}\"^^xsd:date ;",
+            escape(&fm.recorded)
+        );
+        let _ = writeln!(out, "    rune:transcript \"{}\" ;", escape(&fm.transcript));
+        let _ = writeln!(
+            out,
+            "    rune:transcriptMatches {} ;",
+            if matches { "true" } else { "false" }
+        );
+        if let Some(head) = &fm.head {
+            let _ = writeln!(out, "    rune:head \"{}\" ;", escape(head));
+            if matches {
+                let _ = writeln!(out, "    rune:proves {} ;", iri_commit(head));
+            }
+        }
+        let transcript = proof.transcript().unwrap_or_default();
+        for scene in &fm.scenes {
+            let Some((capability, fragment)) = scene.scenario.split_once('#') else {
+                continue;
+            };
+            let scenario = iri_fragment(capability, fragment);
+            let recorded = rune::proof::scene_recorded(&transcript, &scene.scenario);
+            // One node per scene keeps the model with the scene it ran.
+            let _ = writeln!(out, "    rune:scene [");
+            let _ = writeln!(out, "        a rune:Scene ;");
+            let _ = writeln!(out, "        rune:scenario {scenario} ;");
+            let _ = writeln!(out, "        rune:kind \"{}\" ;", scene.kind.as_str());
+            if let Some(model) = &scene.model {
+                let _ = writeln!(out, "        rune:recordedWith \"{}\" ;", escape(model));
+            }
             let _ = writeln!(
                 out,
-                "    dcterms:isPartOf {} .\n",
-                iri_fragment(name, parent)
+                "        rune:recordedInTranscript {}",
+                if recorded { "true" } else { "false" }
             );
+            let _ = writeln!(out, "    ] ;");
+            if matches && recorded && scene.kind.proves() {
+                let _ = writeln!(out, "    rune:proves {scenario} ;");
+            }
         }
+        let _ = writeln!(
+            out,
+            "    rune:sourcePath \"{}\" .\n",
+            escape(&relative(root, &proof.readme))
+        );
     }
     Ok(())
 }

@@ -85,6 +85,23 @@ pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {
 }
 
 pub(crate) fn validate(source: &str, name: Option<&str>, json: bool) -> Result<i32, Error> {
+    // Proof READMEs are validated here, before the specification tree: a
+    // malformed proof names its field and fails the run.
+    if let Err(error) = rune::proof::find(Path::new(source)) {
+        if json {
+            let value = serde_json::json!({
+                "proof_errors": [{
+                    "path": error.path.display().to_string(),
+                    "field": error.field,
+                    "message": error.message,
+                }]
+            });
+            println!("{value}");
+        } else {
+            println!("error[proof-frontmatter-invalid]: {error}");
+        }
+        return Ok(1);
+    }
     rune_docs::spec::validate(source, name, json, mdschema_bridge).map_err(|error| convert(&error))
 }
 
