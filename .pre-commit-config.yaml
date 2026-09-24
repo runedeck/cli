@@ -119,7 +119,7 @@ repos:
           # Archived change proposals are frozen history, not prose to keep.
           - id: vale
             name: vale prose style
-            entry: sh -c 'if command -v vale >/dev/null 2>&1; then vale --no-wrap "$@"; elif [ -n "${REQUIRE_GATES:-}" ]; then echo "REQUIRE_GATES set and vale is absent"; exit 1; fi' --
+            entry: sh -c 'if command -v vale >/dev/null 2>&1; then vale --no-global --no-wrap "$@"; elif [ -n "${REQUIRE_GATES:-}" ]; then echo "REQUIRE_GATES set and vale is absent"; exit 1; fi' --
             language: system
             types: [markdown]
             exclude: '(^|/)\.provenance/|^docs/changes/archive/|^tests/fixtures/'
