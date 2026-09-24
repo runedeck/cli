@@ -1,8 +1,9 @@
 ---
 type: proof
 change: review-and-proof
+head: c701a5d1e08b36ac3a94f4e013fe528c627a642b
 recorded: 2026-09-24
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 54d2055f3fa14c9ac69607a4a82a4e03397825d11079cb9d7bd259e37d4f283f
 scenes:
 - scenario: proof-scene-runner#proof-frontmatter-is-the-record/proof-directory-carries-another-change-s-name
   kind: check

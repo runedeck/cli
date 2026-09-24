@@ -1,0 +1,196 @@
+## proof-scene-runner#proof-frontmatter-is-the-record/proof-directory-carries-another-change-s-name
+kind: check
+$ cd tests/fixtures/proof/two-changes
+$ rune graph export --source .
+  @prefix rune:    <https://runedeck.ai/ns#> .
+  @prefix dcterms: <http://purl.org/dc/terms/> .
+  @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+  <https://runedeck.ai/id/change/other-change-two> a rune:Change ;
+      dcterms:identifier "other-change-two" ;
+      rune:sourcePath "docs/changes/other-change-two/proposal.md" .
+
+  <https://runedeck.ai/id/other-capability-two> a rune:Capability ;
+      dcterms:identifier "other-capability-two" ;
+      rune:change <https://runedeck.ai/id/change/other-change-two> ;
+      rune:sourcePath "docs/changes/other-change-two/specs/other-capability-two/spec.md" .
+
+  <https://runedeck.ai/id/other-capability-two#other-thing-holds> a rune:Requirement ;
+      dcterms:title "Other Thing Holds" ;
+      dcterms:isPartOf <https://runedeck.ai/id/other-capability-two> .
+
+  <https://runedeck.ai/id/other-capability-two#other-thing-holds/other-happens> a rune:Scenario ;
+      dcterms:title "Other happens" ;
+      dcterms:isPartOf <https://runedeck.ai/id/other-capability-two#other-thing-holds> .
+
+  <https://runedeck.ai/id/change/sample-change-one> a rune:Change ;
+      dcterms:identifier "sample-change-one" ;
+      rune:sourcePath "docs/changes/sample-change-one/proposal.md" .
+
+  <https://runedeck.ai/id/sample-capability-one> a rune:Capability ;
+      dcterms:identifier "sample-capability-one" ;
+      rune:change <https://runedeck.ai/id/change/sample-change-one> ;
+      rune:sourcePath "docs/changes/sample-change-one/specs/sample-capability-one/spec.md" .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds> a rune:Requirement ;
+      dcterms:title "Thing Holds" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one> .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> a rune:Scenario ;
+      dcterms:title "Version prints" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one#thing-holds> .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> a rune:Scenario ;
+      dcterms:title "Missing tag fails" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one#thing-holds> .
+
+  <https://runedeck.ai/id/proof/canvas-a> a rune:Proof ;
+      dcterms:identifier "canvas-a" ;
+      rune:change <https://runedeck.ai/id/change/other-change-two> ;
+      rune:recorded "2026-09-24"^^xsd:date ;
+      rune:transcript "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ;
+      rune:transcriptMatches true ;
+      rune:sourcePath "docs/proofs/canvas-a/README.md" .
+
+
+## proof-scene-runner#proof-frontmatter-is-the-record/instruction-scene-without-a-model
+kind: check
+$ cd tests/fixtures/proof/bad-instruction
+$ rune spec validate --source .
+  error[proof-frontmatter-invalid]: ./docs/proofs/bad/README.md: sample-capability-one#thing-holds/version-prints: an instruction scene names the model that ran it
+
+## proof-scene-runner#head-and-transcript-bind-the-record/hand-recorded-proof-has-no-head
+kind: check
+$ cd tests/fixtures/proof/two-changes
+$ rune spec validate --source .
+  specification validation passed
+$ sh -c 'rune graph export --source . | awk '"'"'/proof\/canvas-a> a rune:Proof/,/rune:sourcePath/'"'"''
+  <https://runedeck.ai/id/proof/canvas-a> a rune:Proof ;
+      dcterms:identifier "canvas-a" ;
+      rune:change <https://runedeck.ai/id/change/other-change-two> ;
+      rune:recorded "2026-09-24"^^xsd:date ;
+      rune:transcript "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ;
+      rune:transcriptMatches true ;
+      rune:sourcePath "docs/proofs/canvas-a/README.md" .
+
+## proof-scene-runner#one-scene-per-scenario-is-written-first/readme-already-exists
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/one-change" repo && rune proof scaffold sample-change-one --source repo && rune proof scaffold sample-change-one --source repo'
+  wrote /private/tmp/claude-501/rune-proof-82706-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-17ee05b8-8-0/repo/docs/proofs/sample-change-one/README.md with 2 unproven scenes
+  fatal: /private/tmp/claude-501/rune-proof-82706-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-17ee05b8-8-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
+
+## proof-scene-runner#run-executes-every-executable-scene/scene-names-a-command-the-runner-cannot-find
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled" repo && rune proof run sample-change-one --source repo'
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... unproven: command not found: nonesuch
+  2 scenes, 1 proven, 1 unproven; transcript 8793c3bca298
+
+## proof-scene-runner#run-executes-every-executable-scene/expected-output-disagrees
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/mismatch" repo && rune proof run sample-change-one --source repo'
+  sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:
+  - rune 0.5.0 ([..])
+  + rune 0.6.0 (c47af0ea) built 2026-09-24T11:10:41Z
+  sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
+  2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004
+
+## proof-scene-runner#every-scene-starts-clean/scenes-do-not-share-a-directory
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/isolation" repo && rune proof run sample-change-one --source repo'
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
+  2 scenes, 2 proven, 0 unproven; transcript 47dc4db4c3ac
+
+## proof-scene-runner#the-transcript-binds-the-claim/scene-key-edited-after-the-run
+kind: check
+$ cd tests/fixtures/proof/edited-key
+$ rune proof run sample-change-one --check --source .
+  error[proof-check]: /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-graph/tests/fixtures/proof/edited-key/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/version-prints runs different commands in the README than its section records
+  error[proof-check]: /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-graph/tests/fixtures/proof/edited-key/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/missing-tag-fails is check but has no section
+
+## proof-scene-runner#the-transcript-binds-the-claim/instruction-scene-never-run
+kind: check
+$ cd tests/fixtures/proof/instruction-pending
+$ rune proof run sample-change-one --check --source .
+  error[proof-check]: /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-graph/tests/fixtures/proof/instruction-pending/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/missing-tag-fails is instruction but has no section
+$ rune graph export --source .
+  @prefix rune:    <https://runedeck.ai/ns#> .
+  @prefix dcterms: <http://purl.org/dc/terms/> .
+  @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+  <https://runedeck.ai/id/change/sample-change-one> a rune:Change ;
+      dcterms:identifier "sample-change-one" ;
+      rune:sourcePath "docs/changes/sample-change-one/proposal.md" .
+
+  <https://runedeck.ai/id/sample-capability-one> a rune:Capability ;
+      dcterms:identifier "sample-capability-one" ;
+      rune:change <https://runedeck.ai/id/change/sample-change-one> ;
+      rune:sourcePath "docs/changes/sample-change-one/specs/sample-capability-one/spec.md" .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds> a rune:Requirement ;
+      dcterms:title "Thing Holds" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one> .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> a rune:Scenario ;
+      dcterms:title "Version prints" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one#thing-holds> .
+
+  <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> a rune:Scenario ;
+      dcterms:title "Missing tag fails" ;
+      dcterms:isPartOf <https://runedeck.ai/id/sample-capability-one#thing-holds> .
+
+  <https://runedeck.ai/id/proof/sample-change-one> a rune:Proof ;
+      dcterms:identifier "sample-change-one" ;
+      rune:change <https://runedeck.ai/id/change/sample-change-one> ;
+      rune:recorded "2026-09-24"^^xsd:date ;
+      rune:transcript "b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09" ;
+      rune:transcriptMatches true ;
+      rune:scene [
+          a rune:Scene ;
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+          rune:kind "check" ;
+          rune:recordedInTranscript true
+      ] ;
+      rune:proves <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+      rune:scene [
+          a rune:Scene ;
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> ;
+          rune:kind "instruction" ;
+          rune:recordedWith "claude-opus-5-5" ;
+          rune:recordedInTranscript false
+      ] ;
+      rune:sourcePath "docs/proofs/sample-change-one/README.md" .
+
+
+## proof-scene-runner#check-refuses-drift/transcript-drifted-after-the-run
+kind: check
+$ cd tests/fixtures/proof/drifted
+$ rune proof run sample-change-one --check --source .
+  error[proof-check]: /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-graph/tests/fixtures/proof/drifted/docs/proofs/sample/README.md: transcript drifted: recorded b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09 computed 3a4d3e47be601c20ea89e6b7f51e9b07c69f22e14e82be70bec981b1d7406dae
+  error[proof-check]: /Users/N4M3Z/Developer/runedeck/cli/.workspaces/fable-graph/tests/fixtures/proof/drifted/docs/proofs/sample/README.md: sample-capability-one#thing-holds/version-prints is check but has no section
+
+## proof-scene-runner#the-run-records-its-own-cast/cast-written-from-the-captured-output
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled-good" repo && rune proof run sample-change-one --source repo >/dev/null && head -c 13 repo/docs/proofs/sample-change-one/proof.cast && echo && awk '"'"'/^\[.*"o"/{n++} END{print n " events"}'"'"' repo/docs/proofs/sample-change-one/proof.cast'
+  {"version":2,
+  2 events
+
+## proof-scene-runner#the-graph-shows-only-proven-scenes/proof-transcript-does-not-match
+kind: check
+$ cd tests/fixtures/proof/drifted
+$ sh -c 'rune graph export --source . | awk '"'"'/proof\/sample> a rune:Proof/,/rune:sourcePath/'"'"''
+  <https://runedeck.ai/id/proof/sample> a rune:Proof ;
+      dcterms:identifier "sample" ;
+      rune:change <https://runedeck.ai/id/change/sample-change-one> ;
+      rune:recorded "2026-09-24"^^xsd:date ;
+      rune:transcript "b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09" ;
+      rune:transcriptMatches false ;
+      rune:scene [
+          a rune:Scene ;
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+          rune:kind "check" ;
+          rune:recordedInTranscript false
+      ] ;
+      rune:sourcePath "docs/proofs/sample/README.md" .
+
