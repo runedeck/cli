@@ -6,7 +6,7 @@
 - [x] 1.2 Proof frontmatter reader with validation errors that name the field. Tested on the four deck proofs that carry it
 - [x] 1.3 `graph/lifecycle.rs` emits `rune:Proof`, `rune:proves` to the `head` commit and to proven scenes only when `proof.txt` matches `transcript`, `rune:recordedWith` on instruction scenes
 - [x] 1.4 `rune spec validate` rejects a malformed proof README
-- [x] 1.5 Tests: closure of a fixture change, unplaced path, proof resolved by `change` not by directory, export shows four proofs and no edge for `unproven`
+- [x] 1.5 Tests: closure of a fixture change in declared order, a proof resolved by `change` for both changes, a scene key that no specification declares, export shows proof nodes with no edge for `unproven` or after a drift; the four deck proofs are proven by the export run in the workshop, the unplaced path is a group 3 test
 
 ## 2. Proof runner
 

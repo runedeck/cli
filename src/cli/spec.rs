@@ -87,7 +87,9 @@ pub(crate) fn doctor(source: &str, json: bool) -> Result<i32, Error> {
 pub(crate) fn validate(source: &str, name: Option<&str>, json: bool) -> Result<i32, Error> {
     // Proof READMEs are validated here, before the specification tree: a
     // malformed proof names its field and fails the run.
-    if let Err(error) = rune::proof::find(Path::new(source)) {
+    if let Err(error) = rune::proof::find(Path::new(source))
+        .and_then(|proofs| super::closure::check_scene_keys(Path::new(source), &proofs))
+    {
         if json {
             let value = serde_json::json!({
                 "proof_errors": [{

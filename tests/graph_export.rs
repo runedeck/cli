@@ -329,6 +329,7 @@ fn graph_export_emits_proofs_bound_to_their_transcript() {
     assert!(turtle.contains("<https://runedeck.ai/id/proof/sample-proof> a rune:Proof ;"));
     assert!(turtle.contains("rune:transcriptMatches false ;"));
     assert!(!turtle.contains("rune:proves"));
+    assert!(turtle.contains("rune:scenario <https://runedeck.ai/id/sample-capability#thing-is-checked/thing-enters-the-graph> ;"), "scene nodes survive a drift");
 }
 
 /// A malformed proof README fails `rune spec validate` and names the field.
@@ -352,5 +353,29 @@ fn spec_validate_refuses_a_malformed_proof() {
         .stdout(predicate::str::contains("error[proof-frontmatter-invalid]"))
         .stdout(predicate::str::contains(
             "sample-capability#thing-is-checked/told-to-a-model: an instruction scene names the model",
+        ));
+}
+
+/// A scene that names a scenario no specification declares is refused,
+/// so no proves edge can point at a node the exporter never minted.
+#[test]
+fn spec_validate_refuses_an_undeclared_scenario() {
+    let dir = lifecycle_deck();
+    let root = dir.path();
+    let proof = root.join("docs/proofs/stray-proof");
+    fs::create_dir_all(&proof).expect("proof dir");
+    fs::write(
+        proof.join("README.md"),
+        "---\ntype: proof\nchange: sample-change\nrecorded: 2026-09-24\ntranscript: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\nscenes:\n  - scenario: sample-capability#thing-is-checked/nobody-wrote-this\n    kind: check\n---\n",
+    )
+    .expect("readme");
+    Command::cargo_bin("rune")
+        .expect("binary")
+        .args(["spec", "validate", "--source"])
+        .arg(root)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "nobody-wrote-this: no specification declares this scenario",
         ));
 }

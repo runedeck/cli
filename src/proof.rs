@@ -158,13 +158,14 @@ pub fn parse(path: &Path, text: &str) -> Result<Frontmatter, ProofError> {
             ));
         }
         match (scene.kind, scene.model.as_deref()) {
-            (Kind::Instruction, None | Some("")) => {
+            (Kind::Instruction, model) if model.is_none_or(|m| m.trim().is_empty()) => {
                 return Err(fail(
                     &scene.scenario,
                     "an instruction scene names the model that ran it".to_string(),
                 ));
             }
             (Kind::Instruction, Some(_)) | (_, None) => {}
+            (_, Some(model)) if model.trim().is_empty() => {}
             (_, Some(_)) => {
                 return Err(fail(
                     &scene.scenario,
@@ -353,6 +354,13 @@ mod tests {
         let error = parse(Path::new("README.md"), &text).unwrap_err();
         assert_eq!(error.field, "cap#req-slug/other");
         assert!(error.message.contains("model"));
+    }
+
+    #[test]
+    fn a_blank_model_is_no_model() {
+        let text = GOOD.replace("    model: claude-opus-5-5\n", "    model: \" \"\n");
+        let error = parse(Path::new("README.md"), &text).unwrap_err();
+        assert_eq!(error.field, "cap#req-slug/other");
     }
 
     #[test]

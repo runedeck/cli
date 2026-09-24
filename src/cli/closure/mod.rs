@@ -191,6 +191,54 @@ fn rest(dir: &Path) -> Result<Vec<PathBuf>, Error> {
         .collect())
 }
 
+/// Every scenario key the tree declares: canonical specs under
+/// `docs/specs/` and delta specs of every active change.
+pub fn known_scenarios(root: &Path) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut spec_dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = fs::read_dir(root.join("docs").join("specs")) {
+        spec_dirs.extend(entries.filter_map(Result::ok).map(|e| e.path()));
+    }
+    if let Ok(changes) = fs::read_dir(root.join("docs").join("changes")) {
+        for change in changes.filter_map(Result::ok).map(|e| e.path()) {
+            if let Ok(entries) = fs::read_dir(change.join("specs")) {
+                spec_dirs.extend(entries.filter_map(Result::ok).map(|e| e.path()));
+            }
+        }
+    }
+    for dir in spec_dirs {
+        let spec = dir.join("spec.md");
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if let Ok(text) = fs::read_to_string(&spec) {
+            keys.extend(scenario_keys(name, &text));
+        }
+    }
+    keys
+}
+
+/// Refuse a proof scene that names a scenario no specification declares,
+/// so the exporter never emits a proves edge to a node it did not mint.
+pub fn check_scene_keys(
+    root: &Path,
+    proofs: &[rune::proof::Proof],
+) -> Result<(), rune::proof::ProofError> {
+    let known = known_scenarios(root);
+    for proof in proofs {
+        for scene in &proof.frontmatter.scenes {
+            if !known.contains(&scene.scenario) {
+                return Err(rune::proof::ProofError {
+                    path: proof.readme.clone(),
+                    field: scene.scenario.clone(),
+                    message: "no specification declares this scenario".to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The capability names the proposal's `### New Capabilities` section
 /// lists, in order: the first backticked token of each list item.
 fn declared_capabilities(proposal: &str) -> Vec<String> {

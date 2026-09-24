@@ -42,6 +42,7 @@ fn fixture() -> tempfile::TempDir {
     fs::create_dir_all(&ideas).unwrap();
     fs::write(ideas.join("First Cap Here.svg"), "<svg/>").unwrap();
     fs::write(ideas.join("Unrelated.svg"), "<svg/>").unwrap();
+    fs::create_dir_all(root.join("docs/changes/other-change")).unwrap();
     for (name, change_id) in [("mine", "sample-change"), ("theirs", "other-change")] {
         let proof = root.join("docs/proofs").join(name);
         fs::create_dir_all(&proof).unwrap();
@@ -134,4 +135,38 @@ fn a_change_id_that_is_a_path_is_refused() {
         let error = resolve_change(root, id).unwrap_err();
         assert!(error.to_string().contains("not a change id"), "{id}");
     }
+}
+
+#[test]
+fn a_proof_belongs_to_the_change_its_frontmatter_names() {
+    let dir = fixture();
+    let theirs = resolve_change(dir.path(), "other-change").expect("closure");
+    let names: Vec<String> = theirs
+        .proofs
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["theirs"]);
+}
+
+#[test]
+fn a_scene_must_name_a_declared_scenario() {
+    let dir = fixture();
+    let root = dir.path();
+    let known = known_scenarios(root);
+    assert!(known.contains(&"first-cap-here#thing-holds/one-happens".to_string()));
+    let proofs = rune::proof::find(root).unwrap();
+    assert!(
+        check_scene_keys(root, &proofs).is_ok(),
+        "empty scene lists pass"
+    );
+    let readme = root.join("docs/proofs/mine/README.md");
+    let text = fs::read_to_string(&readme).unwrap().replace(
+        "scenes: []",
+        "scenes:\n  - scenario: first-cap-here#thing-holds/one-happens\n    kind: check\n  - scenario: first-cap-here#thing-holds/never-declared\n    kind: check",
+    );
+    fs::write(&readme, text).unwrap();
+    let proofs = rune::proof::find(root).unwrap();
+    let error = check_scene_keys(root, &proofs).unwrap_err();
+    assert_eq!(error.field, "first-cap-here#thing-holds/never-declared");
 }
