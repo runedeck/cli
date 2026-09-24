@@ -6,16 +6,16 @@
 - [x] 1.2 Proof frontmatter reader with validation errors that name the field. Tested on the four deck proofs that carry it
 - [x] 1.3 `graph/lifecycle.rs` emits `rune:Proof`, `rune:proves` to the `head` commit and to proven scenes only when `proof.txt` matches `transcript`, `rune:recordedWith` on instruction scenes
 - [x] 1.4 `rune spec validate` rejects a malformed proof README
-- [x] 1.5 Tests: closure of a fixture change in declared order, a proof resolved by `change` for both changes, a scene key that no specification declares, export shows proof nodes with no edge for `unproven` or after a drift; the four deck proofs are proven by the export run in the workshop, the unplaced path is a group 3 test
+- [x] 1.5 Tests: closure of a fixture change in declared order, a proof resolved by `change` for both changes, a scene key that no specification declares, export shows proof nodes with no edge for `unproven` or after a drift. The four deck proofs are proven by the export run in the workshop, the unplaced path is a group 3 test
 
 ## 2. Proof runner
 
-- [ ] 2.1 `rune proof scaffold <change>`: README with frontmatter, one empty fence per scenario key in closure order, refuses an existing README
-- [ ] 2.2 `rune proof run <change>`: own fence parser in the trycmd grammar, execution through snapbox with `code` and `stdout_eq`, `rune` resolved to its own path and the rest through `PATH`, a fresh directory per scene, `$ cd` honored, unresolvable command fails the scene, one line per scene
-- [ ] 2.3 Run writes `proof.txt` with one section per scene, `transcript`, `head`, `recorded`, and each scene's kind, failed scenes `unproven`. Instruction scenes skipped, recorded by `run --instruction <key>` through `rune run`. Cast through `asciinema`, else `scripts/fallback/asciinema.py`, else `docs/proofs/cast.py`, when one answers
-- [ ] 2.4 `run --check` rebuilds the expected transcript, refuses a digest mismatch and a `head` that is not an ancestor
-- [ ] 2.5 `docs/proofs/review-and-proof/README.md` holds a scene for every scenario of this change and passes `rune proof run`
-- [ ] 2.6 Tests: fence grammar, unregistered command, output mismatch diff, drifted transcript, recorder absent
+- [x] 2.1 `rune proof scaffold <change>`: README with frontmatter, one empty fence per scenario key in closure order, refuses an existing README
+- [x] 2.2 `rune proof run <change>`: own fence parser in the trycmd grammar, execution through snapbox with `code` and `stdout_eq`, `rune` resolved to its own path and the rest through `PATH`, a fresh directory per scene, `$ cd` honored, unresolvable command fails the scene, one line per scene
+- [x] 2.3 Run writes `proof.txt` with one section per scene, `transcript`, `head`, `recorded`, and each scene's kind, failed scenes `unproven`. Instruction scenes skipped, recorded by `run --instruction <key>` through `rune run`. Cast through `asciinema`, else `scripts/fallback/asciinema.py`, else `docs/proofs/cast.py`, when one answers
+- [x] 2.4 `run --check` rebuilds the expected transcript, refuses a digest mismatch and a `head` that is not an ancestor
+- [x] 2.5 `docs/proofs/review-and-proof/README.md` holds a scene for every scenario of this change. Twelve proof-runner scenes pass `rune proof run` against `tests/fixtures/proof/`, two stay unproven for the deck (canvas A skeleton, four deck proofs), and the sixteen review scenes wait for group 3
+- [x] 2.6 Tests: fence grammar, unregistered command, output mismatch diff, drifted transcript, recorder absent
 
 ## 3. Review commands
 

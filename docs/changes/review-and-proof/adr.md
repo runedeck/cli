@@ -45,7 +45,7 @@ Option 1 writes the closure twice and the two drift on the first change to the g
 ## Consequences
 
 - One resolver serves both commands and the exporter, so the closure is computed once and read three times.
-- snapbox joins the dependencies and the runner parses the trycmd fence grammar itself, because trycmd's harness returns no per-case outcome and reports an unregistered command as ignored while staying green. The grammar is trycmd's, so the deck's interim recordings migrate by hand without a translator.
+- No dependency joins: the runner parses the trycmd fence grammar and matches output with the `[..]` and `...` rules itself, because trycmd's harness returns no per-case outcome and reports an unregistered command as ignored while staying green. The grammar is trycmd's, so the deck's interim recordings migrate by hand without a translator.
 - A proof can say `unproven` and the graph shows it, so acceptance can refuse a record with an unproven scenario instead of trusting a script ran.
 - The review receipt names its scope and only an acceptance ends with `review-exit=0`. `close` re-resolves from a state file outside the tree and scans every recorded path in the annotation commit, so neither an edited `REVIEW.md` nor a narrowed sparse set can turn a stale or partial review into an approval.
 - `.review/` is a reserved directory tracked only in the annotation commit, which never is merged. The deck and the skeleton exclude it from lints, and its markers stay.

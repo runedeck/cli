@@ -4,6 +4,7 @@ mod adopt;
 mod adr;
 mod assemble;
 mod bench;
+mod closure;
 mod completion;
 pub(crate) mod config;
 mod context;
@@ -24,9 +25,6 @@ mod draft;
 mod drift;
 mod exec;
 mod find;
-// Group 3 of review-and-proof gives `rune review parts` its callers.
-#[allow(dead_code)]
-mod closure;
 mod graph;
 mod init;
 pub(crate) mod install;
@@ -37,6 +35,7 @@ mod plugin;
 mod process;
 #[cfg(feature = "spec")]
 mod promote;
+mod proof;
 mod provenance;
 mod provider_cmd;
 mod release;
@@ -604,6 +603,12 @@ enum Command {
     Graph {
         #[command(subcommand)]
         action: graph::GraphAction,
+    },
+
+    /// Behavior proofs: scaffold a change's scenes, run them, check the transcript
+    Proof {
+        #[command(subcommand)]
+        action: proof::ProofAction,
     },
 
     /// Validate deck or rune source files against schemas
@@ -1867,6 +1872,9 @@ pub fn run() -> i32 {
         Command::Graph { action } => {
             return exit_code(graph::execute(&action), args.json);
         }
+        Command::Proof { action } => {
+            return exit_code(proof::execute(&action), args.json);
+        }
         Command::Provenance {
             target,
             source_uri,
@@ -2412,6 +2420,12 @@ fn deck_help(help: &mut String) {
         "graph",
         "export [--source <DIR>]",
         "Export the artifact graph as Turtle for SHACL validation",
+    );
+    help_command(
+        help,
+        "proof",
+        "scaffold <CHANGE> | run <CHANGE> [--check | --instruction <KEY>]",
+        "Scaffold, run, and check a change's behavior proof",
     );
     help_command(
         help,

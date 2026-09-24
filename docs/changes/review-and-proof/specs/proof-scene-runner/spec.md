@@ -44,7 +44,7 @@ The scenario keys come from the delta specs of the change, and a change with no 
 
 ### Requirement: Run Executes Every Executable Scene
 
-`rune proof run <change>` MUST parse each console fence in the trycmd grammar and execute it through snapbox: `$ command` runs the command, `? <status>` is the expected exit code, `[..]` elides within a line, and `...` elides lines.
+`rune proof run <change>` MUST parse each console fence in the trycmd grammar and execute it: `$ command` runs the command, `> ` continues it, `? <status>` is the expected exit code, `[..]` elides within a line, and `...` elides lines, with stdout and stderr captured as one stream.
 A scene whose kind is `instruction` is not executable and is skipped with its kind and model kept.
 The runner resolves `rune` to its own path and every other command through `PATH`, and MUST fail a scene whose command it cannot resolve, so no scene is silently skipped.
 The run prints one line per scene with its key and outcome.
@@ -61,7 +61,7 @@ The run prints one line per scene with its key and outcome.
 
 ### Requirement: Every Scene Starts Clean
 
-Every executable scene MUST run in its own fresh temporary directory, and a fence whose first line is `$ cd <path>` runs the rest in that path under the repository root.
+Every executable scene MUST run in its own fresh temporary directory, and a fence whose first line is `$ cd <path>` runs the rest in that path under the repository root. The runner exports `RUNE_PROOF_ROOT` so a scene run through `sh -c` can copy a fixture.
 
 #### Scenario: Scenes do not share a directory
 
@@ -71,7 +71,7 @@ Every executable scene MUST run in its own fresh temporary directory, and a fenc
 ### Requirement: The Transcript Binds The Claim
 
 After a run, `proof.txt` MUST hold one section per scene with the scenario key, the kind, the command lines, and the captured output, in scene order, so changing a key, command, or kind changes the digest.
-The run sets `transcript` to the file's sha256, `head` to the commit id it ran against, `recorded` to the run date, and each executed scene's kind to the `check`, `new`, or `run` its frontmatter declares when the fence passed, or `unproven` when it failed or held no command.
+The run sets `transcript` to the file's sha256, `head` to the commit it ran against, and `recorded` to the date. A passed scene keeps the `check`, `new`, or `run` it declares, or becomes `check` from `unproven`. A failed or empty scene becomes `unproven`.
 An instruction scene's section holds the instruction and the model's answer, written by `run --instruction <key>` through `rune run <model>`, or the scene stays `unproven`.
 
 #### Scenario: Scene key edited after the run
@@ -94,19 +94,14 @@ It MUST also fail when `head` is not an ancestor of the current commit, so a pro
 - **WHEN** `proof.txt` changed after the frontmatter was written
 - **THEN** the check exits non-zero and names both digests
 
-### Requirement: A Recorder Is Optional
+### Requirement: The Run Records Its Own Cast
 
-When `asciinema`, `scripts/fallback/asciinema.py`, or `docs/proofs/cast.py` answers, in that order, the run MUST write `proof.cast` beside the README, and the scene kind `run` is available. When neither answers, the run MUST print one line that no cast was recorded and MUST proceed, and every executed scene is at most `check` or `new`.
+The run MUST write `proof.cast` beside the README as an asciinema v2 stream of the output it captured, one event per step with its offset from the start, so no external recorder is needed and the scene kind `run` is available on every machine. `asciinema` and `agg` remain the tools that re-record interactively and render a GIF.
 
-#### Scenario: Recorder answers
+#### Scenario: Cast written from the captured output
 
-- **WHEN** `asciinema` is on `PATH` and every fence passes
-- **THEN** `proof.cast` exists beside the README and a scene declared `run` keeps that kind
-
-#### Scenario: Recorder unavailable
-
-- **WHEN** no recorder on that list can run
-- **THEN** the run completes, prints one line that no cast was recorded, and no scene is marked `run`
+- **WHEN** every fence passes on a machine without `asciinema`
+- **THEN** `proof.cast` exists beside the README, its header is asciinema version 2, and a scene declared `run` keeps that kind
 
 ### Requirement: The Graph Shows Only Proven Scenes
 

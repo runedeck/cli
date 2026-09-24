@@ -28,6 +28,7 @@
     promote     <NAME> --domain <DOMAIN> --change <ID>                Move a draft into the deck and open its change
     validate    [--source <DIR>]                                      Validate deck or rune files against schemas
     graph       export [--source <DIR>]                               Export the artifact graph as Turtle for SHACL validation
+    proof       scaffold <CHANGE> | run <CHANGE> [--check | --instruction <KEY>]Scaffold, run, and check a change's behavior proof
     drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift
     provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
     clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files

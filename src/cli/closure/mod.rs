@@ -38,8 +38,9 @@ pub struct Closure {
 
 impl Closure {
     /// Every path in reading order: proposal, specs, records, ideas,
-    /// proofs, the rest.
+    /// proofs, the rest. `rune review parts` (group 3) is its caller.
     #[must_use]
+    #[allow(dead_code)]
     pub fn paths(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         out.extend(self.proposal.iter().cloned());

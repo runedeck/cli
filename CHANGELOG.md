@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
 - Add the change closure resolver: proposal, delta specs in `### New Capabilities` order, records by `decisions:`, ideas by name, proofs by frontmatter `change`.
+- Add `rune proof scaffold <change>`: a proof README with the frontmatter and one empty console fence per scenario, in closure order, never overwriting.
+- Add `rune proof run <change>`: execute the scenes in the trycmd grammar, write `proof.txt`, `proof.cast`, the transcript digest, the head, and each scene's kind.
+- Add `rune proof run --check` (transcript, sections, and head ancestry) and `--instruction <key>` (record a model's answer through `rune run`).
 - Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with the `[TAG]: <iri>` definitions a document copies, and `--json`.
 - Read defined terms from `ontology/rune.ttl` (or the `ontology` path in `deck.yaml`) in `rune spec validate` and `rune spec doctor`, falling back to `glossary.md` only when no ontology file exists.
 - Fail validation on an unreadable ontology, an undeclared prefix, two terms of one kind whose labels match without case, or an ontology with no labeled term.

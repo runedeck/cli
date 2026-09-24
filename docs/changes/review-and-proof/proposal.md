@@ -15,7 +15,7 @@ Proofs have the same gap. A proof is recorded by hand through the deck's bash dr
 ## What Changes
 
 - `rune proof scaffold <change>` writes `docs/proofs/<change>/README.md` with the proof frontmatter and one empty trycmd console fence under each scenario key, in closure order, every scene `kind: unproven`.
-- `rune proof run <change>` parses the fences in the trycmd grammar (`$ command`, `? <status>`, `[..]`, `...`), executes them through snapbox, records the cast when a recorder answers, writes `proof.txt` with one section per scene and its sha256 and the head commit into the frontmatter, and sets each scene's kind. A failed or unresolvable scene is `unproven`.
+- `rune proof run <change>` parses the fences in the trycmd grammar (`$ command`, `? <status>`, `[..]`, `...`), executes them, writes `proof.cast` from the captured output, writes `proof.txt` with one section per scene and its sha256 and the head commit into the frontmatter, and sets each scene's kind. A failed or unresolvable scene is `unproven`.
 - `rune graph export` emits a `rune:Proof` node per proof README with `rune:proves` edges to the commit and to each proven scenario.
 - `rune review parts`, `open`, `diff`, and `close` resolve a target (the working copy, a revision comparison, or a change directory) to an immutable head, a base, and ordered parts. `open` builds a sparse jj workspace at the head and writes `.review/REVIEW.md` with the parts, the reading links, and every scenario with its scene kind. `close` binds the result to head, base, and per-part digests and writes it as a receipt beside the checks receipts.
 - `rune review export` reads the `[ISSUE]`, `[NOTE]`, `[SUGGESTION]`, and `[PRAISE]` markers in files as well as `.rune-comments.yaml`.
@@ -27,6 +27,6 @@ Proofs have the same gap. A proof is recorded by hand through the deck's bash dr
 
 ## Impact
 
-- New modules `src/cli/closure/` and `src/cli/proof/`. `src/cli/review.rs` grows the four subcommands, `src/cli/graph/lifecycle.rs` gains the proof emitter, and `snapbox` joins the dependencies.
+- New modules `src/cli/closure/` and `src/cli/proof/`. `src/cli/review.rs` grows the four subcommands, `src/cli/graph/lifecycle.rs` gains the proof emitter, and no dependency joins.
 - The deck retires `scripts/fallback/prove.sh` once `rune proof run` is merged and adds `.review/` to its lint excludes, and the skeleton template gains the same excludes.
 - Proofs under `docs/proofs/` migrate from `record.sh` scripts to README scenes, this change's own first.
