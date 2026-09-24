@@ -18,3 +18,7 @@ The full design, the adversarial pass, the proof contract, the hand partition, a
 ## Order of work
 
 Group 1 is merged alone, because the deck's acceptance shape waits on the proof nodes. Group 2 is merged next and retires the bash driver. Group 3 is merged with the two reproductions as its proof. Evolution and operation-range targets, and the container runner, are separate changes.
+
+## Markers
+
+A marker is resolved by the author's later commit, never by the reviewer deleting it. `close` reads markers from every recorded path in the annotation commit, so the block in `REVIEW.md` is the reviewer's verdict and findings, and the markers are the line-bound findings. Both are inputs to `close`.

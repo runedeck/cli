@@ -10,7 +10,7 @@ decisions: ["Review and proof share one closure over the specification graph"]
 
 A commit is no longer the unit a reviewer wants. Agents make many commits, rewrite them, and merge work that spans records, delta specs, code, tests, and proofs, so the owner reviews the closure of a change, not a diff of one commit. The deck proved the workspace by hand on 2026-09-23: a jj workspace under `.workspaces/review-canvas-a`, sparse to the fourteen patterns that select the 27 files of `core-foundation-principles`, opened in Zed, commented in place. Nothing builds that workspace, nothing lists the scenarios it holds, and nothing records what was reviewed against which revision.
 
-Proofs have the same gap. A proof is a bash script in the deck's driver grammar, recorded by hand, and the graph has zero `rune:Proof` nodes, so a record can be accepted with unproven scenarios. Canvas A has 41 scenarios and no scene for any of them.
+Proofs have the same gap. A proof is recorded by hand through the deck's bash driver, its README frontmatter is read by nothing, and the graph has zero `rune:Proof` nodes, so a record can be accepted with unproven scenarios. Canvas A has 41 scenarios and no scene for any of them.
 
 ## What Changes
 
@@ -28,5 +28,5 @@ Proofs have the same gap. A proof is a bash script in the deck's driver grammar,
 ## Impact
 
 - New modules `src/cli/closure/` and `src/cli/proof/`. `src/cli/review.rs` grows the four subcommands, `src/cli/graph/lifecycle.rs` gains the proof emitter, and `snapbox` joins the dependencies.
-- The deck retires `scripts/fallback/prove.sh` once `rune proof run` is merged and adds `.review/` to its lint excludes. The skeleton carries the template copies.
+- The deck retires `scripts/fallback/prove.sh` once `rune proof run` is merged and adds `.review/` to its lint excludes, and the skeleton template gains the same excludes.
 - Proofs under `docs/proofs/` migrate from `record.sh` scripts to README scenes, this change's own first.

@@ -12,7 +12,7 @@ Every changed path appears in exactly one part, and a path no declaration places
 
 ### Requirement: Three Targets Exist
 
-No argument MUST mean the working copy after a snapshot of the root, with its single parent as base. `--from` and `--to` name two revisions. A change id is a change-directory closure with the root as head and no base.
+No argument MUST mean the working copy after a snapshot of the root, with its single parent as base. `--from` and `--to` name two revisions. A change id is a change-directory closure whose head is the commit the root snapshot produced and which has no base.
 A working copy with two parents, or a revision that resolves to more than one commit, is refused with the revset that was ambiguous.
 
 #### Scenario: Working copy is a merge
@@ -22,7 +22,7 @@ A working copy with two parents, or a revision that resolves to more than one co
 
 ### Requirement: A Change Declares Its Closure
 
-The resolver MUST take a change's delta specs by directory, in the order the proposal's `### New Capabilities` lists them, or in directory order without that heading, its records from `decisions:`, its ideas under `docs/ideas`, and its proofs by frontmatter `change`.
+The resolver MUST take a change's delta specs by directory, in the order the proposal's `### New Capabilities` lists them, or in directory order without that heading, its records from `decisions:`, the files under `docs/ideas` whose name slugs to the change id or to one of its capabilities, and its proofs by frontmatter `change`.
 The closure of `core-foundation-principles` is therefore its proposal, nine delta specs, ten CORE records, and the proofs that name it, read in that order, because a record cites a requirement and the requirement is read first.
 
 #### Scenario: Change directory closure reproduces canvas A
@@ -34,12 +34,21 @@ The closure of `core-foundation-principles` is therefore its proposal, nine delt
 
 A diff target MUST split by role from the repository's path map: records, delta specs, canonical specs, rune sources, code, tests, workflows, docs, proofs, generated output.
 Inside a role a part is the deepest directory that holds more than one changed file, and a parent's own changed files form their own part. A `tests.rs` beside a source is a test by name. Recordings and binaries are generated output.
-No filename or symbol heuristic joins two parts. Graph edges are reading links between parts, never merge rules.
+No similarity of names or symbols joins two parts. The role map is a declared table, not a heuristic.
 
 #### Scenario: Signing queue commit is partitioned
 
 - **WHEN** `rune review parts --from 9dd8965f- --to 9dd8965f` runs on cli
-- **THEN** the nineteen files fall into ten parts, `sources/src/cli/sign/queue` before `sources/src/cli/sign` before `sources/src/cli`, and `proof.cast` and `proof.gif` are the last part
+- **THEN** the nineteen files fall into ten parts, `sources/src/cli/sign/queue` before `sources/src/cli/sign` before `sources/src/cli`, and `proof.cast` and `proof.gif` form the `generated` part
+
+### Requirement: Reading Links Come From Declarations
+
+A reading link between two parts MUST exist for each record whose `upstream` names a requirement of the change and for each proof scene that names a scenario of it, and for nothing else. A link never merges parts.
+
+#### Scenario: Record cites a requirement
+
+- **WHEN** a record in the closure has `upstream: ["cap#req-slug"]` and the delta spec of `cap` holds that requirement
+- **THEN** `REVIEW.md` lists one link from the record's part to the spec's part, and the two parts stay separate
 
 ### Requirement: Parts Read In One Order
 
@@ -55,14 +64,14 @@ A part name is its role and directory, prefixed with the change id for a closure
 
 ### Requirement: The Workspace Is A Checkout Of The Head
 
-`rune review open` MUST create `.workspaces/review-<name>` with `jj workspace add -r <head> --sparse-patterns=empty` and then set the sparse patterns to the union of the parts, so the checkout is the reviewed revision and only the working-copy target tracks the root.
-Before the working-copy target it MUST snapshot the root and say so.
-The reviewer's edits are one child commit of the head, which is never merged, and `open` never squashes.
+`rune review open` MUST create `.workspaces/review-<name>` with `jj workspace add -r <head> --sparse-patterns=empty`, which makes a new working-copy commit whose parent is the head, and then set the sparse patterns to the union of the parts plus `.review/`.
+It MUST refuse a name whose workspace exists. Before the working-copy target it MUST snapshot the root and say so.
+The reviewer's edits are that child commit, which is never merged, and `open` never squashes.
 
 #### Scenario: Historical revision opened
 
 - **WHEN** `rune review open --from 9dd8965f- --to 9dd8965f` runs while the root `@` is a later commit
-- **THEN** the workspace's parent is `9dd8965f`, the sparse set is the nineteen files, and `tuicr -r` names `9dd8965f-` as the base
+- **THEN** the workspace's parent is `9dd8965f`, the sparse set is the nineteen files plus `.review/`, and the printed `tuicr -r` line reads `9dd8965f-..9dd8965f`
 
 #### Scenario: Working copy opened while the root holds edits
 
@@ -79,6 +88,15 @@ A part digest is the sha256 of the part's git-format diff for a diff target, and
 
 - **WHEN** the closure holds a scenario whose proof has no scene or a scene marked `unproven`
 - **THEN** `REVIEW.md` lists the scenario key with `unproven`
+
+### Requirement: Diff Prints The Grouped Patch
+
+`rune review diff <name>` MUST print the parts in reading order as one git-format patch, each part introduced by a comment line with its name, so any patch reader shows the review in the order `REVIEW.md` lists it.
+
+#### Scenario: Patch follows the parts
+
+- **WHEN** `rune review diff` runs on the signing queue workspace
+- **THEN** the output holds ten part headers in the order of `REVIEW.md` and the diff of every file under its part
 
 ### Requirement: Open Prints The Way In
 
@@ -118,7 +136,6 @@ It MUST NOT write the controller's ledger.
 ### Requirement: Verdicts Keep Their Findings
 
 `close` MUST refuse `accept` while an `[ISSUE]` marker is open in any recorded path of the annotation commit or an issue finding is listed in `REVIEW.md`, and MUST keep every marker under `changes` and `reject`, because the markers are the findings.
-A marker is resolved by the author's later commit, never by the reviewer deleting it.
 A finding on a deleted file or an old-side line has no line in the head checkout, so `REVIEW.md` MUST hold a findings list with path, old-side range, and kind for it, and `rune review export` MUST read file markers with `.rune-comments.yaml` when it exists.
 
 #### Scenario: Accept with an open issue marker

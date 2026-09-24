@@ -71,7 +71,7 @@ Every executable scene MUST run in its own fresh temporary directory, and a fenc
 ### Requirement: The Transcript Binds The Claim
 
 After a run, `proof.txt` MUST hold one section per scene with the scenario key, the kind, the command lines, and the captured output, in scene order, so changing a key, command, or kind changes the digest.
-The run sets `transcript` to the file's sha256, `head` to the commit id it ran against, `recorded` to the run date, and each executed scene's kind to `check`, `new`, or `run` as its heading declares, or `unproven` when it failed.
+The run sets `transcript` to the file's sha256, `head` to the commit id it ran against, `recorded` to the run date, and each executed scene's kind to the `check`, `new`, or `run` its frontmatter declares when the fence passed, or `unproven` when it failed or held no command.
 An instruction scene's section holds the instruction and the model's answer, written by `run --instruction <key>` through `rune run <model>`, or the scene stays `unproven`.
 
 #### Scenario: Scene key edited after the run
@@ -97,6 +97,11 @@ It MUST also fail when `head` is not an ancestor of the current commit, so a pro
 ### Requirement: A Recorder Is Optional
 
 When `asciinema`, `scripts/fallback/asciinema.py`, or `docs/proofs/cast.py` answers, in that order, the run MUST write `proof.cast` beside the README, and the scene kind `run` is available. When neither answers, the run MUST print one line that no cast was recorded and MUST proceed, and every executed scene is at most `check` or `new`.
+
+#### Scenario: Recorder answers
+
+- **WHEN** `asciinema` is on `PATH` and every fence passes
+- **THEN** `proof.cast` exists beside the README and a scene declared `run` keeps that kind
 
 #### Scenario: Recorder unavailable
 
