@@ -76,22 +76,22 @@ $ sh -c 'rune graph export --source . | awk '"'"'/proof\/canvas-a> a rune:Proof/
 ## proof-scene-runner#one-scene-per-scenario-is-written-first/readme-already-exists
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/one-change" repo && rune proof scaffold sample-change-one --source repo && rune proof scaffold sample-change-one --source repo'
-  wrote /private/tmp/claude-501/rune-proof-82706-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-17ee05b8-8-0/repo/docs/proofs/sample-change-one/README.md with 2 unproven scenes
-  fatal: /private/tmp/claude-501/rune-proof-82706-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-17ee05b8-8-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
+  wrote /private/tmp/claude-501/rune-proof-76487-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-4352600-8-0/repo/docs/proofs/sample-change-one/README.md with 2 unproven scenes
+  fatal: /private/tmp/claude-501/rune-proof-76487-proof-scene-runner-one-scene-per-scenario-is-written-first-readme-already-exists-4352600-8-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
 
 ## proof-scene-runner#run-executes-every-executable-scene/scene-names-a-command-the-runner-cannot-find
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled" repo && rune proof run sample-change-one --source repo'
   sample-capability-one#thing-holds/version-prints ... ok (check)
   sample-capability-one#thing-holds/missing-tag-fails ... unproven: command not found: nonesuch
-  2 scenes, 1 proven, 1 unproven; transcript 8793c3bca298
+  2 scenes, 1 proven, 1 unproven; transcript 0df274a2857a
 
 ## proof-scene-runner#run-executes-every-executable-scene/expected-output-disagrees
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/mismatch" repo && rune proof run sample-change-one --source repo'
   sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:
   - rune 0.5.0 ([..])
-  + rune 0.6.0 (c47af0ea) built 2026-09-24T11:10:41Z
+  + rune 0.6.0 (99418dbd) built 2026-09-25T11:01:01Z
   sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
   2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004
 
@@ -174,7 +174,7 @@ $ rune proof run sample-change-one --check --source .
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled-good" repo && rune proof run sample-change-one --source repo >/dev/null && head -c 13 repo/docs/proofs/sample-change-one/proof.cast && echo && awk '"'"'/^\[.*"o"/{n++} END{print n " events"}'"'"' repo/docs/proofs/sample-change-one/proof.cast'
   {"version":2,
-  2 events
+  6 events
 
 ## proof-scene-runner#the-graph-shows-only-proven-scenes/proof-transcript-does-not-match
 kind: check
