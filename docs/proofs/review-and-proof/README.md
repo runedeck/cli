@@ -1,9 +1,9 @@
 ---
 type: proof
 change: review-and-proof
-head: 9803dd64b665a9d284da2081264a383b6e054631
+head: 2ca3b9b5fb8450780310227eaaa85e339e19423e
 recorded: 2026-09-25
-transcript: eaba8aebf24472073b25b3071fdc8ba21aeba8baf98c01bb22cfe30874a41036
+transcript: 4299681170e406b0928a8fea7a88123b29350097e77f87f8cc1090e44f05636d
 scenes:
 - scenario: proof-scene-runner#proof-frontmatter-is-the-record/proof-directory-carries-another-change-s-name
   kind: check
@@ -20,9 +20,9 @@ scenes:
 - scenario: proof-scene-runner#run-executes-every-executable-scene/expected-output-disagrees
   kind: check
 - scenario: proof-scene-runner#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input
-  kind: unproven
+  kind: check
 - scenario: proof-scene-runner#a-step-reads-its-input-from-the-fence/input-line-before-any-command
-  kind: unproven
+  kind: check
 - scenario: proof-scene-runner#every-scene-starts-clean/scenes-do-not-share-a-directory
   kind: check
 - scenario: proof-scene-runner#the-transcript-binds-the-claim/scene-key-edited-after-the-run
