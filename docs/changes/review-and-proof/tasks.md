@@ -15,6 +15,7 @@
 - [x] 2.3 Run writes `proof.txt` with one section per scene, `transcript`, `head`, `recorded`, and each scene's kind, failed scenes `unproven`. Instruction scenes skipped, recorded by `run --instruction <key>` through `rune run`. Cast through `asciinema`, else `scripts/fallback/asciinema.py`, else `docs/proofs/cast.py`, when one answers
 - [x] 2.4 `run --check` rebuilds the expected transcript, refuses a digest mismatch and a `head` that is not an ancestor
 - [x] 2.5 `docs/proofs/review-and-proof/README.md` holds a scene for every scenario of this change. Twelve proof-runner scenes pass `rune proof run` against `tests/fixtures/proof/`, two stay unproven for the deck (canvas A skeleton, four deck proofs), and the sixteen review scenes wait for group 3
+- [x] 2.7 `< text` lines feed a step's standard input, recorded as command lines, and a `<` line before any command is a parse error
 - [x] 2.6 Tests: fence grammar, unregistered command, output mismatch diff, drifted transcript, recorder absent
 
 ## 3. Review commands

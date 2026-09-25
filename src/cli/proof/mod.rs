@@ -308,7 +308,12 @@ fn check(root: &Path, proof: &Proof) -> i32 {
         };
         let recorded: Vec<&str> = section
             .lines()
-            .filter(|line| line.starts_with("$ ") || line.starts_with("> "))
+            .filter(|line| {
+                line.starts_with("$ ")
+                    || line.starts_with("> ")
+                    || line.starts_with("< ")
+                    || *line == "<"
+            })
             .collect();
         let written: Vec<&str> = fence
             .steps

@@ -3,7 +3,8 @@
 //! grammar. `rune` resolves to the running binary, every other program
 //! through `PATH`, and a program that cannot start fails the scene.
 //! `RUNE_PROOF_ROOT` names the repository for a scene that runs through
-//! `sh -c` and needs a fixture. Capture files live outside the scene's
+//! `sh -c` and needs a fixture. A step's `< ` lines reach it as a file on
+//! standard input. Capture files live outside the scene's
 //! directory and are read through the handle the runner holds, so a
 //! command cannot rewrite what it printed.
 
@@ -207,6 +208,31 @@ fn execute(
             Some("cannot share the capture file".to_string()),
         );
     };
+    // The `< ` lines go through a file beside the capture rather than a
+    // pipe, so a command that never reads its input cannot block the run.
+    let stdin = match &step.stdin {
+        None => Stdio::null(),
+        Some(text) => {
+            let path = capture.with_extension("in");
+            let written = File::options()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|mut input| std::io::Write::write_all(&mut input, text.as_bytes()))
+                .and_then(|()| File::open(&path));
+            match written {
+                Ok(input) => Stdio::from(input),
+                Err(error) => {
+                    return (
+                        0.0,
+                        None,
+                        None,
+                        Some(format!("cannot write the step's input: {error}")),
+                    );
+                }
+            }
+        }
+    };
     // A scene that runs `rune` through `sh -c` must find this binary, not
     // an older install on PATH.
     let mut path = std::env::current_exe()
@@ -231,7 +257,7 @@ fn execute(
         .env("COLUMNS", "100")
         .env("PATH", path)
         .env("RUNE_PROOF_ROOT", root)
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     let offset = started.elapsed().as_secs_f64();
@@ -284,6 +310,21 @@ mod tests {
         assert!(run.passed, "{:?}", run.failure);
         assert!(!run.section.contains("\n## cap#req/two"));
         assert!(run.section.contains("\n  ## cap#req/two"));
+    }
+
+    #[test]
+    fn input_lines_reach_the_command_and_the_transcript() {
+        let s = scene("$ sh -s\n< echo one\n< echo two\none\ntwo");
+        let run = run_scene(&s, &root(), Instant::now());
+        assert!(run.passed, "{:?}", run.failure);
+        assert_eq!(
+            run.section,
+            "$ sh -s\n< echo one\n< echo two\n  one\n  two\n"
+        );
+        let none = scene("$ cat\n");
+        let run = run_scene(&none, &root(), Instant::now());
+        assert!(run.passed, "{:?}", run.failure);
+        assert_eq!(run.section, "$ cat\n");
     }
 
     #[test]

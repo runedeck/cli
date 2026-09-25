@@ -1,8 +1,9 @@
 //! The scene grammar: a `## <scenario key>` heading followed by one
 //! `console` fence in trycmd's shape. `$ command` starts a step, `> `
-//! continues its command line, `? <status>` names the expected exit, and
-//! every other line until the next `$ ` or the fence end is expected
-//! output. `KEY=value` tokens before the program set its environment.
+//! continues its command line, `< text` feeds a line to its standard
+//! input, `? <status>` names the expected exit, and every other line
+//! until the next `$ ` or the fence end is expected output. `KEY=value`
+//! tokens before the program set its environment.
 
 use std::collections::BTreeMap;
 
@@ -42,9 +43,12 @@ pub struct Step {
     pub env: BTreeMap<String, String>,
     pub argv: Vec<String>,
     pub status: Status,
+    /// Standard input, one `< ` line each with its newline, or `None`
+    /// for an empty input.
+    pub stdin: Option<String>,
     /// Expected output with `[..]` and `...` elisions, without a trailing newline.
     pub expected: String,
-    /// The `$ ` and `> ` lines as written, for the transcript.
+    /// The `$ `, `> `, and `< ` lines as written, for the transcript.
     pub command_lines: Vec<String>,
 }
 
@@ -159,6 +163,12 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
                 i += 1;
                 continue;
             }
+            if line.starts_with("< ") || line == "<" {
+                return Err(error(
+                    i + 1,
+                    "an input line `< text` comes after the command it feeds",
+                ));
+            }
             return Err(error(i + 1, format!("expected `$ command`, got `{line}`")));
         };
         let command_start = i + 1;
@@ -175,6 +185,21 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             i += 1;
         }
         let words = shell_words(&command_text).map_err(|message| error(command_start, message))?;
+        let mut stdin: Option<String> = None;
+        while i < lines.len() {
+            let text = if lines[i] == "<" {
+                ""
+            } else if let Some(text) = lines[i].strip_prefix("< ") {
+                text
+            } else {
+                break;
+            };
+            command_lines.push(lines[i].to_string());
+            let input = stdin.get_or_insert_with(String::new);
+            input.push_str(text);
+            input.push('\n');
+            i += 1;
+        }
         let mut status = Status::Success;
         if i < lines.len()
             && let Some(raw) = lines[i].strip_prefix("? ")
@@ -214,6 +239,7 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             env,
             argv,
             status,
+            stdin,
             expected,
             command_lines,
         });
@@ -374,6 +400,31 @@ mod tests {
                 .unwrap_err()
                 .contains("unterminated")
         );
+    }
+
+    #[test]
+    fn input_lines_feed_the_step_and_stay_command_lines() {
+        let text = "## cap#req/one\n\n```console\n$ sh -s\n> -x\n< echo one\n<\n< echo two\n? 0\none\ntwo\n```\n";
+        let step = scenes(text).unwrap().remove(0).steps.remove(0);
+        assert_eq!(step.argv, ["sh", "-s", "-x"]);
+        assert_eq!(step.stdin.as_deref(), Some("echo one\n\necho two\n"));
+        assert_eq!(step.command_lines.len(), 5);
+        assert_eq!(step.status, Status::Code(0));
+        assert_eq!(step.expected, "one\ntwo");
+        let plain = scenes("## cap#req/one\n\n```console\n$ true\n```\n")
+            .unwrap()
+            .remove(0)
+            .steps
+            .remove(0);
+        assert_eq!(plain.stdin, None);
+    }
+
+    #[test]
+    fn an_input_line_before_any_command_is_an_error() {
+        let text = "## cap#req/one\n\n```console\n< echo one\n$ sh -s\n```\n";
+        let error = scenes(text).unwrap_err();
+        assert_eq!(error.line, 4);
+        assert!(error.message.contains("comes after the command"));
     }
 
     #[test]

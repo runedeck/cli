@@ -59,6 +59,22 @@ The run prints one line per scene with its key and outcome.
 - **WHEN** a fence expects `rune 0.5.0 ([..])` and the binary prints `rune 0.6.0 (c47af0ea) built [..]`
 - **THEN** the run fails with a diff of the two lines and marks that scene `unproven`
 
+### Requirement: A Step Reads Its Input From The Fence
+
+A `< text` line after a step's command lines MUST feed `text` and a newline to the command's standard input, in order, so a scene can pass a script or a brief without a file beside the README.
+A step without a `<` line reads an empty input.
+The `<` lines are command lines: the transcript records them and `--check` compares them.
+
+#### Scenario: Step feeds a script through standard input
+
+- **WHEN** a fence holds `$ sh -s` and the lines `< echo one` and `< echo two`
+- **THEN** the step prints `one` and `two`, and its transcript section records both `<` lines
+
+#### Scenario: Input line before any command
+
+- **WHEN** a fence starts with `< text`
+- **THEN** the run refuses the fence and names the line
+
 ### Requirement: Every Scene Starts Clean
 
 Every executable scene MUST run in its own fresh temporary directory, and a fence whose first line is `$ cd <path>` runs the rest in that path under the repository root. The runner exports `RUNE_PROOF_ROOT` so a scene run through `sh -c` can copy a fixture.

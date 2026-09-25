@@ -19,6 +19,10 @@ scenes:
   kind: check
 - scenario: proof-scene-runner#run-executes-every-executable-scene/expected-output-disagrees
   kind: check
+- scenario: proof-scene-runner#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input
+  kind: unproven
+- scenario: proof-scene-runner#a-step-reads-its-input-from-the-fence/input-line-before-any-command
+  kind: unproven
 - scenario: proof-scene-runner#every-scene-starts-clean/scenes-do-not-share-a-directory
   kind: check
 - scenario: proof-scene-runner#the-transcript-binds-the-claim/scene-key-edited-after-the-run
@@ -142,6 +146,27 @@ sample-capability-one#thing-holds/version-prints ... unproven: output of `rune -
 + rune [..]
 sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
 2 scenes, 1 proven, 1 unproven; transcript [..]
+```
+
+## proof-scene-runner#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input
+
+```console
+$ python3 -
+< import sys
+< print("brief for", sys.argv[0])
+< print("two lines in")
+brief for -
+two lines in
+$ sh -c 'grep -c "^< " "$RUNE_PROOF_ROOT/docs/proofs/review-and-proof/README.md"'
+[..]
+```
+
+## proof-scene-runner#a-step-reads-its-input-from-the-fence/input-line-before-any-command
+
+```console
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/input-first" repo && rune proof run sample-change-one --source repo'
+? 2
+fatal: [..]README.md: line 14: an input line `< text` comes after the command it feeds
 ```
 
 ## proof-scene-runner#every-scene-starts-clean/scenes-do-not-share-a-directory
