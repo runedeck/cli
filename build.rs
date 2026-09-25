@@ -7,7 +7,11 @@ use std::{
 };
 
 fn main() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Read at run time: `env!` bakes the path into the build-script binary,
+    // and a shared target directory then replays a path from another
+    // checkout of this crate.
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
     let script_path = manifest_dir.join("scripts").join("validate.sh");
 
     println!("cargo:rerun-if-changed=scripts/validate.sh");
