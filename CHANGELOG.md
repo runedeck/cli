@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add `rune proof scaffold <change>`: a proof README with the frontmatter and one empty console fence per scenario, in closure order, never overwriting.
 - Add `rune proof run <change>`: execute the scenes in the trycmd grammar, write `proof.txt`, `proof.cast`, the transcript digest, the head, and each scene's kind.
 - Add `rune proof run --check` (transcript, sections, and head ancestry) and `--instruction <key>` (record a model's answer through `rune run`).
+- Mark every scene in `proof.cast` with a rule, a `# Scenario:` title with its index, and an ok or unproven verdict line, so a cast player lists the scenes and an expected refusal reads as one.
 - Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with the `[TAG]: <iri>` definitions a document copies, and `--json`.
 - Read defined terms from `ontology/rune.ttl` (or the `ontology` path in `deck.yaml`) in `rune spec validate` and `rune spec doctor`, falling back to `glossary.md` only when no ontology file exists.
 - Fail validation on an unreadable ontology, an undeclared prefix, two terms of one kind whose labels match without case, or an ontology with no labeled term.

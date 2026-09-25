@@ -146,25 +146,37 @@ fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
     let previous = proof.transcript().unwrap_or_default();
     let started = Instant::now();
     let mut frontmatter = proof.frontmatter.clone();
+    let total = frontmatter.scenes.len();
     let mut transcript = String::new();
     let mut cast: Vec<(f64, String)> = Vec::new();
     let mut failed = 0usize;
-    for record in &mut frontmatter.scenes {
+    for (index, record) in frontmatter.scenes.iter_mut().enumerate() {
         let key = &record.scenario;
+        cast.push((
+            started.elapsed().as_secs_f64(),
+            scene_header(index + 1, total, key),
+        ));
         if record.kind == Kind::Instruction {
             // A recorded answer is kept; an unrecorded instruction gets no
             // section, so the graph shows it unproven until it is run.
-            if let Some(section) = previous_section(&previous, key) {
+            let verdict = if let Some(section) = previous_section(&previous, key) {
                 transcript.push_str(&section);
                 println!("{key} ... instruction (recorded)");
+                Verdict::Kept("instruction, recorded")
             } else {
                 println!("{key} ... instruction (no section yet; run --instruction)");
-            }
+                Verdict::Unproven("instruction not yet recorded".to_string())
+            };
+            cast.push((started.elapsed().as_secs_f64(), verdict.line()));
             continue;
         }
         let Some(scene) = scenes.iter().find(|s| s.key == *key) else {
             record.kind = Kind::Unproven;
             println!("{key} ... unproven (no scene in the README)");
+            cast.push((
+                started.elapsed().as_secs_f64(),
+                Verdict::Unproven("no scene in the README".to_string()).line(),
+            ));
             failed += 1;
             continue;
         };
@@ -176,12 +188,18 @@ fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
             }
             push_section(&mut transcript, key, record.kind, &outcome.section);
             println!("{key} ... ok ({})", record.kind.as_str());
+            cast.push((
+                started.elapsed().as_secs_f64(),
+                Verdict::Ok(record.kind.as_str()).line(),
+            ));
         } else {
             record.kind = Kind::Unproven;
-            println!(
-                "{key} ... unproven: {}",
-                outcome.failure.unwrap_or_default().trim_end()
-            );
+            let reason = outcome.failure.unwrap_or_default();
+            println!("{key} ... unproven: {}", reason.trim_end());
+            cast.push((
+                started.elapsed().as_secs_f64(),
+                Verdict::Unproven(reason.lines().next().unwrap_or_default().to_string()).line(),
+            ));
             failed += 1;
         }
     }
@@ -204,6 +222,38 @@ fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
         &frontmatter.transcript[..12]
     );
     Ok(i32::from(failed > 0))
+}
+
+/// How a scene ended, as the cast shows it.
+enum Verdict<'a> {
+    Ok(&'a str),
+    Kept(&'a str),
+    Unproven(String),
+}
+
+impl Verdict<'_> {
+    fn line(&self) -> String {
+        match self {
+            Self::Ok(kind) => format!("\x1b[1;32m\u{2714} ok ({kind})\x1b[0m\n\n"),
+            Self::Kept(what) => format!("\x1b[1;36m\u{25cf} {what}\x1b[0m\n\n"),
+            Self::Unproven(reason) => format!("\x1b[1;31m\u{2718} unproven: {reason}\x1b[0m\n\n"),
+        }
+    }
+}
+
+/// The scene header in the cast: a rule, then `# Scenario: <title>` with
+/// its index and key, so a player lists the scenes and a reader sees where
+/// one ends and the next begins. The title is the scenario slug as words.
+fn scene_header(index: usize, total: usize, key: &str) -> String {
+    let slug = key.rsplit('/').next().unwrap_or(key);
+    let mut title = slug.replace('-', " ");
+    if let Some(first) = title.get(..1) {
+        title = first.to_uppercase() + &title[1..];
+    }
+    let rule = "\u{2501}".repeat(100);
+    format!(
+        "\x1b[1;34m{rule}\x1b[0m\n\x1b[1m# Scenario: {title}\x1b[0m  \x1b[2m({index}/{total}, {key})\x1b[0m\n"
+    )
 }
 
 /// Verify a proof without running it: the transcript hashes to the
@@ -559,6 +609,16 @@ mod tests {
         );
         assert!(previous_section(&t, "cap#req/three").is_none());
         assert!(rune::proof::scene_recorded(&t, "cap#req/one"));
+    }
+
+    #[test]
+    fn the_cast_marks_every_scene_with_a_scenario_line() {
+        let header = scene_header(3, 30, "cap#req-slug/readme-already-exists");
+        assert!(header.contains("# Scenario: Readme already exists"));
+        assert!(header.contains("(3/30, cap#req-slug/readme-already-exists)"));
+        assert!(header.starts_with("\x1b[1;34m\u{2501}"));
+        assert!(Verdict::Ok("check").line().contains("ok (check)"));
+        assert!(Verdict::Unproven("x".into()).line().contains("unproven: x"));
     }
 
     #[test]

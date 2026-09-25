@@ -194,7 +194,7 @@ error[proof-check]: [..]README.md: transcript drifted: recorded [..] computed [.
 ```console
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled-good" repo && rune proof run sample-change-one --source repo >/dev/null && head -c 13 repo/docs/proofs/sample-change-one/proof.cast && echo && awk '"'"'/^\[.*"o"/{n++} END{print n " events"}'"'"' repo/docs/proofs/sample-change-one/proof.cast'
 {"version":2,
-2 events
+6 events
 ```
 
 ## proof-scene-runner#the-graph-shows-only-proven-scenes/four-deck-proofs-carry-frontmatter
