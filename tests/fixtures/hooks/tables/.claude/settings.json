@@ -1,0 +1,23 @@
+{
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{"type": "command", "command": "/Users/x/.local/bin/dcg"}]
+      },
+      {
+        "hooks": [{"type": "command", "command": "sh /Users/x/.sd/hook PreToolUse"}]
+      },
+      {
+        "matcher": "*",
+        "hooks": [{"type": "command", "command": "/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin"}]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [{"type": "command", "command": "cmux hooks claude Notification"}]
+      }
+    ]
+  }
+}

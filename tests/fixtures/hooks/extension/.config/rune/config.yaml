@@ -1,0 +1,5 @@
+hooks:
+  handlers:
+    - id: worktree
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [claude:WorktreeCreate]

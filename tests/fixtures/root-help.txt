@@ -9,7 +9,7 @@
     skill       add <NAME[,NAME...]> | install | show                 List or stage skills; ship the rune agent skill
     agent       [add <NAME[,NAME...]>]                                List or stage agents by name
     rule        [add <NAME[,NAME...]>]                                List or stage rules by name
-    hook        [add <NAME[,NAME...]>]                                List or stage hooks by name
+    hook        [list [--events] | add <NAME[,NAME...]>]              Print the hook plan, or stage hook runes
     context     [--json]                                              Agent-ready brief of the working context
     tui         [--source <DIR>] [--edit]                             Launch the terminal dashboard
     dashboard   [--source <DIR>] [--port <PORT>]                      Launch the read-only web dashboard

@@ -135,6 +135,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add the `kebab-case-skills` assembly rule, the full skill-tree normalization of path, frontmatter name, and link retargeting, applied to skills alone.
 - Enable `kebab-case-skills` on the agentskills provider, because the AgentSkills specification requires lowercase names matching the skill directory.
 - Deploy authored casing verbatim on every other provider.
+- Add `hooks:` to the rune config: handlers with `exec`, `events`, `order`, `timeout_ms`, `on_failure`, `requires`, and `rewrites`, validated by field and compiled into `<state>/hooks/plan.json`.
+- Add `rune hook list` (the plan, `--events` for the canonical table, `--write` for the plan file) and `rune hook run --harness <h> --native-event <e>`, the one dispatcher every registration calls.
+- Add `rune hook install`: one dispatcher entry per event in the Claude and Codex tables, foreign entries kept, predecessors adopted, a hand edit stops it, legacy Codex lines named.
+- Add the `rune-hook-<name>` adapters: author-identity (the model written into the checkout from `authors.yaml`), dcg, git-ai, rtk, lint-on-write, session-capture, turn-checkpoint, tmux-status.
+- Add the `rune-hook-jj-guards` adapter: worktree, agent isolation, and VCS internals refusals on `tool.before`.
+- Add `RUNE_STATE_DIR` as the state directory override shared by the sign queue and the hook plan.
 
 ### Changed
 

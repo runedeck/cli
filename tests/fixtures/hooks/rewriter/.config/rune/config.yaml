@@ -1,0 +1,12 @@
+hooks:
+  handlers:
+    - id: rtk
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"input\":{\"command\":\"rtk git status\"}}"']
+      events: [tool.before]
+      order: 10
+      rewrites: true
+    - id: dcg
+      exec: [sh, -c, 'cat > dcg.json; printf "%s" "{}"']
+      events: [tool.before]
+      order: 20
+      on_failure: deny

@@ -12,6 +12,8 @@ extend-exclude = [
     # Vendored minified dashboard assets and signing fixtures are not prose.
     "static/dashboard/vendor",
     "src/cli/sign/fixtures",
+    # Recorded casts carry escape sequences that run into words.
+    "docs/proofs/*/proof.cast",
 ]
 
 [default]

@@ -65,3 +65,9 @@ node_modules/
 docs/plans/
 .specstory/
 docs/*.pdf
+
+# Hook fixtures are fake homes: their config.yaml and harness tables are
+# source, not user overrides or deployed trees
+!tests/fixtures/hooks/**/config.yaml
+!tests/fixtures/hooks/**/.claude/
+!tests/fixtures/hooks/**/.codex/

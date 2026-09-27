@@ -26,6 +26,7 @@ mod drift;
 mod exec;
 mod find;
 mod graph;
+mod hook;
 mod init;
 pub(crate) mod install;
 mod launch;
@@ -50,6 +51,7 @@ mod spec;
 #[cfg(feature = "spec")]
 mod spec_interop;
 mod spec_root;
+pub(crate) mod state;
 mod status;
 pub(crate) mod style;
 mod surface;
@@ -363,11 +365,11 @@ enum Command {
         action: Option<KindAction>,
     },
 
-    /// List hooks, or stage them by name
+    /// List the hook plan, stage hook runes, or dispatch a harness event
     #[command(alias = "hooks")]
     Hook {
         #[command(subcommand)]
-        action: Option<KindAction>,
+        action: Option<HookAction>,
     },
 
     /// List declared plugins under ~/.config/rune/plugins
@@ -1240,6 +1242,70 @@ enum KindAction {
         source: Option<String>,
 
         /// Full pinned commit SHA for an HTTPS source.
+        #[arg(long = "ref", value_name = "SHA")]
+        reference: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    /// Print the plan the `hooks:` config compiles to, per harness
+    List {
+        /// Print the canonical event table instead: native names, modes, budgets.
+        #[arg(long)]
+        events: bool,
+        /// Also write the compiled plan under the rune state directory, as `rune install` does.
+        #[arg(long)]
+        write: bool,
+    },
+    /// Write the dispatcher entries into the Claude and Codex hook tables
+    Install {
+        /// Report what differs from the plan and write nothing; exit 1 on drift.
+        #[arg(long)]
+        check: bool,
+        /// Print what would be written and write nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+    /// Run one built-in handler over a handler payload on stdin (the dispatcher's entry)
+    #[command(hide = true)]
+    Adapter {
+        /// The adapter name, such as author-identity or dcg.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Arguments the handler declared after its name.
+        #[arg(value_name = "ARG", trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    /// Dispatch one harness event: the payload on stdin, the answer on stdout
+    Run {
+        /// The harness that fired the event.
+        #[arg(long, value_name = "HARNESS")]
+        harness: String,
+        /// The event in the harness's own name, such as `PreToolUse`.
+        #[arg(long = "native-event", value_name = "EVENT")]
+        native_event: String,
+    },
+    /// Turn one staged hook rune on for one or all providers
+    On {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Turn one staged hook rune off for one or all providers
+    Off {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+    },
+    /// Stage hook runes in the consumer `.rune` manifest
+    Add {
+        #[arg(value_name = "NAME[,NAME...]")]
+        name: String,
+        #[arg(long, value_name = "PATH_OR_URL")]
+        source: Option<String>,
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
     },
@@ -2132,12 +2198,47 @@ pub fn run() -> i32 {
             );
         }
         Command::Hook { action } => {
-            return run_kind_add(
-                rune::provider::ContentKind::Hooks,
-                action,
-                args.no_color,
-                args.json,
-            );
+            let kind = rune::provider::ContentKind::Hooks;
+            return match action {
+                None => run_kind_add(kind, None, args.no_color, args.json),
+                Some(HookAction::List { events, write }) => {
+                    exit_code(hook::list(events, write, args.json), args.json)
+                }
+                Some(HookAction::Install { check, dry_run }) => {
+                    exit_code(hook::install_tables(check, dry_run, args.json), args.json)
+                }
+                Some(HookAction::Adapter { name, args }) => hook::adapters::run(&name, &args),
+                Some(HookAction::Run {
+                    harness,
+                    native_event,
+                }) => hook::run::run(&harness, &native_event),
+                Some(HookAction::On { name, provider }) => run_kind_add(
+                    kind,
+                    Some(KindAction::On { name, provider }),
+                    args.no_color,
+                    args.json,
+                ),
+                Some(HookAction::Off { name, provider }) => run_kind_add(
+                    kind,
+                    Some(KindAction::Off { name, provider }),
+                    args.no_color,
+                    args.json,
+                ),
+                Some(HookAction::Add {
+                    name,
+                    source,
+                    reference,
+                }) => run_kind_add(
+                    kind,
+                    Some(KindAction::Add {
+                        name,
+                        source,
+                        reference,
+                    }),
+                    args.no_color,
+                    args.json,
+                ),
+            };
         }
         Command::Completion { action } => {
             return match action {
@@ -2333,8 +2434,8 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "hook",
-        "[add <NAME[,NAME...]>]",
-        "List or stage hooks by name",
+        "[list [--events] | add <NAME[,NAME...]>]",
+        "Print the hook plan, or stage hook runes",
     );
     help_command(
         help,

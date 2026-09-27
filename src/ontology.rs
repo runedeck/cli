@@ -16,6 +16,8 @@ pub struct Config {
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
+    /// Harness hook handlers, declared once against canonical events.
+    pub hooks: crate::hooks::Hooks,
     pub watch: Watch,
     /// Bench workspace checkouts, in priority order: the first entry is the
     /// primary (registry, default results); every entry contributes its
@@ -359,6 +361,8 @@ pub struct ResolvedConfig {
     pub setup: Option<SetupRecord>,
     #[serde(skip)]
     pub launch: Launch,
+    #[serde(skip)]
+    pub hooks: crate::hooks::Hooks,
     #[serde(skip)]
     pub bench: Vec<String>,
     #[serde(skip)]
@@ -752,6 +756,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         extensions,
         setup: config.setup.clone(),
         launch: resolve_launch(&config.launch),
+        hooks: config.hooks.clone(),
         bench: config.bench.clone(),
         theme: config.theme.clone(),
     }

@@ -1,0 +1,12 @@
+hooks:
+  handlers:
+    - id: dcg
+      exec: [rune-hook-dcg]
+      events: [tool.before]
+      on_failure: deny
+    - id: git-ai
+      exec: [rune-hook-git-ai]
+      events: [tool.before, tool.after]
+    - id: session-capture
+      exec: [rune-hook-session-capture]
+      events: [session.end]
