@@ -1,0 +1,6 @@
+hooks:
+  handlers:
+    - id: loud
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [notification]
+      on_failure: deny

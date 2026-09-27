@@ -1,0 +1,8 @@
+[features]
+hooks = true
+
+[[hooks.PreToolUse]]
+
+[[hooks.PreToolUse.hooks]]
+command = "sh /Users/x/.sd/hook PreToolUse"
+type = "command"

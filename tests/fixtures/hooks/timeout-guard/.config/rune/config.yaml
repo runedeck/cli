@@ -1,0 +1,7 @@
+hooks:
+  handlers:
+    - id: dcg
+      exec: [sh, -c, 'cat > /dev/null; sleep 5; printf "%s" "{}"']
+      events: [tool.before]
+      timeout_ms: 100
+      on_failure: deny

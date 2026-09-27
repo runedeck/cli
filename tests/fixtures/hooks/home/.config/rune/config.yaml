@@ -1,0 +1,35 @@
+# A rune user config for the hook proofs: five handlers, every one a
+# shell line, so the scenes run on any machine. `record` writes what a
+# handler saw into the scene directory.
+hooks:
+  version: 1
+  events:
+    tool.before: {budget_ms: 3000}
+  handlers:
+    - id: dcg
+      exec: [sh, -c, 'cat > dcg.json; grep -q "rm -rf" dcg.json && printf "%s" "{\"effect\":\"deny\",\"reason\":\"no rm -rf\"}" || printf "%s" "{}"']
+      events: [tool.before]
+      order: 20
+      timeout_ms: 1000
+      on_failure: deny
+      requires: [tool_deny]
+    - id: lint-on-write
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"context\":[\"one finding\"]}"']
+      events: [tool.after]
+      order: 20
+      timeout_ms: 5000
+    - id: session-capture
+      exec: [sh, -c, 'cat > capture.json; printf "%s" "{}"']
+      events: [session.end, compact.before]
+      order: 30
+      timeout_ms: 300
+    - id: turn-checkpoint
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [prompt.before, turn.finish, session.end]
+      order: 40
+      timeout_ms: 150
+    - id: tmux-status
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [prompt.before, notification, turn.finish, session.end]
+      order: 50
+      timeout_ms: 50

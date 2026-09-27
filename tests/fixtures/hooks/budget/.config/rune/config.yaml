@@ -1,0 +1,8 @@
+hooks:
+  events:
+    session.end: {budget_ms: 5000}
+  handlers:
+    - id: session-capture
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [session.end]
+      timeout_ms: 5000

@@ -1,0 +1,25 @@
+# A guard that hangs, a linter that crashes, a slow handler ahead of a
+# guard on a tight budget.
+hooks:
+  events:
+    tool.before: {budget_ms: 400}
+  handlers:
+    - id: slow
+      exec: [sh, -c, 'cat > /dev/null; sleep 2; printf "%s" "{}"']
+      events: [tool.before]
+      order: 10
+      timeout_ms: 5000
+    - id: dcg
+      exec: [sh, -c, 'cat > /dev/null; sleep 5; printf "%s" "{}"']
+      events: [tool.before]
+      order: 20
+      timeout_ms: 100
+      on_failure: deny
+    - id: lint-on-write
+      exec: [sh, -c, 'cat > /dev/null; exit 3']
+      events: [tool.after]
+      order: 10
+    - id: next
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"context\":[\"next ran\"]}"']
+      events: [tool.after]
+      order: 20

@@ -297,19 +297,10 @@ fn read_request(path: &Path) -> Result<Request, Error> {
     })
 }
 
-/// The user state directory: `RUNE_STATE_DIR`, else `$XDG_STATE_HOME/rune`,
-/// else `~/.local/state/rune`. The signing queue and the run's artifacts
+/// The user state directory. The signing queue and the run's artifacts
 /// both live under it.
 pub(crate) fn state_dir() -> Result<PathBuf, Error> {
-    if let Some(dir) = std::env::var_os("RUNE_STATE_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-    if let Some(dir) = std::env::var_os("XDG_STATE_HOME").filter(|dir| !dir.is_empty()) {
-        return Ok(PathBuf::from(dir).join("rune"));
-    }
-    dirs::home_dir()
-        .map(|home| home.join(".local/state/rune"))
-        .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
+    crate::cli::state::dir()
 }
 
 /// Millisecond precision, so two requests from one round keep their order.

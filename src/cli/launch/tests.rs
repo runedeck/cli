@@ -14,6 +14,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
             extensions,
             setup: None,
             launch,
+            hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
             theme: None,
@@ -261,6 +262,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
             theme: None,
@@ -897,6 +899,7 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
         extensions: Vec::new(),
         setup: None,
         launch: Launch::default(),
+        hooks: rune::hooks::Hooks::default(),
         bench: Vec::new(),
 
         theme: None,
@@ -1431,6 +1434,7 @@ fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
             theme: None,
@@ -1482,6 +1486,7 @@ pub(super) fn resolve_with_config_for_tests(
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
             theme: None,

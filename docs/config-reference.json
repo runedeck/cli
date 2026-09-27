@@ -406,6 +406,186 @@
     },
     {
       "default": {
+        "defaults": {
+          "on_failure": "warn",
+          "order": 100,
+          "response_reserve_ms": 50,
+          "timeout_ms": 500
+        },
+        "events": {},
+        "handlers": [],
+        "version": 0
+      },
+      "key": "hooks",
+      "type": "object"
+    },
+    {
+      "default": {
+        "on_failure": "warn",
+        "order": 100,
+        "response_reserve_ms": 50,
+        "timeout_ms": 500
+      },
+      "key": "hooks.defaults",
+      "type": "object"
+    },
+    {
+      "default": "warn",
+      "key": "hooks.defaults.on_failure",
+      "type": "string"
+    },
+    {
+      "default": 100,
+      "key": "hooks.defaults.order",
+      "type": "integer"
+    },
+    {
+      "default": 50,
+      "key": "hooks.defaults.response_reserve_ms",
+      "type": "integer"
+    },
+    {
+      "default": 500,
+      "key": "hooks.defaults.timeout_ms",
+      "type": "integer"
+    },
+    {
+      "default": {},
+      "key": "hooks.events",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.compact.before",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.compact.before.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.compact.before.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.notification",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.notification.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.notification.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.prompt.before",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.prompt.before.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.prompt.before.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.end",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.end.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.end.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.start",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.start.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.session.start.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.after",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.after.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.after.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.before",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.before.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.tool.before.mode",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.turn.finish",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.turn.finish.budget_ms",
+      "type": "integer | null"
+    },
+    {
+      "default": null,
+      "key": "hooks.events.turn.finish.mode",
+      "type": "string | null"
+    },
+    {
+      "default": [],
+      "key": "hooks.handlers",
+      "type": "array<object>"
+    },
+    {
+      "default": 0,
+      "key": "hooks.version",
+      "type": "integer"
+    },
+    {
+      "default": {
         "default_with": [],
         "middleware": {
           "cliproxy": {

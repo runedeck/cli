@@ -1,0 +1,12 @@
+hooks:
+  handlers:
+    - id: rtk
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [tool.before]
+      order: 20
+      rewrites: true
+    - id: dcg
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [tool.before]
+      order: 10
+      on_failure: deny
