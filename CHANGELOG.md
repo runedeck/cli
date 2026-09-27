@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Pace and frame the cast of `rune proof run` for a reader: a rule per capability, a boxed title and kind line per scene, typed commands, a tick or cross per step, `--pause` between scenes, a tally.
+- Read `# text` lines in a console fence as comments: dim in the cast, recorded in the transcript with the command lines, compared by `--check`.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
@@ -209,6 +211,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Number a console fence error by the line of the README file, not of the body under the frontmatter.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
 - Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).

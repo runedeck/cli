@@ -5,7 +5,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
 
 use clap::Subcommand;
 use rune::error::Error;
@@ -14,6 +13,7 @@ use rune::proof::{self, Frontmatter, Kind, Proof, Scene as SceneRecord};
 
 use super::closure;
 
+mod cast;
 mod fence;
 mod matcher;
 mod runner;
@@ -38,6 +38,9 @@ pub enum ProofAction {
         /// Record one instruction scene through `rune run <model>`
         #[arg(long, value_name = "SCENARIO")]
         instruction: Option<String>,
+        /// Seconds the cast rests after each scene
+        #[arg(long, default_value_t = 3.0, value_name = "SECONDS")]
+        pause: f64,
         /// Deck or rune source root. Defaults to the current directory
         #[arg(long, default_value = ".")]
         source: String,
@@ -51,6 +54,7 @@ pub fn execute(action: &ProofAction) -> Result<i32, Error> {
             change,
             check,
             instruction,
+            pause,
             source,
         } => {
             let root = canonical(source)?;
@@ -61,7 +65,7 @@ pub fn execute(action: &ProofAction) -> Result<i32, Error> {
             if let Some(key) = instruction {
                 return record_instruction(&root, &proof, key);
             }
-            run(&root, &proof)
+            run(&root, &proof, *pause)
         }
     }
 }
@@ -132,80 +136,95 @@ fn scaffold(root: &Path, change: &str) -> Result<i32, Error> {
     Ok(0)
 }
 
-fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
+fn run(root: &Path, proof: &Proof, pause: f64) -> Result<i32, Error> {
     let text = fs::read_to_string(&proof.readme).map_err(|error| Error::io(error.to_string()))?;
     let (_, body) = split_frontmatter(&text)
         .ok_or_else(|| Error::io(format!("{} has no frontmatter", proof.readme.display())))?;
-    let scenes = fence::scenes(body)
-        .map_err(|error| Error::io(format!("{}: {error}", proof.readme.display())))?;
+    // A fence error names the line of the file, not of the body under
+    // the frontmatter.
+    let offset = text.lines().count() - body.lines().count();
+    let scenes = fence::scenes(body).map_err(|error| {
+        Error::io(format!(
+            "{}: line {}: {}",
+            proof.readme.display(),
+            error.line + offset,
+            error.message
+        ))
+    })?;
     // The head is read before any scene runs, so a scene cannot move it.
     let (head, head_note) = head_commit(root);
     if let Some(note) = head_note {
         println!("{note}");
     }
     let previous = proof.transcript().unwrap_or_default();
-    let started = Instant::now();
     let mut frontmatter = proof.frontmatter.clone();
     let total = frontmatter.scenes.len();
     let mut transcript = String::new();
-    let mut cast: Vec<(f64, String)> = Vec::new();
+    let mut cast = cast::Cast::new(pause);
     let mut failed = 0usize;
+    let mut capability = String::new();
     for (index, record) in frontmatter.scenes.iter_mut().enumerate() {
         let key = &record.scenario;
-        cast.push((
-            started.elapsed().as_secs_f64(),
-            scene_header(index + 1, total, key),
-        ));
+        open_capability(&mut cast, &proof.frontmatter, key, &mut capability);
+        // The kind the box shows is the one the run settles on below, so
+        // an unproven scene is announced as what it was declared to be.
         if record.kind == Kind::Instruction {
+            cast.scene(index + 1, total, key, record.kind.as_str());
             // A recorded answer is kept; an unrecorded instruction gets no
             // section, so the graph shows it unproven until it is run.
-            let verdict = if let Some(section) = previous_section(&previous, key) {
+            if let Some(section) = previous_section(&previous, key) {
                 transcript.push_str(&section);
                 println!("{key} ... instruction (recorded)");
-                Verdict::Kept("instruction, recorded")
+                cast.note("instruction, recorded");
             } else {
                 println!("{key} ... instruction (no section yet; run --instruction)");
-                Verdict::Unproven("instruction not yet recorded".to_string())
-            };
-            cast.push((started.elapsed().as_secs_f64(), verdict.line()));
+                cast.cross("instruction not yet recorded");
+            }
+            cast.end_scene();
             continue;
         }
         let Some(scene) = scenes.iter().find(|s| s.key == *key) else {
             record.kind = Kind::Unproven;
             println!("{key} ... unproven (no scene in the README)");
-            cast.push((
-                started.elapsed().as_secs_f64(),
-                Verdict::Unproven("no scene in the README".to_string()).line(),
-            ));
+            cast.scene(index + 1, total, key, record.kind.as_str());
+            cast.cross("no scene in the README");
+            cast.end_scene();
             failed += 1;
             continue;
         };
-        let outcome = runner::run_scene(scene, root, started);
-        cast.extend(outcome.chunks.iter().cloned());
+        let outcome = runner::run_scene(scene, root);
+        let kind = if outcome.passed && record.kind == Kind::Unproven {
+            Kind::Check
+        } else if outcome.passed {
+            record.kind
+        } else {
+            Kind::Unproven
+        };
+        cast.scene(index + 1, total, key, kind.as_str());
+        show_steps(&mut cast, &outcome.steps);
         if outcome.passed {
-            if record.kind == Kind::Unproven {
-                record.kind = Kind::Check;
-            }
+            record.kind = kind;
             push_section(&mut transcript, key, record.kind, &outcome.section);
             println!("{key} ... ok ({})", record.kind.as_str());
-            cast.push((
-                started.elapsed().as_secs_f64(),
-                Verdict::Ok(record.kind.as_str()).line(),
-            ));
         } else {
             record.kind = Kind::Unproven;
             let reason = outcome.failure.unwrap_or_default();
             println!("{key} ... unproven: {}", reason.trim_end());
-            cast.push((
-                started.elapsed().as_secs_f64(),
-                Verdict::Unproven(reason.lines().next().unwrap_or_default().to_string()).line(),
-            ));
+            if outcome.steps.last().is_none_or(|s| s.verdict.is_ok()) {
+                // The scene failed before any step ran.
+                cast.cross(&reason);
+            }
             failed += 1;
         }
+        cast.end_scene();
     }
+    cast.tally(
+        total,
+        total - failed - unrecorded_instructions(&frontmatter, &transcript),
+    );
     fs::write(proof.dir.join("proof.txt"), &transcript)
         .map_err(|error| Error::io(error.to_string()))?;
-    write_cast(&proof.dir.join("proof.cast"), &cast)?;
+    cast.write(&proof.dir.join("proof.cast"))?;
     frontmatter.transcript = sha256(transcript.as_bytes());
     frontmatter.recorded = today();
     frontmatter.head = head;
@@ -222,38 +241,6 @@ fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
         &frontmatter.transcript[..12]
     );
     Ok(i32::from(failed > 0))
-}
-
-/// How a scene ended, as the cast shows it.
-enum Verdict<'a> {
-    Ok(&'a str),
-    Kept(&'a str),
-    Unproven(String),
-}
-
-impl Verdict<'_> {
-    fn line(&self) -> String {
-        match self {
-            Self::Ok(kind) => format!("\x1b[1;32m\u{2714} ok ({kind})\x1b[0m\n\n"),
-            Self::Kept(what) => format!("\x1b[1;36m\u{25cf} {what}\x1b[0m\n\n"),
-            Self::Unproven(reason) => format!("\x1b[1;31m\u{2718} unproven: {reason}\x1b[0m\n\n"),
-        }
-    }
-}
-
-/// The scene header in the cast: a rule, then `# Scenario: <title>` with
-/// its index and key, so a player lists the scenes and a reader sees where
-/// one ends and the next begins. The title is the scenario slug as words.
-fn scene_header(index: usize, total: usize, key: &str) -> String {
-    let slug = key.rsplit('/').next().unwrap_or(key);
-    let mut title = slug.replace('-', " ");
-    if let Some(first) = title.get(..1) {
-        title = first.to_uppercase() + &title[1..];
-    }
-    let rule = "\u{2501}".repeat(100);
-    format!(
-        "\x1b[1;34m{rule}\x1b[0m\n\x1b[1m# Scenario: {title}\x1b[0m  \x1b[2m({index}/{total}, {key})\x1b[0m\n"
-    )
 }
 
 /// Verify a proof without running it: the transcript hashes to the
@@ -312,6 +299,7 @@ fn check(root: &Path, proof: &Proof) -> i32 {
                 line.starts_with("$ ")
                     || line.starts_with("> ")
                     || line.starts_with("< ")
+                    || line.starts_with("# ")
                     || *line == "<"
             })
             .collect();
@@ -484,24 +472,53 @@ fn write_readme(readme: &Path, frontmatter: &Frontmatter, body: &str) -> Result<
         .map_err(|error| Error::io(error.to_string()))
 }
 
-/// An asciinema v2 cast of the captured output, one event per chunk.
-fn write_cast(path: &Path, chunks: &[(f64, String)]) -> Result<(), Error> {
-    let mut cast = String::new();
-    // Written by hand so `version` leads, as asciinema writes it.
-    let _ = writeln!(
-        cast,
-        "{{\"version\":2,\"width\":100,\"height\":30,\"timestamp\":{},\"env\":{{\"SHELL\":\"/bin/sh\",\"TERM\":\"xterm-256color\"}}}}",
-        chrono::Utc::now().timestamp()
-    );
-    for (offset, text) in chunks {
-        let event = serde_json::json!([
-            (offset * 1000.0).round() / 1000.0,
-            "o",
-            text.replace('\n', "\r\n")
-        ]);
-        let _ = writeln!(cast, "{event}");
+/// Each step of a scene as the cast shows it: comments, the typed
+/// command, its output, and its tick or cross.
+fn show_steps(cast: &mut cast::Cast, steps: &[runner::StepRun]) {
+    for step in steps {
+        for comment in &step.comments {
+            cast.comment(comment);
+        }
+        cast.command(&step.command_lines);
+        cast.output(&step.output);
+        match &step.verdict {
+            Ok(label) if label.is_empty() => {}
+            Ok(label) => cast.tick(label),
+            Err(reason) => cast.cross(reason),
+        }
     }
-    fs::write(path, cast).map_err(|error| Error::io(error.to_string()))
+}
+
+/// Print the capability rule when a scene opens a new capability.
+fn open_capability(
+    cast: &mut cast::Cast,
+    frontmatter: &Frontmatter,
+    key: &str,
+    current: &mut String,
+) {
+    let own = key.split_once('#').map_or(key, |(c, _)| c);
+    if own != current {
+        cast.capability(own, frontmatter_scenes_of(frontmatter, own));
+        *current = own.to_string();
+    }
+}
+
+/// How many scenes of the record belong to one capability.
+fn frontmatter_scenes_of(frontmatter: &Frontmatter, capability: &str) -> usize {
+    frontmatter
+        .scenes
+        .iter()
+        .filter(|s| s.scenario.split_once('#').map(|(c, _)| c) == Some(capability))
+        .count()
+}
+
+/// Instruction scenes with no recorded section: unproven, though not failed.
+fn unrecorded_instructions(frontmatter: &Frontmatter, transcript: &str) -> usize {
+    frontmatter
+        .scenes
+        .iter()
+        .filter(|s| s.kind == Kind::Instruction && !proof::scene_recorded(transcript, &s.scenario))
+        .count()
 }
 
 fn today() -> String {
@@ -614,16 +631,6 @@ mod tests {
         );
         assert!(previous_section(&t, "cap#req/three").is_none());
         assert!(rune::proof::scene_recorded(&t, "cap#req/one"));
-    }
-
-    #[test]
-    fn the_cast_marks_every_scene_with_a_scenario_line() {
-        let header = scene_header(3, 30, "cap#req-slug/readme-already-exists");
-        assert!(header.contains("# Scenario: Readme already exists"));
-        assert!(header.contains("(3/30, cap#req-slug/readme-already-exists)"));
-        assert!(header.starts_with("\x1b[1;34m\u{2501}"));
-        assert!(Verdict::Ok("check").line().contains("ok (check)"));
-        assert!(Verdict::Unproven("x".into()).line().contains("unproven: x"));
     }
 
     #[test]
