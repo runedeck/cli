@@ -48,8 +48,10 @@ pub struct Step {
     pub stdin: Option<String>,
     /// Expected output with `[..]` and `...` elisions, without a trailing newline.
     pub expected: String,
-    /// The `$ `, `> `, and `< ` lines as written, for the transcript.
+    /// The `# `, `$ `, `> `, and `< ` lines as written, for the transcript.
     pub command_lines: Vec<String>,
+    /// The `# text` comments above the command, for the cast.
+    pub comments: Vec<String>,
 }
 
 /// A scene: the scenario key of its heading and its steps.
@@ -153,10 +155,27 @@ pub fn scenes(body: &str) -> Result<Vec<Scene>, FenceError> {
 fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError> {
     let mut steps = Vec::new();
     let mut i = start;
+    // Comments gathered for the next command, with the line of the first.
+    let mut comments: Vec<String> = Vec::new();
+    let mut comment_line = 0;
     while i < lines.len() {
         let line = lines[i];
         if line.trim_start().starts_with("```") {
+            if !comments.is_empty() {
+                return Err(error(
+                    comment_line,
+                    "a comment `# text` comes before the command it explains",
+                ));
+            }
             return Ok((steps, i + 1));
+        }
+        if let Some(text) = line.strip_prefix("# ") {
+            if comments.is_empty() {
+                comment_line = i + 1;
+            }
+            comments.push(text.trim_end().to_string());
+            i += 1;
+            continue;
         }
         let Some(raw) = line.strip_prefix("$ ") else {
             if line.trim().is_empty() {
@@ -172,7 +191,10 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             return Err(error(i + 1, format!("expected `$ command`, got `{line}`")));
         };
         let command_start = i + 1;
-        let mut command_lines = vec![line.to_string()];
+        let mut command_lines: Vec<String> =
+            comments.iter().map(|text| format!("# {text}")).collect();
+        command_lines.push(line.to_string());
+        let comments_here = std::mem::take(&mut comments);
         let mut command_text = raw.trim().to_string();
         i += 1;
         while i < lines.len() {
@@ -185,21 +207,7 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             i += 1;
         }
         let words = shell_words(&command_text).map_err(|message| error(command_start, message))?;
-        let mut stdin: Option<String> = None;
-        while i < lines.len() {
-            let text = if lines[i] == "<" {
-                ""
-            } else if let Some(text) = lines[i].strip_prefix("< ") {
-                text
-            } else {
-                break;
-            };
-            command_lines.push(lines[i].to_string());
-            let input = stdin.get_or_insert_with(String::new);
-            input.push_str(text);
-            input.push('\n');
-            i += 1;
-        }
+        let stdin = input_lines(lines, &mut i, &mut command_lines);
         let mut status = Status::Success;
         if i < lines.len()
             && let Some(raw) = lines[i].strip_prefix("? ")
@@ -208,8 +216,11 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             i += 1;
         }
         let mut expected = String::new();
+        // A `# ` line ends the expected output: it is the next command's
+        // comment. An output line that starts so is written `[..]`.
         while i < lines.len()
             && !lines[i].starts_with("$ ")
+            && !lines[i].starts_with("# ")
             && !lines[i].trim_start().starts_with("```")
         {
             expected.push_str(lines[i]);
@@ -219,19 +230,7 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
         if expected.ends_with('\n') {
             expected.pop();
         }
-        let mut env = BTreeMap::new();
-        let mut argv = Vec::new();
-        for word in words {
-            if argv.is_empty()
-                && let Some((key, value)) = word.split_once('=')
-                && !key.is_empty()
-                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                env.insert(key.to_string(), value.to_string());
-            } else {
-                argv.push(word);
-            }
-        }
+        let (env, argv) = env_and_argv(words);
         if argv.is_empty() {
             return Err(error(command_start, "a step names no program"));
         }
@@ -242,9 +241,50 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             stdin,
             expected,
             command_lines,
+            comments: comments_here,
         });
     }
     Err(error(lines.len(), "console fence is not closed"))
+}
+
+/// The `< text` lines under a command, joined with newlines, and copied
+/// to the command lines as written. `i` moves past them.
+fn input_lines(lines: &[&str], i: &mut usize, command_lines: &mut Vec<String>) -> Option<String> {
+    let mut stdin: Option<String> = None;
+    while *i < lines.len() {
+        let text = if lines[*i] == "<" {
+            ""
+        } else if let Some(text) = lines[*i].strip_prefix("< ") {
+            text
+        } else {
+            break;
+        };
+        command_lines.push(lines[*i].to_string());
+        let input = stdin.get_or_insert_with(String::new);
+        input.push_str(text);
+        input.push('\n');
+        *i += 1;
+    }
+    stdin
+}
+
+/// Leading `KEY=value` words are the step's environment; the rest is the
+/// program and its arguments.
+fn env_and_argv(words: Vec<String>) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut env = BTreeMap::new();
+    let mut argv = Vec::new();
+    for word in words {
+        if argv.is_empty()
+            && let Some((key, value)) = word.split_once('=')
+            && !key.is_empty()
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            env.insert(key.to_string(), value.to_string());
+        } else {
+            argv.push(word);
+        }
+    }
+    (env, argv)
 }
 
 /// Split a command line into words the way a POSIX shell does: whitespace
@@ -323,6 +363,36 @@ mod tests {
     use super::*;
 
     const README: &str = "# Scenes\n\n## cap#req/one\n\n```console\n$ rune --version\nrune 0.6.0 ([..]) built [..]\n\n```\n\n## cap#req/two\n\n```console\n$ FOO=bar rune sign list\n? 2\nerror: the following required arguments were not provided:\n...\n$ printf 'a b' \"c\"\n> --flag\na b c\n```\n\n## cap#req/empty\n\n```console\n```\n\n## Not a key\n\ntext\n";
+
+    #[test]
+    fn a_comment_belongs_to_the_command_below_it() {
+        let body = "## cap#req/one\n\n```console\n# the guard refuses the delete\n$ rune hook run\n< {\"a\":1}\n# next\n$ true\n```\n";
+        let scenes = scenes(body).expect("parse");
+        let steps = &scenes[0].steps;
+        assert_eq!(
+            steps[0].comments,
+            vec!["the guard refuses the delete".to_string()]
+        );
+        assert_eq!(
+            steps[0].command_lines,
+            vec![
+                "# the guard refuses the delete",
+                "$ rune hook run",
+                "< {\"a\":1}"
+            ]
+        );
+        assert_eq!(steps[0].expected, "");
+        assert_eq!(steps[1].comments, vec!["next".to_string()]);
+        assert_eq!(steps[1].command_lines, vec!["# next", "$ true"]);
+    }
+
+    #[test]
+    fn a_comment_with_no_command_after_it_is_an_error() {
+        let body = "## cap#req/one\n\n```console\n$ true\n# dangling\n```\n";
+        let error = scenes(body).unwrap_err();
+        assert_eq!(error.line, 5);
+        assert!(error.message.contains("before the command it explains"));
+    }
 
     #[test]
     fn scenes_and_steps_parse_in_order() {

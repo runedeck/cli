@@ -13,7 +13,7 @@ use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::fence::{Scene, Step};
 use super::matcher;
@@ -28,8 +28,19 @@ pub struct SceneRun {
     pub section: String,
     /// Why it failed, when it did.
     pub failure: Option<String>,
-    /// Captured output chunks with their offset in seconds, for the cast.
-    pub chunks: Vec<(f64, String)>,
+    /// What each step showed and how it ended, in order, for the cast.
+    pub steps: Vec<StepRun>,
+}
+
+/// One step as the cast shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepRun {
+    pub comments: Vec<String>,
+    /// The `$ `, `> `, and `< ` lines, without the comments.
+    pub command_lines: Vec<String>,
+    pub output: String,
+    /// The tick's label when the step passed, else the reason it failed.
+    pub verdict: Result<String, String>,
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -59,7 +70,7 @@ fn fresh_dir(label: &str) -> Result<PathBuf, String> {
 /// Run a scene. `root` is the canonical repository path; a first step
 /// `$ cd <path>` runs the rest under `root/<path>` instead of a fresh
 /// temporary directory, and must be followed by at least one command.
-pub fn run_scene(scene: &Scene, root: &Path, started: Instant) -> SceneRun {
+pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
     let mut run = SceneRun::default();
     if scene.steps.is_empty() {
         run.failure = Some("the fence holds no command".to_string());
@@ -72,25 +83,34 @@ pub fn run_scene(scene: &Scene, root: &Path, started: Instant) -> SceneRun {
             return run;
         }
     };
-    let (cwd, steps, cleanup) = match working_directory(scene, root, &mut run.section) {
-        Ok(v) => v,
-        Err(message) => {
-            let _ = fs::remove_dir_all(&capture_dir);
-            run.failure = Some(message);
-            return run;
-        }
-    };
+    let (cwd, steps, cleanup) =
+        match working_directory(scene, root, &mut run.section, &mut run.steps) {
+            Ok(v) => v,
+            Err(message) => {
+                let _ = fs::remove_dir_all(&capture_dir);
+                run.failure = Some(message);
+                return run;
+            }
+        };
     let mut passed = true;
     for step in &steps {
         for line in &step.command_lines {
             run.section.push_str(line);
             run.section.push('\n');
         }
-        let (offset, text, code, error) = execute(step, &cwd, root, &capture_dir, started);
-        if let Some(text) = &text {
-            run.chunks.push((offset, text.clone()));
-        }
+        let (text, code, error) = execute(step, &cwd, root, &capture_dir);
         let text = text.unwrap_or_default();
+        let mut shown = StepRun {
+            comments: step.comments.clone(),
+            command_lines: step
+                .command_lines
+                .iter()
+                .filter(|line| !line.starts_with("# "))
+                .cloned()
+                .collect(),
+            output: text.clone(),
+            verdict: Ok(super::cast::tick_label(code, !step.expected.is_empty())),
+        };
         // Trailing whitespace carries nothing and would let a whitespace
         // hook rewrite the transcript out from under its digest.
         for line in text.lines() {
@@ -101,29 +121,31 @@ pub fn run_scene(scene: &Scene, root: &Path, started: Instant) -> SceneRun {
             }
             run.section.push('\n');
         }
-        if let Some(error) = error {
-            run.failure = Some(error);
-            passed = false;
-            break;
-        }
-        if !step.status.accepts(code) {
-            run.failure = Some(format!(
+        let failure = if let Some(error) = error {
+            Some(error)
+        } else if !step.status.accepts(code) {
+            Some(format!(
                 "`{}` exited {} but the scene expects {:?}",
                 step.argv.join(" "),
                 code.map_or("by signal".to_string(), |c| c.to_string()),
                 step.status
-            ));
-            passed = false;
-            break;
-        }
-        if let Err(diff) = matcher::matches(&step.expected, &text) {
-            run.failure = Some(format!(
+            ))
+        } else if let Err(diff) = matcher::matches(&step.expected, &text) {
+            Some(format!(
                 "output of `{}` differs:\n{diff}",
                 step.argv.join(" ")
-            ));
+            ))
+        } else {
+            None
+        };
+        if let Some(reason) = failure {
+            shown.verdict = Err(reason.clone());
+            run.steps.push(shown);
+            run.failure = Some(reason);
             passed = false;
             break;
         }
+        run.steps.push(shown);
     }
     let _ = fs::remove_dir_all(&capture_dir);
     if let Some(dir) = cleanup {
@@ -140,6 +162,7 @@ fn working_directory(
     scene: &Scene,
     root: &Path,
     section: &mut String,
+    shown: &mut Vec<StepRun>,
 ) -> Result<(PathBuf, Vec<Step>, Option<PathBuf>), String> {
     let first = &scene.steps[0];
     if first.argv.first().map(String::as_str) == Some("cd") {
@@ -160,27 +183,36 @@ fn working_directory(
             section.push_str(line);
             section.push('\n');
         }
+        shown.push(StepRun {
+            comments: first.comments.clone(),
+            command_lines: first
+                .command_lines
+                .iter()
+                .filter(|line| !line.starts_with("# "))
+                .cloned()
+                .collect(),
+            output: String::new(),
+            verdict: Ok(String::new()),
+        });
         return Ok((canonical, scene.steps[1..].to_vec(), None));
     }
     let dir = fresh_dir(&scene.key.replace(['#', '/'], "-"))?;
     Ok((dir.clone(), scene.steps.clone(), Some(dir)))
 }
 
-/// Run one step. Returns the output offset, the captured output, the exit
-/// code, and an error when the program could not run at all.
+/// Run one step. Returns the captured output, the exit code, and an error
+/// when the program could not run at all.
 fn execute(
     step: &Step,
     cwd: &Path,
     root: &Path,
     capture_dir: &Path,
-    started: Instant,
-) -> (f64, Option<String>, Option<i32>, Option<String>) {
+) -> (Option<String>, Option<i32>, Option<String>) {
     let program = if step.argv[0] == "rune" {
         match std::env::current_exe() {
             Ok(exe) => exe,
             Err(error) => {
                 return (
-                    0.0,
                     None,
                     None,
                     Some(format!("cannot resolve rune to this binary: {error}")),
@@ -198,11 +230,10 @@ fn execute(
         .open(&capture)
     {
         Ok(file) => file,
-        Err(error) => return (0.0, None, None, Some(error.to_string())),
+        Err(error) => return (None, None, Some(error.to_string())),
     };
     let (Ok(stdout), Ok(stderr)) = (file.try_clone(), file.try_clone()) else {
         return (
-            0.0,
             None,
             None,
             Some("cannot share the capture file".to_string()),
@@ -224,7 +255,6 @@ fn execute(
                 Ok(input) => Stdio::from(input),
                 Err(error) => {
                     return (
-                        0.0,
                         None,
                         None,
                         Some(format!("cannot write the step's input: {error}")),
@@ -260,7 +290,6 @@ fn execute(
         .stdin(stdin)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
-    let offset = started.elapsed().as_secs_f64();
     let status = match command.status() {
         Ok(status) => status,
         Err(error) => {
@@ -269,14 +298,14 @@ fn execute(
             } else {
                 format!("cannot run {}: {error}", step.argv[0])
             };
-            return (offset, None, None, Some(why));
+            return (None, None, Some(why));
         }
     };
     let mut bytes = Vec::new();
     let _ = file.seek(SeekFrom::Start(0));
     let _ = file.read_to_end(&mut bytes);
     let text = String::from_utf8_lossy(&bytes).into_owned();
-    (offset, Some(text), status.code(), None)
+    (Some(text), status.code(), None)
 }
 
 #[cfg(test)]
@@ -297,16 +326,21 @@ mod tests {
     #[test]
     fn a_passing_scene_records_its_output_indented() {
         let s = scene("$ printf 'hello\\n'\nhello");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(run.passed, "{:?}", run.failure);
         assert_eq!(run.section, "$ printf 'hello\\n'\n  hello\n");
-        assert_eq!(run.chunks.len(), 1);
+        assert_eq!(run.steps.len(), 1);
+        assert_eq!(run.steps[0].output, "hello\n");
+        assert_eq!(
+            run.steps[0].verdict,
+            Ok("exit 0 · output matches".to_string())
+        );
     }
 
     #[test]
     fn output_cannot_pose_as_a_transcript_header() {
         let s = scene("$ printf '## cap#req/two\\nkind: check\\n'\n## cap#req/two\nkind: check");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(run.passed, "{:?}", run.failure);
         assert!(!run.section.contains("\n## cap#req/two"));
         assert!(run.section.contains("\n  ## cap#req/two"));
@@ -315,14 +349,14 @@ mod tests {
     #[test]
     fn input_lines_reach_the_command_and_the_transcript() {
         let s = scene("$ sh -s\n< echo one\n< echo two\none\ntwo");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(run.passed, "{:?}", run.failure);
         assert_eq!(
             run.section,
             "$ sh -s\n< echo one\n< echo two\n  one\n  two\n"
         );
         let none = scene("$ cat\n");
-        let run = run_scene(&none, &root(), Instant::now());
+        let run = run_scene(&none, &root());
         assert!(run.passed, "{:?}", run.failure);
         assert_eq!(run.section, "$ cat\n");
     }
@@ -330,7 +364,7 @@ mod tests {
     #[test]
     fn a_missing_program_fails_the_scene() {
         let s = scene("$ nonesuch --flag");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(!run.passed);
         assert!(run.failure.unwrap().contains("command not found: nonesuch"));
     }
@@ -338,10 +372,10 @@ mod tests {
     #[test]
     fn a_wrong_exit_or_output_fails_with_a_reason() {
         let s = scene("$ sh -c 'exit 3'\n? 2");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(run.failure.unwrap().contains("exited 3"));
         let s = scene("$ printf 'a\\n'\nb");
-        let run = run_scene(&s, &root(), Instant::now());
+        let run = run_scene(&s, &root());
         assert!(run.failure.unwrap().contains("- b"));
     }
 
@@ -349,8 +383,8 @@ mod tests {
     fn scenes_do_not_share_a_directory_and_cannot_see_the_capture() {
         let one = scene("$ sh -c 'echo x > note.txt; ls; echo done'\nnote.txt\ndone");
         let two = scene("$ ls\n");
-        assert!(run_scene(&one, &root(), Instant::now()).passed);
-        let run = run_scene(&two, &root(), Instant::now());
+        assert!(run_scene(&one, &root()).passed);
+        let run = run_scene(&two, &root());
         assert!(run.passed, "{:?}", run.failure);
         assert!(!run.section.contains("note.txt"));
     }
@@ -361,21 +395,21 @@ mod tests {
             .unwrap()
             .remove(0);
         assert!(
-            run_scene(&empty, &root(), Instant::now())
+            run_scene(&empty, &root())
                 .failure
                 .unwrap()
                 .contains("no command")
         );
         let bare = scene("$ cd .");
         assert!(
-            run_scene(&bare, &root(), Instant::now())
+            run_scene(&bare, &root())
                 .failure
                 .unwrap()
                 .contains("followed by no command")
         );
         let dir = tempfile::tempdir().unwrap();
         let s = scene("$ cd ..\n$ ls");
-        let run = run_scene(&s, &dir.path().canonicalize().unwrap(), Instant::now());
+        let run = run_scene(&s, &dir.path().canonicalize().unwrap());
         assert!(run.failure.unwrap().contains("leaves the repository"));
     }
 }

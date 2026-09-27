@@ -166,7 +166,7 @@ $ sh -c 'grep -c "^< " "$RUNE_PROOF_ROOT/docs/proofs/review-changes-with-proofs/
 ```console
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/input-first" repo && rune proof run sample-change-one --source repo'
 ? 2
-fatal: [..]README.md: line 14: an input line `< text` comes after the command it feeds
+fatal: [..]README.md: line 25: an input line `< text` comes after the command it feeds
 ```
 
 ## every-scenario-has-proof#every-scene-starts-clean/scenes-do-not-share-a-directory

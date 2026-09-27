@@ -63,6 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Redact the value of every variable a grok `env_key` entry names from every output, the answer included, and leave an ordinary `key: value` line in the answer as the model wrote it.
 - Add the `.rune` key `ontology: <source>`: `rune install` copies that source's ontology to `ontology/rune.ttl` with a manifest and a sidecar, so `rune spec validate` reads the deck's terms there.
 - Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.
+- Pace and frame the cast of `rune proof run` for a reader: a rule per capability, a boxed title and kind line per scene, typed commands, a tick or cross per step, `--pause` between scenes, a tally.
+- Read `# text` lines in a console fence as comments: dim in the cast, recorded in the transcript with the command lines, compared by `--check`.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
@@ -290,6 +292,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fix the drop warning for a codex `model` config key or a claude `model` settings key whose value equals the model the run passes.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
+- Number a console fence error by the line of the README file, not of the body under the frontmatter.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
 - Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).
