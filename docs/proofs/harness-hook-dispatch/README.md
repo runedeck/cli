@@ -1,55 +1,56 @@
 ---
 type: proof
 change: harness-hook-dispatch
-recorded: 2026-09-27
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+head: 4049e67788096ef5290f205eaf8b83703cb3c793
+recorded: 2026-10-24
+transcript: 786f5428d84b7da44b1e7e75e5375205f6afbbb40f460fa3646b597bd7ba207e
 scenes:
 - scenario: harness-hook-dispatch#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#one-config-declares-every-hook/native-extension-registers-on-one-harness
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#one-config-declares-every-hook/deny-policy-on-a-passive-event
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#canonical-events-map-to-each-harness/event-the-harness-lacks
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#canonical-events-map-to-each-harness/compaction-on-claude
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#canonical-events-map-to-each-harness/session-end-budget-on-codex
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#the-dispatcher-normalizes-and-answers/grok-payload-reaches-a-handler
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#the-dispatcher-normalizes-and-answers/denial-encoded-for-claude
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#the-dispatcher-normalizes-and-answers/claude-registration-fired-by-grok
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#dispatcher-failures-follow-the-strongest-policy/payload-names-another-event-on-a-guarded-gate
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#dispatcher-failures-follow-the-strongest-policy/plan-missing-on-a-passive-event
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#handlers-run-in-order-and-fail-by-policy/guard-times-out
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#handlers-run-in-order-and-fail-by-policy/linter-crashes
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#handlers-run-in-order-and-fail-by-policy/budget-spent-before-the-guard
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#rewriters-precede-guards/guard-sees-the-rewritten-command
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#rewriters-precede-guards/rewriter-ordered-after-a-guard
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#install-owns-its-entries-and-nothing-else/foreign-entries-survive
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#install-owns-its-entries-and-nothing-else/owned-entry-edited-by-hand
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#install-adopts-predecessors-and-migrates-legacy-entries/git-ai-adopted
-  kind: unproven
+  kind: check
 - scenario: harness-hook-dispatch#install-adopts-predecessors-and-migrates-legacy-entries/legacy-dispatcher-in-the-codex-config
-  kind: unproven
+  kind: check
 - scenario: checkout-author-identity#identity-binds-to-the-checkout/listed-model-at-session-start
-  kind: unproven
+  kind: check
 - scenario: checkout-author-identity#identity-binds-to-the-checkout/unlisted-model
-  kind: unproven
+  kind: check
 - scenario: checkout-author-identity#identity-binds-to-the-checkout/two-sessions-two-checkouts
-  kind: unproven
+  kind: check
 ---
 
 # Proof: harness-hook-dispatch
