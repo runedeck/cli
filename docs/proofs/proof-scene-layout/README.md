@@ -1,20 +1,20 @@
 ---
 type: proof
 change: proof-scene-layout
-head: d605922d92b243fbe6681e427aac7cf825b198bc
-recorded: 2026-09-27
-transcript: fd15674719bbc1f4d9382db916c7ed0ed9acfc8d0090124b13e502f8c37f033d
+head: 275680d7a3efd4752c679f42d529c078895fec9f
+recorded: 2026-09-28
+transcript: 4412e031c666de7db34f17b57c373dd335a8f03e022fc59c0c3e3f07d6daffd1
 scenes:
 - scenario: proof-scene-layout#the-cast-is-paced-for-a-reader/scenes-are-paced-for-a-reader
   kind: check
 - scenario: proof-scene-layout#the-cast-is-paced-for-a-reader/owner-shortens-the-pause
-  kind: unproven
+  kind: check
 - scenario: proof-scene-layout#the-cast-is-paced-for-a-reader/failed-step-shows-its-reason-in-the-cast
-  kind: unproven
+  kind: check
 - scenario: proof-scene-layout#a-fence-comment-explains-the-step/comment-before-a-command
   kind: check
 - scenario: proof-scene-layout#a-fence-comment-explains-the-step/comment-with-no-command
-  kind: unproven
+  kind: check
 ---
 
 # Proof: proof-scene-layout
