@@ -1264,11 +1264,14 @@ fn notifier_commands(message: &str, icon: Option<&Path>, activate: Option<&str>)
         // The banner is alerter's own, with the runedeck mark as its icon;
         // impersonating the terminal through `--sender` needs that app's
         // notification permission, which a terminal never asked for, and
-        // the banner then never shows.
+        // the banner then never shows. One banner at a time: a previous
+        // alerter of the group is ended first, and a watchdog ends this one
+        // a little after its own timeout, because alerter has stayed alive
+        // for days when the notification never showed.
         let mut alerter = Command::new("/bin/sh");
         alerter.args([
             "-c",
-            r#"out=$("$0" "$@"); case "$out" in @CONTENTCLICKED|@ACTIONCLICKED) [ -n "${RUNE_NOTIFY_OPEN:-}" ] && exec open -b "$RUNE_NOTIFY_OPEN" ;; esac"#,
+            r#"pkill -f "^alerter .*--group rune-sign" 2>/dev/null; ( sleep 620; pkill -f "^alerter .*--group rune-sign" ) >/dev/null 2>&1 & wd=$!; out=$("$0" "$@"); pkill -P "$wd" 2>/dev/null; kill "$wd" 2>/dev/null; case "$out" in @CONTENTCLICKED|@ACTIONCLICKED) [ -n "${RUNE_NOTIFY_OPEN:-}" ] && exec open -b "$RUNE_NOTIFY_OPEN" ;; esac"#,
             "alerter",
             "--title",
             NOTIFICATION_TITLE,
