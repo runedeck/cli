@@ -408,6 +408,10 @@ fn a_click_activates_the_terminal_the_owner_typed_in() {
             "no impersonation"
         );
         assert!(args[1][1].contains("@CONTENTCLICKED") && args[1][1].contains("open -b"));
+        // One banner at a time: the previous group member is ended first
+        // and a watchdog ends this one after its timeout.
+        assert!(args[1][1].starts_with("pkill -f \"^alerter .*--group rune-sign\""));
+        assert!(args[1][1].contains("sleep 620"));
         let env: Vec<(String, String)> = commands[1]
             .get_envs()
             .filter_map(|(key, value)| {
