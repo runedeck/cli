@@ -133,6 +133,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add the `kebab-case-skills` assembly rule, the full skill-tree normalization of path, frontmatter name, and link retargeting, applied to skills alone.
 - Enable `kebab-case-skills` on the agentskills provider, because the AgentSkills specification requires lowercase names matching the skill directory.
 - Deploy authored casing verbatim on every other provider.
+- Add `cursor` to `rune run`: `cursor-agent` in print mode, ask mode when read-only, its own sandbox when writing, and a hint when the sandbox hides the login.
+- Require `CURSOR_API_KEY` for `rune run cursor --clean`, which moves `HOME` and `CURSOR_CONFIG_DIR` into the clean root.
+- Keep only `--endpoint` from a Cursor profile in `rune run`, and refuse a read-only run when Cursor's `approvalMode` is `unrestricted`.
+- Add `cursor` to `rune launch`, which starts `cursor-agent` unless `tools.cursor.binary` names another binary.
+- Add a built-in `fable@cursor` profile that selects `claude-fable-5-1-high`. A configured profile of that name replaces it.
 
 ### Changed
 

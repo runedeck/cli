@@ -515,6 +515,115 @@ fn invocation_splits_as_profile_at_tool() {
 }
 
 #[test]
+fn cursor_fable_profile_is_built_in() {
+    let launch = Launch::default();
+    let profile = resolve_profile("cursor", Some("fable"), &launch)
+        .expect("built-in profile")
+        .expect("profile");
+    assert_eq!(profile.model.as_deref(), Some("fable-cursor"));
+    let model = apply_profile_model("cursor", &profile, &launch, &mut LaunchPlan::default())
+        .expect("model route")
+        .expect("resolved model");
+    assert_eq!(model.id, "claude-fable-5-1-high");
+    assert_eq!(model.source, ModelSource::BuiltIn);
+
+    let error = resolve_profile("claude", Some("fable"), &launch).unwrap_err();
+    assert!(
+        error.contains("no launch profile 'fable' for claude"),
+        "{error}"
+    );
+    let error = resolve_profile("cursor", Some("missing"), &launch).unwrap_err();
+    assert!(error.contains("(profiles: fable)"), "{error}");
+    assert_eq!(profile_names("cursor", &launch), ["fable"]);
+    assert!(profile_names("claude", &launch).is_empty());
+}
+
+#[test]
+fn cursor_launch_passes_the_route_model_before_profile_arguments() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = resolve_with_config(
+        "fable@cursor",
+        &[OsString::from("--resume")],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig::default(),
+    )
+    .expect("fable launch");
+
+    assert_eq!(
+        resolved.argv,
+        [
+            "cursor-agent",
+            "--model",
+            "claude-fable-5-1-high",
+            "--resume"
+        ]
+        .map(OsString::from)
+    );
+    assert_eq!(
+        resolved.model_args,
+        ["--model", "claude-fable-5-1-high"].map(OsString::from)
+    );
+
+    let plain = resolve_with_config(
+        "cursor",
+        &[],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig::default(),
+    )
+    .expect("plain launch");
+    assert_eq!(plain.argv, [OsString::from("cursor-agent")]);
+    assert!(plain.model_args.is_empty());
+}
+
+#[test]
+fn configured_cursor_profile_replaces_the_built_in() {
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "cursor".to_string(),
+        [(
+            "fable".to_string(),
+            ontology::LaunchProfile {
+                model: Some("fable-max".to_string()),
+                ..ontology::LaunchProfile::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let profile = resolve_profile("cursor", Some("fable"), &launch)
+        .expect("configured profile")
+        .expect("profile");
+    assert_eq!(profile.model.as_deref(), Some("fable-max"));
+}
+
+#[test]
+fn configured_fable_cursor_route_replaces_the_built_in() {
+    let mut launch = Launch::default();
+    launch.models.insert(
+        "fable-cursor".to_string(),
+        LaunchModel {
+            id: "claude-fable-5-1-thinking-max".to_string(),
+            context: 1_000_000,
+            compact: None,
+        },
+    );
+    let (model, source) = resolve_model("fable-cursor", &launch).expect("configured route");
+    assert_eq!(model.id, "claude-fable-5-1-thinking-max");
+    assert_eq!(source, ModelSource::Config);
+}
+
+#[test]
+fn unknown_route_error_names_every_built_in_route() {
+    let error = resolve_model("nope", &Launch::default()).expect_err("unknown route");
+    for (alias, _, _) in BUILT_IN_ROUTES {
+        assert!(error.contains(alias), "{alias}: {error}");
+        resolve_model(alias, &Launch::default()).expect("built-in route");
+    }
+}
+
+#[test]
 fn ollama_profile_name_falls_back_to_a_model() {
     let launch = Launch::default();
     let resolved = resolve_profile("ollama", Some("llama3"), &launch).unwrap();
@@ -851,4 +960,35 @@ fn direct_mode_omits_profile_middleware() {
 
     assert!(resolved.wrap.is_empty());
     assert!(resolved.pre.is_empty());
+}
+
+#[test]
+fn cursor_launches_the_agent_cli_by_default() {
+    let tool = resolve_tool("cursor", &Launch::default());
+
+    assert_eq!(tool.binary, OsString::from("cursor-agent"));
+    assert!(KNOWN_TOOLS.contains(&"cursor"));
+}
+
+#[test]
+fn cursor_launches_the_configured_binary() {
+    let mut launch = Launch::default();
+    launch.tools.insert(
+        "cursor".to_string(),
+        ontology::LaunchTool {
+            binary: Some("/opt/cursor/bin/agent".to_string()),
+            base_url_env: None,
+        },
+    );
+
+    let tool = resolve_tool("cursor", &launch);
+
+    assert_eq!(tool.binary, OsString::from("/opt/cursor/bin/agent"));
+}
+
+#[test]
+fn other_tools_keep_their_own_name_as_binary() {
+    for name in ["claude", "codex", "agy", "opencode", "grok", "ollama"] {
+        assert_eq!(default_binary(name), name);
+    }
 }

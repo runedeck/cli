@@ -1,7 +1,7 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface,
+    Surface, SurfaceFailure, SurfaceInvocation, check_access, filter_surface_args, invoke_surface,
     prepare_clean_state,
 };
 use serde_json::{Value, json};
@@ -90,7 +90,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
     let resolved = launch::resolve(&options.tool, &resolve_args)?;
     let surface = Surface::from_tool(&resolved.tool).ok_or_else(|| {
         format!(
-            "automated execution is not supported for '{}'; use claude, codex, agy, grok, or opencode",
+            "automated execution is not supported for '{}'; use claude, codex, agy, grok, opencode, or cursor",
             resolved.tool
         )
     })?;
@@ -105,6 +105,11 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .argv
         .split_first()
         .ok_or_else(|| "resolved launch command is empty".to_string())?;
+    // The run passes the model itself, so the launch's generated model
+    // arguments go. Anything else reaches the owned-argument filter.
+    let extra_args = extra_args
+        .strip_prefix(resolved.model_args.as_slice())
+        .unwrap_or(extra_args);
     let binary = options.binary.as_ref().map_or_else(
         || resolved_binary.clone(),
         |path| path.as_os_str().to_os_string(),
@@ -119,8 +124,8 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
 
     if dry_run || resolved.dry_run {
-        let mut dry_run_argv = resolved.argv.clone();
-        dry_run_argv[0].clone_from(&binary);
+        let mut dry_run_argv = vec![binary.clone()];
+        dry_run_argv.extend(extra_args.iter().cloned());
         println!(
             "{}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}",
             resolved.format_dry_run_with_overrides(&dry_run_argv, options.model.as_deref()),
@@ -143,7 +148,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .transpose()
         .map_err(|error| format!("cannot create clean harness state: {error}"))?;
     if let Some(state) = &clean_state {
-        prepare_clean_state(surface, state.path(), model.as_deref())
+        prepare_clean_state(surface, state.path(), model.as_deref(), &resolved.env)
             .map_err(|error| error.to_string())?;
     }
     let invocation = SurfaceInvocation {
@@ -171,6 +176,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         extra_args: filtered.kept,
         ..invocation
     };
+    check_access(&invocation).map_err(|error| error.to_string())?;
     let started = std::time::Instant::now();
     match invoke_surface(&invocation) {
         Ok(reply) => {
