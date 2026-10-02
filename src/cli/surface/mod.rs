@@ -1,5 +1,5 @@
 //! Noninteractive adapters for the coding surfaces `rune run` drives:
-//! Claude, Codex, Grok, `agy`, and `OpenCode`. Each adapter owns its argument
+//! Claude, Codex, Grok, `agy`, `OpenCode`, and Cursor. Each adapter owns its argument
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
@@ -12,6 +12,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod cursor;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {
     Claude,
@@ -19,6 +21,7 @@ pub(crate) enum Surface {
     Agy,
     Grok,
     Opencode,
+    Cursor,
 }
 
 impl Surface {
@@ -29,6 +32,7 @@ impl Surface {
             "agy" => Some(Self::Agy),
             "grok" => Some(Self::Grok),
             "opencode" => Some(Self::Opencode),
+            "cursor" => Some(Self::Cursor),
             _ => None,
         }
     }
@@ -126,6 +130,7 @@ fn surface_name(surface: Surface) -> &'static str {
         Surface::Agy => "agy",
         Surface::Grok => "grok",
         Surface::Opencode => "opencode",
+        Surface::Cursor => "cursor",
     }
 }
 
@@ -149,6 +154,7 @@ fn boolean_options(surface: Surface) -> &'static [&'static str] {
         Surface::Grok => &["--always-approve", "--no-plan"],
         Surface::Agy => &["--dangerously-skip-permissions"],
         Surface::Opencode => &["--print", "--disable-slash-commands"],
+        Surface::Cursor => cursor::BOOLEAN_OPTIONS,
     }
 }
 
@@ -543,10 +549,12 @@ fn copy_opencode_route_config(
     })
 }
 
+/// `env` is the launch environment the child gets on top of rune's own.
 pub(crate) fn prepare_clean_state(
     surface: Surface,
     root: &Path,
     model: Option<&str>,
+    env: &[(OsString, OsString)],
 ) -> Result<(), SurfaceFailure> {
     let home = dirs::home_dir()
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))?;
@@ -628,6 +636,7 @@ pub(crate) fn prepare_clean_state(
                 "Claude",
             )
         }
+        Surface::Cursor => cursor::prepare_clean_state(root, cursor::has_api_key(env)),
     }
 }
 
@@ -702,6 +711,16 @@ fn process_request(
                 ] {
                     request.env.push((OsString::from(key), OsString::from("1")));
                 }
+            }
+            Surface::Cursor => {
+                // The API key stays in the inherited environment, never in
+                // the arguments. `CURSOR_CONFIG_DIR` alone would still load
+                // `~/.cursor/rules`, so HOME moves too.
+                let config = PathBuf::from(&root).join(".cursor").into_os_string();
+                request
+                    .env
+                    .push((OsString::from(cursor::CONFIG_DIR_ENV), config));
+                request.env.push((OsString::from("HOME"), root));
             }
         }
     }
@@ -1255,6 +1274,7 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
             "-u",
             "--username",
         ],
+        Surface::Cursor => cursor::OWNED_OPTIONS,
     }
 }
 
@@ -1270,6 +1290,16 @@ pub(crate) fn invoke_surface(
         Surface::Agy => invoke_agy(invocation),
         Surface::Grok => invoke_grok(invocation),
         Surface::Opencode => invoke_opencode(invocation),
+        Surface::Cursor => cursor::invoke(invocation),
+    }
+}
+
+/// Refuse a run whose access mode the tool's own config would defeat,
+/// before the tool starts.
+pub(crate) fn check_access(invocation: &SurfaceInvocation) -> Result<(), SurfaceFailure> {
+    match invocation.surface {
+        Surface::Cursor => cursor::check_access(invocation),
+        _ => Ok(()),
     }
 }
 
@@ -1281,6 +1311,12 @@ pub(crate) fn filter_surface_args(invocation: &SurfaceInvocation) -> FilteredArg
     match invocation.surface {
         Surface::Claude => filter_profile_args(invocation, owned, booleans, &claude_settings_key),
         Surface::Codex => filter_profile_args(invocation, owned, booleans, &codex_config_key),
+        Surface::Cursor => cursor::keep_allowed(filter_profile_args(
+            invocation,
+            owned,
+            booleans,
+            &drop_whole,
+        )),
         _ => filter_profile_args(invocation, owned, booleans, &drop_whole),
     }
 }

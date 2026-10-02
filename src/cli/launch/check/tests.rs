@@ -54,6 +54,7 @@ fn resolved(
             compact: None,
             source: ModelSource::Config,
         }),
+        model_args: Vec::new(),
         dry_run: false,
         check: true,
         wrap: Vec::new(),
