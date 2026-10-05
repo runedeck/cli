@@ -10,6 +10,13 @@ on:
     pull_request:
         branches: [main]
 
+# The Rust release the checks run on. A new stable can add lints that fail
+# the crate, so the version moves on purpose, together with the clippy
+# sweep that release needs. The quality workflow uses the runner image's
+# Rust and does not read this value.
+env:
+    RUST_TOOLCHAIN: "1.98.1"
+
 jobs:
     build:
         runs-on: ubuntu-latest
@@ -20,6 +27,7 @@ jobs:
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
+                  toolchain: ${{ env.RUST_TOOLCHAIN }}
                   components: rustfmt, clippy
 
             - name: Build
@@ -40,6 +48,7 @@ jobs:
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
+                  toolchain: ${{ env.RUST_TOOLCHAIN }}
                   components: clippy
 
             - name: Install mdschema
@@ -66,6 +75,7 @@ jobs:
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
               with:
+                  toolchain: ${{ env.RUST_TOOLCHAIN }}
                   components: rustfmt, clippy
 
             - name: Download rune
@@ -99,6 +109,13 @@ jobs:
             - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
               with:
                   persist-credentials: false
+
+            # `make validate` in the generated project runs cargo clippy, so
+            # this job pins the same release as the others.
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: ${{ env.RUST_TOOLCHAIN }}
+                  components: rustfmt, clippy
 
             - name: Download rune
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

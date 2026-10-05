@@ -136,6 +136,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Pin the Build workflow to Rust 1.98.1 through one `RUST_TOOLCHAIN` value, so a new stable release cannot fail main until its clippy sweep lands with the bump.
 - Run the Vale hook with `--no-global`, so the guarded gate reads the repository's style alone and a rule in the machine's global config cannot fail or mask it.
 - Rename `rune run --clean-harness-state` to `--clean`, and the JSON field to `clean`. The old spelling and the `_scope` field are gone.
 - Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter` on macOS and `notify-send` elsewhere.
