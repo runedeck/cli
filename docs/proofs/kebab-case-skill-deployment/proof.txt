@@ -1,0 +1,106 @@
+## kebab-case-skill-deployment#skill-paths-deploy-in-kebab-case/pascalcase-skill-deploys
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
+$ rune install --source deck --target out --provider agents
+
+   ✓ agentskills
+     skills 4
+     ● build-skill
+
+   ● 4 deployed
+
+$ ls out/.agents/skills out/.agents/skills/build-skill
+  out/.agents/skills:
+  build-skill
+
+  out/.agents/skills/build-skill:
+  SKILL.md
+  assets
+  eval-loop.md
+  scripts
+$ head -n 4 out/.agents/skills/build-skill/SKILL.md
+  ---
+  name: build-skill
+  description: Build and evaluate a skill. USE WHEN building a skill.
+  ---
+
+## kebab-case-skill-deployment#the-entrypoint-and-non-markdown-files-keep-their-names/skill-carries-a-script-and-an-asset
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
+$ rune install --source deck --target out --provider agents
+
+   ✓ agentskills
+     skills 4
+     ● build-skill
+
+   ● 4 deployed
+
+$ sh -c 'fd -t f . out/.agents/skills | LC_ALL=C sort'
+  out/.agents/skills/build-skill/SKILL.md
+  out/.agents/skills/build-skill/assets/eval_review.html
+  out/.agents/skills/build-skill/eval-loop.md
+  out/.agents/skills/build-skill/scripts/run_eval.py
+$ sh -c 'cmp deck/skills/BuildSkill/scripts/run_eval.py out/.agents/skills/build-skill/scripts/run_eval.py && echo "run_eval.py: same bytes"'
+  run_eval.py: same bytes
+$ sh -c 'cmp deck/skills/BuildSkill/assets/eval_review.html out/.agents/skills/build-skill/assets/eval_review.html && echo "eval_review.html: same bytes"'
+  eval_review.html: same bytes
+
+## kebab-case-skill-deployment#kebab-case-input-passes-through-unchanged/deployed-skill-deploys-again
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
+$ rune install --source deck --target first --provider agents
+
+   ✓ agentskills
+     skills 4
+     ● build-skill
+
+   ● 4 deployed
+
+$ sh -c 'mkdir -p again/skills && cp -Rf first/.agents/skills/build-skill again/skills/ && cp -f deck/module.yaml again/'
+$ rune install --source again --target second --provider agents
+
+   ✓ agentskills
+     skills 4
+     ● build-skill
+
+   ● 4 deployed
+
+$ sh -c 'diff -r -x .provenance first/.agents/skills second/.agents/skills && echo "second deployment: no difference"'
+  second deployment: no difference
+
+## kebab-case-skill-deployment#validation-accepts-the-casing-the-rule-can-normalize/skill-name-has-stray-separators
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
+$ rune validate --source deck
+
+   validation
+     ✓ module.yaml
+     ✓ defaults.yaml
+     ✓ README.md
+     ✓ LICENSE
+     ⚡ .manifest — .manifest: missing — run rune install to establish baseline
+     ✓ skills/BuildSkill/SKILL.md
+     ✓ skills/BuildSkill/EvalLoop.md
+     ✓ trailing whitespace
+     ✓ ruff check
+
+   ✓ 9 checked  ⚡ 1 warning  ✗ 0 errors
+
+$ sh -c 'mkdir -p deck/skills/-Broken--Name- && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/input/runeshell-malformed-name.md" deck/skills/-Broken--Name-/SKILL.md'
+$ rune validate --source deck
+
+   validation
+     ✓ module.yaml
+     ✓ defaults.yaml
+     ✓ README.md
+     ✓ LICENSE
+     ⚡ .manifest — .manifest: missing — run rune install to establish baseline
+     ✗ skills/-Broken--Name-/SKILL.md — skills/-Broken--Name-/SKILL.md: /name: "-Broken--Name-" does not match "^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$" (Error)
+     ✓ skills/BuildSkill/SKILL.md
+     ✓ skills/BuildSkill/EvalLoop.md
+     ✓ trailing whitespace
+     ✓ ruff check
+
+   ✓ 10 checked  ⚡ 1 warning  ✗ 1 error
+
+

@@ -1,8 +1,9 @@
 ---
 type: proof
 change: kebab-case-skill-deployment
+head: e7753ba532d57269b4f943cb55d51576759836d7
 recorded: 2026-10-06
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: a721d336b59d4c23ff2039603f5e6543d221d12e4fccfd53b396a5d081379eda
 scenes:
 - scenario: kebab-case-skill-deployment#skill-paths-deploy-in-kebab-case/pascalcase-skill-deploys
   kind: check
