@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Feed a step's standard input from `< text` lines in its fence, recorded as command lines, so a scene carries its own script or brief.
 - Mark every scene in `proof.cast` with a rule, a `# Scenario:` title with its index, and an ok or unproven verdict line, so a cast player lists the scenes and an expected refusal reads as one.
 - Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with the `[TAG]: <iri>` definitions a document copies, and `--json`.
+- Add `rune spec glossary --write [PATH]`, which writes the glossary file (header, term list, definitions) from the ontology into `glossary.md` beside the specifications or the given path.
+- Add `rune spec glossary --check [PATH]`, which compares the file with the ontology, names each term whose line is missing, extra, or changed, and exits 1 on drift or a missing file.
 - Read defined terms from `ontology/rune.ttl` (or the `ontology` path in `deck.yaml`) in `rune spec validate` and `rune spec doctor`, falling back to `glossary.md` only when no ontology file exists.
 - Fail validation on an unreadable ontology, an undeclared prefix, two terms of one kind whose labels match without case, or an ontology with no labeled term.
 - Report `term-reference-missing` when the first italic use of an ontology term carries no `[TAG]`, and `term-reference-unresolved` when the tag is undefined or names another IRI.
@@ -138,6 +140,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Sort two glossary terms that share a label by kind, the class first, then by name, so `rune spec glossary` keeps one order whatever the order of the ontology file.
 - Run the Vale hook with `--no-global`, so the guarded gate reads the repository's style alone and a rule in the machine's global config cannot fail or mask it.
 - Rename `rune run --clean-harness-state` to `--clean`, and the JSON field to `clean`. The old spelling and the `_scope` field are gone.
 - Change the `rune sign` notification to carry the runedeck.ai mark, a subtitle, and a sound through `terminal-notifier` or `alerter` on macOS and `notify-send` elsewhere.
@@ -211,6 +214,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
 - Fix the identity tests to expect the versioned display names the synced `author-identity.py` derives (`Claude Fable 5.2`, not `Claude`).

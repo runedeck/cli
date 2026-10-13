@@ -1,0 +1,20 @@
+# A four-term ontology for the render-spec-glossary proof: a class and a
+# property that share a label, a SKOS concept, and a class without a comment.
+@prefix rune: <https://runedeck.ai/ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+rune:Change a rdfs:Class ;
+    rdfs:label "change" ;
+    rdfs:comment "One spec-driven unit of work." .
+
+rune:change a rdf:Property ;
+    rdfs:label "change" ;
+    rdfs:comment "The change a record belongs to." .
+
+rune:Falsifiability a skos:Concept ;
+    rdfs:label "falsifiability" ;
+    rdfs:comment "A requirement states a check that can fail." .
+
+rune:Stage a rdfs:Class ;
+    rdfs:label "stage" .

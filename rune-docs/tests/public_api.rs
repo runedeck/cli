@@ -9,9 +9,10 @@ use rune_docs::error::Error;
 use rune_docs::interop::{self, ConversionReport};
 use rune_docs::sheet::Sheet;
 use rune_docs::spec::{
-    self, ArchiveOutput, ChangeState, ChangeSummary, ContextOutput, DiagnosticSeverity, ListSort,
-    LiveTrees, MdschemaCheck, MergeSummary, ProposeOutput, ShowChangeOutput, ShowOutput,
-    ShowSpecOutput, SpecDoctorOutput, SpecLayout, SpecRoot, SpecViolation, SpecificationSummary,
+    self, ArchiveOutput, ChangeState, ChangeSummary, ContextOutput, DiagnosticSeverity,
+    GlossaryCheckOutput, GlossaryOutput, GlossaryStatus, GlossaryWriteOutput, ListSort, LiveTrees,
+    MdschemaCheck, MergeSummary, ProposeOutput, ShowChangeOutput, ShowOutput, ShowSpecOutput,
+    SpecDoctorOutput, SpecLayout, SpecRoot, SpecViolation, SpecificationSummary,
 };
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,13 @@ fn the_output_surface_is_pinned() {
     let _: fn(&Path) -> Result<Vec<ChangeSummary>, Error> = spec::scan_changes;
     let _: fn(&Path) -> Result<Vec<SpecificationSummary>, Error> = spec::scan_specifications;
     let _: fn(&Path, MdschemaCheck) -> Result<Vec<SpecViolation>, Error> = spec::validate_spec_tree;
+    let _: fn(&Path, &Path) -> Result<GlossaryOutput, Error> = spec::glossary_output;
+    let _: fn(&str, Option<&str>) -> Result<GlossaryWriteOutput, Error> =
+        spec::write_glossary_output;
+    let _: fn(&str, Option<&str>) -> Result<GlossaryCheckOutput, Error> =
+        spec::check_glossary_output;
+    let _: fn(&GlossaryCheckOutput) -> bool = GlossaryCheckOutput::is_current;
+    let _ = GlossaryStatus::Stale;
     let _: fn(&ArchiveOutput) -> &[String] = ArchiveOutput::warnings;
     let _: fn(&SpecDoctorOutput) -> bool = SpecDoctorOutput::has_errors;
     let _: fn(&SpecViolation) -> bool = SpecViolation::is_error;
@@ -64,6 +72,9 @@ fn the_render_surface_is_pinned() {
     let _: fn(&ArchiveOutput) -> String = spec::render_archive;
     let _: fn(&[SpecViolation]) -> String = spec::render_diagnostics;
     let _: fn(&SpecDoctorOutput) -> String = spec::render_doctor;
+    let _: fn(&GlossaryOutput) -> String = spec::render_glossary;
+    let _: fn(&GlossaryOutput) -> String = spec::render_glossary_file;
+    let _: fn(&GlossaryCheckOutput) -> String = spec::render_glossary_check;
     // `render_json` is generic over `Serialize`; instantiating it here pins
     // its shape.
     let rendered = spec::render_json(&Vec::<SpecViolation>::new()).unwrap();

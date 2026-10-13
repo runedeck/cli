@@ -73,6 +73,77 @@ fn glossary_prints_terms_and_reference_definitions_from_the_ontology() {
 }
 
 #[test]
+fn glossary_write_then_check_is_current_and_a_hand_edit_is_drift() {
+    let module = tempfile::tempdir().unwrap();
+    write_module(module.path(), "A rule.\n");
+
+    rune()
+        .args(["spec", "glossary", "--write", "--source"])
+        .arg(module.path())
+        .assert()
+        .success()
+        .stdout("wrote docs/specs/glossary.md\n");
+    let glossary = module.path().join("docs/specs/glossary.md");
+    let text = std::fs::read_to_string(&glossary).unwrap();
+    assert!(text.starts_with(
+        "# Glossary\n\nGenerated from `ontology/rune.ttl` by `rune spec glossary --write`."
+    ));
+    assert!(text.contains("\n- **change**: One spec-driven unit of work. [CHANGE]\n"));
+    assert!(text.ends_with("\n[HARNESS]: https://runedeck.ai/ns#Harness\n"));
+
+    rune()
+        .args(["spec", "glossary", "--check", "--source"])
+        .arg(module.path())
+        .assert()
+        .success()
+        .stdout("docs/specs/glossary.md is current\n");
+
+    std::fs::write(
+        &glossary,
+        text.replace("A coding agent that loads instructions.", "Edited."),
+    )
+    .unwrap();
+    rune()
+        .args(["spec", "glossary", "--check", "--source"])
+        .arg(module.path())
+        .assert()
+        .code(1)
+        .stdout(
+            "docs/specs/glossary.md is stale: run `rune spec glossary --write`\n  changed  harness [HARNESS]\n",
+        );
+}
+
+#[test]
+fn glossary_check_without_a_file_exits_one_and_the_flags_do_not_combine() {
+    let module = tempfile::tempdir().unwrap();
+    write_module(module.path(), "A rule.\n");
+
+    rune()
+        .args(["spec", "glossary", "--check", "--source"])
+        .arg(module.path())
+        .assert()
+        .code(1)
+        .stdout("docs/specs/glossary.md is missing: run `rune spec glossary --write`\n");
+
+    let output = rune()
+        .args(["spec", "glossary", "--check", "--json", "--source"])
+        .arg(module.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["status"], "missing");
+    assert_eq!(value["path"], "docs/specs/glossary.md");
+
+    rune()
+        .args(["spec", "glossary", "--write", "--check", "--source"])
+        .arg(module.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
 fn validate_reports_an_uncited_term_and_ignores_plain_emphasis_in_a_rule() {
     let module = tempfile::tempdir().unwrap();
     write_module(

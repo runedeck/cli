@@ -51,8 +51,24 @@ pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> 
     rune_docs::spec::context(source, id, json).map_err(|error| convert(&error))
 }
 
-pub(crate) fn glossary(source: &str, json: bool) -> Result<i32, Error> {
-    rune_docs::spec::glossary(source, json).map_err(|error| convert(&error))
+/// Print the term list, or with `--write` or `--check` render the glossary
+/// file. A flag given without a PATH arrives as an empty string and means
+/// the default path.
+pub(crate) fn glossary(
+    source: &str,
+    write: Option<&str>,
+    check: Option<&str>,
+    json: bool,
+) -> Result<i32, Error> {
+    fn given(path: &str) -> Option<&str> {
+        Some(path).filter(|path| !path.is_empty())
+    }
+    let result = match (write, check) {
+        (Some(path), None) => rune_docs::spec::write_glossary(source, given(path), json),
+        (None, Some(path)) => rune_docs::spec::check_glossary(source, given(path), json),
+        _ => rune_docs::spec::glossary(source, json),
+    };
+    result.map_err(|error| convert(&error))
 }
 
 /// Term diagnostics for documents outside the specification tree.

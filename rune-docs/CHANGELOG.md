@@ -13,9 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `spec::terms`: the term source behind the italic-term rule. An `ontology/rune.ttl` (labeled classes, properties, and SKOS concepts) replaces `glossary.md` when present. The first italic use of a term must cite it (`term-reference-missing`, `term-reference-unresolved`). `glossary` prints the term list, and `lint_documents` applies the reference rules to files outside the specification tree, where plain emphasis is not a term.
 
+- `spec::terms`: `write_glossary` renders the glossary file (`render_glossary_file`: a header, the term list, the definitions) from the ontology into `glossary.md` beside the specifications or a given path. `check_glossary` compares the file with the rendering and reports the terms whose lines are missing, extra, or changed (`GlossaryCheckOutput`, `render_glossary_check`), exit 1 on drift or a missing file. A term without a comment renders with one space before its tag.
+
 ### Changed
 
 - The scaffolded delta template and the archive fixtures use MUST.
+- `spec::terms` sorts two terms that share a label by kind (the class first) and then by name, so the order does not depend on the order of the ontology file.
+
+### Fixed
+
+- `spec::terms` reads the comment of a term whose closing quote directly precedes the terminating period. The reader dropped that quote, so the literal never closed and the term had no definition.
 
 ## [0.1.0] - 2026-07-25
 

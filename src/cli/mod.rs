@@ -1004,6 +1004,23 @@ enum SpecAction {
 
     /// Print every defined term: the ontology's labels, comments, and reference tags
     Glossary {
+        /// Write the glossary file from the ontology. PATH defaults to
+        /// `glossary.md` beside the capability specifications; a relative
+        /// PATH resolves against the source root.
+        #[arg(
+            long,
+            value_name = "PATH",
+            num_args = 0..=1,
+            default_missing_value = "",
+            conflicts_with = "check"
+        )]
+        write: Option<String>,
+
+        /// Compare the glossary file with the ontology: name each term that
+        /// differs and exit 1 on drift or a missing file. PATH as for --write.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+        check: Option<String>,
+
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
         source: String,
@@ -2882,7 +2899,11 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
         SpecAction::Show { name, source } => spec::show(&source, &name, json),
         SpecAction::Doctor { source } => spec::doctor(&source, json),
         SpecAction::Validate { name, source } => spec::validate(&source, name.as_deref(), json),
-        SpecAction::Glossary { source } => spec::glossary(&source, json),
+        SpecAction::Glossary {
+            write,
+            check,
+            source,
+        } => spec::glossary(&source, write.as_deref(), check.as_deref(), json),
         SpecAction::Archive {
             change_id,
             yes,

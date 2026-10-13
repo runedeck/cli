@@ -50,10 +50,11 @@ static PREFIX: LazyLock<Regex> = LazyLock::new(|| {
 /// One term statement: `prefix:Name a <type> ... .` where the type is a
 /// class, a property, or a SKOS concept. The body runs to the first period
 /// that ends a line after whitespace or a closing quote, an optional
-/// Turtle comment allowed after it.
+/// Turtle comment allowed after it. The body keeps that closing quote, so
+/// a comment that ends the statement is still a complete literal.
 static TERM: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?ms)^([A-Za-z_][\w-]*)?:([\w-]+)\s+(?:a|rdf:type)\s+(rdfs:Class|rdf:Property|owl:Class|owl:ObjectProperty|owl:DatatypeProperty|skos:Concept)\b(.*?)(?:\s|")\.[ \t]*(?:#[^\n]*)?$"#,
+        r#"(?ms)^([A-Za-z_][\w-]*)?:([\w-]+)\s+(?:a|rdf:type)\s+(rdfs:Class|rdf:Property|owl:Class|owl:ObjectProperty|owl:DatatypeProperty|skos:Concept)\b(.*?(?:\s|"))\.[ \t]*(?:#[^\n]*)?$"#,
     )
     .expect("term regex is valid")
 });
@@ -229,9 +230,14 @@ impl Terms {
             .values()
             .map(|index| terms.entries[*index].iri.clone())
             .collect();
-        terms
-            .entries
-            .sort_by(|left, right| left.label.cmp(&right.label));
+        // By label, then the class before the property that shares it, then
+        // by name, so the order does not depend on the order of the file.
+        terms.entries.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| precedence(left.kind).cmp(&precedence(right.kind)))
+                .then_with(|| left.name.cmp(&right.name))
+        });
         terms.index(&preferred);
         Ok(terms)
     }
@@ -389,24 +395,32 @@ pub struct GlossaryTerm {
     pub tag: String,
 }
 
+impl GlossaryOutput {
+    fn from_terms(terms: &Terms) -> Self {
+        let tags = terms.tags();
+        Self {
+            source: terms.location().to_string(),
+            terms: terms
+                .terms()
+                .iter()
+                .map(|term| GlossaryTerm {
+                    label: term.label.clone(),
+                    comment: term.comment.clone(),
+                    name: term.name.clone(),
+                    iri: term.iri.clone(),
+                    kind: term.kind,
+                    tag: tags.get(&term.iri).cloned().unwrap_or_default(),
+                })
+                .collect(),
+        }
+    }
+}
+
 pub fn glossary_output(repository: &Path, specifications: &Path) -> Result<GlossaryOutput, Error> {
-    let terms = Terms::load(repository, specifications)?;
-    let tags = terms.tags();
-    Ok(GlossaryOutput {
-        source: terms.location().to_string(),
-        terms: terms
-            .terms()
-            .iter()
-            .map(|term| GlossaryTerm {
-                label: term.label.clone(),
-                comment: term.comment.clone(),
-                name: term.name.clone(),
-                iri: term.iri.clone(),
-                kind: term.kind,
-                tag: tags.get(&term.iri).cloned().unwrap_or_default(),
-            })
-            .collect(),
-    })
+    Ok(GlossaryOutput::from_terms(&Terms::load(
+        repository,
+        specifications,
+    )?))
 }
 
 /// Print the term list, or its JSON form.
@@ -422,19 +436,7 @@ pub fn glossary(source: &str, json: bool) -> Result<i32, Error> {
 }
 
 pub fn render_glossary(output: &GlossaryOutput) -> String {
-    let mut lines: Vec<String> = output
-        .terms
-        .iter()
-        .map(|term| {
-            let mut line = format!("- **{}**: {}", term.label, term.comment);
-            if !term.tag.is_empty() {
-                line.push_str(" [");
-                line.push_str(&term.tag);
-                line.push(']');
-            }
-            line
-        })
-        .collect();
+    let mut lines: Vec<String> = output.terms.iter().map(entry_line).collect();
     let definitions: Vec<String> = output
         .terms
         .iter()
@@ -448,6 +450,298 @@ pub fn render_glossary(output: &GlossaryOutput) -> String {
     let mut text = lines.join("\n");
     text.push('\n');
     text
+}
+
+/// One `- **label**: comment [TAG]` line. A term without a comment keeps
+/// one space before its tag.
+fn entry_line(term: &GlossaryTerm) -> String {
+    let mut line = format!("- **{}**:", term.label);
+    if !term.comment.is_empty() {
+        line.push(' ');
+        line.push_str(&term.comment);
+    }
+    if !term.tag.is_empty() {
+        line.push_str(" [");
+        line.push_str(&term.tag);
+        line.push(']');
+    }
+    line
+}
+
+/// The command the glossary header and a drift report tell the reader to run.
+const WRITE_COMMAND: &str = "rune spec glossary --write";
+
+/// The glossary file: a header that names the ontology and the write
+/// command, then the term list `render_glossary` prints.
+pub fn render_glossary_file(output: &GlossaryOutput) -> String {
+    let namespace = output
+        .terms
+        .first()
+        .and_then(|term| term.iri.strip_suffix(term.name.as_str()))
+        .unwrap_or("https://runedeck.ai/ns#");
+    format!(
+        "# Glossary\n\n\
+         Generated from `{}` by `{WRITE_COMMAND}`. Do not edit this file. Change the ontology.\n\
+         A specification sets a term in italics at first use and cites it as `*term* [TERM]` with\n\
+         `[TERM]: {namespace}Term` at the end of the file.\n\n{}",
+        output.source,
+        render_glossary(output)
+    )
+}
+
+/// Where the glossary file sits and what the rendering looks like, for
+/// `--write` and `--check`. The ontology is the only source a file can be
+/// rendered from: a repository that reads its terms from a glossary has
+/// nothing to render.
+struct GlossaryFile {
+    path: PathBuf,
+    display: String,
+    custom: bool,
+    output: GlossaryOutput,
+}
+
+impl GlossaryFile {
+    fn resolve(source: &str, path: Option<&str>) -> Result<Self, Error> {
+        let spec_root = resolve_spec_root(Path::new(source))?;
+        let repository = spec_root.repository();
+        let terms = Terms::load(repository, spec_root.specifications())?;
+        if terms.source() != TermSource::Ontology {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "no ontology at {}; the glossary file is rendered from the ontology",
+                    relative_display(repository, &ontology_path(repository)?)
+                ),
+            ));
+        }
+        let file = match path {
+            Some(path) => repository.join(path),
+            None => spec_root.specifications().join(GLOSSARY_FILE),
+        };
+        Ok(Self {
+            display: relative_display(repository, &file),
+            path: file,
+            custom: path.is_some(),
+            output: GlossaryOutput::from_terms(&terms),
+        })
+    }
+
+    fn write_command(&self) -> String {
+        if self.custom {
+            format!("{WRITE_COMMAND} {}", self.display)
+        } else {
+            WRITE_COMMAND.to_string()
+        }
+    }
+}
+
+/// What `--write` reports.
+#[derive(Debug, Serialize)]
+pub struct GlossaryWriteOutput {
+    pub path: String,
+    pub terms: usize,
+}
+
+/// Write the glossary file from the ontology, creating its directory.
+pub fn write_glossary_output(
+    source: &str,
+    path: Option<&str>,
+) -> Result<GlossaryWriteOutput, Error> {
+    let file = GlossaryFile::resolve(source, path)?;
+    let io_error = |error: std::io::Error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot write {}: {error}", file.display),
+        )
+    };
+    if let Some(parent) = file.path.parent() {
+        std::fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    std::fs::write(&file.path, render_glossary_file(&file.output)).map_err(io_error)?;
+    Ok(GlossaryWriteOutput {
+        path: file.display,
+        terms: file.output.terms.len(),
+    })
+}
+
+pub fn write_glossary(source: &str, path: Option<&str>, json: bool) -> Result<i32, Error> {
+    let output = write_glossary_output(source, path)?;
+    if json {
+        print_json(&output)?;
+    } else {
+        println!("wrote {}", output.path);
+    }
+    Ok(0)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GlossaryStatus {
+    Current,
+    Stale,
+    Missing,
+}
+
+/// One term a drift report names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GlossaryEntry {
+    pub label: String,
+    pub tag: String,
+}
+
+impl GlossaryEntry {
+    fn render(&self) -> String {
+        if self.tag.is_empty() {
+            self.label.clone()
+        } else {
+            format!("{} [{}]", self.label, self.tag)
+        }
+    }
+}
+
+/// What `--check` reports: the terms the file lacks, the terms it holds
+/// that the ontology no longer defines, and the terms whose line differs.
+#[derive(Debug, Serialize)]
+pub struct GlossaryCheckOutput {
+    pub path: String,
+    pub status: GlossaryStatus,
+    pub write_command: String,
+    pub missing: Vec<GlossaryEntry>,
+    pub extra: Vec<GlossaryEntry>,
+    pub changed: Vec<GlossaryEntry>,
+}
+
+impl GlossaryCheckOutput {
+    pub fn is_current(&self) -> bool {
+        self.status == GlossaryStatus::Current
+    }
+}
+
+static ENTRY_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^- \*\*(?P<label>[^*\n]+)\*\*:(?:.*?)(?: \[(?P<tag>[^\[\]\s]+)\])?$")
+        .expect("entry line regex is valid")
+});
+
+/// The entry lines of a glossary text, keyed by tag, or by label for a
+/// line that carries no tag.
+fn entry_lines(text: &str) -> Vec<(String, GlossaryEntry, &str)> {
+    text.lines()
+        .filter_map(|line| {
+            let capture = ENTRY_LINE.captures(line)?;
+            let entry = GlossaryEntry {
+                label: capture["label"].to_string(),
+                tag: capture
+                    .name("tag")
+                    .map_or_else(String::new, |tag| tag.as_str().to_string()),
+            };
+            let key = if entry.tag.is_empty() {
+                format!("label:{}", entry.label)
+            } else {
+                format!("tag:{}", entry.tag)
+            };
+            Some((key, entry, line))
+        })
+        .collect()
+}
+
+/// Name the terms whose entry lines differ between the rendering and the file.
+fn compare_glossary(output: &mut GlossaryCheckOutput, rendered: &str, current: &str) {
+    let wanted = entry_lines(rendered);
+    let found = entry_lines(current);
+    let found_by_key: BTreeMap<&str, &str> = found
+        .iter()
+        .map(|(key, _, line)| (key.as_str(), *line))
+        .collect();
+    let wanted_keys: BTreeSet<&str> = wanted.iter().map(|(key, _, _)| key.as_str()).collect();
+    for (key, entry, line) in &wanted {
+        match found_by_key.get(key.as_str()) {
+            None => output.missing.push(entry.clone()),
+            Some(existing) if existing != line => output.changed.push(entry.clone()),
+            Some(_) => {}
+        }
+    }
+    output.extra = found
+        .iter()
+        .filter(|(key, _, _)| !wanted_keys.contains(key.as_str()))
+        .map(|(_, entry, _)| entry.clone())
+        .collect();
+}
+
+/// Render the glossary in memory and compare it with the file, byte for byte.
+pub fn check_glossary_output(
+    source: &str,
+    path: Option<&str>,
+) -> Result<GlossaryCheckOutput, Error> {
+    let file = GlossaryFile::resolve(source, path)?;
+    let rendered = render_glossary_file(&file.output);
+    let mut output = GlossaryCheckOutput {
+        path: file.display.clone(),
+        status: GlossaryStatus::Current,
+        write_command: file.write_command(),
+        missing: Vec::new(),
+        extra: Vec::new(),
+        changed: Vec::new(),
+    };
+    let current = match std::fs::read_to_string(&file.path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            output.status = GlossaryStatus::Missing;
+            return Ok(output);
+        }
+        Err(error) => {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", file.display),
+            ));
+        }
+    };
+    if current != rendered {
+        output.status = GlossaryStatus::Stale;
+        compare_glossary(&mut output, &rendered, &current);
+    }
+    Ok(output)
+}
+
+pub fn render_glossary_check(output: &GlossaryCheckOutput) -> String {
+    use std::fmt::Write as _;
+    let mut text = match output.status {
+        GlossaryStatus::Current => return format!("{} is current\n", output.path),
+        GlossaryStatus::Missing => {
+            return format!(
+                "{} is missing: run `{}`\n",
+                output.path, output.write_command
+            );
+        }
+        GlossaryStatus::Stale => {
+            format!("{} is stale: run `{}`\n", output.path, output.write_command)
+        }
+    };
+    let rows = [
+        ("missing", &output.missing),
+        ("extra", &output.extra),
+        ("changed", &output.changed),
+    ];
+    let mut listed = false;
+    for (kind, entries) in rows {
+        for entry in entries {
+            listed = true;
+            let _ = writeln!(text, "  {kind:<8} {}", entry.render());
+        }
+    }
+    if !listed {
+        text.push_str("  the header or the definitions differ\n");
+    }
+    text
+}
+
+pub fn check_glossary(source: &str, path: Option<&str>, json: bool) -> Result<i32, Error> {
+    let output = check_glossary_output(source, path)?;
+    if json {
+        print_json(&output)?;
+    } else {
+        print!("{}", render_glossary_check(&output));
+    }
+    Ok(i32::from(!output.is_current()))
 }
 
 #[cfg(test)]
@@ -503,6 +797,10 @@ rune:Tight a rdfs:Class ; rdfs:label "tight" ; rdfs:comment "Ends without a spac
         assert_eq!(
             terms.resolve("change key").map(|term| term.kind),
             Some(TermKind::Property)
+        );
+        assert_eq!(
+            terms.resolve("tight").map(|term| term.comment.as_str()),
+            Some("Ends without a space before the period.")
         );
         assert!(terms.resolve("unlabeled").is_none());
         assert!(terms.resolve("fake").is_none());
@@ -599,5 +897,170 @@ rune:Tight a rdfs:Class ; rdfs:label "tight" ; rdfs:comment "Ends without a spac
         assert!(text.contains("- **change key**: The change a record belongs to. [CHANGE-KEY]\n"));
         assert!(text.contains("\n[CHANGE-KEY]: https://runedeck.ai/ns#change\n"));
         assert!(text.ends_with("[TIGHT]: https://runedeck.ai/ns#Tight\n"));
+    }
+
+    /// A repository root with the ontology and an empty `docs/specs`.
+    fn ontology_repository() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("ontology")).unwrap();
+        std::fs::create_dir_all(root.path().join("docs/specs")).unwrap();
+        std::fs::write(root.path().join("ontology/rune.ttl"), TURTLE).unwrap();
+        root
+    }
+
+    fn source(root: &tempfile::TempDir) -> &str {
+        root.path().to_str().unwrap()
+    }
+
+    #[test]
+    fn two_writes_from_one_ontology_give_the_same_bytes() {
+        let root = ontology_repository();
+        let glossary = root.path().join("docs/specs/glossary.md");
+
+        let first = write_glossary_output(source(&root), None).unwrap();
+        let first_bytes = std::fs::read(&glossary).unwrap();
+        let second = write_glossary_output(source(&root), None).unwrap();
+        let second_bytes = std::fs::read(&glossary).unwrap();
+
+        assert_eq!(first.path, "docs/specs/glossary.md");
+        assert_eq!(first.terms, 4);
+        assert_eq!(second.terms, 4);
+        assert_eq!(first_bytes, second_bytes);
+        let text = String::from_utf8(first_bytes).unwrap();
+        assert!(text.starts_with(
+            "# Glossary\n\nGenerated from `ontology/rune.ttl` by `rune spec glossary --write`. Do not edit this file. Change the ontology.\n"
+        ));
+        assert!(text.contains("`[TERM]: https://runedeck.ai/ns#Term` at the end of the file.\n\n- **change**: One spec-driven unit of work. [CHANGE]\n"));
+        assert!(text.ends_with("\n[TIGHT]: https://runedeck.ai/ns#Tight\n"));
+    }
+
+    #[test]
+    fn a_written_glossary_checks_current_at_the_default_and_a_custom_path() {
+        let root = ontology_repository();
+        write_glossary_output(source(&root), None).unwrap();
+        let check = check_glossary_output(source(&root), None).unwrap();
+        assert_eq!(check.status, GlossaryStatus::Current);
+        assert!(check.is_current());
+        assert_eq!(
+            render_glossary_check(&check),
+            "docs/specs/glossary.md is current\n"
+        );
+
+        write_glossary_output(source(&root), Some("docs/terms.md")).unwrap();
+        let custom = check_glossary_output(source(&root), Some("docs/terms.md")).unwrap();
+        assert_eq!(custom.path, "docs/terms.md");
+        assert!(custom.is_current());
+        assert_eq!(
+            custom.write_command,
+            "rune spec glossary --write docs/terms.md"
+        );
+    }
+
+    #[test]
+    fn an_edited_term_line_is_named_as_drift() {
+        let root = ontology_repository();
+        let glossary = root.path().join("docs/specs/glossary.md");
+        write_glossary_output(source(&root), None).unwrap();
+        let edited = std::fs::read_to_string(&glossary)
+            .unwrap()
+            .replace(
+                "- **change key**: The change a record belongs to. [CHANGE-KEY]",
+                "- **change key**: Edited by hand. [CHANGE-KEY]",
+            )
+            .replace(
+                "- **tight**: Ends without a space before the period. [TIGHT]\n",
+                "",
+            )
+            + "- **stray**: Not in the ontology. [STRAY]\n";
+        std::fs::write(&glossary, edited).unwrap();
+
+        let check = check_glossary_output(source(&root), None).unwrap();
+        assert_eq!(check.status, GlossaryStatus::Stale);
+        assert_eq!(
+            check.changed,
+            [GlossaryEntry {
+                label: "change key".into(),
+                tag: "CHANGE-KEY".into()
+            }]
+        );
+        assert_eq!(
+            check.missing,
+            [GlossaryEntry {
+                label: "tight".into(),
+                tag: "TIGHT".into()
+            }]
+        );
+        assert_eq!(
+            check.extra,
+            [GlossaryEntry {
+                label: "stray".into(),
+                tag: "STRAY".into()
+            }]
+        );
+        assert_eq!(
+            render_glossary_check(&check),
+            "docs/specs/glossary.md is stale: run `rune spec glossary --write`\n  missing  tight [TIGHT]\n  extra    stray [STRAY]\n  changed  change key [CHANGE-KEY]\n"
+        );
+    }
+
+    #[test]
+    fn a_header_edit_is_drift_without_a_term() {
+        let root = ontology_repository();
+        let glossary = root.path().join("docs/specs/glossary.md");
+        write_glossary_output(source(&root), None).unwrap();
+        let edited = std::fs::read_to_string(&glossary)
+            .unwrap()
+            .replace("# Glossary", "# Terms");
+        std::fs::write(&glossary, edited).unwrap();
+
+        let check = check_glossary_output(source(&root), None).unwrap();
+        assert_eq!(check.status, GlossaryStatus::Stale);
+        assert_eq!(check.missing, []);
+        assert_eq!(check.extra, []);
+        assert_eq!(check.changed, []);
+        assert!(
+            render_glossary_check(&check).ends_with("  the header or the definitions differ\n")
+        );
+    }
+
+    #[test]
+    fn a_missing_glossary_file_is_reported_with_its_path() {
+        let root = ontology_repository();
+        let check = check_glossary_output(source(&root), None).unwrap();
+        assert_eq!(check.status, GlossaryStatus::Missing);
+        assert!(!check.is_current());
+        assert_eq!(
+            render_glossary_check(&check),
+            "docs/specs/glossary.md is missing: run `rune spec glossary --write`\n"
+        );
+    }
+
+    #[test]
+    fn a_repository_without_an_ontology_cannot_render_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("docs/specs")).unwrap();
+        std::fs::write(
+            root.path().join("docs/specs/glossary.md"),
+            "# Glossary\n\n- **scan**: a full read.\n",
+        )
+        .unwrap();
+        let error = write_glossary_output(source(&root), None).unwrap_err();
+        assert!(error.message().contains("no ontology at ontology/rune.ttl"));
+        assert!(check_glossary_output(source(&root), None).is_err());
+    }
+
+    #[test]
+    fn a_term_without_a_comment_keeps_one_space_before_its_tag() {
+        let terms = Terms::from_turtle(
+            "@prefix ex: <https://example.org/> .\nex:Bare a rdfs:Class ; rdfs:label \"bare\" .\n",
+            "o.ttl",
+        )
+        .unwrap();
+        let output = GlossaryOutput::from_terms(&terms);
+        assert_eq!(
+            render_glossary(&output),
+            "- **bare**: [BARE]\n\n[BARE]: https://example.org/Bare\n"
+        );
+        assert!(render_glossary_file(&output).contains("`[TERM]: https://example.org/Term`"));
     }
 }

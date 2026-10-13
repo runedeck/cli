@@ -70,8 +70,11 @@ pub use lint::{
     name_words, set_name_rule_lookup,
 };
 pub use terms::{
-    DEFAULT_ONTOLOGY_FILE, GLOSSARY_FILE, GlossaryOutput, GlossaryTerm, Term, TermKind, TermSource,
-    Terms, glossary, glossary_output, ontology_path, render_glossary, set_ontology_lookup,
+    DEFAULT_ONTOLOGY_FILE, GLOSSARY_FILE, GlossaryCheckOutput, GlossaryEntry, GlossaryOutput,
+    GlossaryStatus, GlossaryTerm, GlossaryWriteOutput, Term, TermKind, TermSource, Terms,
+    check_glossary, check_glossary_output, glossary, glossary_output, ontology_path,
+    render_glossary, render_glossary_check, render_glossary_file, set_ontology_lookup,
+    write_glossary, write_glossary_output,
 };
 pub use validate::lint_documents;
 pub use validate::{

@@ -82,11 +82,14 @@ A missing executable produces no finding. A failure or timeout is advisory and d
 - A canonical specification stays under 150 lines, or it splits into capabilities. A delta over the limit warns.
 - A term marked in *italics* is an ontology term: its `rdfs:label` in `ontology/rune.ttl` (or the file `deck.yaml` names under `ontology`). A plain plural matches its singular. Without an ontology, a `- **term**: definition` entry in `docs/specs/glossary.md` serves.
 - The first italic use of a term in a file cites it, `*term* [TAG]`, and the file defines `[TAG]: <iri>`. `rune spec glossary` prints every term with its tag and definition line.
+- `rune spec glossary --write` renders the same list into `docs/specs/glossary.md` with a header, so a reader of a specification is one hop from every definition. `--check` compares the file with the ontology, names each term that differs, and exits 1 on drift or a missing file. Both take an optional PATH relative to the source root.
 
 ```sh
 rune spec validate            # house rules run with the structural checks
 rune spec doctor              # the same findings beside relationship health
 rune spec glossary            # every term, its tag, and the definition line to paste
+rune spec glossary --write    # write docs/specs/glossary.md from the ontology
+rune spec glossary --check    # exit 1 when the file drifted from the ontology
 ```
 
 A consumer has no `deck.yaml`, so it reads the deck's ontology through a deployed copy. Name the source under `ontology` in `.rune`:
