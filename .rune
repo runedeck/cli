@@ -1,0 +1,6 @@
+version: 1
+sources:
+    deck:
+        git: https://github.com/runedeck/deck
+        ref: 861ae76c1e315cf22d1004e3fdce840a5bbfa743
+ontology: deck

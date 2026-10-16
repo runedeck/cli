@@ -18,7 +18,7 @@
 
 ## 4. Self-consumption
 
-- [ ] 4.1 Once the deck's `ontology/rune.ttl` is on origin main, from the cli root: write `.rune` with the deck as a git source pinned to that commit, run the install, and commit the copy with its record. The `.rune` git source takes a 40-hex commit under `ref`.
+- [x] 4.1 Once the deck's `ontology/rune.ttl` is on origin main, from the cli root: write `.rune` with the deck as a git source pinned to that commit, run the install, and commit the copy with its record. The `.rune` git source takes a 40-hex commit under `ref`. Done against deck commit `861ae76c1e315cf22d1004e3fdce840a5bbfa743`.
 
   ```sh
   cd /Users/N4M3Z/Developer/runedeck/cli
