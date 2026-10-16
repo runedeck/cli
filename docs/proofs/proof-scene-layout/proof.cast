@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1790555639,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
+{"version":2,"width":100,"height":30,"timestamp":1792143216,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
 [0.0,"o","\r\n\u001b[1;36m── proof-scene-layout · 5 scenes ───────────────────────────────────────────────────────────────────\u001b[0m\r\n"]
 [1.2,"o","\r\n\u001b[2m┌─────────────────────────────────────┐\u001b[0m\r\n\u001b[2m│\u001b[0m \u001b[1m1/5 · Scenes are paced for a reader\u001b[0m \u001b[2m│\u001b[0m\r\n\u001b[2m└─────────────────────────────────────┘\u001b[0m\r\n\u001b[35mcheck\u001b[0m  \u001b[2mthe cast is paced for a reader\u001b[0m\r\n"]
 [2.4,"o","\u001b[2;3m# three scenes whose commands finish within a millisecond, default pause\u001b[0m\r\n"]
@@ -153,7 +153,7 @@
 [22.7,"o"," "]
 [22.7,"o","repo'"]
 [22.76,"o","\r\n"]
-[22.91,"o","sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:\r\n- rune 0.5.0 ([..])\r\n+ rune 0.6.0 (275680d7) built 2026-09-28T00:30:32Z\r\nsample-capability-one#thing-holds/missing-tag-fails ... ok (check)\r\n2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004\r\n"]
+[22.91,"o","sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:\r\n- rune 0.5.0 ([..])\r\n+ rune 0.6.0 (275680d7) built 2026-10-16T09:26:52Z\r\nsample-capability-one#thing-holds/missing-tag-fails ... ok (check)\r\n2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004\r\n"]
 [23.31,"o","\u001b[32m✓\u001b[0m \u001b[2mexit 1 as expected · output matches\u001b[0m\r\n"]
 [23.71,"o","\u001b[1;32m❯\u001b[0m "]
 [23.71,"o","python3"]
@@ -262,6 +262,6 @@
 [40.23,"o"," "]
 [40.23,"o","repo'"]
 [40.29,"o","\r\n"]
-[40.44,"o","fatal: /private/tmp/claude-501/rune-proof-53657-proof-scene-layout-a-fence-comment-explains-the-step-comment-with-no-command-3a814798-18-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `# text` comes before the command it explains\r\n"]
+[40.44,"o","fatal: /private/tmp/claude-501/rune-proof-10465-proof-scene-layout-a-fence-comment-explains-the-step-comment-with-no-command-17544270-18-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `# text` comes before the command it explains\r\n"]
 [40.84,"o","\u001b[32m✓\u001b[0m \u001b[2mexit 2 as expected · output matches\u001b[0m\r\n"]
 [44.24,"o","\r\n\u001b[1;32m5 scenes · 5 proven · 0 unproven\u001b[0m\r\n"]
