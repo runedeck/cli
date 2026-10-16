@@ -1,19 +1,20 @@
 ---
 type: proof
 change: install-deck-ontology
+head: e60aed9434ed4149e663f682e70a3f70a87a12dc
 recorded: 2026-10-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: f92e040bc56084a5b92e913caf49cbc1963873d3d26a1431e44e82982d33fccb
 scenes:
 - scenario: install-deck-ontology#consumer-names-its-ontology-source/key-names-an-absent-source
-  kind: unproven
+  kind: check
 - scenario: install-deck-ontology#install-deploys-the-ontology-with-provenance/consumer-cites-a-deck-term
-  kind: unproven
+  kind: check
 - scenario: install-deck-ontology#consumer-without-the-key-installs-as-before/manifest-carries-no-ontology-key
-  kind: unproven
+  kind: check
 - scenario: install-deck-ontology#source-without-an-ontology-file-is-refused/source-carries-no-ontology-file
-  kind: unproven
+  kind: check
 - scenario: install-deck-ontology#deployed-copy-reports-drift/copy-edited-by-hand
-  kind: unproven
+  kind: check
 ---
 
 # Proof: install-deck-ontology
