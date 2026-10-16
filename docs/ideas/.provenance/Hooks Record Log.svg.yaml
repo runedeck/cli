@@ -1,0 +1,25 @@
+provenance:
+  _type: https://in-toto.io/Statement/v1
+  predicateType: https://slsa.dev/provenance/v1
+  subject:
+  - name: docs/ideas/Hooks Record Log.svg
+    digest:
+      sha256: 9144b607aa1789b23ffe14c923f76c271314495a4b83e46960a963536669496f
+  predicate:
+    buildDefinition:
+      buildType: idea-snapshot/v1
+      externalParameters:
+        upstream_url: obsidian://open?vault=Atlas&file=Library%2FCanvas%2FHooks%20Record%20Log
+        transforms_applied:
+        - obsidian read
+        - read the exported SVG beside the note
+      resolvedDependencies:
+      - name: upstream
+        uri: obsidian://open?vault=Atlas&file=Library%2FCanvas%2FHooks%20Record%20Log
+        digest:
+          sha256: 3be8562aad858e33baa77812ce7b4f2f1def5505efdf4732413d43380b6b07c9
+    runDetails:
+      builder:
+        id: scripts/sync-idea
+      metadata:
+        startedOn: 2026-10-17T06:28:28.932586+00:00

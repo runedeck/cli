@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Snapshot an idea, a drawing or a transcript, from the owner's Obsidian vault into docs/ideas/, and
+check that a snapshot still matches its source.
+
+    scripts/sync-idea "obsidian://open?vault=Atlas&file=Library%2FCanvas%2FPlain%20Text%20Wins"
+    scripts/sync-idea --check              every snapshot against its vault source
+    scripts/sync-idea --check <snapshot>   one snapshot
+
+The source of truth is the vault note. The snapshot is the SVG the
+Excalidraw plugin exports beside it, read through the Obsidian CLI, so a
+person sees the drawing on GitHub and a tool reads its texts. The
+provenance sidecar under docs/ideas/.provenance/ records the obsidian://
+link, the sha256 of the SVG (the subject, checked by
+scripts/check-provenance), and the sha256 of the note's bytes (the
+upstream). `--check` reads the note again and reports a digest that moved.
+Both modes skip when the `obsidian` CLI is absent, and fail instead when
+REQUIRE_GATES is set.
+"""
+import argparse
+import datetime
+import hashlib
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import urllib.parse
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SNAPSHOTS = ROOT / "docs" / "ideas"
+SIDECARS = SNAPSHOTS / ".provenance"
+LINK = re.compile(r"^obsidian://open\?(.*)$")
+
+
+def parse_link(link):
+    """The vault name and the vault-relative markdown path of an obsidian:// open link."""
+    match = LINK.match(link)
+    if not match:
+        raise ValueError(f"not an obsidian://open link: {link}")
+    query = urllib.parse.parse_qs(match.group(1))
+    vault, file = query.get("vault", [""])[0], query.get("file", [""])[0]
+    if not vault or not file:
+        raise ValueError(f"link names no vault or file: {link}")
+    if not file.endswith(".md"):
+        file += ".md"
+    return vault, file
+
+
+def read_source(vault, file):
+    """The bytes the Obsidian CLI returns for one vault file."""
+    run = subprocess.run(["obsidian", f"vault={vault}", "read", f"path={file}"], capture_output=True, check=False)
+    if run.returncode != 0 or run.stdout.startswith(b"Error:") or not run.stdout.strip():
+        message = (run.stderr or run.stdout).decode(errors="replace").strip()
+        raise RuntimeError(message or f"obsidian read failed for {file}")
+    return run.stdout
+
+
+def sidecar_text(name, link, digest, upstream):
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return (
+        "provenance:\n"
+        "  _type: https://in-toto.io/Statement/v1\n"
+        "  predicateType: https://slsa.dev/provenance/v1\n"
+        "  subject:\n"
+        f"  - name: docs/ideas/{name}\n"
+        "    digest:\n"
+        f"      sha256: {digest}\n"
+        "  predicate:\n"
+        "    buildDefinition:\n"
+        "      buildType: idea-snapshot/v1\n"
+        "      externalParameters:\n"
+        f"        upstream_url: {link}\n"
+        "        transforms_applied:\n"
+        "        - obsidian read\n"
+        "        - read the exported SVG beside the note\n"
+        "      resolvedDependencies:\n"
+        "      - name: upstream\n"
+        f"        uri: {link}\n"
+        "        digest:\n"
+        f"          sha256: {upstream}\n"
+        "    runDetails:\n"
+        "      builder:\n"
+        "        id: scripts/sync-idea\n"
+        "      metadata:\n"
+        f"        startedOn: {now}\n"
+    )
+
+
+def field(text, key, after=""):
+    start = text.index(after) if after and after in text else 0
+    match = re.search(rf"^\s*{key}: (.+)$", text[start:], re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def snapshot(link):
+    vault, file = parse_link(link)
+    data = read_source(vault, file)
+    svg = read_source(vault, file[: -len(".md")] + ".svg")
+    name = pathlib.PurePosixPath(file).with_suffix(".svg").name
+    SNAPSHOTS.mkdir(parents=True, exist_ok=True)
+    SIDECARS.mkdir(exist_ok=True)
+    (SNAPSHOTS / name).write_bytes(svg)
+    digest, upstream = hashlib.sha256(svg).hexdigest(), hashlib.sha256(data).hexdigest()
+    (SIDECARS / (name + ".yaml")).write_text(sidecar_text(name, link, digest, upstream))
+    print(f"docs/ideas/{name}  {digest[:12]}  from {link} ({upstream[:12]})")
+
+
+def check(paths):
+    sidecars = [SIDECARS / (p.name + ".yaml") for p in paths] if paths else sorted(SIDECARS.glob("*.yaml"))
+    drift = 0
+    for sidecar in sidecars:
+        if not sidecar.is_file():
+            print(f"no sidecar: {sidecar.relative_to(ROOT)}")
+            drift += 1
+            continue
+        text = sidecar.read_text()
+        link, recorded = field(text, "upstream_url"), field(text, "sha256", after="resolvedDependencies")
+        try:
+            vault, file = parse_link(link)
+            current = hashlib.sha256(read_source(vault, file)).hexdigest()
+        except (ValueError, RuntimeError) as error:
+            print(f"{sidecar.relative_to(ROOT)}: cannot read the source: {error}")
+            drift += 1
+            continue
+        if current != recorded:
+            print(f"{sidecar.relative_to(ROOT)}: the vault moved on ({current[:12]}, snapshot {recorded[:12]}). Run scripts/sync-idea \"{link}\" to refresh.")
+            drift += 1
+    if not drift:
+        print(f"ideas: {len(sidecars)} snapshots match their vault sources")
+    return 1 if drift else 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("targets", nargs="*", help="obsidian:// links to snapshot, or snapshot paths with --check")
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    if shutil.which("obsidian") is None:
+        if os.environ.get("REQUIRE_GATES"):
+            sys.exit("REQUIRE_GATES set and the obsidian CLI is absent")
+        print("skipped: obsidian CLI absent")
+        return 0
+    if args.check:
+        return check([pathlib.Path(t) for t in args.targets])
+    if not args.targets:
+        parser.error("give an obsidian:// link, or --check")
+    for link in args.targets:
+        snapshot(link)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
