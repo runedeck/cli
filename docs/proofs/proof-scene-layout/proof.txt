@@ -37,7 +37,7 @@ kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/mismatch" repo && rune proof run sample-change-one --source repo'
   sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:
   - rune 0.5.0 ([..])
-  + rune 0.6.0 (275680d7) built 2026-09-28T00:30:32Z
+  + rune 0.6.0 (da5a8d1d2) built 2026-10-24T01:31:01Z
   sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
   2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004
 $ python3 -
@@ -74,5 +74,5 @@ $ python3 -
 ## proof-scene-layout#a-fence-comment-explains-the-step/comment-with-no-command
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/dangling-comment" repo && rune proof run sample-change-one --source repo'
-  fatal: /private/tmp/claude-501/rune-proof-53657-proof-scene-layout-a-fence-comment-explains-the-step-comment-with-no-command-3a814798-18-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `# text` comes before the command it explains
+  fatal: /private/tmp/claude-501/rune-proof-86151-proof-scene-layout-a-fence-comment-explains-the-step-comment-with-no-command-1b521c30-18-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `# text` comes before the command it explains
 

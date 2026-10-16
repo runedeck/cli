@@ -1,9 +1,9 @@
 ---
 type: proof
 change: proof-scene-layout
-head: 275680d7a3efd4752c679f42d529c078895fec9f
-recorded: 2026-09-28
-transcript: 4412e031c666de7db34f17b57c373dd335a8f03e022fc59c0c3e3f07d6daffd1
+head: da5a8d1d202cfc494b8c21df181e88c2a71abb2b
+recorded: 2026-10-24
+transcript: 605d9c7eda4a5e2a793cbe4040ba7d17bceefa233566fad4daf43d1972b6836a
 scenes:
 - scenario: proof-scene-layout#the-cast-is-paced-for-a-reader/scenes-are-paced-for-a-reader
   kind: check
