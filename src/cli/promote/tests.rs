@@ -76,11 +76,11 @@ fn promote_moves_the_draft_and_writes_the_change_stub() {
     );
     assert!(!draft_file.exists(), "the provider copy is gone");
     assert!(!consumer.path().join(".claude/skills/ReviewSpec").exists());
-    assert!(
+    assert_eq!(
         Register::load(consumer.path())
             .unwrap()
-            .by_name("ReviewSpec")
-            .is_empty()
+            .by_name("ReviewSpec"),
+        [] as [&rune::manifest::drafts::Draft; 0]
     );
     assert_eq!(done.removed, vec![".claude/skills/ReviewSpec/SKILL.md"]);
 
@@ -153,11 +153,9 @@ fn promote_keeps_the_draft_when_the_stub_cannot_be_written() {
         consumer.path().join(".claude/rules/Terse.md").exists(),
         "the draft stays"
     );
-    assert!(
-        !Register::load(consumer.path())
-            .unwrap()
-            .by_name("Terse")
-            .is_empty()
+    assert_ne!(
+        Register::load(consumer.path()).unwrap().by_name("Terse"),
+        [] as [&rune::manifest::drafts::Draft; 0]
     );
     assert!(
         !deck.path().join("runes/core/rules/Terse.md").exists(),

@@ -36,7 +36,7 @@ fn load_merged_config_succeeds_on_missing_defaults() {
     let temp_directory = TempDir::new().unwrap();
     let result = load_merged_config(temp_directory.path());
     assert!(result.is_ok());
-    assert!(result.unwrap().is_empty());
+    assert_eq!(result.unwrap(), "");
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn load_merged_config_succeeds_on_empty_defaults() {
     let temp_directory = TempDir::new().unwrap();
     std::fs::write(temp_directory.path().join("defaults.yaml"), "").unwrap();
     let result = load_merged_config(temp_directory.path()).unwrap();
-    assert!(result.is_empty());
+    assert_eq!(result, "");
     assert!(load_providers(&result).is_ok());
 }
 
@@ -145,7 +145,7 @@ fn load_models_returns_embedded_defaults() {
 fn load_source_uri_returns_empty_for_missing_module_yaml() {
     let temp_directory = TempDir::new().unwrap();
     let result = load_source_uri(temp_directory.path());
-    assert!(result.is_empty());
+    assert_eq!(result, "");
 }
 
 #[test]

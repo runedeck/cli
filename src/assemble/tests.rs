@@ -229,7 +229,7 @@ fn extract_returns_urls() {
 #[test]
 fn extract_returns_empty_for_no_refs() {
     let urls = references::extract("No refs here.");
-    assert!(urls.is_empty());
+    assert_eq!(urls, [] as [String; 0]);
 }
 
 const REFS_MNEMONIC: &str = fixture!("refs-mnemonic.md");

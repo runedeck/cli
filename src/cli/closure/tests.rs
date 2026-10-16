@@ -119,7 +119,7 @@ fn a_missing_change_is_an_error_that_names_it() {
 fn declared_capabilities_reads_only_the_section() {
     let text = "## What Changes\n\n### New Capabilities\n\n- `a-b-c`: x\n- plain item\n- `d-e-f`: y\n\n### Modified Capabilities\n\n- `g-h-i`: z\n";
     assert_eq!(declared_capabilities(text), ["a-b-c", "d-e-f"]);
-    assert!(declared_capabilities("# No section\n").is_empty());
+    assert_eq!(declared_capabilities("# No section\n"), [] as [String; 0]);
 }
 
 #[test]

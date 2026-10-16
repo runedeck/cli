@@ -193,7 +193,10 @@ fn complete_selected_bundle_deploys() {
             "{companion}"
         );
     }
-    assert!(inspect_bundle(&root).problems.is_empty());
+    assert_eq!(
+        inspect_bundle(&root).problems,
+        [] as [rune::manifest::bundle::BundleProblem; 0]
+    );
 }
 
 #[test]
@@ -393,7 +396,10 @@ fn retained_legacy_copy_blocks_unique_readiness_until_migration_completes() {
             .is_empty()
     );
     assert!(completed.static_valid, "{completed:#?}");
-    assert!(completed.findings.is_empty());
+    assert_eq!(
+        completed.findings,
+        [] as [rune::skill_readiness::ReadinessFinding; 0]
+    );
     assert_eq!(completed.skills.len(), 1);
     assert_eq!(
         completed.skills[0].path,
@@ -791,7 +797,10 @@ fn case_aliases_and_symlinks_are_accounted_for() {
     );
     assert_ne!(linked.digest, inspect_bundle(&root).digest);
     symlink("../outside", root.join("escape")).unwrap();
-    assert!(!inspect_bundle(&root).problems.is_empty());
+    assert_ne!(
+        inspect_bundle(&root).problems,
+        [] as [rune::manifest::bundle::BundleProblem; 0]
+    );
     #[cfg(target_os = "macos")]
     {
         let probe = tempfile::tempdir().unwrap();

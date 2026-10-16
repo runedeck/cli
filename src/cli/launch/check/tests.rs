@@ -71,7 +71,10 @@ fn plan_without_a_base_url_has_nothing_to_check() {
         env(&[("ANTHROPIC_MODEL", "kimi-k3")]),
         Some("kimi-k3"),
     );
-    assert!(plan_checks(&launch, None).is_empty());
+    assert_eq!(
+        plan_checks(&launch, None),
+        [] as [crate::cli::launch::check::EndpointCheck; 0]
+    );
     let report = run_checks(&launch, None);
     assert_eq!(report.exit_code, EXIT_SERVED);
     assert!(format_report(&report).contains("nothing to check"));
@@ -231,7 +234,10 @@ fn a_tool_with_a_configured_base_url_key_uses_it() {
 #[test]
 fn a_tool_without_any_base_url_has_nothing_to_check() {
     let launch = resolved("ollama", env(&[]), Some("llama3"));
-    assert!(plan_checks(&launch, None).is_empty());
+    assert_eq!(
+        plan_checks(&launch, None),
+        [] as [crate::cli::launch::check::EndpointCheck; 0]
+    );
 }
 
 #[test]

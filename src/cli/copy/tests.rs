@@ -439,7 +439,7 @@ fn execute_sidecar_round_trips_typed() {
     );
     assert_eq!(sidecar.provenance.subject.len(), 1);
     assert_eq!(sidecar.provenance.subject[0].name, "rules/Roundtrip.md");
-    assert!(!sidecar.provenance.subject[0].digest.sha256.is_empty());
+    assert_ne!(sidecar.provenance.subject[0].digest.sha256, "");
 
     let build = &sidecar.provenance.predicate.build_definition;
     assert!(build.build_type.ends_with("/copy/v1"));
@@ -457,5 +457,5 @@ fn execute_sidecar_round_trips_typed() {
     let runner = &sidecar.provenance.predicate.run_details;
     assert_eq!(runner.builder.id, env!("CARGO_PKG_REPOSITORY"));
     assert_eq!(runner.builder.version.rune, env!("CARGO_PKG_VERSION"));
-    assert!(!runner.metadata.started_on.is_empty());
+    assert_ne!(runner.metadata.started_on, "");
 }

@@ -97,7 +97,7 @@ fn output_schema_bad_payload_fails_validation() {
         panic!("expected completed exec");
     };
     assert_eq!(result.exit_code, 1);
-    assert!(!result.validation_errors.is_empty());
+    assert_ne!(result.validation_errors, [] as [String; 0]);
 }
 
 #[test]

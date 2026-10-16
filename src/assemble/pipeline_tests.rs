@@ -141,7 +141,7 @@ fn multi_provider_produces_separate_outputs() {
 
     let (results, errors) = pipeline::assemble_module(&sources, &providers, &tool_mappings, &[]);
 
-    assert!(errors.is_empty());
+    assert_eq!(errors, [] as [String; 0]);
     assert_eq!(results.len(), 2);
 
     let paths: Vec<&str> = results.iter().map(|r| r.output_path.as_str()).collect();
@@ -174,7 +174,7 @@ fn unknown_rule_collected_as_error() {
 
     let (results, errors) = pipeline::assemble_module(&sources, &providers, &tool_mappings, &[]);
 
-    assert!(!errors.is_empty());
+    assert_ne!(errors, [] as [String; 0]);
     assert!(errors[0].contains("unknown assembly rule"));
     // Files still assembled (unknown rule skipped, valid rules applied)
     assert_eq!(results.len(), 1);
@@ -191,5 +191,5 @@ fn empty_sources_produces_empty_results() {
     let (results, errors) = pipeline::assemble_module(&sources, &providers, &tool_mappings, &[]);
 
     assert!(results.is_empty());
-    assert!(errors.is_empty());
+    assert_eq!(errors, [] as [String; 0]);
 }

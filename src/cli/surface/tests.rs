@@ -91,7 +91,7 @@ fn claude_settings_with_only_owned_keys_is_dropped_whole() {
         Surface::Claude,
         &["--settings", r#"{"permissions":{"allow":["Bash"]}}"#],
     ));
-    assert!(filtered.kept.is_empty());
+    assert_eq!(filtered.kept, [] as [std::ffi::OsString; 0]);
     assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
     assert!(filtered.warnings[1].contains("nothing remains"));
 }
@@ -155,7 +155,7 @@ fn claude_settings_path_is_dropped_not_loaded() {
         Surface::Claude,
         &["--settings", "/home/me/wide-open.json"],
     ));
-    assert!(filtered.kept.is_empty());
+    assert_eq!(filtered.kept, [] as [std::ffi::OsString; 0]);
     assert!(filtered.warnings[0].contains("only an inline JSON object is filtered"));
 }
 
@@ -174,7 +174,7 @@ fn warnings_escape_control_characters_and_name_the_value() {
 fn unowned_profile_args_pass_through_untouched() {
     let filtered = filter_surface_args(&invocation(Surface::Grok, &["--effort", "high"]));
     assert_eq!(strings(&filtered.kept), ["--effort", "high"]);
-    assert!(filtered.warnings.is_empty());
+    assert_eq!(filtered.warnings, [] as [String; 0]);
 }
 
 #[test]

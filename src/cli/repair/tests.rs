@@ -81,7 +81,7 @@ fn modified_file_is_reported_and_never_repaired() {
     assert!(remaining[0].findings.iter().any(|finding| {
         finding.status == IntegrityStatus::Modified && finding.path == "skills/Alpha/SKILL.md"
     }));
-    assert!(repairs.is_empty());
+    assert_eq!(repairs, [] as [crate::cli::repair::RepairAction; 0]);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn repair_does_not_restore_source_with_wrong_digest() {
             .iter()
             .any(|finding| finding.status == IntegrityStatus::Missing)
     );
-    assert!(repairs.is_empty());
+    assert_eq!(repairs, [] as [crate::cli::repair::RepairAction; 0]);
 }
 
 #[test]

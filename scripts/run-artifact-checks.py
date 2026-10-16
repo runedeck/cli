@@ -248,7 +248,7 @@ def state(root, manifest, options):
 
 def utc_stamp(seconds):
     return (
-        datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+        datetime.datetime.fromtimestamp(seconds, datetime.UTC)
         .isoformat(timespec="microseconds")
         .replace("+00:00", "Z")
     )

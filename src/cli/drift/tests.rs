@@ -54,7 +54,7 @@ fn split_parts_separates_frontmatter_and_body() {
 fn split_parts_returns_full_content_as_body_without_frontmatter() {
     let content = "No frontmatter here.";
     let (frontmatter, body) = split_parts(content);
-    assert!(frontmatter.is_empty());
+    assert_eq!(frontmatter, "");
     assert_eq!(body, content);
 }
 
@@ -78,7 +78,7 @@ fn diff_frontmatter_keys_detects_added_key() {
 fn diff_frontmatter_keys_returns_empty_when_identical() {
     let yaml = "name: test\nversion: 0.1.0\n";
     let changed = diff_frontmatter_keys(yaml, yaml);
-    assert!(changed.is_empty());
+    assert_eq!(changed, [] as [String; 0]);
 }
 
 #[test]

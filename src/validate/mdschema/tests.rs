@@ -56,7 +56,10 @@ fn outline_reports_file_line_after_frontmatter() {
 #[test]
 fn extract_headings_empty_body() {
     let headings = extract_headings("");
-    assert!(headings.is_empty());
+    assert_eq!(
+        headings,
+        [] as [crate::validate::mdschema::heading::Heading; 0]
+    );
 }
 
 #[test]

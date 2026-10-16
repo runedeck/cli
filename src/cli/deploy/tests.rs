@@ -37,7 +37,7 @@ fn collect_files_recursive_finds_nested_files() {
 fn collect_files_recursive_empty_directory() {
     let temp_directory = TempDir::new().unwrap();
     let files = collect_files_recursive(temp_directory.path()).unwrap();
-    assert!(files.is_empty());
+    assert_eq!(files, [] as [std::path::PathBuf; 0]);
 }
 
 #[test]

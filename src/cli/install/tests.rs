@@ -237,10 +237,9 @@ fn commitless_repository_has_no_freshness_warning() {
         .unwrap();
 
     assert!(detect_stale_source(module.path()).unwrap().is_none());
-    assert!(
-        warn_or_block_stale_source(module.path(), false, "rune install --allow-stale")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        warn_or_block_stale_source(module.path(), false, "rune install --allow-stale").unwrap(),
+        [] as [String; 0]
     );
 }
 

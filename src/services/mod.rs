@@ -1038,10 +1038,9 @@ mod tests {
         assert!(!edit.after.contains(&"science/rules/Alpha".to_string()));
         persist_cast_edit(&edit).unwrap();
         let deck = crate::deck::load(temp.path()).unwrap();
-        assert!(
-            deck.resolve_cast("all", ["science/rules/Alpha"])
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            deck.resolve_cast("all", ["science/rules/Alpha"]).unwrap(),
+            [] as [String; 0]
         );
     }
 

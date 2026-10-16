@@ -340,7 +340,7 @@ mod tests {
         assert!(two[0].expected.ends_with("..."));
         assert_eq!(two[1].argv, ["printf", "a b", "c", "--flag"]);
         assert_eq!(two[1].command_lines.len(), 2);
-        assert!(scenes[2].steps.is_empty());
+        assert_eq!(scenes[2].steps, [] as [crate::cli::proof::fence::Step; 0]);
     }
 
     #[test]

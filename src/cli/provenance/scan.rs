@@ -603,7 +603,7 @@ mod tests {
 
         let (by_source, orphans) = collect(target.path());
 
-        assert!(orphans.is_empty());
+        assert_eq!(orphans, [] as [String; 0]);
         let (verified, total) = by_source["https://example.test/upstream"];
         assert_eq!(total, 1);
         assert_eq!(verified, 1);
@@ -623,7 +623,7 @@ mod tests {
             by_source.is_empty(),
             "dotfile and stray .yaml must not appear"
         );
-        assert!(orphans.is_empty());
+        assert_eq!(orphans, [] as [String; 0]);
     }
 
     #[test]
