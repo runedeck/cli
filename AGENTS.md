@@ -13,8 +13,8 @@ make clean              # remove build artifacts
 Run one Rust test with `cargo test -- test_name`. Before presenting a Rust change for review, run `cargo fmt --check`,
 Clippy with warnings denied, and the focused tests. Use `make validate` for the repository-wide gate.
 
-The pre-commit cascade is `prek run --all-files` followed by `rune validate .` and `scripts/validate.sh`. `make install`
-sets `core.hooksPath` to `.githooks`.
+The pre-commit cascade is `prek run --all-files`, whose rune hooks run `.githooks/rune-here`, which builds and runs this
+tree's own rune with `cargo run`. `make install` sets `core.hooksPath` to `.githooks`.
 
 ## Architecture
 

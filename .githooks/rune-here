@@ -1,0 +1,14 @@
+#!/bin/sh
+# Build and run the rune of this tree for a hook.
+#
+# This repository is rune's own source. A hook that calls the installed
+# `rune` checks the tree with a binary that predates the tree's own schema
+# whenever the tree moves first: on 2026-10-16 the installed 0.6.0 refused
+# this repository's `.rune` with `unknown field ontology` and failed the
+# push gate. Cargo is always present here, so the hooks build and run the
+# tree's rune through this helper.
+#
+# Usage: .githooks/rune-here <subcommand> [args...]
+set -eu
+cd "$(dirname "$0")/.." || exit 1
+exec cargo run --quiet --all-features --bin rune -- "$@"

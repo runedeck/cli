@@ -5,12 +5,6 @@ set -euo pipefail
 
 if command -v prek >/dev/null 2>&1; then
     prek run --all-files --stage pre-push
-elif command -v rune >/dev/null 2>&1; then
-    rune validate
 else
-    echo ""
-    echo "  ⚠  Neither prek nor rune found — install one to run the pre-push checks"
-    echo "     Install: cargo install --path .   or   cargo binstall prek"
-    echo ""
-    exit 1
+    "$(dirname "$0")/rune-here" validate
 fi

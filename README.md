@@ -404,7 +404,7 @@ Assembly rules transform content for each provider. Configured in `defaults.yaml
 ```sh
 make build      # cargo build --release
 make install    # build, symlink to ~/.local/bin/rune, activate git hooks
-make validate   # run pre-commit checks (prek → rune → validate.sh)
+make validate   # run pre-commit checks (prek; the rune hooks run the tree's own rune through .githooks/rune-here)
 make test       # validate + cargo test
 make clean      # remove build artifacts
 ```
