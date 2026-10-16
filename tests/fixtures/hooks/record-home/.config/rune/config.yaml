@@ -1,0 +1,37 @@
+# A rune user config for the hook record proofs: every hook is a shell
+# line, so the scenes run on any machine. `pass` asks for nothing, `lint`
+# asks to deny with counted metrics and a reason that quotes a sentence,
+# `textual` returns metrics the record refuses, `cap` and `over` return a
+# metrics object of exactly 4096 and 4097 bytes.
+hooks:
+  version: 1
+  events:
+    tool.after: {budget_ms: 5000}
+  handlers:
+    - id: pass
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [tool.after]
+      order: 10
+      timeout_ms: 1000
+    - id: lint
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"effect\":\"deny\",\"reason\":\"a.md:3:52 error Core.NoEmDash: No em dash. The sentence \\\"the quick brown fox\\\" is quoted.\",\"metrics\":{\"rules\":{\"Core.NoEmDash\":1,\"STE.Semicolons\":1},\"cause\":[\"Core.NoEmDash\"]}}"']
+      events: [tool.after]
+      order: 20
+      timeout_ms: 1000
+    - id: textual
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"effect\":\"pass\",\"metrics\":{\"note\":\"the quick brown fox\"}}"']
+      events: [tool.after]
+      order: 30
+      timeout_ms: 1000
+    - id: cap
+      exec: [python3, -c, 'import json,sys; sys.stdin.read(); k=[]; v=lambda: json.dumps({"k":k},separators=(",",":"));
+exec("while len(v())<4096: k.append(\"a\"*60)"); k[-1]=k[-1][:len(k[-1])-(len(v())-4096)]; print(json.dumps({"effect":"pass","metrics":{"k":k}}))']
+      events: [tool.after]
+      order: 40
+      timeout_ms: 2000
+    - id: over
+      exec: [python3, -c, 'import json,sys; sys.stdin.read(); k=[]; v=lambda: json.dumps({"k":k},separators=(",",":"));
+exec("while len(v())<4097: k.append(\"a\"*60)"); k[-1]=k[-1][:len(k[-1])-(len(v())-4097)]; print(json.dumps({"effect":"pass","metrics":{"k":k}}))']
+      events: [tool.after]
+      order: 50
+      timeout_ms: 2000

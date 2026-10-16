@@ -10,13 +10,69 @@ use rune::ontology;
 
 pub(crate) mod adapters;
 pub(crate) mod encode;
+pub(crate) mod findings;
+pub(crate) mod import_claude;
 pub(crate) mod install;
 pub(crate) mod payload;
 pub(crate) mod plan;
+pub(crate) mod record;
 pub(crate) mod run;
+pub(crate) mod stats;
 
 #[cfg(test)]
 mod dispatch_tests;
+
+/// `rune hook record`, `rune hook record stats`, and `rune hook record import`.
+pub(crate) fn record_command(
+    action: Option<crate::cli::RecordAction>,
+    filter: crate::cli::RecordFilter,
+    json: bool,
+) -> Result<i32, Error> {
+    use crate::cli::RecordAction;
+    match action {
+        None => {
+            let records = stats::load(&filter.into())?;
+            print!("{}", stats::list(&records, json));
+            Ok(0)
+        }
+        Some(RecordAction::Stats { filter: inner, top }) => {
+            // A filter may sit before or after `stats`; the one after wins
+            // per field, and neither is dropped.
+            let records = stats::load(&filter.merged(inner).into())?;
+            print!("{}", stats::render(&stats::stats(&records, top), json));
+            Ok(0)
+        }
+        Some(RecordAction::Import { harness, dir }) => {
+            if harness != "claude" {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!("`{harness}` has no importer; only claude transcripts are read today"),
+                ));
+            }
+            let store = dir.or_else(import_claude::default_store).ok_or_else(|| {
+                Error::new(ErrorKind::Config, "no transcript store: pass a directory")
+            })?;
+            let target = record::dir()?;
+            let report = import_claude::import(&store, &target).map_err(Error::io)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"transcripts": report.transcripts, "added": report.added, "skipped": report.skipped, "store": store, "record": target})
+                );
+            } else {
+                println!(
+                    "read {} transcript(s) under {}: {} record(s) added, {} already held, into {}",
+                    report.transcripts,
+                    store.display(),
+                    report.added,
+                    report.skipped,
+                    target.display()
+                );
+            }
+            Ok(0)
+        }
+    }
+}
 
 /// Print the plan the config compiles to, or the event table.
 pub fn list(events: bool, write: bool, json: bool) -> Result<i32, Error> {

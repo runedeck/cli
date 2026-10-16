@@ -36,6 +36,8 @@ fn runner(fakes: HashMap<String, Fake>) -> (Runner, Seen) {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let log = Rc::clone(&seen);
     let runner = Runner {
+        record_dir: None,
+        record_error: None,
         spawn: Box::new(move |handler, stdin, timeout, _env, _cwd| {
             let payload: HandlerPayload = serde_json::from_slice(stdin).expect("payload json");
             log.borrow_mut().push((handler.id.clone(), payload));
@@ -305,4 +307,190 @@ fn an_unknown_registration_runs_nothing() {
     assert_eq!(answer.stdout, None);
     assert!(answer.stderr[0].contains("no handler subscribes"));
     assert!(seen.borrow().is_empty());
+}
+
+// ------------------------------------------------------------ the record ----
+
+fn recording_runner(fakes: HashMap<String, Fake>, dir: &std::path::Path) -> Runner {
+    let (mut runner, _seen) = runner(fakes);
+    runner.record_dir = Some(dir.to_path_buf());
+    runner
+}
+
+fn claude_write(path: &str) -> Value {
+    json!({"hook_event_name": "PostToolUse", "session_id": "s1", "cwd": "/w", "tool_name": "Write", "tool_use_id": "toolu_9", "tool_input": {"file_path": path}, "tool_response": {}})
+}
+
+#[test]
+fn two_hooks_on_one_event_leave_two_records_in_order_with_the_answer() {
+    let temp = tempfile::tempdir().unwrap();
+    let plan = plan(
+        "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.after]\n    order: 10\n  - id: lint-on-write\n    exec: [lint]\n    events: [tool.after]\n    order: 20\n",
+    );
+    let runner = recording_runner(
+        HashMap::from([
+            ("dcg".to_string(), fake("")),
+            (
+                "lint-on-write".to_string(),
+                fake(
+                    r#"{"effect":"deny","reason":"/w/a.md:3:52 error Core.NoEmDash: No em dash. The sentence \"quick brown fox\" is quoted.","metrics":{"rules":{"Core.NoEmDash":1},"cause":["Core.NoEmDash"]}}"#,
+                ),
+            ),
+        ]),
+        temp.path(),
+    );
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PostToolUse",
+        Ok(claude_write("/w/a.md")),
+        &runner,
+    );
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["decision"], "block");
+    let records = super::record::load(temp.path()).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].hook, "dcg");
+    assert_eq!(records[0].asked, "allow");
+    assert_eq!(records[0].answer, "deny");
+    assert_eq!(records[1].hook, "lint-on-write");
+    assert_eq!(records[1].asked, "deny");
+    assert_eq!(records[1].answer, "deny");
+    assert_eq!(records[1].exit_status, Some(0));
+    assert_eq!(records[1].file.as_deref(), Some("/w/a.md"));
+    assert_eq!(records[1].tool_use_id.as_deref(), Some("toolu_9"));
+    assert_eq!(records[1].session_id.as_deref(), Some("s1"));
+    assert_eq!(
+        records[1].metrics.as_ref().unwrap()["rules"]["Core.NoEmDash"],
+        1
+    );
+    let text = std::fs::read_to_string(
+        temp.path().join(
+            super::record::path_for(temp.path(), &chrono::Utc::now())
+                .file_name()
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    assert!(
+        !text.contains("quick brown fox"),
+        "the record must hold no text"
+    );
+}
+
+#[test]
+fn a_budget_spent_before_a_hook_records_the_budget_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let plan = plan(
+        "events:\n  tool.before: {budget_ms: 60}\nhandlers:\n  - id: slow\n    exec: [slow]\n    events: [tool.before]\n    order: 10\n    timeout_ms: 5000\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
+    );
+    let runner = recording_runner(
+        HashMap::from([
+            (
+                "slow".to_string(),
+                Fake {
+                    stdout: String::new(),
+                    code: 0,
+                    sleep_ms: 500,
+                },
+            ),
+            ("dcg".to_string(), fake("")),
+        ]),
+        temp.path(),
+    );
+    let _ = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    let records = super::record::load(temp.path()).unwrap();
+    let dcg = records
+        .iter()
+        .find(|r| r.hook == "dcg")
+        .expect("dcg record");
+    assert_eq!(dcg.failure.as_deref(), Some("budget"));
+    assert_eq!(dcg.duration_ms, Some(0));
+    assert_eq!(dcg.answer, "deny");
+    let slow = records.iter().find(|r| r.hook == "slow").unwrap();
+    assert_eq!(slow.failure.as_deref(), Some("timeout"));
+}
+
+#[test]
+fn text_in_metrics_is_dropped_and_the_answer_is_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let plan = plan(
+        "handlers:\n  - id: lint-on-write\n    exec: [lint]\n    events: [tool.after]\n    order: 20\n",
+    );
+    let runner = recording_runner(
+        HashMap::from([(
+            "lint-on-write".to_string(),
+            fake(r#"{"effect":"deny","reason":"bad","metrics":{"note":"the quick brown fox"}}"#),
+        )]),
+        temp.path(),
+    );
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PostToolUse",
+        Ok(claude_write("/w/a.md")),
+        &runner,
+    );
+    assert!(answer.stdout.as_deref().unwrap().contains("\"block\""));
+    assert!(
+        answer
+            .stderr
+            .iter()
+            .any(|l| l.contains("lint-on-write") && l.contains("metrics"))
+    );
+    let records = super::record::load(temp.path()).unwrap();
+    assert_eq!(records[0].metrics, None);
+    assert_eq!(records[0].asked, "deny");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_only_record_directory_leaves_the_answer_and_exit_code_alone() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if std::env::var("USER").as_deref() == Ok("root") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("record");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let plan = plan(
+        "handlers:\n  - id: lint-on-write\n    exec: [lint]\n    events: [tool.after]\n    order: 20\n",
+    );
+    let fakes = HashMap::from([(
+        "lint-on-write".to_string(),
+        fake(r#"{"effect":"deny","reason":"bad"}"#),
+    )]);
+    let silent = recording_runner(fakes.clone(), &dir);
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PostToolUse",
+        Ok(claude_write("/w/a.md")),
+        &silent,
+    );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (bare, _) = runner(fakes);
+    let expected = dispatch(
+        &plan,
+        Harness::Claude,
+        "PostToolUse",
+        Ok(claude_write("/w/a.md")),
+        &bare,
+    );
+    assert_eq!(answer.stdout, expected.stdout);
+    assert_eq!(answer.exit, expected.exit);
+    let record_lines: Vec<_> = answer
+        .stderr
+        .iter()
+        .filter(|l| l.contains("hook record"))
+        .collect();
+    assert_eq!(record_lines.len(), 1, "{:?}", answer.stderr);
+    assert!(record_lines[0].contains(&dir.display().to_string()));
 }

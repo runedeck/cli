@@ -19,9 +19,11 @@ extend-exclude = [
 [default]
 # Mermaid node identifiers such as BA in fenced diagrams, hex object ids
 # (a jj short commit id in a recorded proof transcript is eight hex
-# characters), the gpg colon-listing record tag, and the wrap-test
-# fragment in the comment panel tests.
-extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\"", "fpr:{9}", "[0-9a-f]{8,}", "\" worl\""]
+# characters), the gpg colon-listing record tag, the wrap-test fragment
+# in the comment panel tests, and the one misspelling the hook record
+# fixtures and proof scenes carry on purpose so the lint hook has a typo
+# to count.
+extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\"", "fpr:{9}", "[0-9a-f]{8,}", "\" worl\"", "refernce"]
 
 [default.extend-words]
 # The TUI crate and the skateboarding fixture are spelled as upstream spells them.

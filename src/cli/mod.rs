@@ -1317,6 +1317,7 @@ enum KindAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // the record filters are eight optional strings, parsed once
 enum HookAction {
     /// Print the plan the `hooks:` config compiles to, per harness
     List {
@@ -1355,6 +1356,13 @@ enum HookAction {
         #[arg(long = "native-event", value_name = "EVENT")]
         native_event: String,
     },
+    /// List the hook record: one line per hook the dispatcher ran
+    Record {
+        #[command(subcommand)]
+        action: Option<RecordAction>,
+        #[command(flatten)]
+        filter: RecordFilter,
+    },
     /// Turn one staged hook rune on for one or all providers
     On {
         #[arg(value_name = "NAME")]
@@ -1378,6 +1386,87 @@ enum HookAction {
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum RecordAction {
+    /// Aggregate the record: rules with cause and sole cause, weeks, repeats, files, hooks
+    Stats {
+        #[command(flatten)]
+        filter: RecordFilter,
+        /// Keep this many rows per table, by count then name.
+        #[arg(long, default_value_t = 25, value_name = "N")]
+        top: usize,
+    },
+    /// Backfill the record from a harness's raw session transcripts
+    Import {
+        /// The harness whose transcripts to read. Only `claude` today.
+        #[arg(long, value_name = "HARNESS")]
+        harness: String,
+        /// The transcript store. Defaults to ~/Data/Sessions/claude, else ~/.claude/projects.
+        #[arg(value_name = "DIR")]
+        dir: Option<QueuePathBuf>,
+    },
+}
+
+/// The filters `rune hook record` and `rune hook record stats` share.
+#[derive(clap::Args, Clone, Default)]
+struct RecordFilter {
+    /// From this ISO week (2026-W42) or date (2026-10-15), inclusive, UTC.
+    #[arg(long, value_name = "WEEK_OR_DATE")]
+    since: Option<String>,
+    /// Up to this ISO week or date, inclusive, UTC.
+    #[arg(long, value_name = "WEEK_OR_DATE")]
+    until: Option<String>,
+    /// Only runs under this harness.
+    #[arg(long, value_name = "HARNESS")]
+    harness: Option<String>,
+    /// Only runs of this hook, such as lint-on-write.
+    #[arg(long, value_name = "HOOK")]
+    hook: Option<String>,
+    /// Only runs whose metrics name a rule containing this text.
+    #[arg(long, value_name = "SUBSTRING")]
+    rule: Option<String>,
+    /// Only runs on a file whose path contains this text.
+    #[arg(long, value_name = "SUBSTRING")]
+    file: Option<String>,
+    /// Only runs where the hook asked for this: allow, deny, or stop.
+    #[arg(long, value_name = "WORD")]
+    asked: Option<String>,
+    /// Only runs whose dispatcher answer was this: allow, deny, or stop.
+    #[arg(long, value_name = "WORD")]
+    answer: Option<String>,
+}
+
+impl RecordFilter {
+    /// This filter with every field the other one sets.
+    fn merged(self, other: Self) -> Self {
+        Self {
+            since: other.since.or(self.since),
+            until: other.until.or(self.until),
+            harness: other.harness.or(self.harness),
+            hook: other.hook.or(self.hook),
+            rule: other.rule.or(self.rule),
+            file: other.file.or(self.file),
+            asked: other.asked.or(self.asked),
+            answer: other.answer.or(self.answer),
+        }
+    }
+}
+
+impl From<RecordFilter> for hook::stats::Filter {
+    fn from(f: RecordFilter) -> Self {
+        Self {
+            since: f.since,
+            until: f.until,
+            harness: f.harness,
+            hook: f.hook,
+            rule: f.rule,
+            file: f.file,
+            asked: f.asked,
+            answer: f.answer,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -2313,6 +2402,9 @@ pub fn run() -> i32 {
                     harness,
                     native_event,
                 }) => hook::run::run(&harness, &native_event),
+                Some(HookAction::Record { action, filter }) => {
+                    exit_code(hook::record_command(action, filter, args.json), args.json)
+                }
                 Some(HookAction::On { name, provider }) => run_kind_add(
                     kind,
                     Some(KindAction::On { name, provider }),
@@ -2552,8 +2644,8 @@ fn flow_help(help: &mut String) {
     help_command(
         help,
         "hook",
-        "[list [--events] | add <NAME[,NAME...]>]",
-        "Print the hook plan, or stage hook runes",
+        "[list | record [stats|import] | add <NAME[,NAME...]>]",
+        "Print the hook plan, read the hook record, or stage hook runes",
     );
     help_command(
         help,

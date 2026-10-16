@@ -52,6 +52,7 @@ The month comes from the record's own UTC timestamp. The writer runs after the a
 - The code depends on `harness-hook-dispatch`, signed at `68fb6321` and not yet on main, which still has two open task groups. The specification sits on main. The code waits for that change.
 - Claude Code owns the transcript format the import reads. The import is a backfill, not the record's source, so a format change costs the backfill and nothing else.
 - Paths in the record may name AMBER vault notes. The record is local, and the last requirement of `hooks-record-stats` keeps it out of every artifact rune produces.
+- `tests/hook_record_local.rs` runs a release and a proof with a populated record and scans the source for readers of the record directory outside the hook module. `rune bench report` and `rune sign` are covered by that scan only, because neither has a fixture that produces an artifact without a bench suite or a key.
 
 ## Coverage
 
@@ -76,7 +77,7 @@ The specs state behavior. The commands live here, in the tasks, and in the propo
 
 The owner chose one ontology, the deck's `ontology/rune.ttl`, read by cli through a configured path (2026-10-16). The deck defines the terms this change cites, after the owner's review of the whole ontology on 2026-10-16 (deck main `861ae76c`, owner-signed, 79 labeled terms): hook (a script bound to harness events, run by the hook dispatcher), hook dispatcher, hook execution, hook record, hook metrics, and dispatcher answer (allow, deny, or stop the turn, with a reason). The specs, the proposal, and `adr.md` set each first use in italics and cite it as `*term* [TERM]`, with `[TERM]: https://runedeck.ai/ns#Term` at the end of the file. Dropped by that review: handler (write hook, or the hook's process), response reserve (said in a sentence), hook effect. Plain nouns in their dictionary sense carry no tag: state dir, tool-use id, session, event, exit status.
 
-How cli reaches the ontology: the owner chose that every consumer reads a deployed copy. The cli change `install-deck-ontology` (bookmark `fable/install-deck-ontology`) gives `.rune` a top-level `ontology: <source>` key, and `rune install` deploys `<source>/ontology/rune.ttl` to `<consumer>/ontology/rune.ttl` with a provenance sidecar and a fingerprint, where the term reader in `rune-docs/src/spec/terms.rs` already looks. That change is on main (`f721ba57`), this repository's `.rune` names `ontology: deck`, and `ontology/rune.ttl` at deck `861ae76c` is committed here. The deployed copy is a tracked file, so a jj workspace reads it like the main checkout, and the term lint resolves every citation in this change against it.
+How cli reaches the ontology: the owner chose that every consumer reads a deployed copy. The cli change `install-deck-ontology` (bookmark `fable/install-deck-ontology`) gives `.rune` a top-level `ontology: <source>` key, and `rune install` deploys `<source>/ontology/rune.ttl` to `<consumer>/ontology/rune.ttl` with a provenance sidecar and a fingerprint, where the term reader in `rune-docs/src/spec/terms.rs` already looks. That change is on main (`f721ba57425f`), this repository's `.rune` names `ontology: deck`, and `ontology/rune.ttl` at deck `861ae76c` is committed here. The deployed copy is a tracked file, so a jj workspace reads it like the main checkout, and the term lint resolves every citation in this change against it.
 
 ## Review dispositions
 
@@ -96,3 +97,32 @@ Astra on the specification and the record (`gpt-6-astra`, clean state, 12 hits, 
 | 10 the denial policy behind the lint scenario is unstated, the clean-file outcome has no MUST | fixed: the scenario's WHEN names the Vale levels and the typos policy, the requirement states the clean-file MUST |
 | 11 4096 bytes has no stated reason, boundary untested | fixed: the cap is tied to the audited rate (about 240 runs a week, under 4 MB a month at the cap), scenario tests 4096 and 4097 |
 | 12 semicolon in the record description, passive MUSTs, "writes down", a triad, state-shaped scenario titles | fixed throughout, every scenario title names an event |
+
+Astra on the code (`gpt-6-astra`, clean state, 12 hits, 2026-10-17):
+
+| Hit | Disposition |
+|---|---|
+| 1 the writer got a fresh reserve, not what is left of the budget, and a 50 ms floor | fixed in part: the floor is gone, and the writer waits for what the answer left of the reserve. The reserve is not reduced by a hook's overrun, because the reserve is the dispatcher's own allowance and a hook that timed out at the edge of its budget must not empty it: the budget-spent proof scene showed every record lost under that reading. The answer is printed by `run` after `dispatch` returns, after the bounded wait. The harness reads a hook's stdout at exit, so the order on the pipe changes nothing |
+| 2 metrics validation runs inside the budget charged to later hooks, deep nesting fails the result | disputed: validation serializes at most 4 KB once per hook, microseconds against a 500 ms timeout. A result that does not parse as one JSON object is the existing contract of `harness-hook-dispatch`, metrics or not |
+| 3 `thread::spawn` panics when no thread can start | fixed: `Builder::spawn`, a failure is the one stderr line naming the records lost |
+| 4 appends can interleave across processes, a torn tail poisons `load` | fixed: writers and the import take a lock file in the record directory, each monthly file is written in one call per execution, and `load` skips a line that is not a record with one stderr note |
+| 5 duplicate check, append, and checkpoint are not one operation | fixed: the import holds the directory lock across the check and the append, and the checkpoint is written to a temp file and renamed |
+| 6 checkpoints keyed on a displayed, relative path | fixed: the canonical path keys the checkpoint. A file that shrinks below its offset is read from the start |
+| 7 `rune hook run` accepted as lint provenance | fixed: only the legacy shell hook and `lint-on-write` mark an attachment. The dispatcher's own outcomes are in the live record |
+| 8 cause counts ignore denial, advice counts "not deny" | fixed: a cause counts only in a run that asked to deny, advice only in a run that asked for allow |
+| 9 rows rank by findings, so a tie on caused denials is not what `--top` cuts | fixed: rows rank by denials caused, then findings, then name. The proof scene is a real three-way tie |
+| 10 filters before `stats` are discarded | fixed: both filter sets merge, the one after `stats` wins per field |
+| 11 the proof test ran `spec list` | fixed: `rune proof run` on the `filled-good` fixture with a populated state dir. Bench and sign stay covered by the source scan only, a stated limit |
+| 12 a closure clippy would reject | applied, though the check had passed |
+
+Grok on the code (`grok-4.7` through the cliproxy route, clean state, 11 hits, 2026-10-17). Five restate Astra's 1, 4, 9, 8, and 11 and took their fixes. The rest:
+
+| Hit | Disposition |
+|---|---|
+| 4b a rule named only in `cause` gets no row | fixed: a cause the rules object does not name still gets its row and counts |
+| 5 imported advice keeps a cause list | fixed: an attachment that advised has its causes cleared, as the adapter does |
+| 6 a missing session or tool-use id collapses into one identity | fixed: a record without both has no identity and is never a duplicate |
+| 7 an unresolved state dir loses records with no line | fixed: the runner keeps the resolution error and reports it once per event that had records |
+| 8 `walk` follows symlink cycles | fixed: symlinks are not followed |
+| 10 the clean-file test accepted any rules object and skipped without rumdl | fixed: rules and cause must both be empty, with or without the linters |
+| 11 a week whose Sunday is out of range panics | fixed: the same "not an ISO week" error |

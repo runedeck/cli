@@ -65,6 +65,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.
 - Pace and frame the cast of `rune proof run` for a reader: a rule per capability, a boxed title and kind line per scene, typed commands, a tick or cross per step, `--pause` between scenes, a tally.
 - Read `# text` lines in a console fence as comments: dim in the cast, recorded in the transcript with the command lines, compared by `--check`.
+- Write one hook record per hook the dispatcher runs or fails to start to `hooks/record/YYYY-MM.jsonl` under the state dir, after the answer is encoded, bounded by the dispatcher's reserve.
+- Accept `metrics` in a hook result: identifier keys, integer values, at most 4096 bytes, copied into the record or dropped with one stderr line.
+- Report `rules` and `cause` from the `lint-on-write` adapter as hook metrics, counted from the lines it reports.
+- Add `rune hook record` to list the record with `--since`, `--until`, `--harness`, `--hook`, `--rule`, `--file`, `--asked`, `--answer`, and `--json`.
+- Add `rune hook record stats` with rules by findings, cause runs, sole-cause runs, and advice runs, weeks, repeat denials, files, hooks, and `--top`.
+- Add `rune hook record import --harness claude` to backfill the record from raw Claude Code transcripts with a per-file checkpoint.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.

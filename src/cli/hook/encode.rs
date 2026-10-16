@@ -24,6 +24,10 @@ pub(crate) struct HandlerResult {
     pub input: Option<Value>,
     #[serde(default)]
     pub context: Vec<String>,
+    /// Counted facts about the run, copied into the hook record once
+    /// validated: identifier keys, integer values, at most 4096 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<Value>,
 }
 
 const fn one() -> u32 {
@@ -38,6 +42,7 @@ impl Default for HandlerResult {
             reason: None,
             input: None,
             context: Vec::new(),
+            metrics: None,
         }
     }
 }
@@ -61,6 +66,18 @@ pub(crate) enum Effect {
     Deny,
     /// On a turn end: the turn is not over, keep working.
     ContinueTurn,
+}
+
+impl Effect {
+    /// The word the hook record uses: what a hook asked for, or what the
+    /// dispatcher answered.
+    pub(crate) const fn word(self) -> &'static str {
+        match self {
+            Self::Pass => "allow",
+            Self::Deny => "deny",
+            Self::ContinueTurn => "stop",
+        }
+    }
 }
 
 /// What the dispatcher prints and how it exits.

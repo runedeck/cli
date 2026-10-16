@@ -1,0 +1,17 @@
+# One slow hook spends the whole tool.after budget, so the hook after it
+# is not started and its record names the budget.
+hooks:
+  version: 1
+  events:
+    tool.after: {budget_ms: 300}
+  handlers:
+    - id: slow
+      exec: [sh, -c, 'cat > /dev/null; sleep 2; printf "%s" "{}"']
+      events: [tool.after]
+      order: 10
+      timeout_ms: 5000
+    - id: lint
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [tool.after]
+      order: 20
+      timeout_ms: 1000

@@ -16,6 +16,7 @@ use serde_json::Value;
 use super::encode::{Answer, Effect, HandlerResult, encode};
 use super::payload::{HandlerPayload, decode, event_matches, payload_event};
 use super::plan;
+use super::record::{self, Record};
 use crate::cli::process::{ProcessFailure, ProcessRequest, run_process_request};
 
 /// The entry point of the CLI: read stdin, dispatch, print, exit.
@@ -69,11 +70,18 @@ pub(crate) type SpawnFn =
 
 pub(crate) struct Runner {
     pub(crate) spawn: Box<SpawnFn>,
+    /// Where the hook record is written; `None` writes no record.
+    pub(crate) record_dir: Option<PathBuf>,
+    /// Why no record directory could be resolved, reported once per event
+    /// that had records to write.
+    pub(crate) record_error: Option<String>,
 }
 
 impl Runner {
     pub(crate) fn real() -> Self {
         Self {
+            record_dir: record::dir().ok(),
+            record_error: record::dir().err().map(|e| e.to_string()),
             spawn: Box::new(|handler, stdin, timeout, env, cwd| {
                 // `rune-hook-<name>` is a built-in adapter: this binary,
                 // `hook adapter <name>`, with the handler's own arguments.
@@ -115,6 +123,9 @@ impl Runner {
 struct Failure {
     why: String,
     policy: OnFailure,
+    /// The record's failure word: timeout, exit, result, or budget.
+    kind: &'static str,
+    exit_status: Option<i32>,
 }
 
 /// Dispatch one event. Pure over the plan, the payload, and the runner.
@@ -126,29 +137,12 @@ pub(crate) fn dispatch(
     runner: &Runner,
 ) -> Answer {
     let Some(event) = plan.event(harness, native_event) else {
-        // A registration without handlers: the config changed since the
-        // table was written. Nothing to run, nothing to say on stdout.
-        return Answer {
-            stderr: vec![format!(
-                "rune hook: no handler subscribes to {native_event} on {harness}; run `rune install`"
-            )],
-            ..Answer::default()
-        };
+        return unregistered(harness, native_event);
     };
-    let raw = match raw {
+    let raw = match admit(harness, native_event, event, raw) {
         Ok(raw) => raw,
-        Err(why) => return dispatcher_failure(harness, native_event, event, &why),
+        Err(answer) => return answer,
     };
-    if let Some(carried) = payload_event(harness, &raw)
-        && !event_matches(harness, &carried, native_event)
-    {
-        return dispatcher_failure(
-            harness,
-            native_event,
-            event,
-            &format!("the payload names `{carried}` but the registration is for `{native_event}`"),
-        );
-    }
     let can_block = event.canonical.is_some_and(|c| c.can_block(harness));
     let mut payload = decode(harness, native_event, raw);
     let started = Instant::now();
@@ -157,68 +151,80 @@ pub(crate) fn dispatch(
     let mut merged = HandlerResult::default();
     let mut stderr = Vec::new();
     let mut log = log_preamble(&payload);
+    let mut records: Vec<Record> = Vec::new();
     for handler in &event.handlers {
         let remaining = budget
             .saturating_sub(started.elapsed())
             .saturating_sub(reserve);
+        let handler_started = Instant::now();
         let outcome = if remaining.is_zero() {
-            Err(Failure {
-                why: format!(
-                    "the {} ms budget of {native_event} was spent before it started",
-                    event.budget_ms
-                ),
-                policy: handler.on_failure,
-            })
+            Err(budget_spent(
+                native_event,
+                event.budget_ms,
+                handler.on_failure,
+            ))
         } else {
             let timeout = Duration::from_millis(handler.timeout_ms).min(remaining);
             run_handler(handler, &payload, timeout, runner)
         };
+        let mut line = record_line(
+            harness,
+            native_event,
+            &payload,
+            &handler.id,
+            handler_started,
+        );
         match outcome {
-            Ok(result) => {
-                let _ = writeln!(log, "{} {:?}", handler.id, result.effect);
-                if let Some(reason) = result.reason.as_deref().filter(|r| !r.is_empty()) {
-                    let first = reason.lines().next().unwrap_or_default();
-                    let _ = writeln!(
-                        log,
-                        "reason: {}",
-                        first.chars().take(160).collect::<String>()
-                    );
-                }
+            Ok(mut result) => {
+                line.exit_status = Some(0);
+                line.asked = result.effect.word().to_string();
+                line.metrics = take_metrics(&mut result, &handler.id, &mut stderr);
+                log_result(&mut log, &handler.id, &result);
                 if event.mode == Mode::Passive && result.effect != Effect::Pass {
-                    stderr.push(format!(
-                        "rune hook: {native_event} is passive on {harness}; {}'s {:?} is logged, not applied",
-                        handler.id, result.effect
+                    stderr.push(passive_note(
+                        native_event,
+                        harness,
+                        &handler.id,
+                        result.effect,
                     ));
                 }
                 merge(&mut payload, &mut merged, result, event.mode);
             }
             Err(failure) => {
                 let _ = writeln!(log, "{} failed: {}", handler.id, failure.why);
-                match failure.policy {
-                    OnFailure::Warn => stderr.push(format!(
-                        "rune hook: {} failed: {} (warn, proceeding)",
-                        handler.id, failure.why
-                    )),
-                    OnFailure::Deny if can_block && event.mode != Mode::Passive => {
-                        if merged.effect == Effect::Pass {
-                            merged.effect = Effect::Deny;
-                            merged.reason = Some(format!("{} failed: {}", handler.id, failure.why));
-                        }
-                        stderr.push(format!("rune hook: {} failed: {} (deny)", handler.id, failure.why));
-                    }
-                    OnFailure::Deny => stderr.push(format!(
-                        "rune hook: {} failed: {} (deny, but {harness} cannot block {native_event})",
-                        handler.id, failure.why
-                    )),
+                line.failure = Some(failure.kind.to_string());
+                line.exit_status = failure.exit_status;
+                if failure.kind == "budget" {
+                    line.duration_ms = Some(0);
                 }
+                apply_failure(
+                    &failure,
+                    &handler.id,
+                    can_block && event.mode != Mode::Passive,
+                    harness,
+                    native_event,
+                    &mut merged,
+                    &mut stderr,
+                );
             }
         }
+        records.push(line);
         if event.mode == Mode::Gate && merged.effect == Effect::Deny {
             break;
         }
     }
+    // The reserve is the dispatcher's own allowance for the answer and the
+    // record: the hooks never get it, and a hook that overran its timeout
+    // does not take it away. The writer gets what the answer left of it.
+    let own_phase = Instant::now();
     let mut answer = encode(harness, native_event, &merged);
     stderr.append(&mut answer.stderr);
+    stderr.extend(write_records(
+        runner,
+        records,
+        merged.effect,
+        reserve.saturating_sub(own_phase.elapsed()),
+    ));
     answer.stderr = stderr;
     append_log(harness, native_event, &log);
     answer
@@ -254,15 +260,17 @@ fn run_handler(
     timeout: Duration,
     runner: &Runner,
 ) -> Result<HandlerResult, Failure> {
-    let fail = |why: String| Failure {
+    let fail = |why: String, kind: &'static str, exit_status: Option<i32>| Failure {
         why,
         policy: handler.on_failure,
+        kind,
+        exit_status,
     };
     if handler.exec.is_empty() {
-        return Err(fail("names no executable".to_string()));
+        return Err(fail("names no executable".to_string(), "exit", None));
     }
     let stdin = serde_json::to_vec(payload)
-        .map_err(|e| fail(format!("cannot serialize the payload: {e}")))?;
+        .map_err(|e| fail(format!("cannot serialize the payload: {e}"), "result", None))?;
     let env = vec![
         (
             OsString::from("RUNE_HARNESS"),
@@ -287,26 +295,42 @@ fn run_handler(
         .as_ref()
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
-    let (code, stdout, stderr) =
-        (runner.spawn)(handler, &stdin, timeout, &env, cwd.as_ref()).map_err(fail)?;
+    let (code, stdout, stderr) = (runner.spawn)(handler, &stdin, timeout, &env, cwd.as_ref())
+        .map_err(|why| {
+            let kind = if why.starts_with("timed out") {
+                "timeout"
+            } else {
+                "exit"
+            };
+            fail(why, kind, None)
+        })?;
     if code != Some(0) {
         let tail = stderr.lines().last().unwrap_or_default();
-        return Err(fail(format!(
-            "exited {}{}",
-            code.map_or_else(|| "by signal".to_string(), |c| c.to_string()),
-            if tail.is_empty() {
-                String::new()
-            } else {
-                format!(": {tail}")
-            }
-        )));
+        return Err(fail(
+            format!(
+                "exited {}{}",
+                code.map_or_else(|| "by signal".to_string(), |c| c.to_string()),
+                if tail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {tail}")
+                }
+            ),
+            "exit",
+            code,
+        ));
     }
     let text = stdout.trim();
     if text.is_empty() {
         return Ok(HandlerResult::default());
     }
-    serde_json::from_str::<HandlerResult>(text)
-        .map_err(|e| fail(format!("printed something that is not one result: {e}")))
+    serde_json::from_str::<HandlerResult>(text).map_err(|e| {
+        fail(
+            format!("printed something that is not one result: {e}"),
+            "result",
+            Some(0),
+        )
+    })
 }
 
 /// The first log line of a tool event: the tool and its subject, so the
@@ -379,4 +403,168 @@ fn append_log(harness: Harness, native_event: &str, text: &str) {
             chrono::Utc::now().to_rfc3339()
         );
     }
+}
+
+/// The record line for one hook, before its outcome is known.
+fn record_line(
+    harness: Harness,
+    native_event: &str,
+    payload: &HandlerPayload,
+    hook: &str,
+    started: Instant,
+) -> Record {
+    Record {
+        v: 1,
+        ts: Record::stamp(&chrono::Utc::now()),
+        harness: harness.as_str().to_string(),
+        event: payload.event.clone(),
+        native_event: native_event.to_string(),
+        hook: hook.to_string(),
+        session_id: payload.session_id.clone(),
+        tool_use_id: payload.tool.as_ref().and_then(|t| t.id.clone()),
+        cwd: payload.cwd.clone(),
+        file: payload
+            .tool
+            .as_ref()
+            .and_then(|t| super::adapters::written_paths(t).into_iter().next())
+            .map(|p| p.display().to_string()),
+        duration_ms: Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+        exit_status: None,
+        asked: Effect::Pass.word().to_string(),
+        answer: String::new(),
+        failure: None,
+        metrics: None,
+        source: None,
+    }
+}
+
+/// Write the event's records after the answer is encoded, bounded by what
+/// the answer left of the reserve the dispatcher keeps for itself. Never
+/// changes the answer.
+fn write_records(
+    runner: &Runner,
+    mut records: Vec<Record>,
+    answer: Effect,
+    reserve: Duration,
+) -> Vec<String> {
+    let Some(dir) = &runner.record_dir else {
+        return match (&runner.record_error, records.len()) {
+            (Some(why), count) if count > 0 => vec![format!(
+                "rune hook: no record directory: {why}; {count} hook record(s) lost"
+            )],
+            _ => Vec::new(),
+        };
+    };
+    let word = answer.word();
+    for line in &mut records {
+        line.answer = word.to_string();
+    }
+    record::write_all(dir, records, reserve)
+}
+
+/// A hook's metrics, kept when they pass validation and dropped with one
+/// stderr line when they do not.
+fn take_metrics(result: &mut HandlerResult, hook: &str, stderr: &mut Vec<String>) -> Option<Value> {
+    let metrics = result.metrics.take()?;
+    match record::validate_metrics(&metrics) {
+        Ok(()) => Some(metrics),
+        Err(why) => {
+            stderr.push(format!(
+                "rune hook: {hook} returned metrics the record refuses: {why}; dropped"
+            ));
+            None
+        }
+    }
+}
+
+/// A failed hook under its policy: warn and proceed, or deny when the
+/// harness can block the event.
+fn apply_failure(
+    failure: &Failure,
+    hook: &str,
+    can_deny: bool,
+    harness: Harness,
+    native_event: &str,
+    merged: &mut HandlerResult,
+    stderr: &mut Vec<String>,
+) {
+    match failure.policy {
+        OnFailure::Warn => stderr.push(format!(
+            "rune hook: {hook} failed: {} (warn, proceeding)",
+            failure.why
+        )),
+        OnFailure::Deny if can_deny => {
+            if merged.effect == Effect::Pass {
+                merged.effect = Effect::Deny;
+                merged.reason = Some(format!("{hook} failed: {}", failure.why));
+            }
+            stderr.push(format!("rune hook: {hook} failed: {} (deny)", failure.why));
+        }
+        OnFailure::Deny => stderr.push(format!(
+            "rune hook: {hook} failed: {} (deny, but {harness} cannot block {native_event})",
+            failure.why
+        )),
+    }
+}
+
+/// The log lines of one result: the effect and the first reason line.
+fn log_result(log: &mut String, hook: &str, result: &HandlerResult) {
+    let _ = writeln!(log, "{hook} {:?}", result.effect);
+    if let Some(reason) = result.reason.as_deref().filter(|r| !r.is_empty()) {
+        let first = reason.lines().next().unwrap_or_default();
+        let _ = writeln!(
+            log,
+            "reason: {}",
+            first.chars().take(160).collect::<String>()
+        );
+    }
+}
+
+/// The failure of a hook the budget left no time for.
+fn budget_spent(native_event: &str, budget_ms: u64, policy: OnFailure) -> Failure {
+    Failure {
+        why: format!("the {budget_ms} ms budget of {native_event} was spent before it started"),
+        policy,
+        kind: "budget",
+        exit_status: None,
+    }
+}
+
+/// A steering result on a passive event is logged and never applied.
+fn passive_note(native_event: &str, harness: Harness, hook: &str, effect: Effect) -> String {
+    format!(
+        "rune hook: {native_event} is passive on {harness}; {hook}'s {effect:?} is logged, not applied"
+    )
+}
+
+/// A registration without handlers: the config changed since the table
+/// was written. Nothing to run, nothing to say on stdout.
+fn unregistered(harness: Harness, native_event: &str) -> Answer {
+    Answer {
+        stderr: vec![format!(
+            "rune hook: no handler subscribes to {native_event} on {harness}; run `rune install`"
+        )],
+        ..Answer::default()
+    }
+}
+
+/// The payload, once it decoded and names the event it was registered for.
+fn admit(
+    harness: Harness,
+    native_event: &str,
+    event: &PlannedEvent,
+    raw: Result<Value, String>,
+) -> Result<Value, Answer> {
+    let raw = raw.map_err(|why| dispatcher_failure(harness, native_event, event, &why))?;
+    if let Some(carried) = payload_event(harness, &raw)
+        && !event_matches(harness, &carried, native_event)
+    {
+        return Err(dispatcher_failure(
+            harness,
+            native_event,
+            event,
+            &format!("the payload names `{carried}` but the registration is for `{native_event}`"),
+        ));
+    }
+    Ok(raw)
 }

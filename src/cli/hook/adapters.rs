@@ -594,20 +594,35 @@ fn lint_on_write_in(payload: &HandlerPayload, skip_scratch: bool) -> HandlerResu
             advice = joined;
         }
     }
+    let metrics = Some(lint_metrics(&blocking, &advice));
     if !blocking.trim().is_empty() {
         let mut result = HandlerResult::deny(blocking.trim().to_string());
         if !advice.is_empty() {
             result.context.push(advice);
         }
+        result.metrics = metrics;
         return result;
     }
-    let mut result = HandlerResult::default();
+    let mut result = HandlerResult {
+        metrics,
+        ..HandlerResult::default()
+    };
     if !advice.is_empty() {
         result.context.push(format!(
             "Vale advice for the file you wrote, not a block. Rewrite a flagged sentence when the meaning survives it, keep the wording when it does not.\n{advice}"
         ));
     }
     result
+}
+
+/// The hook metrics of a lint run: rule counts from everything reported,
+/// and the causes from the lines that deny. Counts only, no text.
+fn lint_metrics(blocking: &str, advice: &str) -> Value {
+    let mut found = super::findings::Findings::parse(blocking);
+    let mut advised = super::findings::Findings::parse(advice);
+    advised.cause.clear();
+    found.extend(advised);
+    found.metrics()
 }
 
 /// The session's capture, detached: the launcher never waits on it.
@@ -1055,5 +1070,41 @@ mod tests {
             false,
         );
         assert_eq!(result.effect, Effect::Deny, "{result:?}");
+        // The metrics count the rumdl rules that denied and carry no text.
+        let metrics = result.metrics.clone().expect("metrics");
+        let rules = metrics["rules"].as_object().unwrap();
+        assert!(rules.keys().any(|k| k.starts_with("MD")), "{metrics}");
+        let cause: Vec<&str> = metrics["cause"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(cause.iter().all(|c| rules.contains_key(*c)), "{metrics}");
+        assert!(!metrics.to_string().contains("Bad heading"));
+        assert_eq!(super::super::record::validate_metrics(&metrics), Ok(()));
+    }
+
+    #[test]
+    fn lint_on_write_reports_empty_metrics_for_a_clean_file() {
+        // With or without the linters installed, a clean file yields empty metrics.
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let cwd = dir.path().display().to_string();
+        let md = dir.path().join("clean.md");
+        std::fs::write(&md, "# Clean\n\nOne plain sentence.\n").unwrap();
+        let result = lint_on_write_in(
+            &payload(
+                Harness::Claude,
+                "tool.after",
+                Some(("Write", json!({"file_path": md.display().to_string()}))),
+                &cwd,
+                None,
+            ),
+            false,
+        );
+        assert_eq!(result.effect, Effect::Pass, "{result:?}");
+        let metrics = result.metrics.clone().expect("metrics");
+        assert_eq!(metrics["cause"], json!([]));
+        assert_eq!(metrics["rules"], json!({}), "{result:?}");
     }
 }
