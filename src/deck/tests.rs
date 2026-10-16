@@ -72,7 +72,7 @@ fn skips_dotfiles_under_runes_without_warning() {
     let deck = load(root.path()).unwrap();
 
     assert!(deck.entries.is_empty());
-    assert!(deck.warnings.is_empty());
+    assert_eq!(deck.warnings, [] as [String; 0]);
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn skips_root_readme_under_runes_without_warning() {
     let deck = load(root.path()).unwrap();
 
     assert!(deck.entries.is_empty());
-    assert!(deck.warnings.is_empty());
+    assert_eq!(deck.warnings, [] as [String; 0]);
 }
 
 #[test]

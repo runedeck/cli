@@ -181,7 +181,7 @@ fn check_module_structure_passes_with_all_required_files() {
     let mut report = ValidationReport::default();
     check_module_structure(temp_directory.path(), &mut report);
 
-    assert!(report.result.errors.is_empty());
+    assert_eq!(report.result.errors, [] as [String; 0]);
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn check_module_yaml_skips_when_no_module_yaml() {
 
     check_module_yaml(temp_directory.path(), &mut report);
 
-    assert!(report.result.errors.is_empty());
+    assert_eq!(report.result.errors, [] as [String; 0]);
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn top_level_validation_preserves_specification_schema_warnings() {
     check_spec_lifecycle_with_validator(root.path(), &mut report, specification_schema_warning)
         .unwrap();
 
-    assert!(report.result.errors.is_empty());
+    assert_eq!(report.result.errors, [] as [String; 0]);
     assert_eq!(
         report.result.warnings,
         vec!["docs/specs/search/spec.md:4: schema advisory"]

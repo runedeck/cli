@@ -542,7 +542,7 @@ fn review_session_records_pending_blocks_and_refuses_double_start() {
     let blocks = record["review"]["predicate"]["blocks"]
         .as_sequence()
         .expect("blocks");
-    assert!(!blocks.is_empty());
+    assert_ne!(blocks.as_slice(), [] as [serde_yaml::Value; 0]);
     assert!(
         blocks
             .iter()

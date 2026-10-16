@@ -938,7 +938,7 @@ fn launch_queues_harness_in_module_repo() {
 
     let command = app.take_external().expect("launch queued");
     assert_eq!(command.directory, PathBuf::from("/tmp/rune-core"));
-    assert!(command.args.is_empty());
+    assert_eq!(command.args, [] as [String; 0]);
 }
 
 #[test]

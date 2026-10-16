@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(commits[0].message, "feat: add thing");
         assert_eq!(commits[0].author, "Alice Example");
         assert_eq!(commits[0].checkpoint, "933ba0519d0a");
-        assert!(commits[1].checkpoint.is_empty());
+        assert_eq!(commits[1].checkpoint, "");
     }
 
     #[test]

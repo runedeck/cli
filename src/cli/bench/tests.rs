@@ -921,7 +921,7 @@ fn second_run_reuses_every_prior_result() {
         match &record.result {
             Some(RecordResult::Reused(reused)) => {
                 assert!(reused.reused);
-                assert!(!reused.source_file.is_empty());
+                assert_ne!(reused.source_file, "");
             }
             other => panic!("expected reused result, got {other:?}"),
         }
@@ -993,6 +993,6 @@ fn regenerate_reports_nothing_when_cache_is_empty() {
     let root = tempfile::tempdir().expect("tempdir");
     let rebuilt = regenerate_from_cache(&echo_options(&suite, &models, root.path(), None, None))
         .expect("regenerates");
-    assert!(rebuilt.model_ids.is_empty());
+    assert_eq!(rebuilt.model_ids, [] as [String; 0]);
     assert!(rebuilt.records.is_empty());
 }

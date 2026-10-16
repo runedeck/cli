@@ -331,7 +331,7 @@ fn structured_error_json_has_the_stable_shape() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         error,
@@ -360,7 +360,7 @@ fn init_errors_use_the_shared_json_renderer() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["code"], "error.io");
     assert!(
@@ -382,7 +382,7 @@ fn structured_error_human_fix_uses_a_separate_line() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, [] as [u8; 0]);
     let stderr = String::from_utf8(output.stderr).unwrap();
     let lines = stderr.lines().collect::<Vec<_>>();
     assert_eq!(lines.len(), 2);
@@ -602,7 +602,7 @@ fn strict_install_error_uses_the_resolved_review_command() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let source = source.canonicalize().unwrap();
     let expected = format!(

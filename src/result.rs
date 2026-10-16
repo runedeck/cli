@@ -57,8 +57,8 @@ mod tests {
         assert!(result.installed.is_empty());
         assert!(result.skipped.is_empty());
         assert!(result.pruned.is_empty());
-        assert!(result.warnings.is_empty());
-        assert!(result.errors.is_empty());
+        assert_eq!(result.warnings, [] as [String; 0]);
+        assert_eq!(result.errors, [] as [String; 0]);
     }
 
     #[test]

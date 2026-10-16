@@ -41,7 +41,7 @@ mod skill_symlink_tests {
             .find(|source| source.relative_path.ends_with("/Alias.md"))
             .unwrap();
         assert!(alias.passthrough);
-        assert!(alias.content.is_empty());
+        assert_eq!(alias.content, "");
         assert!(alias.content_bytes.is_none());
     }
 

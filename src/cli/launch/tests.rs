@@ -209,7 +209,10 @@ fn wrapped_launch_does_not_apply_env_to_wrapper_process() {
     .expect("compose");
     let tool = resolve_tool("claude", &Launch::default());
 
-    assert!(process_env(&tool, &plan).is_empty());
+    assert_eq!(
+        process_env(&tool, &plan),
+        [] as [(std::ffi::OsString, std::ffi::OsString); 0]
+    );
 }
 
 #[test]
@@ -550,8 +553,8 @@ fn direct_flag_disables_profile_middleware() {
     )
     .expect("direct profile launch");
 
-    assert!(resolved.pre.is_empty());
-    assert!(resolved.wrap.is_empty());
+    assert_eq!(resolved.pre, [] as [crate::cli::launch::PreStep; 0]);
+    assert_eq!(resolved.wrap, [] as [Vec<std::ffi::OsString>; 0]);
 }
 
 #[test]
@@ -679,7 +682,7 @@ fn check_flag_parses_like_dry_run() {
     .expect("parse");
     assert!(parsed.check);
     assert!(parsed.dry_run);
-    assert!(parsed.args.is_empty());
+    assert_eq!(parsed.args, [] as [std::ffi::OsString; 0]);
 }
 
 #[test]
@@ -849,6 +852,6 @@ fn direct_mode_omits_profile_middleware() {
     )
     .expect("direct launch");
 
-    assert!(resolved.wrap.is_empty());
-    assert!(resolved.pre.is_empty());
+    assert_eq!(resolved.wrap, [] as [Vec<std::ffi::OsString>; 0]);
+    assert_eq!(resolved.pre, [] as [crate::cli::launch::PreStep; 0]);
 }

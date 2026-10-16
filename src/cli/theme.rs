@@ -371,7 +371,7 @@ mod tests {
         let (tones, warnings) = resolve(&selection, Appearance::Unknown);
         assert_eq!(tones.accent.rgb, (255, 0, 0));
         assert_eq!(tones.good, named(DEFAULT_DARK).unwrap().good);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [String; 0]);
     }
 
     #[test]

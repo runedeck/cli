@@ -409,6 +409,9 @@ mod tests {
         );
         let scalar = "---\nchange: one-change\n---\n";
         assert_eq!(list_values(scalar, "change"), vec!["one-change"]);
-        assert!(list_values("---\nchange: []\n---\n", "change").is_empty());
+        assert_eq!(
+            list_values("---\nchange: []\n---\n", "change"),
+            [] as [String; 0]
+        );
     }
 }

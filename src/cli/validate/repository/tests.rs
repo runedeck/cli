@@ -45,7 +45,7 @@ fn detects_matching_file() {
     let mut report = ValidationReport::default();
     check_template_drift(temp_directory.path(), &mut report);
 
-    assert!(report.result.warnings.is_empty());
+    assert_eq!(report.result.warnings, [] as [String; 0]);
 }
 
 #[test]

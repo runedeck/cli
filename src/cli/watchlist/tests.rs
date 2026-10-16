@@ -57,7 +57,10 @@ fn git_entry_round_trips_through_yaml() {
 #[test]
 fn empty_yaml_yields_no_locations() {
     let config: WatchlistConfig = serde_yaml::from_str("{}").expect("parse empty");
-    assert!(config.locations.is_empty());
+    assert_eq!(
+        config.locations,
+        [] as [crate::cli::watchlist::WatchEntry; 0]
+    );
 }
 
 #[test]
@@ -111,7 +114,10 @@ fn load_strict_from_absent_path_is_empty_ok() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("watchlist.yaml");
     let config = load_strict_from(&path).expect("absent file is ok");
-    assert!(config.locations.is_empty());
+    assert_eq!(
+        config.locations,
+        [] as [crate::cli::watchlist::WatchEntry; 0]
+    );
 }
 
 #[test]
@@ -120,7 +126,10 @@ fn load_strict_from_zero_byte_file_is_empty_ok() {
     let path = dir.path().join("watchlist.yaml");
     std::fs::write(&path, "").expect("write empty");
     let config = load_strict_from(&path).expect("empty file is ok");
-    assert!(config.locations.is_empty());
+    assert_eq!(
+        config.locations,
+        [] as [crate::cli::watchlist::WatchEntry; 0]
+    );
 }
 
 #[test]
@@ -165,7 +174,10 @@ fn load_lenient_from_corrupt_file_is_empty() {
     let path = dir.path().join("watchlist.yaml");
     std::fs::write(&path, "locations:\n    - [unterminated\n").expect("write corrupt");
     let config = load_lenient_from(&path);
-    assert!(config.locations.is_empty());
+    assert_eq!(
+        config.locations,
+        [] as [crate::cli::watchlist::WatchEntry; 0]
+    );
 }
 
 #[test]

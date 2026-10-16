@@ -177,7 +177,10 @@ fn store_round_trips_requests_and_removes_them() {
     assert_eq!(store.load("one").expect("load"), request);
     assert_eq!(store.load_all().expect("all").len(), 1);
     store.remove("one").expect("remove");
-    assert!(store.load_all().expect("all").is_empty());
+    assert_eq!(
+        store.load_all().expect("all"),
+        [] as [crate::cli::sign::queue::store::Request; 0]
+    );
 }
 
 #[test]

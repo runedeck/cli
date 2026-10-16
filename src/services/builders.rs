@@ -653,8 +653,8 @@ mod tests {
             .iter()
             .find(|row| row.name == "HasModel")
             .expect("variant row");
-        assert!(has_model.cells[0].mode.is_empty());
-        assert!(has_model.cells[0].link.is_empty());
+        assert_eq!(has_model.cells[0].mode, "");
+        assert_eq!(has_model.cells[0].link, "");
         assert_eq!(has_model.cells[1].mode, "replace");
     }
 }

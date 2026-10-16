@@ -287,7 +287,7 @@ fn hooks_manifest_invalid_json_errors() {
     let (diagnostics, scripts) = validate_hooks_manifest("{bad", "hooks.json");
     assert_eq!(diagnostics.len(), 1);
     assert!(diagnostics[0].message.contains("invalid JSON"));
-    assert!(scripts.is_empty());
+    assert_eq!(scripts, [] as [String; 0]);
 }
 
 #[test]
@@ -320,5 +320,5 @@ fn hooks_manifest_ignores_non_convention_command() {
         diagnostics.is_empty(),
         "non-convention command is not flagged"
     );
-    assert!(scripts.is_empty());
+    assert_eq!(scripts, [] as [String; 0]);
 }

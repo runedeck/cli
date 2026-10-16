@@ -21,8 +21,8 @@ fn parse_minimal_happy_path() {
     assert_eq!(local.to_string_lossy(), "../rune-core");
     assert!(path.is_none());
     assert_eq!(manifest.runes["rune-core"].skills, vec!["BuildSkill"]);
-    assert!(manifest.runes["rune-core"].agents.is_empty());
-    assert!(manifest.runes["rune-core"].rules.is_empty());
+    assert_eq!(manifest.runes["rune-core"].agents, [] as [String; 0]);
+    assert_eq!(manifest.runes["rune-core"].rules, [] as [String; 0]);
 }
 
 #[test]
@@ -371,8 +371,8 @@ runes:
         rules: [OnlyRule]
 ";
     let manifest = parse(content).unwrap();
-    assert!(manifest.runes["a"].skills.is_empty());
-    assert!(manifest.runes["a"].agents.is_empty());
+    assert_eq!(manifest.runes["a"].skills, [] as [String; 0]);
+    assert_eq!(manifest.runes["a"].agents, [] as [String; 0]);
     assert_eq!(manifest.runes["a"].rules, vec!["OnlyRule"]);
 }
 

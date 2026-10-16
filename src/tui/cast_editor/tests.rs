@@ -56,7 +56,7 @@ fn preselects_cast_and_materializes_it_when_member_is_unchecked() {
 
     let manifest = dotrune::load(&consumer).unwrap().unwrap();
     let selection = &manifest.runes["deck"];
-    assert!(selection.casts.is_empty());
+    assert_eq!(selection.casts, [] as [String; 0]);
     assert_eq!(selection.include, ["science/agents/Researcher"]);
     assert!(editor.status.contains("materialized cast lab"));
 }

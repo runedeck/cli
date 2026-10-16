@@ -926,7 +926,7 @@ mod tests {
         assert_eq!(findings[0].status, IntegrityStatus::Orphan);
 
         let reports = draft_reports(root.path()).unwrap();
-        assert!(reports.is_empty());
+        assert_eq!(reports, [] as [crate::cli::doctor::DraftReport; 0]);
 
         fs::write(
             root.path().join(".drafts"),

@@ -329,6 +329,6 @@ mod tests {
 
         assert!(!codex.deployed);
         assert_eq!(codex.deployment_state, DeploymentState::NotInstalled);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [String; 0]);
     }
 }

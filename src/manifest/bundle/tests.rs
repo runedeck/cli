@@ -40,7 +40,10 @@ fn bundle_identity_is_versioned_and_stable() {
     write(root.path(), "refs/Reference.md", b"Reference.\n");
     let first = inspect_bundle(root.path());
     assert_eq!(first.version, BUNDLE_DIGEST_VERSION);
-    assert!(first.problems.is_empty());
+    assert_eq!(
+        first.problems,
+        [] as [crate::manifest::bundle::BundleProblem; 0]
+    );
     assert_eq!(first, inspect_bundle(root.path()));
     assert_eq!(
         first

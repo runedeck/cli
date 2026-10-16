@@ -16,7 +16,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -319,7 +319,7 @@ def run_observation(args):
         evidence = {"version": "rune-native-skill-evidence/v1", "harness_version": harness_version,
                     "model_route": model_route, "cwd": cwd, "inventory_digest": inventory["inventory_digest"],
                     "configuration_digest": inventory["configuration_digest"], "session_id": session_id,
-                    "observed_at": datetime.now(timezone.utc).isoformat(), "catalog": catalog,
+                    "observed_at": datetime.now(UTC).isoformat(), "catalog": catalog,
                     "accesses": [{key: event[key] for key in ["skill_path", "companion_path", "content_sha256"]} | {"tool_event_id": event["event_id"]} for event in normalized if event["type"] == "tool_access"],
                     "checks": checks, "transcript_sha256": sha256(transcript), "raw_transcript_sha256": sha256(raw)}
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")

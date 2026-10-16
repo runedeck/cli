@@ -17,7 +17,7 @@ fn provider_explain_json_has_the_required_shape_and_evidence() {
         .unwrap();
 
     assert!(output.status.success(), "{:?}", output.status);
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let fields = report
         .as_object()
@@ -131,7 +131,7 @@ fn provider_status_json_reports_one_requested_provider() {
         .unwrap();
 
     assert!(output.status.success(), "{:?}", output.status);
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let providers = report["providers"].as_array().unwrap();
     assert_eq!(providers.len(), 1);
@@ -152,7 +152,7 @@ fn provider_status_unknown_name_has_a_structured_error() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["code"], "provider.unknown");
     assert_eq!(error["fix_command"], "rune provider status");
@@ -170,7 +170,7 @@ fn provider_status_labels_a_plain_source_command_as_review() {
         .unwrap();
 
     assert!(output.status.success(), "{:?}", output.status);
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("review:"), "{stdout}");
     assert!(stdout.contains("rune context"), "{stdout}");

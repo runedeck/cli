@@ -31,7 +31,10 @@ fn symbols_match_case_insensitively_at_identifier_boundaries() {
 #[test]
 fn ordinary_words_and_portable_metadata_remain_valid() {
     let text = "---\nname: Portable\nallowed-tools: [Read, Write, Edit]\nmetadata:\n  context: fork\n  agent: worker\n  model: chosen\n  hooks: []\n---\nRead, Write, Edit, Task, Agent, model, and context are ordinary words.\n";
-    assert!(inspect_text(text, &CODEX_POLICY, true).unwrap().is_empty());
+    assert_eq!(
+        inspect_text(text, &CODEX_POLICY, true).unwrap(),
+        [] as [crate::skill_readiness::portability::Violation; 0]
+    );
 }
 
 #[test]
@@ -88,10 +91,9 @@ fn claude_command_injection_and_exact_tool_calls_are_literal_violations() {
     assert_eq!(violations[0].token, "!`");
     assert_eq!(violations[0].line, 1);
     let ordinary = "Bash and Read are tool names. read(path) is ordinary code. MyBash(command) prefix_Read(path) stay distinct.\n";
-    assert!(
-        inspect_text(ordinary, &CODEX_POLICY, false)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        inspect_text(ordinary, &CODEX_POLICY, false).unwrap(),
+        [] as [crate::skill_readiness::portability::Violation; 0]
     );
 }
 
@@ -200,7 +202,10 @@ fn escaping_or_replaced_symlinks_never_expose_external_text() {
     )
     .unwrap();
     let bundle = inspect_bundle(root.path());
-    assert!(!bundle.problems.is_empty());
+    assert_ne!(
+        bundle.problems,
+        [] as [crate::manifest::bundle::BundleProblem; 0]
+    );
     assert!(inspect_rendered(root.path(), &bundle).is_empty());
     fs::write(root.path().join("guide.md"), "Safe instructions.\n").unwrap();
     let bundle = inspect_bundle(root.path());
