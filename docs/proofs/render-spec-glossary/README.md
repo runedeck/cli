@@ -1,15 +1,16 @@
 ---
 type: proof
 change: render-spec-glossary
-recorded: 2026-10-13
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+head: d935b16de3e7e20588382adbe85efeebcbe84934
+recorded: 2026-10-17
+transcript: db58d4f185878ac5426b26b8c6bcd3ee044f6c7d896aeaa060ec3bebff6a99a0
 scenes:
 - scenario: render-spec-glossary#the-glossary-is-rendered-from-the-ontology/two-writes-read-one-ontology
-  kind: unproven
+  kind: check
 - scenario: render-spec-glossary#the-check-reports-drift/term-line-edited-in-the-file
-  kind: unproven
+  kind: check
 - scenario: render-spec-glossary#the-check-reports-drift/glossary-file-absent
-  kind: unproven
+  kind: check
 ---
 
 # Proof: render-spec-glossary
