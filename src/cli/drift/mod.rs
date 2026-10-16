@@ -112,7 +112,13 @@ fn discover_current_provider_targets() -> Result<(PathBuf, Vec<(String, PathBuf)
         .with_fix_command("pwd")
     })?;
     let provider_targets = crate::cli::config::registered_provider_target_records(&current_dir)?;
-    let targets = discover_provider_targets(&current_dir, &provider_targets)?;
+    let mut targets = discover_provider_targets(&current_dir, &provider_targets)?;
+    // A consumer's deployed ontology carries its own manifest and verifies
+    // like a provider tree.
+    if crate::cli::deploy::ontology::deployed_target(&current_dir)?.is_some() {
+        let directory = crate::cli::deploy::ontology::ONTOLOGY_DIRECTORY;
+        targets.push((directory.to_string(), PathBuf::from(directory)));
+    }
     if targets.is_empty() {
         return Err(Error::new(
             ErrorKind::Io,

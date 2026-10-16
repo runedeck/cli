@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Add the `.rune` key `ontology: <source>`: `rune install` copies that source's ontology to `ontology/rune.ttl` with a manifest and a sidecar, so `rune spec validate` reads the deck's terms there.
+- Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.

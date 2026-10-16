@@ -30,9 +30,7 @@ use std::path::Path;
 
 pub use git::cached_worktree;
 pub use parse::{DotRune, RuneList, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
-#[cfg(feature = "tui")]
-pub use resolve::materialize_source;
-pub use resolve::{enumerate_ids, resolve_sources};
+pub use resolve::{enumerate_ids, materialize_source, resolve_sources};
 
 const MAX_BYTES: usize = 64 * 1024;
 

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use super::{DriftEntry, DriftResult, DriftStatus, compare_file_content, print_drift_result};
 use crate::cli::config;
+use crate::cli::deploy::ontology::{self, ONTOLOGY_DIRECTORY, ONTOLOGY_FILE};
 use crate::cli::deploy::{is_owned_by_module, load_deployed_manifest};
 use rune::provider::{ContentKind, ProviderConfig};
 
@@ -69,6 +70,15 @@ pub fn execute(
             module_name,
             &ignored,
         );
+    }
+
+    // A consumer's ontology is deployed from its source, not from build/, so
+    // the source bytes are the upstream side of the comparison.
+    if let Some(consumer) = crate::cli::dotrune::load(module_root)?
+        && let Some(ontology_source) = ontology::resolve_source(&consumer, module_root)?
+    {
+        compared_any = true;
+        compare_ontology(&mut result, &ontology_source, base);
     }
 
     if !compared_any {
@@ -386,6 +396,27 @@ fn compare_provider(
 fn is_generated_plugin_file(key: &str, deployed_base: &Path) -> bool {
     matches!(key, "hooks/hooks.json" | ".claude-plugin/plugin.json")
         && deployed_base.join(".claude-plugin/plugin.json").is_file()
+}
+
+/// The consumer's ontology source against its deployed copy, byte for byte.
+fn compare_ontology(
+    result: &mut DriftResult,
+    source: &ontology::OntologySource,
+    target_base: &Path,
+) {
+    let name = format!("{ONTOLOGY_DIRECTORY}/{ONTOLOGY_FILE}");
+    let deployed = target_base.join(ONTOLOGY_DIRECTORY).join(ONTOLOGY_FILE);
+    let status = match (fs::read(&source.path), fs::read(&deployed)) {
+        (Ok(upstream), Ok(local)) if upstream == local => DriftStatus::Identical,
+        (Ok(_), Ok(_)) => DriftStatus::BodyOnly,
+        (Ok(_), Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            DriftStatus::LocalOnly
+        }
+        _ => DriftStatus::Unreadable,
+    };
+    let mut entry = only_entry(&name, status, ONTOLOGY_DIRECTORY);
+    entry.source_uri = Some(source.uri.clone());
+    result.entries.push(entry);
 }
 
 fn only_entry(name: &str, status: DriftStatus, category: &str) -> DriftEntry {

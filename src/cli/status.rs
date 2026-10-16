@@ -109,6 +109,17 @@ fn collect(root: &Path) -> Result<StatusDashboard, Error> {
         runes = fallback_inventory(root);
         (0, 0, Vec::new())
     };
+    let mut deploy_targets = deploy_targets;
+    // A consumer's deployed ontology is a deploy target of its own.
+    if let Some(target) = super::deploy::ontology::deployed_target(root)? {
+        let (ok, stale) = super::deploy::ontology::verify(&target)?;
+        deploy_targets.push(DeployTargetStatus {
+            name: super::deploy::ontology::ONTOLOGY_DIRECTORY.to_string(),
+            path: target.display().to_string(),
+            ok,
+            stale,
+        });
+    }
 
     let changes = collect_changes(root)?;
     let change_counts = changes

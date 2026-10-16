@@ -597,6 +597,7 @@ fn minimal_manifest(source: &str, reference: Option<&str>) -> Result<DotRune, Er
         sources,
         runes: BTreeMap::new(),
         dirs: Vec::new(),
+        ontology: None,
     })
 }
 

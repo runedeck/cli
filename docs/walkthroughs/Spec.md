@@ -89,6 +89,19 @@ rune spec doctor              # the same findings beside relationship health
 rune spec glossary            # every term, its tag, and the definition line to paste
 ```
 
+A consumer has no `deck.yaml`, so it reads the deck's ontology through a deployed copy. Name the source under `ontology` in `.rune`:
+
+```yaml
+version: 1
+sources:
+    deck:
+        git: https://github.com/runedeck/deck
+        ref: <40-hex commit>
+ontology: deck
+```
+
+`rune install` copies `<source>/ontology/rune.ttl`, or the path the source's `deck.yaml` names under `ontology`, to `ontology/rune.ttl` at the consumer root, with its fingerprint in `ontology/.manifest` and its sidecar at `ontology/.provenance/rune.ttl.yaml`. `rune drift` and `rune status` report a copy that left that record, and a hand-edited copy is skipped on the next install unless `--force` is passed. A source with no ontology file fails the install before any provider tree is written.
+
 ## Review checklist
 
 - [ ] Native `docs/`, direct `openspec/`, and a custom root complete the lifecycle.

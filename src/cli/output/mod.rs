@@ -183,10 +183,12 @@ fn artifact_label(target: &str) -> String {
     {
         return format!("hooks/{name}");
     }
+    // A single-file rune is named by its stem; any other file, such as the
+    // consumer's `ontology/rune.ttl`, keeps its extension.
     let filename = segments.last().copied().unwrap_or(target);
     filename
-        .rsplit_once('.')
-        .map_or_else(|| filename.to_string(), |(stem, _)| stem.to_string())
+        .strip_suffix(".md")
+        .map_or_else(|| filename.to_string(), str::to_string)
 }
 
 fn print_errors(result: &ActionResult) {

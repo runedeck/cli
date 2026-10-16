@@ -11,6 +11,9 @@ pub struct DeckManifest {
     pub version: String,
     pub description: String,
     pub providers: Option<Vec<String>>,
+    /// Where the deck keeps its ontology, relative to the deck root. Absent
+    /// means `ontology/rune.ttl`.
+    pub ontology: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +148,24 @@ impl Deck {
 
 pub fn is_deck(root: &Path) -> bool {
     root.join("deck.yaml").is_file()
+}
+
+/// The `ontology` key of `deck.yaml`, when `root` is a deck that names one.
+/// Reads only that key, so a caller that needs no entries pays for none.
+pub fn ontology_key(root: &Path) -> Result<Option<String>, String> {
+    #[derive(Deserialize)]
+    struct OntologyKey {
+        ontology: Option<String>,
+    }
+    let manifest = root.join("deck.yaml");
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&manifest)
+        .map_err(|error| format!("cannot read {}: {error}", manifest.display()))?;
+    serde_yaml::from_str::<OntologyKey>(&text)
+        .map(|key| key.ontology)
+        .map_err(|error| format!("cannot read ontology from {}: {error}", manifest.display()))
 }
 
 pub fn load(root: &Path) -> Result<Deck, String> {

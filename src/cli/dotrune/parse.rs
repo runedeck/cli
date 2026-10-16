@@ -34,6 +34,11 @@ pub struct DotRune {
     /// machine-specific absolute paths belong in a gitignored `.rune.local`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<WorkspaceDir>,
+    /// The source whose ontology `rune install` copies to `ontology/rune.ttl`
+    /// at the consumer root, so `rune spec validate` reads the deck's terms
+    /// there. One ontology per consumer; the name must be a `sources` key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -374,6 +379,14 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
                 format!(".rune: runes entry '{source_label}' has no matching `sources` entry"),
             ));
         }
+    }
+    if let Some(source_label) = &manifest.ontology
+        && !manifest.sources.contains_key(source_label)
+    {
+        return Err(Error::new(
+            ErrorKind::Parse,
+            format!(".rune: ontology '{source_label}' has no matching `sources` entry"),
+        ));
     }
 
     Ok(manifest)

@@ -1,0 +1,18 @@
+@prefix rune: <https://runedeck.ai/ns#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# A small declared world for the install tests: the terms a consumer's
+# delta specification cites once the deck's ontology is deployed.
+
+rune:Instance a rdfs:Class ;
+    rdfs:label "instance" ;
+    rdfs:comment "One deployed copy of an artifact at a target." .
+
+rune:Sidecar a rdfs:Class ;
+    rdfs:label "sidecar" ;
+    rdfs:comment "The provenance record beside a deployed file." .
+
+rune:Target a rdfs:Class ;
+    rdfs:label "target" ;
+    rdfs:comment "A directory a deployment writes into." .

@@ -12,6 +12,7 @@ use crate::cli::config;
 
 pub(crate) mod evidence;
 mod migration;
+pub(crate) mod ontology;
 mod recovery;
 pub mod wiring;
 
@@ -83,6 +84,13 @@ pub fn execute(
     let effective_target: Option<&str> = match target {
         Some(dir) => Some(dir),
         None if is_consumer => Some(path),
+        None => None,
+    };
+
+    // The consumer's ontology source is resolved before any provider tree is
+    // written, so a key that names no usable source fails the whole install.
+    let ontology_source = match crate::cli::dotrune::load(module_root)? {
+        Some(consumer) => ontology::resolve_source(&consumer, module_root)?,
         None => None,
     };
 
@@ -278,6 +286,10 @@ pub fn execute(
                 write_manifest(&target_base, &existing_manifest)?;
             }
         }
+    }
+
+    if let Some(source) = &ontology_source {
+        ontology::deploy(source, effective_target, force, dry_run, only, &mut result)?;
     }
 
     if prune

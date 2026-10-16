@@ -405,3 +405,31 @@ fn resolved_deck_artifacts_store_canonical_ids() {
         ]
     );
 }
+
+#[test]
+fn parse_accepts_an_ontology_key_that_names_a_source() {
+    let content = r"
+version: 1
+sources:
+    deck:
+        local: ../deck
+ontology: deck
+";
+    let manifest = parse(content).expect("ontology naming a source must parse");
+    assert_eq!(manifest.ontology.as_deref(), Some("deck"));
+}
+
+#[test]
+fn parse_rejects_an_ontology_key_that_names_no_source() {
+    let content = r"
+version: 1
+sources:
+    deck:
+        local: ../deck
+ontology: other
+";
+    let error = parse(content).expect_err("an unknown ontology source must error");
+    let message = error.to_string();
+    assert!(message.contains("ontology 'other'"), "{message}");
+    assert!(message.contains("sources"), "{message}");
+}
