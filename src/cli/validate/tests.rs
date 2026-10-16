@@ -82,7 +82,7 @@ fn consumer_root_validates_without_module_structure_errors() {
     let temp_directory = TempDir::new().unwrap();
     std::fs::write(
         temp_directory.path().join(".rune"),
-        "version: 1\nsources: {}\nrunes: {}\n",
+        "version: 1\nsources:\n  deck:\n    local: ../deck\nrunes:\n  deck:\n    rules: [Glossary]\n",
     )
     .unwrap();
     std::fs::create_dir_all(temp_directory.path().join(".claude")).unwrap();
@@ -109,6 +109,97 @@ fn consumer_root_validates_without_module_structure_errors() {
             .any(|warning| warning.contains(".claude/.manifest")),
         "expected a missing-manifest warning: {:?}",
         report.result.warnings
+    );
+}
+
+/// A consumer that names an ontology source and requests no runes, with
+/// the provider directory an install would leave behind but no manifest
+/// in it, as an isolated clone of such a repository looks.
+fn ontology_only_consumer(root: &std::path::Path) {
+    std::fs::write(
+        root.join(".rune"),
+        "version: 1\nsources:\n  deck:\n    local: ../deck\nontology: deck\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+}
+
+/// A deployed ontology copy with the manifest an install writes for it.
+fn deployed_ontology(root: &std::path::Path, text: &str) {
+    let target = root.join("ontology");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("rune.ttl"), text).unwrap();
+    std::fs::write(
+        target.join(".manifest"),
+        format!(
+            "rune.ttl:\n  fingerprint: {}\n  provenance: .provenance/rune.ttl.yaml\n",
+            rune::manifest::content_sha256(text)
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn consumer_requesting_no_runes_is_not_asked_for_provider_manifests() {
+    let temp_directory = TempDir::new().unwrap();
+    ontology_only_consumer(temp_directory.path());
+
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+
+    assert!(
+        report.result.errors.is_empty(),
+        "an ontology-only consumer must not fail: {:?}",
+        report.result.errors
+    );
+    assert!(
+        !report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".claude/.manifest")),
+        "no provider deployment to hold to a baseline: {:?}",
+        report.result.warnings
+    );
+    assert!(
+        report
+            .result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("ontology/.manifest: missing")),
+        "the ontology copy is asked for its baseline: {:?}",
+        report.result.warnings
+    );
+}
+
+#[test]
+fn consumer_ontology_copy_is_checked_against_its_manifest() {
+    let temp_directory = TempDir::new().unwrap();
+    ontology_only_consumer(temp_directory.path());
+    deployed_ontology(temp_directory.path(), "rune:Term a rdfs:Class .\n");
+
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+    assert!(
+        report.items.iter().any(
+            |item| item.name == "ontology/.manifest" && item.status == ValidationStatus::Passed
+        ),
+        "a copy that matches its fingerprint passes: {:?}",
+        report.items
+    );
+
+    std::fs::write(
+        temp_directory.path().join("ontology/rune.ttl"),
+        "# edited by hand\n",
+    )
+    .unwrap();
+    let report = validate(&temp_directory.path().to_string_lossy(), false).unwrap();
+    assert!(
+        report
+            .result
+            .errors
+            .iter()
+            .any(|error| error.contains("ontology/rune.ttl") && error.contains("fingerprint")),
+        "a copy that left its record fails: {:?}",
+        report.result.errors
     );
 }
 

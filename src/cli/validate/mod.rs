@@ -315,11 +315,40 @@ fn validate_consumer(consumer_root: &Path, scan: bool) -> Result<ValidationRepor
 }
 
 fn consumer_checks(consumer_root: &Path, report: &mut ValidationReport) -> Result<(), Error> {
-    match crate::cli::dotrune::load(consumer_root) {
-        Ok(_) => report.pass(".rune"),
-        Err(error) => report.fail(".rune", format!(".rune: {error}")),
-    }
+    let manifest = match crate::cli::dotrune::load(consumer_root) {
+        Ok(manifest) => {
+            report.pass(".rune");
+            manifest
+        }
+        Err(error) => {
+            report.fail(".rune", format!(".rune: {error}"));
+            None
+        }
+    };
 
+    // A consumer that requests no runes has no provider deployment to hold
+    // to a baseline: an ontology-only consumer, or a manifest still being
+    // filled, carries no provider manifest and is not asked for one.
+    let requests_runes = manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.runes.values().any(|list| !list.is_empty()));
+    if requests_runes {
+        check_provider_baselines(consumer_root, report)?;
+    }
+    if manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.ontology.is_some())
+    {
+        check_ontology_baseline(consumer_root, report)?;
+    }
+    Ok(())
+}
+
+/// Every provider target that exists holds a `.manifest` from an install.
+fn check_provider_baselines(
+    consumer_root: &Path,
+    report: &mut ValidationReport,
+) -> Result<(), Error> {
     // The same provider set installation would use: the consumer's merged
     // config (custom targets, plugin: null) over the embedded defaults.
     let merged_config = crate::cli::config::load_merged_config(consumer_root)?;
@@ -343,6 +372,37 @@ fn consumer_checks(consumer_root: &Path, report: &mut ValidationReport) -> Resul
                 format!("{target}/.manifest: missing — run rune install to establish baseline"),
             );
         }
+    }
+    Ok(())
+}
+
+/// The deployed ontology copy still matches the fingerprint its manifest
+/// records. A copy that left its record is an error: the consumer commits
+/// the copy, so a hand edit would otherwise travel as the deck's terms.
+fn check_ontology_baseline(
+    consumer_root: &Path,
+    report: &mut ValidationReport,
+) -> Result<(), Error> {
+    use crate::cli::deploy::ontology::{ONTOLOGY_DIRECTORY, ONTOLOGY_FILE};
+    let item = format!("{ONTOLOGY_DIRECTORY}/.manifest");
+    let target = consumer_root.join(ONTOLOGY_DIRECTORY);
+    if !target.join(".manifest").is_file() {
+        report.warn(
+            item.clone(),
+            format!("{item}: missing — run rune install to establish baseline"),
+        );
+        return Ok(());
+    }
+    let (_, stale) = crate::cli::deploy::ontology::verify(&target)?;
+    if stale == 0 {
+        report.pass(item);
+    } else {
+        report.fail(
+            item,
+            format!(
+                "{ONTOLOGY_DIRECTORY}/{ONTOLOGY_FILE}: differs from the fingerprint in {ONTOLOGY_DIRECTORY}/.manifest — run rune install, or rune install --force to replace a hand edit"
+            ),
+        );
     }
     Ok(())
 }
