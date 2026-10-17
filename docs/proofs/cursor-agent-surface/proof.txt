@@ -1,0 +1,122 @@
+
+# Scenario: Cursor launch without a configured binary
+# The cursor tool starts cursor-agent, because the cursor command on a Mac opens the editor.
+❯ rune launch cursor --dry-run
+tool: cursor
+argv: cursor-agent
+env:
+base_url: <none>
+wrap:
+pre:
+❯ rune launch
+ launchable tools
+   claude     installed  grok@claude sol@claude
+   codex      installed
+   agy        installed
+   opencode   installed
+   grok       installed
+   cursor     installed  fable@cursor max@cursor shell@cursor tools@cursor wide@cursor
+   ollama     installed
+
+# Scenario: Cursor launch with a configured binary
+# A second config sets tools.cursor.binary to /opt/cursor/bin/agent.
+❯ rune launch cursor --dry-run
+tool: cursor
+argv: /opt/cursor/bin/agent
+env:
+base_url: <none>
+wrap:
+pre:
+
+# Scenario: Cursor run with a profile model
+# The profile model becomes --model, and the prompt travels on standard input.
+❯ rune run max@cursor 'Reply with pong'
+argv: -p --output-format json --workspace ~/repo --trust --mode ask --model claude-fable-5-1-max | stdin: Reply with pong | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+
+# Scenario: Built-in Fable profile for Cursor
+# The config defines no fable profile for cursor: the built-in one selects claude-fable-5-1-high.
+❯ rune run fable@cursor 'Reply with pong'
+argv: -p --output-format json --workspace ~/repo --trust --mode ask --model claude-fable-5-1-high | stdin: Reply with pong | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+❯ rune launch fable@cursor --dry-run
+tool: cursor
+model: fable-cursor
+model_id: claude-fable-5-1-high
+model_context: 1000000
+model_source: built-in
+argv: cursor-agent --model claude-fable-5-1-high
+env:
+base_url: <none>
+wrap:
+pre:
+❯ rune launch
+ launchable tools
+   claude     installed  grok@claude sol@claude
+   codex      installed
+   agy        installed
+   opencode   installed
+   grok       installed
+   cursor     installed  fable@cursor max@cursor shell@cursor tools@cursor wide@cursor
+   ollama     installed
+
+# Scenario: Read-only run asks for an edit
+# Read-only is the default: ask mode, and no --force, --yolo, or --sandbox.
+❯ rune run cursor 'Create hello.txt'
+argv: -p --output-format json --workspace ~/repo --trust --mode ask | stdin: Create hello.txt | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+
+# Scenario: Read-only run under unrestricted approval
+# Defense in depth: a saved approvalMode unrestricted is the one mode that would run a write unasked.
+❯ rune --json run cursor 'hello'; echo "exit $?"
+{"details":{"message":"a read-only cursor run refuses approvalMode unrestricted: ask mode is enforced by cursor-agent, and unrestricted is the one approval mode that would run a write without asking if that enforcement failed; set approvalMode to allowlist or auto-review in cli-config.json, or run with --mode workspace-write"},"kind":"configuration_error","ok":false,"tool":"cursor"}
+exit 2
+
+# Scenario: Workspace-write run creates a file
+# Workspace-write lets Cursor apply edits inside its own sandbox.
+❯ rune run cursor --mode workspace-write 'Create hello.txt'
+argv: -p --output-format json --workspace ~/repo --trust --force --sandbox enabled | stdin: Create hello.txt | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+
+# Scenario: Cursor reports an error in its result
+# Cursor exits 0 but sets is_error: the run fails with the tool's message.
+❯ rune --json run cursor 'hello'; echo "exit $?"
+{"details":{"message":"cursor-agent reported an error: rate limited"},"kind":"surface_error","ok":false,"tool":"cursor"}
+exit 1
+
+# Scenario: Clean run without a key
+# The browser login lives in the Keychain, which a clean home cannot reach.
+❯ rune --json run cursor --clean 'Reply with pong'; echo "exit $?"
+{"details":{"message":"a clean cursor run needs CURSOR_API_KEY: the cursor-agent browser login lives in the macOS Keychain, which a clean home cannot reach, and CURSOR_CONFIG_DIR alone still loads ~/.cursor/rules; set CURSOR_API_KEY or run without --clean"},"kind":"configuration_error","ok":false,"tool":"cursor"}
+exit 2
+
+# Scenario: Clean run with a key
+# HOME and CURSOR_CONFIG_DIR move into the clean root. The key stays in the environment.
+❯ CURSOR_API_KEY=proof-key rune run cursor --clean 'Reply with pong'
+argv: -p --output-format json --workspace ~/repo --trust --mode ask | stdin: Reply with pong | HOME=/tmp/claude-501/rune-clean-YePYnQ CURSOR_CONFIG_DIR=/tmp/claude-501/rune-clean-YePYnQ/.cursor key-in-env=yes
+
+# Scenario: Cursor run inside the harness sandbox
+# cursor-agent cannot read the Keychain in the sandbox: the failure keeps its stderr and adds a hint.
+❯ rune run cursor 'hello'
+error: process Exited(1): hint: cursor-agent cannot read its Keychain login inside the harness sandbox; run `rune run` as a bare command outside the sandbox
+ERROR: failed to copy trust settings of system certificate-25291
+ERROR: failed to copy trust settings of system certificate-25291
+ERROR: failed to copy trust settings of system certificate-25291
+ERROR: failed to copy trust settings of system certificate-25291
+ERROR: failed to copy trust settings of system certificate-25291
+ERROR: failed to copy trust settings of syst
+
+# Scenario: Cursor profile widens access
+# The profile carries --yolo and --sandbox disabled: both are dropped with a warning each.
+❯ rune run wide@cursor 'hello'
+warning: automated cursor execution owns --yolo; the profile flag is dropped
+warning: automated cursor execution owns --sandbox; the profile value disabled is dropped
+argv: -p --output-format json --workspace ~/repo --trust --mode ask | stdin: hello | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+
+# Scenario: Cursor profile carries an unlisted flag
+# cursor-agent accepts --allowed-tools although its help does not list it. The run keeps only --endpoint.
+❯ rune run tools@cursor 'hello'
+warning: automated cursor execution keeps only --endpoint from a profile; the profile flag --allowed-tools is dropped
+argv: -p --output-format json --workspace ~/repo --trust --mode ask | stdin: hello | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
+
+# Scenario: Cursor profile names a subcommand
+# The profile carries install-shell-integration, which cursor-agent would run as a subcommand.
+❯ rune run shell@cursor 'hello'
+warning: automated cursor execution drops the positional profile argument at position 1; cursor-agent reads it as a subcommand or a prompt
+argv: -p --output-format json --workspace ~/repo --trust --mode ask | stdin: hello | HOME=~ CURSOR_CONFIG_DIR=unset key-in-env=no
