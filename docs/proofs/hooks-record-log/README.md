@@ -1,8 +1,8 @@
 ---
 type: proof
 change: hooks-record-log
-head: b1471f10be7bfc991b8a777dd1505f5acb40b933
-recorded: 2026-10-17
+head: 5c01fdb3c77352dad6fc42a119dd692ab0d4e91d
+recorded: 2026-10-24
 transcript: bbcdd43aec84fa660001f8a9ea63e5a2b0fc205ec3a28b6997f8fc949c51974c
 scenes:
 - scenario: hooks-record-log#the-hook-dispatcher-records-every-hook-execution/two-hooks-run-on-one-event
