@@ -336,8 +336,7 @@ fn write_config_document(path: &Path, document: &serde_yaml::Value) -> Result<()
     }
     let content = serde_yaml::to_string(document)
         .map_err(|error| Error::config(format!("cannot serialize config: {error}")))?;
-    fs::write(path, content)
-        .map_err(|error| Error::io(format!("cannot write {}: {error}", path.display())))
+    crate::cli::config::write_atomic(path, content)
 }
 
 fn format_source(source: Source) -> &'static str {

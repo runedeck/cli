@@ -3,6 +3,7 @@ use rune::error::{Error, ErrorKind};
 use rune::manifest;
 use rune::manifest::bundle::is_build_sidecar;
 use rune::result::{ActionResult, DeployedFile, PrunedFile, SkipReason, SkippedFile};
+use rune::services::confine::{Violation, confine_for_write, is_plain_relative};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -876,12 +877,7 @@ fn write_generated_file(
                 )
             })?;
         }
-        fs::write(&target_path, content).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", target_path.display()),
-            )
-        })?;
+        config::write_atomic(&target_path, content)?;
         existing_manifest.insert(
             manifest_key,
             manifest::ManifestEntry {
@@ -921,9 +917,7 @@ fn prune_stale_files(
                 .any(|prefix| key.starts_with(prefix))
         })
         .filter(|(key, _)| {
-            let confined = std::path::Path::new(key)
-                .components()
-                .all(|component| matches!(component, std::path::Component::Normal(_)));
+            let confined = is_plain_relative(Path::new(key));
             if !confined {
                 eprintln!("rune prune: ignoring malformed manifest key {key}");
             }
@@ -1197,8 +1191,10 @@ fn write_manifest(
 }
 
 /// Verify that writing `target_path` cannot escape `base`: the deepest
-/// existing ancestor (which any symlinked component resolves through) must
-/// canonicalize inside the base directory.
+/// existing ancestor must canonicalize inside the base directory, and a
+/// symlink there is refused. `copy_file` unlinks a symlink at the
+/// destination itself instead of writing through it, so for that case the
+/// directory the file lands in is what gets confined.
 fn ensure_destination_within(target_path: &Path, base: &Path) -> Result<(), Error> {
     fs::create_dir_all(base).map_err(|error| {
         Error::new(
@@ -1206,34 +1202,32 @@ fn ensure_destination_within(target_path: &Path, base: &Path) -> Result<(), Erro
             format!("cannot create {}: {error}", base.display()),
         )
     })?;
-    let resolved_base = base.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", base.display()),
-        )
-    })?;
-    let existing = target_path
-        .ancestors()
-        .find(|ancestor| ancestor.exists())
-        .unwrap_or(base);
-    let resolved = existing.canonicalize().map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot resolve {}: {error}", existing.display()),
-        )
-    })?;
-    if resolved.starts_with(&resolved_base) {
-        Ok(())
+    let destination = if fs::symlink_metadata(target_path)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        target_path.parent().unwrap_or(base)
     } else {
-        Err(Error::new(
+        target_path
+    };
+    confine_for_write(base, destination).map_err(|violation| match violation {
+        Violation::Escape { resolved, .. } => Error::new(
             ErrorKind::Config,
             format!(
                 "destination escapes target: {} resolves to {}",
                 target_path.display(),
                 resolved.display()
             ),
-        ))
-    }
+        ),
+        Violation::Symlink { link, .. } => Error::new(
+            ErrorKind::Config,
+            format!(
+                "destination escapes target: {} resolves through the symlink {}",
+                target_path.display(),
+                link.display()
+            ),
+        ),
+        other => Error::new(ErrorKind::Io, other),
+    })
 }
 
 /// Copy a file, creating parent directories as needed.

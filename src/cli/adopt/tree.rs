@@ -199,8 +199,7 @@ fn write_file(path: &Path, content: &[u8]) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    std::fs::write(path, content)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))
+    crate::cli::config::write_atomic(path, content).map_err(|error| error.to_string())
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {

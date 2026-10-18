@@ -6,6 +6,7 @@
 //! and groups artifacts by their source module (via provenance `source_uri`).
 
 mod adr;
+pub mod atomic;
 pub mod builders;
 pub mod confine;
 mod discovery;
@@ -42,8 +43,6 @@ use provenance::collect_provenance;
 use references::artifact_staleness;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use target::{PendingCompanion, attach_companions, scan_target};
 
@@ -743,30 +742,7 @@ fn deck_rune_ids(deck: &crate::deck::Deck) -> Vec<String> {
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), Error> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp = parent.join(format!(".cast.tmp-{}-{nonce}", std::process::id()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temp, path)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temp);
-        return Err(Error::new(
-            ErrorKind::Io,
-            format!("cannot atomically rewrite {}: {error}", path.display()),
-        ));
-    }
-    Ok(())
+    atomic::write_atomic(path, content)
 }
 
 /// Directory-name allowlist for ADRs and schemas: the active modules plus the

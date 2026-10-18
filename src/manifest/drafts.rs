@@ -83,12 +83,7 @@ impl Register {
             return Ok(());
         }
         let content = render(self)?;
-        // Write beside, then rename: a crash mid-write never truncates the register.
-        let staging = consumer_root.join(format!("{DRAFTS_FILE}.tmp"));
-        std::fs::write(&staging, content)
-            .map_err(|error| format!("cannot write {}: {error}", staging.display()))?;
-        std::fs::rename(&staging, &path)
-            .map_err(|error| format!("cannot replace {}: {error}", path.display()))
+        crate::services::atomic::write_atomic(&path, content).map_err(|error| error.to_string())
     }
 
     /// Every registered path, relative to the consumer root.

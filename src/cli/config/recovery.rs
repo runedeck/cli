@@ -287,13 +287,7 @@ pub fn reset(key: &str, scope: FileScope, json: bool) -> Result<i32, Error> {
     ));
     fs::write(&backup, &content)
         .map_err(|error| Error::io(format!("cannot write {}: {error}", backup.display())))?;
-    let temp = path.with_file_name(format!(".config-reset-{}.tmp", std::process::id()));
-    fs::write(&temp, &updated)
-        .and_then(|()| fs::rename(&temp, &path))
-        .map_err(|error| {
-            let _ = fs::remove_file(&temp);
-            Error::io(format!("cannot rewrite {}: {error}", path.display()))
-        })?;
+    super::write_atomic(&path, &updated)?;
 
     let restore = format!(
         "command cp {} {}",

@@ -203,8 +203,7 @@ fn run(root: &Path, proof: &Proof) -> Result<i32, Error> {
             failed += 1;
         }
     }
-    fs::write(proof.dir.join("proof.txt"), &transcript)
-        .map_err(|error| Error::io(error.to_string()))?;
+    crate::cli::config::write_atomic(&proof.dir.join("proof.txt"), &transcript)?;
     write_cast(&proof.dir.join("proof.cast"), &cast)?;
     frontmatter.transcript = sha256(transcript.as_bytes());
     frontmatter.recorded = today();
@@ -412,8 +411,7 @@ fn record_instruction(root: &Path, proof: &Proof, key: &str) -> Result<i32, Erro
             transcript.push_str(&section);
         }
     }
-    fs::write(proof.dir.join("proof.txt"), &transcript)
-        .map_err(|error| Error::io(error.to_string()))?;
+    crate::cli::config::write_atomic(&proof.dir.join("proof.txt"), &transcript)?;
     let mut frontmatter = proof.frontmatter.clone();
     frontmatter.transcript = sha256(transcript.as_bytes());
     frontmatter.recorded = today();
@@ -480,8 +478,7 @@ fn write_readme(readme: &Path, frontmatter: &Frontmatter, body: &str) -> Result<
         .strip_prefix('\n')
         .unwrap_or(body)
         .trim_end_matches('\n');
-    fs::write(readme, format!("---\n{yaml}---\n\n{body}\n"))
-        .map_err(|error| Error::io(error.to_string()))
+    crate::cli::config::write_atomic(readme, format!("---\n{yaml}---\n\n{body}\n"))
 }
 
 /// An asciinema v2 cast of the captured output, one event per chunk.
@@ -501,7 +498,7 @@ fn write_cast(path: &Path, chunks: &[(f64, String)]) -> Result<(), Error> {
         ]);
         let _ = writeln!(cast, "{event}");
     }
-    fs::write(path, cast).map_err(|error| Error::io(error.to_string()))
+    crate::cli::config::write_atomic(path, cast)
 }
 
 fn today() -> String {

@@ -1083,12 +1083,7 @@ fn append_missing_gitignore_entries(target: &Path, addition: &[u8]) -> Result<bo
     let Some(merged) = merged_gitignore_contents(target, addition)? else {
         return Ok(false);
     };
-    fs::write(target, merged).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", target.display()),
-        )
-    })?;
+    crate::cli::config::write_atomic(target, merged)?;
     Ok(true)
 }
 
@@ -1677,12 +1672,7 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
                     Error::new(ErrorKind::Io, format!("{}: {error}", parent.display()))
                 })?;
             }
-            fs::write(&provenance_path, &statement).map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("{}: {error}", provenance_path.display()),
-                )
-            })?;
+            crate::cli::config::write_atomic(&provenance_path, &statement)?;
 
             manifest_entries.insert(
                 filename.to_string(),
@@ -1697,8 +1687,7 @@ pub fn execute(path: &str) -> Result<ActionResult, Error> {
     if !manifest_entries.is_empty() {
         let yaml = manifest::write(&manifest_entries)
             .map_err(|error| Error::new(ErrorKind::Io, format!("manifest: {error}")))?;
-        fs::write(module_root.join(".manifest"), &yaml)
-            .map_err(|error| Error::new(ErrorKind::Io, format!(".manifest: {error}")))?;
+        crate::cli::config::write_atomic(&module_root.join(".manifest"), &yaml)?;
     }
 
     Ok(result)

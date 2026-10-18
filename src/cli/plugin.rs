@@ -180,19 +180,18 @@ fn confined_exec(directory: &Path, exec: &str) -> Result<PathBuf, String> {
         ));
     }
     let candidate = directory.join(exec);
-    let directory = directory
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
-    let resolved = candidate
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", candidate.display()))?;
-    if !resolved.starts_with(&directory) {
-        return Err(format!(
-            "{}: exec '{exec}' escapes the plugin directory; the plugin does not run",
-            directory.display()
-        ));
-    }
-    Ok(resolved)
+    rune::services::confine::confine_existing(directory, &candidate).map_err(|violation| {
+        match violation {
+            rune::services::confine::Violation::Escape { .. } => format!(
+                "{}: exec '{exec}' escapes the plugin directory; the plugin does not run",
+                directory.display()
+            ),
+            rune::services::confine::Violation::Unresolvable { path, error } => {
+                format!("{}: {error}", path.display())
+            }
+            other => other.to_string(),
+        }
+    })
 }
 
 fn run_plugin(plugin: &Plugin, payload: &str) -> Result<(), String> {

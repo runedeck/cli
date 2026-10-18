@@ -82,59 +82,10 @@ pub fn lock_target(base: &Path) -> Result<TargetLock, Error> {
     }
 }
 
-/// Write through an adjacent temporary file plus rename, so interruption
-/// never leaves a truncated file. The temporary carries a per-process
-/// unique suffix and is opened with `create_new`, so a pre-planted
-/// symlink at a predictable name cannot redirect the write; a symlink at
-/// the destination itself is refused rather than followed.
-static WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn write_atomic(path: &Path, content: &str) -> Result<(), Error> {
-    if path.symlink_metadata().is_ok_and(|meta| meta.is_symlink()) {
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!("{} is a symlink; refusing to replace it", path.display()),
-        ));
-    }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let base_name = path.file_name().map_or_else(
-        || "rune-write".to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let sequence = WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".{base_name}.{}.{sequence}.tmp",
-        std::process::id()
-    ));
-    {
-        use std::io::Write as _;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("cannot create {}: {error}", temporary.display()),
-                )
-            })?;
-        file.write_all(content.as_bytes()).map_err(|error| {
-            let _ = fs::remove_file(&temporary);
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", temporary.display()),
-            )
-        })?;
-        let _ = file.sync_all();
-    }
-    fs::rename(&temporary, path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot replace {}: {error}", path.display()),
-        )
-    })
-}
+/// The one atomic-replace writer: temporary file beside the target, then
+/// rename. The implementation lives in the library so every writer, in the
+/// binary and in the library, shares it.
+pub use rune::services::atomic::write_atomic;
 
 /// Read a file to string with consistent error handling.
 pub fn read_file(path: &Path) -> Result<String, Error> {

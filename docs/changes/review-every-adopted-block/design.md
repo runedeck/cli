@@ -2,7 +2,7 @@
 
 ## Commands
 
-The delta names roles: the maintainer decides, the *[importer][IMPORTER]* fetches, splits,
+The delta names roles: the maintainer decides, the importer fetches, splits,
 records, and enforces. The importer is a role beyond the readback's five (validator, assembler,
 generator, deployer, fixer), and the deck ontology defines it. This table carries the command, flag, file, and diagnostic names that implement each
 requirement, as rune 0.6.0 prints them in `--help`. Exit statuses come from
@@ -19,5 +19,3 @@ requirement, as rune 0.6.0 prints them in `--help`. Exit statuses come from
 | Agents and rules are adoptable | `rune import --kind agent` or `--kind rule`, and the same flag on `rune adopt start`. Placement is `agents/<name>.md` and `rules/<name>.md`. | none | none | 0 |
 | Names match the source schema | The pattern is `^[A-Za-z0-9]+([-_]?[A-Za-z0-9]+)*$` from `schemas/skill.schema.yaml`. The name comes from `--name <NAME>`. | none | invalid name refusal | 1 on refusal |
 | Abandoning closes a session safely | `rune adopt abandon --yes`, with `--artifact <PATH>` to pick a session. The destination is the tree trash. | none | none | 0 |
-
-[IMPORTER]: ../../specs/glossary/importer.md

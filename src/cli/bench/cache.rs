@@ -189,8 +189,7 @@ pub fn write_cache_entry(params: &CacheWriteParams<'_>) -> Result<PathBuf, Strin
 
     let rendered = serde_json::to_string_pretty(&payload)
         .map_err(|error| format!("cannot render cache entry: {error}"))?;
-    std::fs::write(&path, rendered)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    crate::cli::config::write_atomic(&path, rendered).map_err(|error| error.to_string())?;
     Ok(path)
 }
 

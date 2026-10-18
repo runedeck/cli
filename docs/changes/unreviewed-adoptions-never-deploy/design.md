@@ -3,7 +3,7 @@
 ## Commands
 
 The delta names roles: the assembler and the deployer refuse unreviewed content, the
-*[importer][IMPORTER]* records and flags, the validator verifies. The importer is a role beyond
+importer records and flags, the validator verifies. The importer is a role beyond
 the readback's five (validator, assembler, generator, deployer, fixer), and the deck ontology
 defines it. This table carries the command, flag, field,
 and diagnostic names that implement each requirement, as rune 0.6.0 prints them in `--help` and
@@ -17,5 +17,3 @@ writes them in `src/cli/adopt/review.rs`. Exit statuses come from
 | Suspect blocks are flagged at segmentation | The flag ids are `instruction-override`, `tool-invocation`, `high-entropy`, `external-url`, and `unicode-hidden`, under the lint version `lint/v1`. A dynamic-injection line (`!` and then a command in backticks) raises `tool-invocation`. `rune adopt next --json` carries `flags`. | none | the flag ids | none |
 | The validator verifies sessions and reviewed sidecars | `rune adopt doctor`. The legacy ledgers are `review.yaml` and `*.review.yaml`. The fixer is `rune repair`. | none | sidecar-to-file digest disagreement (error), legacy ledger (warning) | 1 on an integrity error, 0 on warnings alone |
 | Verdict transport is recorded | The field is `transport` with the values `verdict-cli`, `finalize`, and `review-tty`. The interactive mode `rune adopt review` is its own change and is not built in 0.6.0. | none | none | none |
-
-[IMPORTER]: ../../specs/glossary/importer.md

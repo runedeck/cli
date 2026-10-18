@@ -226,12 +226,7 @@ fn write_change_stub(
             "- List the affected runes, casts, commands, or documentation.",
             &format!("- `{rune_rel}` (new)."),
         );
-    fs::write(&proposal_path, proposal).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", proposal_path.display()),
-        )
-    })
+    crate::cli::config::write_atomic(&proposal_path, proposal)
 }
 
 /// The command entry: promote and print the outcome.

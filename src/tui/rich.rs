@@ -208,14 +208,9 @@ fn glow_style_path() -> Option<String> {
         .get_or_init(|| {
             let user = std::env::var("USER").unwrap_or_else(|_| "shared".to_string());
             let path = std::env::temp_dir().join(format!("rune-glow-style-{user}.json"));
-            let staging = std::env::temp_dir().join(format!(
-                "rune-glow-style-{user}-{}.json.tmp",
-                std::process::id()
-            ));
-            // Write-then-rename keeps concurrent rune processes from ever
+            // The atomic writer keeps concurrent rune processes from ever
             // observing a truncated style file.
-            std::fs::write(&staging, include_str!("glow_style.json")).ok()?;
-            std::fs::rename(&staging, &path).ok()?;
+            rune::services::atomic::write_atomic(&path, include_str!("glow_style.json")).ok()?;
             Some(path.to_string_lossy().into_owned())
         })
         .clone()

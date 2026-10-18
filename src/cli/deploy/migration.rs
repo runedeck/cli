@@ -8,6 +8,7 @@ use rune::error::{Error, ErrorKind};
 use rune::manifest::{self, ManifestEntry};
 use rune::provider::{ContentKind, ProviderConfig};
 use rune::result::{ActionResult, PrunedFile};
+use rune::services::confine::is_plain_relative;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -129,7 +130,7 @@ pub(super) fn check_writers(
                 let Some(relative) = &entry.provenance else {
                     continue;
                 };
-                if !confined(Path::new(relative)) {
+                if !is_plain_relative(Path::new(relative)) {
                     return Err(conflict(&root, "unconfined provenance claim"));
                 }
                 if !canonical_target(&root.join(relative))?.starts_with(&physical) {
@@ -160,13 +161,6 @@ pub(super) fn check_writers(
         }
     }
     Ok(())
-}
-
-fn confined(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)))
 }
 
 struct LegacySkill {
@@ -524,7 +518,7 @@ fn inspect_legacy(
     }
     let mut claimed = HashSet::new();
     for key in &keys {
-        if !confined(Path::new(key)) {
+        if !is_plain_relative(Path::new(key)) {
             return Err(conflict(&bundle, "invalid manifest key"));
         }
         let entry = &entries[key];
@@ -536,7 +530,8 @@ fn inspect_legacy(
         let Some(provenance) = &entry.provenance else {
             return Err(conflict(&file, "source ownership is unknown"));
         };
-        if !confined(Path::new(provenance)) || !Path::new(provenance).starts_with(relative) {
+        if !is_plain_relative(Path::new(provenance)) || !Path::new(provenance).starts_with(relative)
+        {
             return Err(conflict(&file, "provenance leaves the skill bundle"));
         }
         let source = provenance_source(&root.join(provenance), key, &entry.fingerprint)?;

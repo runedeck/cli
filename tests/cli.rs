@@ -524,8 +524,11 @@ fn setup_verification_failure_writes_no_record() {
         .join(".local/share/bash-completion/completions/rune");
     std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
     std::fs::create_dir_all(completion_path.parent().unwrap()).unwrap();
-    std::fs::write(&config_path, "deck: /tmp/deck\n").unwrap();
-    std::fs::hard_link(&config_path, &completion_path).unwrap();
+    // The completion write must corrupt the user config so verification
+    // fails after apply. Writes replace the inode, so a hard link no longer
+    // aliases the two; the config is a symlink onto the completion file.
+    std::fs::write(&completion_path, "deck: /tmp/deck\n").unwrap();
+    std::os::unix::fs::symlink(&completion_path, &config_path).unwrap();
 
     rune()
         .current_dir(source.path())

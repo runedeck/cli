@@ -1919,20 +1919,9 @@ fn write_record(path: &Path, record: &ReviewRecord) -> Result<(), String> {
     atomic_write(path, &yaml)
 }
 
-/// Temp-file-and-rename so a crash mid-write never leaves a torn record.
+/// The shared atomic-replace writer with this module's string errors.
 fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let temp = parent.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    fs::write(&temp, content)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
-    fs::rename(&temp, path).map_err(|error| {
-        let _ = fs::remove_file(&temp);
-        format!("cannot replace {}: {error}", path.display())
-    })
+    crate::cli::config::write_atomic(path, content).map_err(|error| error.to_string())
 }
 
 fn display_relative(root: &Path, path: &Path) -> String {

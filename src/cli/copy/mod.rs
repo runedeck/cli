@@ -201,12 +201,7 @@ fn copy_directory_recursive(
             )
         })?;
 
-        fs::write(&target_path, &content).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", target_path.display()),
-            )
-        })?;
+        crate::cli::config::write_atomic(&target_path, &content)?;
 
         if !source_uri.is_empty() {
             write_copy_provenance(
@@ -265,12 +260,7 @@ fn write_copy_provenance(
         )
     })?;
 
-    fs::write(&sidecar_path, &statement).map_err(|error| {
-        Error::new(
-            ErrorKind::Io,
-            format!("cannot write {}: {error}", sidecar_path.display()),
-        )
-    })?;
+    crate::cli::config::write_atomic(&sidecar_path, &statement)?;
 
     Ok(())
 }

@@ -110,12 +110,7 @@ fn install_into(base: &Path, content: &str) -> Result<InstallReport, Error> {
                 format!("cannot create {}: {error}", destination.display()),
             )
         })?;
-        fs::write(&skill_path, content).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", skill_path.display()),
-            )
-        })?;
+        crate::cli::config::write_atomic(&skill_path, content)?;
     }
     Ok(InstallReport {
         path: skill_path,

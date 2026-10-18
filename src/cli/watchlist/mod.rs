@@ -120,7 +120,7 @@ fn save(config: &WatchlistConfig) -> Result<(), String> {
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
     let yaml = serde_yaml::to_string(config).map_err(|error| format!("serialize: {error}"))?;
-    fs::write(&path, yaml).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    crate::cli::config::write_atomic(&path, yaml).map_err(|error| error.to_string())
 }
 
 fn announce(json: bool, message: &str) {

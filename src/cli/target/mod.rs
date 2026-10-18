@@ -161,7 +161,7 @@ fn unbind_target(state_path: &Path) -> Result<i32, Error> {
     }
     let content = serde_yaml::to_string(&document)
         .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize: {error}")))?;
-    std::fs::write(state_path, content).map_err(|error| io_error(state_path, "write", &error))?;
+    crate::cli::config::write_atomic(state_path, content)?;
     println!("target unbound");
     Ok(0)
 }
@@ -273,7 +273,7 @@ fn write_binding(state_path: &Path, target: &Path) -> Result<(), Error> {
     }
     let content = serde_yaml::to_string(&document)
         .map_err(|error| Error::new(ErrorKind::Parse, format!("cannot serialize: {error}")))?;
-    std::fs::write(state_path, content).map_err(|error| io_error(state_path, "write", &error))
+    crate::cli::config::write_atomic(state_path, content)
 }
 
 fn read_document(state_path: &Path) -> Result<serde_yaml::Value, Error> {

@@ -371,19 +371,19 @@ fn read_deployed_file(
     for base in bases {
         let harness_root = base.join(provider_dir);
         let candidate = harness_root.join(path);
-        let (Ok(canonical_root), Ok(canonical_file)) =
-            (harness_root.canonicalize(), candidate.canonicalize())
-        else {
-            continue;
-        };
-        if !canonical_file.starts_with(&canonical_root) {
-            eprintln!(
-                "dashboard: refused deployed path escaping {}: {}",
-                canonical_root.display(),
-                canonical_file.display()
-            );
-            continue;
-        }
+        let canonical_file =
+            match rune::services::confine::confine_existing(&harness_root, &candidate) {
+                Ok(file) => file,
+                Err(rune::services::confine::Violation::Escape { resolved, .. }) => {
+                    eprintln!(
+                        "dashboard: refused deployed path escaping {}: {}",
+                        harness_root.display(),
+                        resolved.display()
+                    );
+                    continue;
+                }
+                Err(_) => continue,
+            };
         if let Ok(content) = std::fs::read_to_string(&canonical_file) {
             let display = display_path(&canonical_file, home.as_deref());
             return Some((display, content));

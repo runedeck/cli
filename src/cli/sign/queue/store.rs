@@ -210,18 +210,10 @@ impl Store {
     /// Write through a temporary file so a reader never sees a torn record.
     pub(crate) fn save(&self, request: &Request) -> Result<(), Error> {
         let path = self.request_path(&request.id);
-        let temporary = path.with_extension("json.tmp");
         let body = serde_json::to_string_pretty(request).map_err(|error| {
             Error::new(ErrorKind::Io, format!("cannot encode request: {error}"))
         })?;
-        fs::write(&temporary, body)
-            .and_then(|()| fs::rename(&temporary, &path))
-            .map_err(|error| {
-                Error::new(
-                    ErrorKind::Io,
-                    format!("cannot write {}: {error}", path.display()),
-                )
-            })
+        crate::cli::config::write_atomic(&path, body)
     }
 
     pub(crate) fn remove(&self, id: &str) -> Result<(), Error> {

@@ -126,13 +126,10 @@ impl InstallPlan {
                 .with_fix_command(format!("rune completion install {}", self.shell.name()))
             })?;
         }
-        std::fs::write(&self.destination, &self.content).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot write {}: {error}", self.destination.display()),
-            )
-            .with_code("completion.write_failed")
-            .with_fix_command(format!("rune completion install {}", self.shell.name()))
+        crate::cli::config::write_atomic(&self.destination, &self.content).map_err(|error| {
+            error
+                .with_code("completion.write_failed")
+                .with_fix_command(format!("rune completion install {}", self.shell.name()))
         })?;
         for path in &self.cache_removals {
             std::fs::remove_file(path).map_err(|error| {

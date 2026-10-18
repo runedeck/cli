@@ -563,8 +563,7 @@ pub fn build_dashboard(
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    std::fs::write(out_path, page)
-        .map_err(|error| format!("cannot write {}: {error}", out_path.display()))?;
+    crate::cli::config::write_atomic(out_path, page).map_err(|error| error.to_string())?;
 
     let summary = suites
         .iter()

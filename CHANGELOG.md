@@ -152,6 +152,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Share one path-confinement helper and one atomic-replace writer across adopt, deploy, doctor, the review record, and the bench writers.
 - Sort two glossary terms that share a label by kind, the class first, then by name, so `rune spec glossary` keeps one order whatever the order of the ontology file.
 - Run the Vale hook with `--no-global`, so the guarded gate reads the repository's style alone and a rule in the machine's global config cannot fail or mask it.
 - Rename `rune run --clean-harness-state` to `--clean`, and the JSON field to `clean`. The old spelling and the `_scope` field are gone.

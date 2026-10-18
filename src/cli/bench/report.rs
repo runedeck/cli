@@ -533,19 +533,18 @@ pub fn write_outputs(
     let results_path = directory.join(format!("test-results-{stamp}.json"));
     let rendered = serde_json::to_string_pretty(&results_document)
         .map_err(|error| format!("cannot render results: {error}"))?;
-    std::fs::write(&results_path, rendered)
-        .map_err(|error| format!("cannot write {}: {error}", results_path.display()))?;
+    crate::cli::config::write_atomic(&results_path, rendered).map_err(|error| error.to_string())?;
 
     let markdown_path = directory.join(format!("test-results-{stamp}.md"));
     let markdown = render_markdown_report(params, &results_document.metadata);
-    std::fs::write(&markdown_path, markdown)
-        .map_err(|error| format!("cannot write {}: {error}", markdown_path.display()))?;
+    crate::cli::config::write_atomic(&markdown_path, markdown)
+        .map_err(|error| error.to_string())?;
 
     let summary_path = directory.join(format!("summary-{stamp}.json"));
     let summary_rendered = serde_json::to_string_pretty(&summary_document)
         .map_err(|error| format!("cannot render summary: {error}"))?;
-    std::fs::write(&summary_path, &summary_rendered)
-        .map_err(|error| format!("cannot write {}: {error}", summary_path.display()))?;
+    crate::cli::config::write_atomic(&summary_path, &summary_rendered)
+        .map_err(|error| error.to_string())?;
 
     let mut written = WrittenOutputs {
         results_path,
@@ -556,7 +555,7 @@ pub fn write_outputs(
 
     if let Some(visualizer) = visualizer_data_path {
         // Best-effort upstream-parity copy; no mkdir, failure is non-fatal (§5c).
-        if std::fs::write(visualizer, &summary_rendered).is_ok() {
+        if crate::cli::config::write_atomic(visualizer, &summary_rendered).is_ok() {
             written.visualizer_path = Some(visualizer.to_path_buf());
         }
     }

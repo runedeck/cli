@@ -2,6 +2,7 @@ use clap::ValueEnum;
 use regex::Regex;
 use rune::manifest;
 use rune::parse;
+use rune::services::confine::{Violation, confine_for_write};
 use std::fs;
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
@@ -160,15 +161,15 @@ where
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    fs::write(&plan.artifact_path, &plan.content)
-        .map_err(|error| format!("cannot write {}: {error}", plan.artifact_path.display()))?;
+    crate::cli::config::write_atomic(&plan.artifact_path, &plan.content)
+        .map_err(|error| error.to_string())?;
 
     if let Some(parent) = plan.sidecar_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    fs::write(&plan.sidecar_path, &plan.sidecar_yaml)
-        .map_err(|error| format!("cannot write {}: {error}", plan.sidecar_path.display()))?;
+    crate::cli::config::write_atomic(&plan.sidecar_path, &plan.sidecar_yaml)
+        .map_err(|error| error.to_string())?;
 
     println!("adopted {}", plan.artifact_relative);
     Ok(adopted)
@@ -580,44 +581,31 @@ fn canonical_module_root(module: &Path) -> Result<PathBuf, String> {
 // Containment is validated against the deepest existing ancestor without
 // creating anything: planning must stay side-effect free so `--dry-run`
 // leaves no directories behind. Directories are created at write time.
+// The directory that will hold the file is what gets confined; a symlink
+// at the file itself is the destination guards' concern.
 fn contained_path(module_root: &Path, relative_path: &Path) -> Result<PathBuf, String> {
     let safe_relative = validate_relative_path(&path_to_slash(relative_path))?;
     let target = module_root.join(&safe_relative);
     let parent = target
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", target.display()))?;
-
-    let mut probe = parent.to_path_buf();
-    let existing = loop {
-        match fs::symlink_metadata(&probe) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(format!(
-                        "{} is a symlink; refusing to write through it",
-                        probe.display()
-                    ));
-                }
-                break probe;
-            }
-            Err(_) => match probe.parent() {
-                Some(ancestor) => probe = ancestor.to_path_buf(),
-                None => {
-                    return Err(format!(
-                        "no existing ancestor for {}; cannot validate containment",
-                        target.display()
-                    ));
-                }
-            },
+    confine_for_write(module_root, parent).map_err(|violation| match violation {
+        Violation::Symlink { link, .. } => format!(
+            "{} is a symlink; refusing to write through it",
+            link.display()
+        ),
+        Violation::NoAncestor { .. } => format!(
+            "no existing ancestor for {}; cannot validate containment",
+            target.display()
+        ),
+        Violation::Unresolvable { path, error } => {
+            format!("cannot canonicalize {}: {error}", path.display())
         }
-    };
-    let canonical_existing = fs::canonicalize(&existing)
-        .map_err(|error| format!("cannot canonicalize {}: {error}", existing.display()))?;
-    if !canonical_existing.starts_with(module_root) {
-        return Err(format!(
+        Violation::Escape { .. } => format!(
             "target escapes rune source root: {}",
             relative_path.display()
-        ));
-    }
+        ),
+    })?;
     Ok(target)
 }
 

@@ -433,9 +433,7 @@ fn resolve_in_repo(module_root: &Path, repo_relative: &str) -> Option<PathBuf> {
 /// Canonicalize an existing path as given and require it inside the module
 /// root. Returns `None` when the file is missing or outside the repo.
 fn confine_existing(module_root: &Path, candidate: &Path) -> Option<PathBuf> {
-    let canonical = fs::canonicalize(candidate).ok()?;
-    let root_canonical = fs::canonicalize(module_root).ok()?;
-    canonical.starts_with(&root_canonical).then_some(canonical)
+    rune::services::confine::confine_existing(module_root, candidate).ok()
 }
 
 /// Resolve an in-repo dependency URI (typically `<module-name>/<path>`) under
