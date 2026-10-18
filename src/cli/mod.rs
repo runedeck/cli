@@ -1002,11 +1002,13 @@ enum SpecAction {
         source: String,
     },
 
-    /// Print every defined term: the ontology's labels, comments, and reference tags
+    /// Print every defined term: the ontology's labels, comments, reference tags, and pages
     Glossary {
-        /// Write the glossary file from the ontology. PATH defaults to
-        /// `glossary.md` beside the capability specifications; a relative
-        /// PATH resolves against the source root.
+        /// Write the glossary pages and index from the ontology: one page
+        /// per term under PATH, which defaults to `glossary/` beside the
+        /// capability specifications; a relative PATH resolves against the
+        /// source root. Pages of terms the ontology no longer defines and
+        /// the single `glossary.md` an older render wrote are removed.
         #[arg(
             long,
             value_name = "PATH",
@@ -1016,10 +1018,34 @@ enum SpecAction {
         )]
         write: Option<String>,
 
-        /// Compare the glossary file with the ontology: name each term that
-        /// differs and exit 1 on drift or a missing file. PATH as for --write.
+        /// Regenerate every page in memory and compare the directory with
+        /// it byte for byte: name each page that is missing, extra, or
+        /// changed, and exit 1 on drift or a missing directory. PATH as
+        /// for --write.
         #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
         check: Option<String>,
+
+        /// Deck or rune source root. Defaults to the current directory.
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        source: String,
+    },
+
+    /// Fix what validation reports about terms: draft entries and the link form
+    Fix {
+        /// Add a draft entry to the ontology for every term link that names
+        /// no term, and write its glossary page.
+        #[arg(long)]
+        terms: bool,
+
+        /// Rewrite the legacy `*term* [TAG]` form to `*[term][TAG]*` in the
+        /// Markdown files under the source root, emphasize only the first
+        /// use of a term in a file, point every definition at the term's
+        /// page, and add a missing definition. The walk skips version
+        /// control, build, dependency, and fixture trees, a deployed tree
+        /// (a directory with a `.manifest`), the change archive, and the
+        /// glossary. Idempotent on converted files.
+        #[arg(long)]
+        links: bool,
 
         /// Deck or rune source root. Defaults to the current directory.
         #[arg(long, value_name = "DIR", default_value = ".")]
@@ -2295,7 +2321,7 @@ fn spec_help(help: &mut String) {
         help_command(
             help,
             "spec",
-            "propose | list | show | glossary | doctor | archive",
+            "propose | list | glossary | fix | doctor | archive",
             "Spec-driven change lifecycle under docs/",
         );
     }
@@ -2855,6 +2881,7 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
             | SpecAction::Show { source, .. }
             | SpecAction::Doctor { source, .. }
             | SpecAction::Glossary { source, .. }
+            | SpecAction::Fix { source, .. }
             | SpecAction::Validate { source, .. }
             | SpecAction::Archive { source, .. }
             | SpecAction::Context { source, .. } => source.clone(),
@@ -2904,6 +2931,11 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
             check,
             source,
         } => spec::glossary(&source, write.as_deref(), check.as_deref(), json),
+        SpecAction::Fix {
+            terms,
+            links,
+            source,
+        } => spec::fix(&source, terms, links, json),
         SpecAction::Archive {
             change_id,
             yes,

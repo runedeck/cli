@@ -15,3 +15,8 @@
 
 - [x] 3.1 Spec walkthrough, rune-docs changelog, cli changelog
 - [x] 3.2 The rune hooks fail under `REQUIRE_RUNE` when the binary is absent, and the Build quality job sets it
+
+## 4. Link model
+
+- [x] 4.1 The term rule becomes the link rule: the delta and `design.md` with the Commands table. The change `ontology-term-references` carries the implementation and its tests
+- [ ] 4.2 `docs/walkthroughs/Spec.md` house rules section

@@ -44,20 +44,20 @@ fn install(consumer: &Path, extra: &[&str]) -> assert_cmd::assert::Assert {
         .assert()
 }
 
-/// One change in the consumer whose delta specification cites a term the
-/// fixture ontology defines.
+/// One change in the consumer whose delta specification links a term the
+/// fixture ontology defines, through the term's glossary page.
 fn write_change_citing_a_term(consumer: &Path) {
-    let change = consumer.join("docs/changes/cite-the-instance");
-    fs::create_dir_all(change.join("specs/deployed-copy-records")).unwrap();
+    let change = consumer.join("docs/changes/cite-the-deck-instance");
+    fs::create_dir_all(change.join("specs/deployed-copy-records-provenance")).unwrap();
     fs::write(
         change.join("proposal.md"),
-        "---\nstatus: proposed\n---\n\n# Cite the instance\n\n## Why\n\nA reader meets a term.\n\n## What Changes\n\n- Cite it.\n\n## Capabilities\n\n- deployed-copy-records (new)\n\n## Impact\n\n- The specification.\n",
+        "---\nstatus: proposed\n---\n\n# Cite the deck instance\n\n## Why\n\nA reader meets a term.\n\n## What Changes\n\n- Cite it.\n\n## Capabilities\n\n- deployed-copy-records-provenance (new)\n\n## Impact\n\n- The specification.\n",
     )
     .unwrap();
     fs::write(change.join("tasks.md"), "## 1. Work\n\n- [ ] 1.1 Cite\n").unwrap();
     fs::write(
-        change.join("specs/deployed-copy-records/spec.md"),
-        "## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *instance* [INSTANCE] MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: https://runedeck.ai/ns#Instance\n",
+        change.join("specs/deployed-copy-records-provenance/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *[instance][INSTANCE]* MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: ../../../../specs/glossary/instance.md\n",
     )
     .unwrap();
 }
@@ -68,17 +68,32 @@ fn install_copies_the_ontology_with_a_sidecar_and_validate_reads_the_copy() {
     write_dotrune(consumer.path(), &fixture_deck(), Some("deck"));
     write_change_citing_a_term(consumer.path());
 
-    // Without the copy, the italic term has no definition in the consumer.
+    // Without the copy the consumer defines no terms, so the link is an
+    // ordinary link and nothing is checked.
     rune()
-        .args(["spec", "validate", "cite-the-instance", "--source"])
+        .args(["spec", "validate", "cite-the-deck-instance", "--source"])
         .arg(consumer.path())
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("term"));
+        .success();
 
     install(consumer.path(), &[])
         .success()
         .stdout(predicate::str::contains("ontology"));
+
+    // With the copy the tag names the term, and its page is missing.
+    rune()
+        .args(["spec", "validate", "cite-the-deck-instance", "--source"])
+        .arg(consumer.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "glossary page docs/specs/glossary/instance.md is missing",
+        ));
+    rune()
+        .args(["spec", "glossary", "--write", "--source"])
+        .arg(consumer.path())
+        .assert()
+        .success();
 
     let copy = consumer.path().join("ontology/rune.ttl");
     assert_eq!(fs::read(&copy).unwrap(), fixture_ontology());
@@ -107,7 +122,7 @@ fn install_copies_the_ontology_with_a_sidecar_and_validate_reads_the_copy() {
     );
 
     rune()
-        .args(["spec", "validate", "cite-the-instance", "--source"])
+        .args(["spec", "validate", "cite-the-deck-instance", "--source"])
         .arg(consumer.path())
         .assert()
         .success();

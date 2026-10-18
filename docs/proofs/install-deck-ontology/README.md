@@ -44,10 +44,9 @@ $ sh -s
 < printf 'version: 1\nsources:\n  deck:\n    local: ../deck\nrunes:\n  deck:\n    rules: [CiteTerms]\nontology: deck\n' > consumer/.rune
 < printf -- '---\nstatus: proposed\n---\n\n# Cite the instance\n\n## Why\n\nA reader meets a term.\n\n## What Changes\n\n- Cite it.\n\n## Capabilities\n\n- deployed-copy-records (new)\n\n## Impact\n\n- The specification.\n' > consumer/docs/changes/cite-the-instance/proposal.md
 < printf '## 1. Work\n\n- [ ] 1.1 Cite\n' > consumer/docs/changes/cite-the-instance/tasks.md
-< printf '## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *instance* [INSTANCE] MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: https://runedeck.ai/ns#Instance\n' > consumer/docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md
+< printf '## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *[instance][INSTANCE]* MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: ../../../../specs/glossary/instance.md\n' > consumer/docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md
 $ rune spec validate cite-the-instance --source consumer
-? 1
-error[delta-term-undefined]: docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md:5: defined term 'instance' needs a glossary; create docs/specs/glossary.md with `- **instance**: <definition>`
+specification validation passed
 $ rune install --source consumer
 
  ✓ claude
@@ -67,6 +66,11 @@ $ sh -c 'grep -E "name: ontology/rune.ttl|source: |uri: " consumer/ontology/.pro
   - name: ontology/rune.ttl
         source: [..]/deck
       - uri: ontology/rune.ttl
+$ rune spec validate cite-the-instance --source consumer
+? 1
+error[delta-term-page]: docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md:5: glossary page docs/specs/glossary/instance.md is missing; run `rune spec glossary --write`
+$ rune spec glossary --write --source consumer
+wrote docs/specs/glossary: 3 page(s) and the index, 4 file(s) changed
 $ rune spec validate cite-the-instance --source consumer
 specification validation passed
 ```

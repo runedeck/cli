@@ -2,12 +2,12 @@
 
 ### Requirement: House rules are a separate lint
 
-`rune spec validate` and `rune spec doctor` MUST apply the runedeck house rules to every canonical specification and every active delta through one lint that the OpenSpec compatibility parser does not share. The parser MUST keep accepting both upstream normative keywords.
+The *[validator][VALIDATOR]* MUST apply the runedeck house rules to every canonical specification and every active *[delta specification][DELTASPECIFICATION]*. It MUST do so through one lint that the OpenSpec compatibility parser does not share. The parser MUST keep accepting both upstream normative keywords.
 
 #### Scenario: Legacy keyword in prose
 
 - **WHEN** a prose line outside a code fence or inline code span contains `SHALL`
-- **THEN** validation reports `spec-shall-keyword` or `delta-shall-keyword` with the line number, and the artifact still parses
+- **THEN** the validator reports a named diagnostic with the line number, and the artifact still parses
 
 #### Scenario: Upstream oracle fixture
 
@@ -16,42 +16,45 @@
 
 ### Requirement: House rules run in the commit-stage checks
 
-The `rune-spec-doctor` hook MUST run `rune spec doctor` for every change under `docs/specs/` or `docs/changes/`, and under `REQUIRE_RUNE` an absent `rune` binary MUST fail the hook. The Build quality job, which has the binary built from the same commit, MUST set `REQUIRE_RUNE`.
+The commit-stage check MUST run the validator's advisory pass for every change under the specifications or the changes directory. When the environment requires the validator and none is installed, the hook MUST fail. The build quality job, which has the validator built from the same commit, MUST require it. Without that requirement an absent validator MUST skip, so a fresh clone stays usable before the tools are installed.
 
 #### Scenario: Binary absent in CI
 
-- **WHEN** the commit-stage checks run with `REQUIRE_RUNE` set and no `rune` on the path
+- **WHEN** the commit-stage checks run with the validator required and none on the path
 - **THEN** the hook fails instead of skipping
 
 #### Scenario: Binary absent on a fresh clone
 
-- **WHEN** the hooks run without `REQUIRE_RUNE` and no `rune` on the path
-- **THEN** the hook skips so the clone stays usable before `make install`
+- **WHEN** the hooks run without the requirement and no validator on the path
+- **THEN** the hook skips so the clone stays usable before the tools are installed
 
 ### Requirement: Capabilities stay short
 
-A canonical specification longer than 150 lines MUST fail validation with `spec-too-long`. A delta longer than 150 lines MUST warn with `delta-too-long`.
+A canonical specification longer than 150 lines MUST fail validation. A delta longer than 150 lines MUST warn. The diagnostic MUST name the limit and ask for a split.
 
 #### Scenario: Specification over the limit
 
 - **WHEN** a canonical specification has 151 lines
-- **THEN** validation reports an error that names the limit and asks for a split
+- **THEN** the validator reports an error that names the limit and asks for a split
 
 #### Scenario: Specification at the limit
 
 - **WHEN** a canonical specification has 150 lines
-- **THEN** validation reports nothing for its length
+- **THEN** the validator reports nothing for its length
 
 ### Requirement: Defined terms have a glossary entry
 
-A term marked with single-asterisk italics in a specification or delta MUST have an entry in `<specs root>/glossary.md` of the form `- **term**: definition`, compared without case, with a plain plural matching its singular. A term with no entry MUST fail validation with `spec-term-undefined` or `delta-term-undefined`. An italic label that ends in a colon MUST NOT count as a defined term.
+A defined term in a specification or delta MUST be a link to the term's generated glossary page. The first use in the file MUST be emphasized and every later use plain. A definition at the end of the file MUST point at the page by relative path. The link text MAY be the plural of the label. A link that names no ontology term MUST fail validation. Plain italics are emphasis and MUST NOT be reported.
 
-#### Scenario: Term without an entry
+#### Scenario: Term link without a page
 
-- **WHEN** a specification marks a term in italics and the glossary has no such entry
-- **THEN** validation names the term, the glossary path, and the entry shape to add
+- **WHEN** a specification links a term and the ontology defines no such term
+- **THEN** the validator names the term, the file and line, and the ontology to extend
 
 #### Scenario: Plural term
 
-- **WHEN** a specification marks the plural of a term in italics and the glossary defines its singular
-- **THEN** validation reports nothing for the term
+- **WHEN** a specification links the plural of a term whose page the definition names
+- **THEN** the validator reports nothing for the term
+
+[DELTASPECIFICATION]: ../../../../specs/glossary/delta-specification.md
+[VALIDATOR]: ../../../../specs/glossary/validator.md

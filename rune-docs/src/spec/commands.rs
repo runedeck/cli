@@ -5,13 +5,15 @@
 
 use super::tasks::{parse_tasks, read_tasks};
 use super::templates::{DELTA_SPEC_TEMPLATE, DESIGN_TEMPLATE, PROPOSAL_TEMPLATE, TASKS_TEMPLATE};
+use super::term_links::{Resolution, markdown_files, resolve_document};
+use super::terms::{TermSource, Terms};
 use super::transaction::{self, FileWrite, Operation};
 use super::{
-    ChangeState, ChangeSummary, MergeSummary, SpecificationSummary, archived_change_exists,
-    archived_change_path, archived_change_status, build_merge_plans, changes_root,
-    discover_capabilities, io_error, load_with_override, parse_canonical, read, read_directories,
-    relative_display, resolve_spec_root, specs_root, state_label, strip_frontmatter, substitute,
-    validate_capability, validate_change_identifier,
+    ChangeState, ChangeSummary, MergeSummary, SpecRoot, SpecificationSummary,
+    archived_change_exists, archived_change_path, archived_change_status, build_merge_plans,
+    changes_root, discover_capabilities, io_error, load_with_override, parse_canonical, read,
+    read_directories, relative_display, resolve_spec_root, specs_root, state_label,
+    strip_frontmatter, substitute, validate_capability, validate_change_identifier,
 };
 use crate::error::{Error, ErrorKind};
 use chrono::Utc;
@@ -417,8 +419,48 @@ pub fn archive_output(
     if abandon {
         archive_abandoned(root, id, &change_dir, &archive_dir, &mut transaction)
     } else {
+        refuse_unsettled_terms(&spec_root, id, &change_dir)?;
         archive_merged(root, id, yes, &change_dir, &archive_dir, &mut transaction)
     }
+}
+
+/// Archive refuses a change whose files link to a draft term or to no
+/// term, naming each link, so nothing undefined reaches the canonical
+/// specifications. A repository without an ontology has no terms.
+fn refuse_unsettled_terms(spec_root: &SpecRoot, id: &str, change_dir: &Path) -> Result<(), Error> {
+    let terms = Terms::load(spec_root.repository(), spec_root.specifications())?;
+    if terms.source() != TermSource::Ontology {
+        return Ok(());
+    }
+    let mut lines = Vec::new();
+    for path in markdown_files(change_dir, &[])? {
+        let content = read(&path)?;
+        let display = relative_display(spec_root.repository(), &path);
+        for (link, resolution) in resolve_document(&content, &path, &terms) {
+            match resolution {
+                Resolution::Term { term, .. } if term.draft => lines.push(format!(
+                    "  draft '{}' as [{}][{}]: {display}:{}",
+                    term.label, link.text, link.tag, link.line
+                )),
+                Resolution::Undefined { .. } => lines.push(format!(
+                    "  undefined [{}][{}]: {display}:{}",
+                    link.text, link.tag, link.line
+                )),
+                _ => {}
+            }
+        }
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    Err(Error::new(
+        ErrorKind::Validate,
+        format!(
+            "change '{id}' links to terms that are not settled:\n{}\ndefine each term in {} (a draft comes from `rune spec fix --terms`), add any missing definition, and rerun",
+            lines.join("\n"),
+            terms.location()
+        ),
+    ))
 }
 
 fn archive_abandoned(

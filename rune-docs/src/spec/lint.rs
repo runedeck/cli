@@ -1,9 +1,14 @@
 //! Prose rules for specification artifacts, beyond structure and parsing:
-//! one normative keyword, a length ceiling, and defined terms that must
-//! exist in the ontology (or the glossary) and cite it. Validation and
-//! doctor share these so acceptance cannot differ by command.
+//! one normative keyword, a length ceiling, and term links that must reach
+//! a term the ontology defines. Validation and doctor share these so
+//! acceptance cannot differ by command.
 
-use super::terms::{TermSource, Terms};
+use super::prose::prose_lines;
+use super::term_links::{
+    Definition, Resolution, TermLink, Via, canonical, legacy_links, reference_definitions,
+    reference_links, relative_link, resolve,
+};
+use super::terms::{Term, TermSource, Terms};
 use super::{DiagnosticSeverity, SpecViolation, relative_display};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,21 +55,6 @@ pub fn name_words(name: &str) -> usize {
 
 static SHALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bSHALL\b").expect("normative keyword regex is valid"));
-/// A single-asterisk italic run marks a defined term. The boundaries are
-/// checked by [`italic_terms`], not consumed here, so two runs separated
-/// by one space are both found.
-static ITALIC_RUN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\*([^*\n]+?)\*").expect("italic run regex is valid"));
-/// The reference tag that may follow an italic run: `*term* [TAG]`.
-/// Markdown labels are case-insensitive, so any case is a tag here.
-static REFERENCE_TAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\[([A-Za-z0-9][A-Za-z0-9_-]*)\]").expect("reference tag regex is valid")
-});
-/// A reference definition, `[TAG]: <target>`, indented up to three spaces.
-static REFERENCE_DEFINITION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^ {0,3}\[([A-Za-z0-9][A-Za-z0-9_-]*)\]:\s*(\S+)")
-        .expect("reference definition regex is valid")
-});
 static REQUIREMENT_HEADING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^###\s+Requirement:").expect("requirement heading regex is valid")
 });
@@ -97,27 +87,20 @@ pub(super) fn lint_canonical(
         "canonical specification",
         diagnostics,
     );
-    lint_terms(
-        target,
-        content,
-        terms,
-        Some("spec-term-undefined"),
-        diagnostics,
-    );
+    lint_terms(target, content, terms, "spec", diagnostics);
     lint_prose(target, content, "spec", diagnostics);
     lint_names(target, "spec", diagnostics);
 }
 
 /// Lint one document outside the specification tree: a decision record or
-/// a rune. Only the reference rules apply. An italic run that matches no
-/// term is emphasis there, not a definition, so it is not reported.
+/// a rune. Only the term link rules apply, under the `spec-` codes.
 pub(super) fn lint_document(
     target: LintTarget<'_>,
     content: &str,
     terms: &Terms,
     diagnostics: &mut Vec<SpecViolation>,
 ) {
-    lint_terms(target, content, terms, None, diagnostics);
+    lint_terms(target, content, terms, "spec", diagnostics);
 }
 
 /// Lint one change delta.
@@ -136,13 +119,7 @@ pub(super) fn lint_delta(
         "delta specification",
         diagnostics,
     );
-    lint_terms(
-        target,
-        content,
-        terms,
-        Some("delta-term-undefined"),
-        diagnostics,
-    );
+    lint_terms(target, content, terms, "delta", diagnostics);
     lint_prose(target, content, "delta", diagnostics);
     lint_names(target, "delta", diagnostics);
 }
@@ -284,221 +261,248 @@ fn lint_prose(
     close(&mut requirement, diagnostics);
 }
 
-/// Every italic term exists in the term source, reported under
-/// `undefined_code` when the caller passes one. With an ontology, the first
-/// italic use of each term in the file also cites it: `*term* [TAG]` with
-/// `[TAG]: <iri>` defined in the file, and a definition under an ontology
-/// namespace names a real term.
+/// Every term link in the file reaches a term the ontology defines. The
+/// rules, under `<prefix>-term-*`: `undefined` (error: the link names no
+/// term), `draft` (warning: the term is a draft), `first-use` (error: the
+/// first use in the file is not emphasized, or a later use is), `page`
+/// (error: the page is missing, differs from the render, or the tag has
+/// no definition), and `legacy` (warning: the old `*term* [TAG]` form, or
+/// a definition that names an IRI instead of the page). Plain italics are
+/// emphasis and are not checked. A repository without an ontology has no
+/// terms, so nothing is checked.
 fn lint_terms(
     target: LintTarget<'_>,
     content: &str,
     terms: &Terms,
-    undefined_code: Option<&str>,
+    code_prefix: &str,
     diagnostics: &mut Vec<SpecViolation>,
 ) {
-    let location = terms.location();
-    let tags = terms.tags();
-    let definitions = reference_definitions(content);
-    if terms.source() == TermSource::Ontology {
-        for (tag, (line, iri)) in &definitions {
-            if terms.in_namespace(iri) && terms.by_iri(iri).is_none() {
-                diagnostics.push(violation(
-                    target,
-                    "term-reference-unresolved",
-                    DiagnosticSeverity::Error,
-                    Some(*line),
-                    format!("[{tag}] names {iri}, which is not a term in {location}"),
-                ));
-            }
+    if terms.source() != TermSource::Ontology {
+        return;
+    }
+    let view: Vec<(usize, String)> = prose_lines(content).collect();
+    let definitions =
+        reference_definitions(view.iter().map(|(number, line)| (*number, line.as_str())));
+    let mut lint = TermLint {
+        target,
+        terms,
+        code_prefix,
+        file_dir: target.path.parent().unwrap_or(Path::new("")),
+        seen: BTreeSet::new(),
+        reported: BTreeSet::new(),
+        pages: BTreeMap::new(),
+        diagnostics,
+    };
+    for definition in definitions.values() {
+        if terms.in_namespace(&definition.target) && terms.by_iri(&definition.target).is_none() {
+            lint.report(
+                "undefined",
+                DiagnosticSeverity::Error,
+                definition.line,
+                format!(
+                    "[{}] names {}, which is not a term in {}",
+                    definition.tag,
+                    definition.target,
+                    terms.location()
+                ),
+            );
         }
     }
-    let mut cited = BTreeSet::new();
-    for (index, line) in prose_lines(content) {
-        for (term, tag) in italic_terms(&line) {
-            // `*Rationale:*` and similar labels are emphasis, not definitions.
-            if term.is_empty() || term.ends_with(':') {
-                continue;
-            }
-            let Some(entry) = terms.resolve(term) else {
-                if let Some(code) = undefined_code {
-                    diagnostics.push(violation(
-                        target,
-                        code,
-                        DiagnosticSeverity::Error,
-                        Some(index),
-                        undefined_message(terms, term),
-                    ));
-                }
-                continue;
-            };
-            if terms.source() != TermSource::Ontology || !cited.insert(entry.iri.clone()) {
-                continue;
-            }
-            let expected = tags.get(&entry.iri).cloned().unwrap_or_default();
-            match tag {
-                None => diagnostics.push(violation(
-                    target,
-                    "term-reference-missing",
-                    DiagnosticSeverity::Error,
-                    Some(index),
-                    format!(
-                        "first use of *{term}* has no reference tag; write `*{term}* [{expected}]` and define `[{expected}]: {}`",
-                        entry.iri
-                    ),
-                )),
-                Some(tag) => {
-                    let defined = definitions
-                        .get(&tag.to_uppercase())
-                        .map(|(_, iri)| iri.as_str());
-                    if defined != Some(entry.iri.as_str()) {
-                        diagnostics.push(violation(
-                            target,
-                            "term-reference-unresolved",
-                            DiagnosticSeverity::Error,
-                            Some(index),
-                            format!("[{tag}] must be defined as `[{tag}]: {}`", entry.iri),
-                        ));
-                    }
-                }
-            }
+    for (number, line) in &view {
+        for link in legacy_links(*number, line) {
+            lint.legacy(&link, &definitions);
+        }
+        for link in reference_links(*number, line) {
+            lint.link(&link, &definitions);
         }
     }
 }
 
-/// The single-asterisk italic runs of one prose line with the tag that
-/// follows each, in order. A run counts when the character before its
-/// opening `*` and after its closing `*` is neither `*` nor a word
-/// character, and the opening `*` is not escaped.
-fn italic_terms(line: &str) -> Vec<(&str, Option<&str>)> {
-    let mut found = Vec::new();
-    for capture in ITALIC_RUN.captures_iter(line) {
-        let whole = capture.get(0).expect("whole match");
-        let before = line[..whole.start()].chars().next_back();
-        let after = line[whole.end()..].chars().next();
-        let bounded =
-            |c: Option<char>| c.is_none_or(|c| c != '*' && !c.is_alphanumeric() && c != '_');
-        if !bounded(before) || before == Some('\\') {
-            continue;
-        }
-        let rest = &line[whole.end()..];
-        let tag = REFERENCE_TAG
-            .captures(rest)
-            .map(|tag| tag.get(1).expect("tag").as_str());
-        let after_tag = tag.map_or(after, |_| {
-            let end = REFERENCE_TAG.find(rest).map_or(0, |m| m.end());
-            rest[end..].chars().next()
-        });
-        if !bounded(after) && tag.is_none() || !bounded(after_tag) {
-            continue;
-        }
-        found.push((capture.get(1).expect("term").as_str().trim(), tag));
-    }
-    found
+/// The state of the term rules over one file.
+struct TermLint<'a> {
+    target: LintTarget<'a>,
+    terms: &'a Terms,
+    code_prefix: &'a str,
+    file_dir: &'a Path,
+    /// Terms linked so far, by IRI: the first link is the first use.
+    seen: BTreeSet<String>,
+    /// Findings reported once per term and rule.
+    reported: BTreeSet<(String, &'static str)>,
+    /// Whether each page read so far matches its render.
+    pages: BTreeMap<std::path::PathBuf, bool>,
+    diagnostics: &'a mut Vec<SpecViolation>,
 }
 
-fn undefined_message(terms: &Terms, term: &str) -> String {
-    let location = terms.location();
-    match terms.source() {
-        TermSource::Ontology => format!(
-            "defined term '{term}' is not in {location}; add a term with `rdfs:label \"{term}\"` or drop the emphasis"
-        ),
-        TermSource::Glossary => format!(
-            "defined term '{term}' has no entry in {location}; add `- **{term}**: <definition>`"
-        ),
-        TermSource::Absent => format!(
-            "defined term '{term}' needs a glossary; create {location} with `- **{term}**: <definition>`"
-        ),
+impl TermLint<'_> {
+    fn report(&mut self, rule: &str, severity: DiagnosticSeverity, line: usize, message: String) {
+        self.diagnostics.push(violation(
+            self.target,
+            &format!("{}-term-{rule}", self.code_prefix),
+            severity,
+            Some(line),
+            message,
+        ));
     }
-}
 
-/// Reference definitions by upper-cased tag (Markdown labels are
-/// case-insensitive), with the line they sit on. The first definition of a
-/// tag wins, as in Markdown, and an angle-bracketed destination is unwrapped.
-fn reference_definitions(content: &str) -> BTreeMap<String, (usize, String)> {
-    let mut definitions = BTreeMap::new();
-    for (index, line) in prose_lines(content) {
-        if let Some(capture) = REFERENCE_DEFINITION.captures(&line) {
-            let destination = capture[2]
-                .strip_prefix('<')
-                .and_then(|inner| inner.strip_suffix('>'))
-                .unwrap_or(&capture[2]);
-            definitions
-                .entry(capture[1].to_uppercase())
-                .or_insert((index, destination.to_string()));
-        }
+    fn once(&mut self, key: &str, rule: &'static str) -> bool {
+        self.reported.insert((key.to_string(), rule))
     }
-    definitions
-}
 
-/// Non-fenced lines with their one-based numbers, inline code spans
-/// blanked: a quoted literal such as `` `SHALL` `` is a mention, not a
-/// normative statement or a defined term. Backtick and tilde fences both
-/// count. A leading YAML front matter block, closed by `---` or `...`, is
-/// data, not prose, and is skipped whole; an unclosed block is prose.
-fn prose_lines(content: &str) -> impl Iterator<Item = (usize, String)> + '_ {
-    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
-    let mut fence: Option<(char, usize)> = None;
-    let mut front_matter = front_matter_end(content);
-    content
-        .lines()
-        .enumerate()
-        .filter_map(move |(index, line)| {
-            if front_matter.is_some_and(|end| index <= end) {
-                if front_matter == Some(index) {
-                    front_matter = None;
+    /// The definition a file at this path writes for a term.
+    fn page_link(&self, term: &Term) -> String {
+        relative_link(self.file_dir, &self.terms.page_path(term))
+    }
+
+    /// The legacy `*text* [TAG]` form warns when its tag reaches a term or
+    /// its definition sits under a term namespace.
+    fn legacy(&mut self, link: &TermLink, definitions: &BTreeMap<String, Definition>) {
+        let resolution = resolve(self.terms, link, definitions, self.file_dir);
+        let under_namespace = definitions
+            .get(&link.tag.to_uppercase())
+            .is_some_and(|definition| self.terms.in_namespace(&definition.target));
+        let relative = match resolution {
+            Resolution::Term { term, .. } => self.page_link(term),
+            _ if under_namespace => format!("<path to the page of {}>", link.tag),
+            _ => return,
+        };
+        self.report(
+            "legacy",
+            DiagnosticSeverity::Warning,
+            link.line,
+            format!(
+                "`*{text}* [{tag}]` is the legacy form; write `*[{text}][{tag}]*` at first use, `[{text}][{tag}]` later, and define `[{tag}]: {relative}`",
+                text = link.text,
+                tag = link.tag
+            ),
+        );
+    }
+
+    fn link(&mut self, link: &TermLink, definitions: &BTreeMap<String, Definition>) {
+        match resolve(self.terms, link, definitions, self.file_dir) {
+            Resolution::Ordinary => {}
+            Resolution::Undefined { reason, hint, .. } => self.report(
+                "undefined",
+                DiagnosticSeverity::Error,
+                link.line,
+                format!(
+                    "term link [{}][{}] names no term: {reason}; {hint}",
+                    link.text, link.tag
+                ),
+            ),
+            Resolution::Term { term, via, page } => {
+                let first = self.seen.insert(term.iri.clone());
+                self.first_use(link, first);
+                if term.draft && self.once(&term.iri, "draft") {
+                    self.report(
+                        "draft",
+                        DiagnosticSeverity::Warning,
+                        link.line,
+                        format!(
+                            "term '{}' is a draft; define it in {} before archive",
+                            term.label,
+                            self.terms.location()
+                        ),
+                    );
                 }
-                return None;
+                self.reached(link, term, via, page);
             }
-            let trimmed = line.trim_start();
-            let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
-            let run = marker.map_or(0, |c| trimmed.chars().take_while(|d| *d == c).count());
-            match fence {
-                Some((open, width))
-                    if marker == Some(open) && run >= width && trimmed[run..].trim().is_empty() =>
-                {
-                    fence = None;
-                    None
-                }
-                Some(_) => None,
-                None if run >= 3 => {
-                    fence = marker.map(|c| (c, run));
-                    None
-                }
-                None => Some((index + 1, without_inline_code(line))),
-            }
-        })
-}
-
-/// The zero-based line index of the `---` or `...` that closes a leading
-/// YAML front matter block, when the content opens with `---` and a
-/// closing line exists.
-fn front_matter_end(content: &str) -> Option<usize> {
-    let mut lines = content.lines().enumerate();
-    let (_, first) = lines.next()?;
-    if first.trim_end() != "---" {
-        return None;
+        }
     }
-    lines
-        .find(|(_, line)| matches!(line.trim_end(), "---" | "..."))
-        .map(|(index, _)| index)
-}
 
-/// Replace every `` `...` `` span with spaces of the same length so column
-/// positions survive and the span's text never matches a rule.
-fn without_inline_code(line: &str) -> String {
-    let mut result = String::with_capacity(line.len());
-    let mut inside = false;
-    for character in line.chars() {
-        if character == '`' {
-            inside = !inside;
-            result.push(' ');
-        } else if inside {
-            result.push(' ');
+    /// The first use of a term in a file is `*[text][TAG]*`; every later
+    /// use is `[text][TAG]`.
+    fn first_use(&mut self, link: &TermLink, first: bool) {
+        if link.emphasized == first {
+            return;
+        }
+        let message = if first {
+            format!(
+                "first use of [{text}][{tag}] in this file is not emphasized; write `*[{text}][{tag}]*`",
+                text = link.text,
+                tag = link.tag
+            )
         } else {
-            result.push(character);
+            format!(
+                "later use of [{text}][{tag}] is emphasized; only the first use in a file is, write `[{text}][{tag}]`",
+                text = link.text,
+                tag = link.tag
+            )
+        };
+        self.report("first-use", DiagnosticSeverity::Error, link.line, message);
+    }
+
+    /// The page behind a resolved link exists and matches the render, the
+    /// tag is defined, and the definition points at the page.
+    fn reached(
+        &mut self,
+        link: &TermLink,
+        term: &Term,
+        via: Via,
+        page: Option<std::path::PathBuf>,
+    ) {
+        let expected = self.page_link(term);
+        match via {
+            Via::Page => {
+                let page = page.expect("a page resolution carries its path");
+                let terms = self.terms;
+                let current = *self.pages.entry(page.clone()).or_insert_with(|| {
+                    std::fs::read_to_string(&page)
+                        .is_ok_and(|bytes| bytes == super::glossary::render_page(terms, term))
+                });
+                if !current && self.once(&term.iri, "page") {
+                    self.report(
+                        "page",
+                        DiagnosticSeverity::Error,
+                        link.line,
+                        format!(
+                            "glossary page {} differs from the ontology render; run `rune spec glossary --write`",
+                            relative_display(&canonical(self.target.repository), &page)
+                        ),
+                    );
+                }
+            }
+            Via::PageMissing => {
+                if self.once(&term.iri, "page") {
+                    let page = page.expect("a missing page resolution carries its path");
+                    self.report(
+                        "page",
+                        DiagnosticSeverity::Error,
+                        link.line,
+                        format!(
+                            "glossary page {} is missing; run `rune spec glossary --write`",
+                            relative_display(&canonical(self.target.repository), &page)
+                        ),
+                    );
+                }
+            }
+            Via::NoDefinition => {
+                if self.once(&link.tag.to_uppercase(), "page") {
+                    self.report(
+                        "page",
+                        DiagnosticSeverity::Error,
+                        link.line,
+                        format!(
+                            "[{}] has no definition; add `[{}]: {expected}` at the end of the file",
+                            link.tag, link.tag
+                        ),
+                    );
+                }
+            }
+            Via::Iri => {
+                if self.once(&term.iri, "legacy") {
+                    self.report(
+                        "legacy",
+                        DiagnosticSeverity::Warning,
+                        link.line,
+                        format!(
+                            "[{}] is defined as an IRI, the legacy form; point it at the page: `[{}]: {expected}`",
+                            link.tag, link.tag
+                        ),
+                    );
+                }
+            }
         }
     }
-    result
 }
 
 fn violation(

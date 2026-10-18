@@ -9,7 +9,7 @@ use rune_docs::error::Error;
 use rune_docs::interop::{self, ConversionReport};
 use rune_docs::sheet::Sheet;
 use rune_docs::spec::{
-    self, ArchiveOutput, ChangeState, ChangeSummary, ContextOutput, DiagnosticSeverity,
+    self, ArchiveOutput, ChangeState, ChangeSummary, ContextOutput, DiagnosticSeverity, FixOutput,
     GlossaryCheckOutput, GlossaryOutput, GlossaryStatus, GlossaryWriteOutput, ListSort, LiveTrees,
     MdschemaCheck, MergeSummary, ProposeOutput, ShowChangeOutput, ShowOutput, ShowSpecOutput,
     SpecDoctorOutput, SpecLayout, SpecRoot, SpecViolation, SpecificationSummary,
@@ -52,6 +52,7 @@ fn the_output_surface_is_pinned() {
         spec::check_glossary_output;
     let _: fn(&GlossaryCheckOutput) -> bool = GlossaryCheckOutput::is_current;
     let _ = GlossaryStatus::Stale;
+    let _: fn(&str, bool, bool) -> Result<FixOutput, Error> = spec::fix_output;
     let _: fn(&ArchiveOutput) -> &[String] = ArchiveOutput::warnings;
     let _: fn(&SpecDoctorOutput) -> bool = SpecDoctorOutput::has_errors;
     let _: fn(&SpecViolation) -> bool = SpecViolation::is_error;
@@ -73,8 +74,9 @@ fn the_render_surface_is_pinned() {
     let _: fn(&[SpecViolation]) -> String = spec::render_diagnostics;
     let _: fn(&SpecDoctorOutput) -> String = spec::render_doctor;
     let _: fn(&GlossaryOutput) -> String = spec::render_glossary;
-    let _: fn(&GlossaryOutput) -> String = spec::render_glossary_file;
+    let _: fn(&GlossaryWriteOutput) -> String = spec::render_glossary_write;
     let _: fn(&GlossaryCheckOutput) -> String = spec::render_glossary_check;
+    let _: fn(&FixOutput) -> String = spec::render_fix;
     // `render_json` is generic over `Serialize`; instantiating it here pins
     // its shape.
     let rendered = spec::render_json(&Vec::<SpecViolation>::new()).unwrap();
@@ -102,6 +104,10 @@ fn the_printing_wrappers_are_pinned() {
     let _: fn(&str, bool) -> Result<i32, Error> = spec::doctor;
     let _: fn(&str, Option<&str>, bool, MdschemaCheck) -> Result<i32, Error> = spec::validate;
     let _: fn(&str, &str, bool, bool, bool) -> Result<i32, Error> = spec::archive;
+    let _: fn(&str, bool) -> Result<i32, Error> = spec::glossary;
+    let _: fn(&str, Option<&str>, bool) -> Result<i32, Error> = spec::write_glossary;
+    let _: fn(&str, Option<&str>, bool) -> Result<i32, Error> = spec::check_glossary;
+    let _: fn(&str, bool, bool, bool) -> Result<i32, Error> = spec::fix;
     let _: fn(&str, bool) -> Result<i32, Error> = interop::export_openspec;
     let _: fn(&str, bool) -> Result<i32, Error> = interop::import_openspec;
     let _: fn(&str, &str, bool) -> Result<i32, Error> = interop::import_openspec_into;

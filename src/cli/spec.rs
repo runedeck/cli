@@ -52,8 +52,8 @@ pub(crate) fn context(source: &str, id: &str, json: bool) -> Result<i32, Error> 
 }
 
 /// Print the term list, or with `--write` or `--check` render the glossary
-/// file. A flag given without a PATH arrives as an empty string and means
-/// the default path.
+/// pages. A flag given without a PATH arrives as an empty string and means
+/// the default directory.
 pub(crate) fn glossary(
     source: &str,
     write: Option<&str>,
@@ -69,6 +69,13 @@ pub(crate) fn glossary(
         _ => rune_docs::spec::glossary(source, json),
     };
     result.map_err(|error| convert(&error))
+}
+
+/// The fixer. Without a flag it runs both passes.
+pub(crate) fn fix(source: &str, terms: bool, links: bool, json: bool) -> Result<i32, Error> {
+    let both = !terms && !links;
+    rune_docs::spec::fix(source, terms || both, links || both, json)
+        .map_err(|error| convert(&error))
 }
 
 /// Term diagnostics for documents outside the specification tree.

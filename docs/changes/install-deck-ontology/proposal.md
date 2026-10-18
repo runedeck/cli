@@ -6,7 +6,7 @@ status: proposed
 
 ## Why
 
-There is one ontology, the deck's `ontology/rune.ttl`, and every specification that sets a term in italics cites a term it defines. `rune spec validate` and `rune spec doctor` read terms from `ontology/rune.ttl` at the repository root, or from the path the `ontology` key of `deck.yaml` names. A consumer is not a deck and has no `deck.yaml`, so it has no way to read the deck's ontology today, and an italic term in its specifications fails as a term that needs a glossary. The cli repository is the first consumer: its specifications cite *instance* [INSTANCE], *provenance* [PROVENANCE], *sidecar* [SIDECAR], and *target* [TARGET], which only that file defines.
+There is one ontology, the deck's `ontology/rune.ttl`, and every specification that links a term links one it defines. `rune spec validate` and `rune spec doctor` read terms from `ontology/rune.ttl` at the repository root, or from the path the `ontology` key of `deck.yaml` names. A consumer carries no `deck.yaml`, so it has no way to read the deck's ontology today, and a term link in its specifications goes unchecked. Once the copy exists, the link fails with the page diagnostic until the glossary pages are written. The cli repository is the first consumer: its specifications link *[instance][INSTANCE]*, *[provenance][PROVENANCE]*, *[sidecar][SIDECAR]*, and *[target][TARGET]*, which only that file defines.
 
 The deck already deploys runes into a consumer with a fingerprint and a provenance sidecar per file. The ontology is one more file from the same source, and it gets the same record.
 
@@ -29,7 +29,7 @@ The deck already deploys runes into a consumer with a fingerprint and a provenan
 - `docs/walkthroughs/Spec.md`, the two changelogs.
 - The cli repository becomes a consumer of itself: `.rune` names the deck as a git source and `ontology: deck`, and the deployed copy is committed with its sidecar once the deck's ontology is on origin main.
 
-[INSTANCE]: https://runedeck.ai/ns#Instance
-[PROVENANCE]: https://runedeck.ai/ns#Provenance
-[SIDECAR]: https://runedeck.ai/ns#Sidecar
-[TARGET]: https://runedeck.ai/ns#Target
+[INSTANCE]: ../../specs/glossary/instance.md
+[PROVENANCE]: ../../specs/glossary/provenance.md
+[SIDECAR]: ../../specs/glossary/sidecar.md
+[TARGET]: ../../specs/glossary/target.md

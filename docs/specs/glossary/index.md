@@ -1,0 +1,83 @@
+# Glossary
+
+Generated from `ontology/rune.ttl`. Edit the ontology, not these pages.
+
+- [Occam's razor](occams-razor.md): Of two instructions that pass the same check, the shorter one wins.
+- [accountable](accountable.md): On a record: who approves the decision, the A of RACI.
+- [agent](agent.md): The document that defines a persona and its tools for a harness to run. The running process is a prov:SoftwareAgent.
+- [aliases](aliases.md): On every artifact: other names it is known by, an Obsidian default.
+- [analysis baseline](analysis-baseline.md): The set of results one run of analysis tools produced on a set of artifacts, kept so a later run is compared against it.
+- [analysis result](analysis-result.md): One condition an analysis tool reports in an artifact, with the rule it violates and the location.
+- [analysis rule](analysis-rule.md): One criterion for correctness that an analysis tool verifies, a general one or a convention of this deck.
+- [analysis tool](analysis-tool.md): A program that examines artifacts to detect problems without executing them: a linter, a validator, a shape checker, or a check script.
+- [architecture decision record](architecture-decision-record.md): A decision record for a software architecture decision in the shape Michael Nygard set out in 2011: context, decision, status, consequences.
+- [archived](archived.md): On a proposal: the date the archive step accepted the change, which is the acceptance date of every record it produced.
+- [artifact](artifact.md): Any file the system tracks: an instruction, a record, a specification, or a companion.
+- [assembly](assembly.md): The activity that resolves one canonical rune, its companions, and its variants into one instance for each harness and model, and records provenance.
+- [attestation](attestation.md): A proof recorded as a run of a change's scenarios against one commit, with what the transcript shows for each, bound by the transcript digest.
+- [author](author.md): On every artifact: who wrote it, by handle.
+- [canon](canon.md): The harness-neutral entrypoint document of a rune: SKILL.md for a skill, the rule file for a rule.
+- [capability](capability.md): One specification: canonical under docs/specs/, or a delta inside a change.
+- [change](change.md): One spec-driven change under docs/changes/, active or archived.
+- [change](change-key.md): On a record: the change that produced it.
+- [companion](companion.md): A document beside a canon that the canon routes to: reference material, or the instructions and quirks of one harness, kept out of the canon so they are easy to review and to compile.
+- [consulted](consulted.md): On a record: whose input was used, people and models as model-id@harness, MADR's consulted.
+- [coverage](coverage.md): The binding of each requirement to the analysis tool that enforces it, or its listing as a missed requirement.
+- [created](created.md): On every artifact: the date it was first written.
+- [decision record](decision-record.md): A record of one decision: its context, the options considered, and the outcome.
+- [decisions](decisions.md): On a proposal: the records the change produced, by title.
+- [delta specification](delta-specification.md): A change-local specification that lists added, modified, removed, or renamed requirements, merged into the canonical specification at sync or archive.
+- [description](description.md): On every artifact: one sentence that says what it is for.
+- [dispatcher answer](dispatcher-answer.md): The answer the hook dispatcher encodes for the harness after an event's hook executions: allow, deny, or stop the turn, with a reason.
+- [falsifiability](falsifiability.md): A requirement states a check that can fail. A statement nothing can fail is not a requirement.
+- [fixture](fixture.md): An input a test runs against, with the result the test asserts for it.
+- [harness](harness.md): A program that runs a model with tools and loads instructions from directories it owns.
+- [hook](hook.md): A script bound to harness events, run by the hook dispatcher. It is code.
+- [hook dispatcher](hook-dispatcher.md): The program that takes one harness event, runs the hooks deployed for it in order, and encodes one answer for the harness.
+- [hook execution](hook-execution.md): One execution of the hook dispatcher for one harness event, with every hook it ran or failed to start.
+- [hook metrics](hook-metrics.md): Counted facts a hook returns with its result, as identifiers and integers, copied into the hook record.
+- [hook record](hook-record.md): One line the hook dispatcher writes per hook it ran: harness, event, hook, session, file, duration, exit status, the answer, and metrics.
+- [idea](idea.md): The human-authored capture a change starts from: a drawing, a transcript, or a prompt in the owner's vault.
+- [informed](informed.md): On a record: who is told the outcome, MADR's informed.
+- [instance](instance.md): One concrete realization of a kind, as the file assembly writes into a target for one harness is an instance of its rune.
+- [instruction](instruction.md): A Markdown file a harness loads to steer a model: a skill, a rule, an agent, or a routine.
+- [lifecycle](lifecycle.md): The path a change takes: an optional canvas, then the specification, the decision record, the implementation, the review, and the merge.
+- [lifecycle stage](lifecycle-stage.md): One step of the lifecycle, in order: canvas, specification, decision, implementation, review, merge.
+- [linter](linter.md): An analysis tool that matches rule patterns against a file, one file at a time, and reports style and convention violations.
+- [markdown architecture decision record](markdown-architecture-decision-record.md): An architecture decision record in Markdown with the MADR template: decision drivers, considered options, their pros and cons, and the outcome.
+- [missed requirement](missed-requirement.md): A requirement no analysis tool checks yet, listed in the coverage as such.
+- [model](model.md): The language model a harness runs.
+- [module](module.md): One domain of a deck that keeps its instructions, its defaults, and its checks together behind a small interface, so it can be added, replaced, or removed without a change elsewhere.
+- [name](name.md): On a rune canon: its name, which the Agent Skills specification requires beside description.
+- [project](project.md): On a record: the project it belongs to, a DOAP project such as the deck.
+- [projection](projection.md): A representation that drops information from its source. A search index stays uncommitted, and a snapshot of a source outside the repository is committed only with a provenance sidecar that names its upstream.
+- [proof](proof.md): Evidence that a candidate commit shows the behavior a scenario states.
+- [provenance](provenance.md): The sealed statement of where an instance came from: its source and digest, the transforms applied, and the builder, kept in the sidecar as an in-toto statement.
+- [recorded](recorded.md): The day the proof was recorded.
+- [related](related.md): On every artifact: neighbor artifacts, by id and title.
+- [render](render.md): A committed representation that a command the repository carries produces from a plain-text source and that regenerates from it byte for byte.
+- [representation](representation.md): One form an artifact's content takes. The plain-text representation is the authoritative one, and every other representation derives from it.
+- [requirement](requirement.md): One `### Requirement:` with MUST text, part of a capability.
+- [responsible](responsible.md): On a record: who does the work, the R of RACI, which MADR leaves out.
+- [routine](routine.md): An instruction installed on a harness account, which runs it on a schedule.
+- [rule](rule.md): An always-on instruction artifact under a rules/ tree.
+- [rune](rune.md): An instruction that follows the rune template: one canon, optional sidecar, companions, and variants. A skill, a rule, or an agent is a rune when it does.
+- [scenario](scenario.md): One `#### Scenario:` with WHEN and THEN, part of a requirement.
+- [scenes](scenes.md): What the proof records about one scenario.
+- [sidecar](sidecar.md): A file beside a rune that holds what the canon does not: harness metadata, or sealed provenance under .provenance/. A sidecar never repeats a canon field.
+- [skill](skill.md): A procedure artifact with a SKILL.md canon.
+- [status](status.md): On a record or a proposal: its asserted lifecycle status. The frontmatter is the authority, and a shape only catches a disagreement with the file's location.
+- [structure schema](structure-schema.md): The per-directory structural contract, serialized as .mdschema, that validates the files beside it.
+- [structured architecture decision record](structured-architecture-decision-record.md): A markdown architecture decision record with YAML frontmatter for status, dates, RACI, and provenance: the runeADR format the deck's records under docs/decisions/ use.
+- [supersedes](supersedes.md): On a record: the older record it replaces, which then states status superseded.
+- [tags](tags.md): On every artifact: the topics it belongs to, as Obsidian tags.
+- [target](target.md): A directory one harness loads instructions from, and the destination a deployment writes into.
+- [template](template.md): A file with placeholders that a renderer fills to produce another file.
+- [title](title.md): On every artifact: its human name. A rune canon says `name` instead, because Agent Skills owns that frontmatter.
+- [transcript](transcript.md): The sha256 of proof.txt as the README states it.
+- [type](type.md): On every artifact: its kind as the directory states it: skill, rule, agent, hook, routine, adr, or proof. A shape holds the list, so the key and the directory never disagree.
+- [updated](updated.md): On every artifact: the date of its last change.
+- [upstream](upstream.md): On every artifact: the sources it was adapted from, as links, with the origin first.
+- [validator](validator.md): An analysis tool that decides whether an artifact is valid against a grammar, a schema, or a set of shapes, and reports nothing about style.
+- [variant](variant.md): A first-class alternative of a rune for one harness, one model, or one user, resolved at assembly: user, then harness and model, then harness, then the base rune.
+- [verdict](verdict.md): The bench's judgment of one artifact against its baseline, from the metrics the bench measured.

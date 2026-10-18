@@ -1,7 +1,7 @@
 ## 1. Implementation
 
-- [x] 1.1 `terms.rs`: read labeled classes, properties, and SKOS concepts from Turtle, the glossary fallback, and tags with the `-KEY` rule
-- [x] 1.2 `lint.rs`: term lookup through the source, `term-reference-missing` and `term-reference-unresolved`, and `lint_document` for records and runes
+- [x] 1.1 `terms.rs`: read labeled classes, properties, and SKOS concepts from Turtle, and tags with the `-KEY` rule
+- [x] 1.2 `lint.rs`: term lookup through the source, and `lint_document` for records and runes
 - [x] 1.3 `rune spec glossary` with `--json`, and the `deck.yaml` `ontology` key through the lookup hook
 - [x] 1.4 `rune validate`: term check over `docs/decisions` and `runes` (deck) or the module content directories, when an ontology exists
 
@@ -15,3 +15,13 @@
 ## 3. Documentation
 
 - [x] 3.1 Spec walkthrough house rules, cli CHANGELOG, rune-docs CHANGELOG, ADR CLI-0043
+
+## 4. Link model
+
+- [x] 4.1 `term_links.rs`, `prose.rs`: the link forms, the definitions, page resolution through `iri`, the byte-aligned prose view. `lint.rs`: the five term rules, italics unchecked. The glossary fallback removed from `terms.rs`
+- [x] 4.2 `fix.rs`: `rune spec fix --terms` and `--links`, no flag runs both. `commands.rs`: archive refuses a draft or undefined term link
+- [x] 4.3 Unit tests per rule in `lint/tests.rs`, `tests/spec_terms.rs` for the pages, the link rules, `fix`, and the archive refusal
+- [x] 4.4 The delta, `design.md` with the Commands table, this change's record, the cli CHANGELOG
+- [ ] 4.5 `docs/walkthroughs/Spec.md` house rules section, `rune-docs/CHANGELOG.md`
+- [ ] 4.6 Proof under `docs/proofs/ontology-term-references/`
+- [ ] 4.7 Assembly strips the links from an instance and adds a per-instance definition block (a later change)

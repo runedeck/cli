@@ -1,5 +1,4 @@
 use super::*;
-use crate::spec::terms::GLOSSARY_FILE;
 use tempfile::TempDir;
 
 fn target<'target>(repository: &'target Path, path: &'target Path) -> LintTarget<'target> {
@@ -112,7 +111,7 @@ fn exactly_the_limit_passes() {
 }
 
 #[test]
-fn defined_term_needs_a_glossary_entry() {
+fn italics_are_emphasis_and_need_no_term() {
     let root = TempDir::new().unwrap();
     let specs = root.path().join("docs/specs");
     std::fs::create_dir_all(&specs).unwrap();
@@ -129,35 +128,7 @@ fn defined_term_needs_a_glossary_entry() {
         &Terms::load(root.path(), &specs).unwrap(),
         &mut diagnostics,
     );
-    let messages: Vec<_> = diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.message.as_str())
-        .collect();
-    assert_eq!(diagnostics.len(), 2, "{messages:?}");
-    assert!(messages[0].contains("'search index' needs a glossary"));
-    assert!(messages[0].contains("docs/specs/glossary.md"));
-    assert!(messages[1].contains("'scan'"));
-    assert!(
-        !messages.iter().any(|message| message.contains("Rationale")),
-        "labels ending in a colon are emphasis, not definitions"
-    );
-
-    std::fs::write(
-        specs.join(GLOSSARY_FILE),
-        "# Glossary\n\n- **Search Index**: the prebuilt term table.\n",
-    )
-    .unwrap();
-    let mut diagnostics = Vec::new();
-    lint_canonical(
-        target(root.path(), &path),
-        &content,
-        &Terms::load(root.path(), &specs).unwrap(),
-        &mut diagnostics,
-    );
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0].code, "spec-term-undefined");
-    assert!(diagnostics[0].message.contains("'scan' has no entry"));
-    assert_eq!(diagnostics[0].line, Some(5));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
@@ -207,30 +178,6 @@ fn must_passes_the_house_rule_and_shall_fails_it() {
             ("delta-shall-keyword", Some(9))
         ]
     );
-}
-
-#[test]
-fn a_plain_plural_finds_its_singular_entry() {
-    let root = TempDir::new().unwrap();
-    let specs = root.path().join("docs/specs");
-    std::fs::create_dir_all(&specs).unwrap();
-    std::fs::write(
-        specs.join(GLOSSARY_FILE),
-        "# Glossary\n\n- **trailer**: a key-value line in the commit footer.\n",
-    )
-    .unwrap();
-    let path = specs.join("search/spec.md");
-    let content = CLEAN.replace("Find runes.", "Attribute through *trailers*.");
-    let mut diagnostics = Vec::new();
-
-    lint_canonical(
-        target(root.path(), &path),
-        &content,
-        &Terms::load(root.path(), &specs).unwrap(),
-        &mut diagnostics,
-    );
-
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
@@ -322,13 +269,22 @@ rune:Harness a rdfs:Class ;
 rune:Canon a rdfs:Class ;
     rdfs:label "canon" ;
     rdfs:comment "The authored source of one instruction." .
+
+rune:Ghost a rdfs:Class ;
+    rdfs:label "ghost" ;
+    rune:status "draft" .
 "#;
 
+/// The definitions a specification under `docs/specs/<capability>/` writes.
+const DEFINITIONS: &str = "\n\n[HARNESS]: ../glossary/harness.md\n[CANON]: ../glossary/canon.md\n[GHOST]: ../glossary/ghost.md";
+
+/// A repository with the ontology and its generated glossary pages.
 fn ontology_root() -> TempDir {
     let root = TempDir::new().unwrap();
     std::fs::create_dir_all(root.path().join("ontology")).unwrap();
     std::fs::create_dir_all(root.path().join("docs/specs")).unwrap();
     std::fs::write(root.path().join("ontology/rune.ttl"), ONTOLOGY).unwrap();
+    crate::spec::write_glossary_output(root.path().to_str().unwrap(), None).unwrap();
     root
 }
 
@@ -345,75 +301,186 @@ fn lint_with_ontology(root: &TempDir, prose: &str) -> Vec<SpecViolation> {
     diagnostics
 }
 
-#[test]
-fn an_ontology_replaces_the_glossary_as_the_term_source() {
-    let root = ontology_root();
-    std::fs::write(
-        root.path().join("docs/specs").join(GLOSSARY_FILE),
-        "# Glossary\n\n- **scan**: a full read.\n",
-    )
-    .unwrap();
-
-    let diagnostics = lint_with_ontology(
-        &root,
-        "Every *harness* [HARNESS] runs a *scan*.\n\n[HARNESS]: https://runedeck.ai/ns#Harness",
-    );
-
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0].code, "spec-term-undefined");
-    assert!(
-        diagnostics[0]
-            .message
-            .contains("'scan' is not in ontology/rune.ttl")
-    );
+fn codes(diagnostics: &[SpecViolation]) -> Vec<&str> {
+    diagnostics.iter().map(|d| d.code.as_str()).collect()
 }
 
 #[test]
-fn a_cited_first_use_with_its_definition_passes_and_later_uses_need_no_tag() {
+fn an_emphasized_first_use_and_plain_later_uses_pass() {
     let root = ontology_root();
     let diagnostics = lint_with_ontology(
         &root,
-        "Every *harness* [HARNESS] loads a *canon* [CANON]. The *harnesses* share the canon.\n\n[HARNESS]: https://runedeck.ai/ns#Harness\n[CANON]: https://runedeck.ai/ns#Canon",
+        &format!(
+            "Every *[harness][HARNESS]* loads a *[canon][CANON]*. The [harnesses][HARNESS] share the [canon][CANON].{DEFINITIONS}"
+        ),
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
-fn a_first_use_without_a_tag_names_the_tag_and_the_definition_to_add() {
+fn plain_italics_and_ordinary_links_are_not_terms() {
     let root = ontology_root();
-    let diagnostics = lint_with_ontology(&root, "Every *harness* loads instructions.");
+    let diagnostics = lint_with_ontology(
+        &root,
+        "A *widget* is *not* a term, *Rationale:* neither, and [the readme][README] is a link.\n\n[README]: ../../README.md",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
 
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0].code, "term-reference-missing");
+#[test]
+fn a_plain_first_use_and_an_emphasized_later_use_are_errors() {
+    let root = ontology_root();
+    let diagnostics = lint_with_ontology(
+        &root,
+        &format!(
+            "A [harness][HARNESS] loads a *[canon][CANON]*. Again *[canon][CANON]*.{DEFINITIONS}"
+        ),
+    );
+    assert_eq!(
+        codes(&diagnostics),
+        ["spec-term-first-use", "spec-term-first-use"],
+        "{diagnostics:?}"
+    );
     assert_eq!(diagnostics[0].line, Some(5));
     assert!(
-        diagnostics[0].message.contains(
-            "write `*harness* [HARNESS]` and define `[HARNESS]: https://runedeck.ai/ns#Harness`"
-        ),
-        "{}",
-        diagnostics[0].message
+        diagnostics[0]
+            .message
+            .contains("write `*[harness][HARNESS]*`")
+    );
+    assert!(
+        diagnostics[1]
+            .message
+            .contains("later use of [canon][CANON]")
+    );
+    assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Error);
+}
+
+#[test]
+fn a_link_to_no_term_is_undefined_and_names_the_fixer() {
+    let root = ontology_root();
+    let diagnostics = lint_with_ontology(
+        &root,
+        "A *[widget][WIDGET]* here.\n\n[WIDGET]: ../glossary/widget.md",
+    );
+    assert_eq!(
+        codes(&diagnostics),
+        ["spec-term-undefined"],
+        "{diagnostics:?}"
+    );
+    assert_eq!(diagnostics[0].line, Some(5));
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("[widget][WIDGET] names no term")
+    );
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("run `rune spec fix --terms`")
     );
 }
 
 #[test]
-fn a_tag_defined_to_another_iri_or_not_defined_is_unresolved() {
+fn a_tag_without_a_definition_is_a_dangling_link() {
     let root = ontology_root();
-    let wrong = lint_with_ontology(
-        &root,
-        "Every *harness* [HARNESS] loads a *canon* [CANON].\n\n[HARNESS]: https://runedeck.ai/ns#Canon",
-    );
-    let codes: Vec<_> = wrong.iter().map(|d| d.code.as_str()).collect();
+    let diagnostics = lint_with_ontology(&root, "A [phantom][PHANTOM] here.");
     assert_eq!(
-        codes,
-        ["term-reference-unresolved", "term-reference-unresolved"],
-        "{wrong:?}"
+        codes(&diagnostics),
+        ["spec-term-undefined"],
+        "{diagnostics:?}"
+    );
+    assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("the tag has no definition in this file and no term has the tag")
     );
     assert!(
-        wrong[0]
+        diagnostics[0]
             .message
-            .contains("[HARNESS] must be defined as `[HARNESS]: https://runedeck.ai/ns#Harness`")
+            .contains("add `[PHANTOM]: ../glossary/phantom.md` at the end of the file")
     );
-    assert!(wrong[1].message.contains("[CANON] must be defined as"));
+}
+
+#[test]
+fn a_draft_term_warns_once_per_file() {
+    let root = ontology_root();
+    let diagnostics = lint_with_ontology(
+        &root,
+        &format!("A *[ghost][GHOST]* and the [ghost][GHOST] again.{DEFINITIONS}"),
+    );
+    assert_eq!(codes(&diagnostics), ["spec-term-draft"], "{diagnostics:?}");
+    assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Warning);
+    assert!(diagnostics[0].message.contains("term 'ghost' is a draft"));
+}
+
+#[test]
+fn a_missing_page_and_a_hand_edited_page_are_page_errors() {
+    let root = ontology_root();
+    std::fs::remove_file(root.path().join("docs/specs/glossary/canon.md")).unwrap();
+    let missing = lint_with_ontology(&root, &format!("A *[canon][CANON]*.{DEFINITIONS}"));
+    assert_eq!(codes(&missing), ["spec-term-page"], "{missing:?}");
+    assert!(
+        missing[0]
+            .message
+            .contains("glossary page docs/specs/glossary/canon.md is missing")
+    );
+
+    let page = root.path().join("docs/specs/glossary/harness.md");
+    std::fs::write(
+        &page,
+        std::fs::read_to_string(&page)
+            .unwrap()
+            .replace("coding", "code"),
+    )
+    .unwrap();
+    let edited = lint_with_ontology(
+        &root,
+        &format!("A *[harness][HARNESS]* and [harness][HARNESS].{DEFINITIONS}"),
+    );
+    assert_eq!(codes(&edited), ["spec-term-page"], "{edited:?}");
+    assert!(
+        edited[0]
+            .message
+            .contains("differs from the ontology render")
+    );
+}
+
+#[test]
+fn a_known_tag_without_a_definition_names_the_definition_to_add() {
+    let root = ontology_root();
+    let diagnostics = lint_with_ontology(&root, "A *[harness][HARNESS]* loads.");
+    assert_eq!(codes(&diagnostics), ["spec-term-page"], "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("add `[HARNESS]: ../glossary/harness.md` at the end of the file")
+    );
+}
+
+#[test]
+fn the_legacy_form_and_an_iri_definition_warn_and_name_the_new_form() {
+    let root = ontology_root();
+    let legacy = lint_with_ontology(
+        &root,
+        "Every *harness* [HARNESS] loads.\n\n[HARNESS]: https://runedeck.ai/ns#Harness",
+    );
+    assert_eq!(codes(&legacy), ["spec-term-legacy"], "{legacy:?}");
+    assert_eq!(legacy[0].severity, DiagnosticSeverity::Warning);
+    assert!(legacy[0].message.contains(
+        "write `*[harness][HARNESS]*` at first use, `[harness][HARNESS]` later, and define `[HARNESS]: ../glossary/harness.md`"
+    ));
+
+    let iri = lint_with_ontology(
+        &root,
+        "A *[canon][CANON]* and [canon][CANON].\n\n[CANON]: <https://runedeck.ai/ns#Canon>",
+    );
+    assert_eq!(codes(&iri), ["spec-term-legacy"], "{iri:?}");
+    assert!(
+        iri[0]
+            .message
+            .contains("point it at the page: `[CANON]: ../glossary/canon.md`")
+    );
 }
 
 #[test]
@@ -421,92 +488,54 @@ fn a_definition_under_the_namespace_must_name_a_term() {
     let root = ontology_root();
     let diagnostics = lint_with_ontology(
         &root,
-        "No terms here.\n\n[GHOST]: https://runedeck.ai/ns#Ghost\n[OTHER]: https://example.org/elsewhere",
+        "No terms here.\n\n[NOPE]: https://runedeck.ai/ns#Nope\n[OTHER]: https://example.org/elsewhere",
     );
-
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0].code, "term-reference-unresolved");
+    assert_eq!(
+        codes(&diagnostics),
+        ["spec-term-undefined"],
+        "{diagnostics:?}"
+    );
+    assert_eq!(diagnostics[0].line, Some(7));
     assert!(
         diagnostics[0]
             .message
-            .contains("[GHOST] names https://runedeck.ai/ns#Ghost, which is not a term")
+            .contains("[NOPE] names https://runedeck.ai/ns#Nope, which is not a term")
     );
 }
 
 #[test]
-fn a_document_outside_the_tree_gets_reference_rules_only_and_no_capability() {
+fn a_delta_reports_the_delta_twins() {
+    let root = ontology_root();
+    let path = root
+        .path()
+        .join("docs/changes/add-search-index/specs/search/spec.md");
+    let content = CLEAN.replace(
+        "Find runes.",
+        "A [harness][HARNESS] and a *[ghost][GHOST]*.\n\n[HARNESS]: ../../../../specs/glossary/harness.md\n[GHOST]: ../../../../specs/glossary/ghost.md",
+    );
+    let mut diagnostics = Vec::new();
+    lint_delta(
+        LintTarget {
+            repository: root.path(),
+            path: &path,
+            capability: Some("search-index-rules"),
+            change: Some("add-search-index"),
+        },
+        &content,
+        &Terms::load(root.path(), &root.path().join("docs/specs")).unwrap(),
+        &mut diagnostics,
+    );
+    assert_eq!(
+        codes(&diagnostics),
+        ["delta-term-first-use", "delta-term-draft"],
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn a_document_outside_the_tree_gets_the_term_rules_only_and_no_capability() {
     let root = ontology_root();
     let path = root.path().join("docs/decisions/CLI-0001 Example.md");
-    let mut diagnostics = Vec::new();
-    lint_document(
-        LintTarget {
-            repository: root.path(),
-            path: &path,
-            capability: None,
-            change: None,
-        },
-        "# Example\n\nThe *harness* and the *widget*.\n",
-        &Terms::load(root.path(), &root.path().join("docs/specs")).unwrap(),
-        &mut diagnostics,
-    );
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code.as_str()).collect();
-    assert_eq!(codes, ["term-reference-missing"], "{diagnostics:?}");
-    assert!(diagnostics.iter().all(|d| d.capability.is_none()));
-}
-
-#[test]
-fn front_matter_and_plain_emphasis_are_not_terms_in_a_document() {
-    let root = ontology_root();
-    let path = root.path().join("runes/core/skills/Example/SKILL.md");
-    let mut diagnostics = Vec::new();
-    lint_document(
-        LintTarget {
-            repository: root.path(),
-            path: &path,
-            capability: None,
-            change: None,
-        },
-        "---\nallowed-tools: Bash(git add:*), Bash(git diff:*)\n---\n\nDo *not* skip the *harness* [HARNESS] step.\n\n[HARNESS]: https://runedeck.ai/ns#Harness\n",
-        &Terms::load(root.path(), &root.path().join("docs/specs")).unwrap(),
-        &mut diagnostics,
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-}
-
-#[test]
-fn adjacent_italic_runs_escaped_asterisks_and_lowercase_tags_follow_markdown() {
-    let root = ontology_root();
-    let diagnostics = lint_with_ontology(
-        &root,
-        "*harness* [harness] *canon* [CANON] \\*not a term\\* here.\n\n[harness]: <https://runedeck.ai/ns#Harness>\n[CANON]: https://runedeck.ai/ns#Canon\n",
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-
-    let missing_second = lint_with_ontology(
-        &root,
-        "*harness* [HARNESS] *canon* here.\n\n[HARNESS]: https://runedeck.ai/ns#Harness\n",
-    );
-    let codes: Vec<_> = missing_second.iter().map(|d| d.code.as_str()).collect();
-    assert_eq!(codes, ["term-reference-missing"], "{missing_second:?}");
-    assert!(missing_second[0].message.contains("*canon* [CANON]"));
-}
-
-#[test]
-fn the_first_definition_wins_and_indented_definitions_count() {
-    let root = ontology_root();
-    let diagnostics = lint_with_ontology(
-        &root,
-        "A *harness* [HARNESS] runs.\n\n   [HARNESS]: https://runedeck.ai/ns#Canon\n[HARNESS]: https://runedeck.ai/ns#Harness\n",
-    );
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code.as_str()).collect();
-    assert_eq!(codes, ["term-reference-unresolved"], "{diagnostics:?}");
-    assert_eq!(diagnostics[0].line, Some(5));
-}
-
-#[test]
-fn tilde_fences_and_closed_front_matter_are_skipped_but_an_unclosed_block_is_prose() {
-    let root = ontology_root();
-    let path = root.path().join("docs/decisions/X.md");
     let terms = Terms::load(root.path(), &root.path().join("docs/specs")).unwrap();
     let lint = |content: &str| {
         let mut diagnostics = Vec::new();
@@ -523,8 +552,57 @@ fn tilde_fences_and_closed_front_matter_are_skipped_but_an_unclosed_block_is_pro
         );
         diagnostics
     };
-    assert!(lint("---\ntitle: *harness*\n...\n\n~~~\n*harness*\n~~~\n").is_empty());
-    let unclosed = lint("---\ntitle: x\n\nThe *harness* here.\n");
-    assert_eq!(unclosed.len(), 1, "{unclosed:?}");
-    assert_eq!(unclosed[0].code, "term-reference-missing");
+    let clean = lint(
+        "# Example\n\nThe *[harness][HARNESS]* and the *widget*.\n\n[HARNESS]: ../specs/glossary/harness.md\n",
+    );
+    assert!(clean.is_empty(), "{clean:?}");
+    let plain =
+        lint("# Example\n\nThe [harness][HARNESS].\n\n[HARNESS]: ../specs/glossary/harness.md\n");
+    assert_eq!(codes(&plain), ["spec-term-first-use"], "{plain:?}");
+    assert!(plain.iter().all(|d| d.capability.is_none()));
+}
+
+#[test]
+fn front_matter_fences_and_images_are_not_term_links() {
+    let root = ontology_root();
+    let diagnostics = lint_with_ontology(
+        &root,
+        &format!(
+            "![harness][HARNESS] then *[harness][HARNESS]* ok.\n\n```md\n[canon][CANON]\n```\n\nThe *[canon][CANON]*.{DEFINITIONS}"
+        ),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    let path = root.path().join("docs/decisions/X.md");
+    let terms = Terms::load(root.path(), &root.path().join("docs/specs")).unwrap();
+    let mut front = Vec::new();
+    lint_document(
+        LintTarget {
+            repository: root.path(),
+            path: &path,
+            capability: None,
+            change: None,
+        },
+        "---\ntitle: [harness][HARNESS]\n---\n\n*[harness][HARNESS]* first.\n\n[HARNESS]: ../specs/glossary/harness.md\n",
+        &terms,
+        &mut front,
+    );
+    assert!(front.is_empty(), "{front:?}");
+}
+
+#[test]
+fn a_repository_without_an_ontology_checks_no_links() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("docs/specs/search/spec.md");
+    let mut diagnostics = Vec::new();
+    lint_canonical(
+        target(root.path(), &path),
+        &CLEAN.replace(
+            "Find runes.",
+            "A [harness][HARNESS].\n\n[HARNESS]: ../glossary/harness.md",
+        ),
+        &Terms::default(),
+        &mut diagnostics,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }

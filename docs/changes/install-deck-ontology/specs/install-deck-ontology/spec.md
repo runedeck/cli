@@ -11,7 +11,7 @@ The consumer manifest MUST accept one key that names one of its declared sources
 
 ### Requirement: Install deploys the ontology with provenance
 
-An install in a consumer that names an ontology source MUST copy that source's ontology, byte for byte, to the path the term reader opens by default. The copy MUST be recorded as an *instance* [INSTANCE]: a *sidecar* [SIDECAR] that carries its *provenance* [PROVENANCE] and a fingerprint entry in a manifest beside it. The term reader MUST NOT change.
+An install in a consumer that names an ontology source MUST copy that source's ontology, byte for byte, to the path the term reader opens by default. The copy MUST be recorded as an *[instance][INSTANCE]*: a *[sidecar][SIDECAR]* that carries its *[provenance][PROVENANCE]* and a fingerprint entry in a manifest beside it. The term reader MUST NOT change.
 
 #### Scenario: Consumer cites a deck term
 
@@ -29,7 +29,7 @@ A consumer manifest without an ontology key MUST install exactly as before, and 
 
 ### Requirement: Source without an ontology file is refused
 
-An ontology source whose root carries no ontology file MUST be refused with a message that names the key and the source, before any *target* [TARGET] is written.
+An ontology source whose root carries no ontology file MUST be refused with a message that names the key and the source, before any *[target][TARGET]* is written.
 
 #### Scenario: Source carries no ontology file
 
@@ -45,7 +45,7 @@ A deployed copy that differs from its recorded fingerprint or from its source MU
 - **WHEN** the deployed copy is edited after the install
 - **THEN** drift reports the copy, status counts it stale, an install skips it as user modified, and a forced install restores the source bytes
 
-[INSTANCE]: https://runedeck.ai/ns#Instance
-[PROVENANCE]: https://runedeck.ai/ns#Provenance
-[SIDECAR]: https://runedeck.ai/ns#Sidecar
-[TARGET]: https://runedeck.ai/ns#Target
+[INSTANCE]: ../../../../specs/glossary/instance.md
+[PROVENANCE]: ../../../../specs/glossary/provenance.md
+[SIDECAR]: ../../../../specs/glossary/sidecar.md
+[TARGET]: ../../../../specs/glossary/target.md

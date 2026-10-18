@@ -3,13 +3,17 @@
 //! Module map, by concern:
 //!
 //! - Public command surface: [`commands`] (propose, list, context, archive,
-//!   show), [`validate`], [`doctor`]; each command has an output-returning
-//!   `*_output` form, a pure `render_*` form, and a printing wrapper.
+//!   show), [`validate`], [`doctor`], [`glossary`] (the term list and the
+//!   generated pages), [`fix`] (the fixer); each command has an
+//!   output-returning `*_output` form, a pure `render_*` form, and a
+//!   printing wrapper.
 //! - Internal pipeline: [`parse`] and [`model`] read and edit canonical
 //!   Markdown, [`apply`] merges deltas, [`transaction`] makes archive and
 //!   conversion crash-safe, [`root`] resolves the spec root (shared source
 //!   with the CLI fallback), [`tasks`] reads checklists, [`templates`]
-//!   embeds scaffolding.
+//!   embeds scaffolding, [`terms`] reads the ontology, [`term_links`]
+//!   parses and resolves term links over the [`prose`] view, [`lint`]
+//!   applies the prose rules.
 //! - This file keeps the shared vocabulary (summaries, diagnostics) and
 //!   the file/discovery plumbing every submodule uses.
 //! - Tests: unit tests at the bottom of each module; the `OpenSpec` v1.6.0
@@ -45,14 +49,18 @@ use std::sync::LazyLock;
 mod apply;
 mod commands;
 mod doctor;
+mod fix;
+mod glossary;
 mod lint;
 mod model;
 #[cfg(test)]
 mod openspec_oracle;
 mod parse;
+mod prose;
 mod root;
 mod tasks;
 mod templates;
+mod term_links;
 mod terms;
 pub(crate) mod transaction;
 mod validate;
@@ -65,16 +73,20 @@ pub use commands::{
     scan_changes, scan_specifications, show, show_output, sorted_changes,
 };
 pub use doctor::{SpecDoctorOutput, doctor, doctor_output, render_doctor};
+pub use fix::{DraftTerm, FixOutput, SkippedTerm, fix, fix_output, render_fix};
+pub use glossary::{
+    DRAFT_COMMENT, GlossaryCheckOutput, GlossaryEntry, GlossaryOutput, GlossaryStatus,
+    GlossaryTerm, GlossaryWriteOutput, INDEX_FILE, check_glossary, check_glossary_output, glossary,
+    glossary_output, render_glossary, render_glossary_check, render_glossary_write, write_glossary,
+    write_glossary_output,
+};
 pub use lint::{
     DEFAULT_MIN_NAME_WORDS, MAX_REQUIREMENT_WORDS, MAX_SPEC_LINES, MAX_STEP_WORDS, min_name_words,
     name_words, set_name_rule_lookup,
 };
 pub use terms::{
-    DEFAULT_ONTOLOGY_FILE, GLOSSARY_FILE, GlossaryCheckOutput, GlossaryEntry, GlossaryOutput,
-    GlossaryStatus, GlossaryTerm, GlossaryWriteOutput, Term, TermKind, TermSource, Terms,
-    check_glossary, check_glossary_output, glossary, glossary_output, ontology_path,
-    render_glossary, render_glossary_check, render_glossary_file, set_ontology_lookup,
-    write_glossary, write_glossary_output,
+    DEFAULT_ONTOLOGY_FILE, GLOSSARY_DIR, GLOSSARY_FILE, Term, TermKind, TermSource, Terms, kebab,
+    ontology_path, set_ontology_lookup, upper_camel,
 };
 pub use validate::lint_documents;
 pub use validate::{

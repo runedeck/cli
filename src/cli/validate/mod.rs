@@ -500,8 +500,9 @@ fn check_spec_lifecycle(module_root: &Path, report: &mut ValidationReport) -> Re
     }
 }
 
-/// Every italic term in the decision records and runes exists in the
-/// ontology and cites it. A root without an ontology has nothing to cite.
+/// Every term link in the decision records and runes reaches a term the
+/// ontology defines, through its glossary page. A root without an
+/// ontology has no terms.
 fn check_terms(
     root: &Path,
     directories: &[&str],

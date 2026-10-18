@@ -26,13 +26,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add `rune proof run --check` (transcript, sections, and head ancestry) and `--instruction <key>` (record a model's answer through `rune run`).
 - Feed a step's standard input from `< text` lines in its fence, recorded as command lines, so a scene carries its own script or brief.
 - Mark every scene in `proof.cast` with a rule, a `# Scenario:` title with its index, and an ok or unproven verdict line, so a cast player lists the scenes and an expected refusal reads as one.
-- Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with the `[TAG]: <iri>` definitions a document copies, and `--json`.
-- Add `rune spec glossary --write [PATH]`, which writes the glossary file (header, term list, definitions) from the ontology into `glossary.md` beside the specifications or the given path.
-- Add `rune spec glossary --check [PATH]`, which compares the file with the ontology, names each term whose line is missing, extra, or changed, and exits 1 on drift or a missing file.
-- Read defined terms from `ontology/rune.ttl` (or the `ontology` path in `deck.yaml`) in `rune spec validate` and `rune spec doctor`, falling back to `glossary.md` only when no ontology file exists.
+- Add `rune spec glossary`, which prints every ontology term as `- **label**: comment [TAG]` with a `[TAG]: <page>` definition per term, and `--json`.
+- Add `rune spec glossary --write [PATH]`, which writes one glossary page per term and an `index.md` under `glossary/` beside the specifications, or under the given directory.
+- Give each glossary page `title`, `iri`, `kind`, and `status` front matter, the term's comment, and a generated-from line.
+- Remove, on `--write`, the pages of terms the ontology no longer defines and the single `glossary.md` an older render wrote.
+- Add `rune spec glossary --check [PATH]`: regenerates every page in memory and reports each page whose bytes differ.
+- Read defined terms from `ontology/rune.ttl`, or from the `ontology` path in `deck.yaml`, in `rune spec validate` and `rune spec doctor`. A repository without an ontology has no terms.
+- Accept `rune:status "draft"` on a term.
 - Fail validation on an unreadable ontology, an undeclared prefix, two terms of one kind whose labels match without case, or an ontology with no labeled term.
-- Report `term-reference-missing` when the first italic use of an ontology term carries no `[TAG]`, and `term-reference-unresolved` when the tag is undefined or names another IRI.
-- Apply the term reference rules in `rune validate` to `docs/decisions` and `runes` of a deck, and to the record and rune directories of a module, when the root has an ontology.
+- Mark a term as a link to its glossary page: `*[text][TAG]*` at first use, `[text][TAG]` later, and `[TAG]: <relative page path>` at the end of the file.
+- Resolve a term link through its page's `iri`, or through the tag when the page is absent. Plain italics are emphasis and are not checked.
+- Report `spec-term-undefined` when a link names no term, including a reference tag with no definition in the file, and `spec-term-draft` (warning) when the term is a draft.
+- Report `spec-term-first-use` when the first use of a term in a file is not emphasized, or a later use is.
+- Report `spec-term-legacy` (warning) on the old `*term* [TAG]` form or an IRI definition, naming the new form. A delta gets `delta-` twins of every term code.
+- Apply the term link rules in `rune validate` to `docs/decisions` and `runes` of a deck, and to the record and rune directories of a module, when the root has an ontology.
+- Add `rune spec fix --terms`: adds a draft ontology entry for every term link that names no term and writes its page.
+- Add `rune spec fix --links`: rewrites the legacy italics form to the link form across the repository, idempotently.
+- Run both fixer passes when `rune spec fix` gets no flag. Both are idempotent.
+- Skip, in the fixer's walk, version control, build, dependency, and fixture trees, a deployed tree (a directory with a `.manifest`), the change archive, and the glossary.
+- Refuse `rune spec archive` on a change whose files link to a draft term or to no term, naming each link.
 - Refuse `rune sign queue` on a head that `origin` already holds or sits above, because signing it in place would rewrite a pushed tip.
 - Report jj's immutable-commit refusal in `rune sign next` without a retry, print the pinentry focus hint on every timeout, and print the `jj git push` line after a signed head.
 - Add `rune launch --check` and `rune run --check`, which ask each base URL in the plan for its model list and report every model the plan sends as served or missing, without spawning.
