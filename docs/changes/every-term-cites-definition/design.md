@@ -2,7 +2,7 @@
 
 ## Approach
 
-A term is marked by a Markdown link to its generated glossary page. The *[validator][VALIDATOR]* reads the term address from the page and matches it to the ontology, so the link text and the tag carry no meaning of their own. This beat the italics model, which marked a term with a form no reader could tell from emphasis, and it beat a parenthetical definition at first use, which copies the definition into every file. The fixer is a separate step, because a validator that edits files is no longer a validator.
+A term is marked by a Markdown link to its generated glossary page. The *[validator][VALIDATOR]* reads the term address from the page and matches it to the ontology, so the link text and the tag carry no meaning of their own. This beat the italics model, which marked a term with a form no reader could tell from emphasis, and it beat a parenthetical definition at first use, which copies the definition into every file. The fixer is a separate step, because a [validator][VALIDATOR] that edits files is no longer a [validator][VALIDATOR].
 
 ## Structure
 
@@ -21,7 +21,7 @@ One row per requirement of the delta. The requirement names a role. This table n
 | Defined terms link to the ontology | validate | `rune-spec-doctor` | `spec-term-undefined`, `delta-term-undefined` | 1 |
 | The ontology is the term source | validate. The ontology is `ontology/rune.ttl` unless `deck.yaml` names another path under `ontology` | | `spec-term-draft`, `delta-term-draft` (warning) | 0 on a warning alone |
 | A broken ontology fails validation | validate | | none. The error carries no id and names the ontology path | 1 |
-| First use of a term is emphasized | validate | | `spec-term-first-use`, `delta-term-first-use` | 1 |
+| Every occurrence of a term is a link | validate; `rune spec fix --links` links the plain occurrences | | `spec-term-unlinked`, `spec-term-first-use`, and their `delta-` twins | 1 |
 | Term pages back every link | validate. Pages live under `docs/specs/glossary/` | `glossary-current` (deck) | `spec-term-page`, `delta-term-page` | 1 |
 | The legacy form warns | validate | | `spec-term-legacy`, `delta-term-legacy` (warning) | 0 |
 | Reference definitions follow Markdown | validate | | none | |

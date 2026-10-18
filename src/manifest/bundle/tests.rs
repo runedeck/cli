@@ -204,6 +204,36 @@ fn escaping_reference_is_rejected_even_when_destination_exists() {
 }
 
 #[test]
+fn term_link_into_the_repository_glossary_is_not_an_escape() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("skill");
+    fs::create_dir(&root).unwrap();
+    write(
+        &root,
+        "SKILL.md",
+        b"# Alpha\nThe *[validator][VALIDATOR]* reads it.\n\n[VALIDATOR]: ../../../../docs/specs/glossary/validator.md\n",
+    );
+    let inventory = inspect_bundle(&root);
+    assert!(
+        inventory.problems.is_empty(),
+        "a term link is stripped by the assembler and is no escape: {:?}",
+        inventory.problems
+    );
+    for escape in [
+        b"# Alpha\n[escape](../../docs/specs/glossary/)\n".as_slice(),
+        b"# Alpha\n[escape](../../docs/specs/glossary/..%5c..%5c..%5csecret.md)\n",
+        b"# Alpha\n[escape](../../docs/specs/glossary/Secret.MD)\n",
+    ] {
+        write(&root, "SKILL.md", escape);
+        has_problem(
+            &inspect_bundle(&root),
+            BundleProblemKind::EscapingReference,
+            "SKILL.md",
+        );
+    }
+}
+
+#[test]
 fn inaccessible_root_never_produces_a_complete_digest() {
     let root = TempDir::new().unwrap();
     let report = inspect_bundle(&root.path().join("absent"));

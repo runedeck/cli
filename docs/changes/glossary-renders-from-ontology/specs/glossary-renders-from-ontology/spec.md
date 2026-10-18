@@ -2,7 +2,7 @@
 
 ### Requirement: The glossary is rendered from the ontology
 
-The glossary is a *[render][RENDER]* of the ontology. The generator MUST write one page per labeled ontology term and one index. They go into the glossary directory beside the canonical specifications, or into a directory the owner names. The index MUST list every page sorted by label with the term's comment. One ontology MUST produce the same bytes on every write. A write MUST remove the page of a term the ontology no longer defines and the single glossary file an older render wrote.
+The glossary is a *[render][RENDER]* of the ontology. The generator MUST write one page per labeled ontology term and one index. They go into the glossary directory beside the canonical specifications, or into a directory the owner names. The index MUST list every page sorted by label with the term's comment. One ontology MUST produce the same bytes on every write. A write MUST remove the page of a term the ontology no longer defines and the single glossary file an older [render][RENDER] wrote.
 
 #### Scenario: Two writes read one ontology
 

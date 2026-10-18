@@ -80,6 +80,90 @@ impl TermLink {
     }
 }
 
+/// A plain occurrence of a term's label on a prose line: the label or its
+/// plural as whole words, outside any link, heading, or inline code (the
+/// prose view blanks code), compared without case. Every occurrence of a
+/// term in a file is a link, so a plain one is a finding and the fixer
+/// links it with the tag the file already uses for the term.
+pub(super) struct PlainOccurrence {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub(super) fn plain_occurrences(line: &str, label: &str) -> Vec<PlainOccurrence> {
+    if line.trim_start().starts_with('#') || label.is_empty() || is_definition(line) {
+        return Vec::new();
+    }
+    // Lower-case per character, keeping every byte offset: a character whose
+    // lower-case form has another length (`İ`, the Kelvin sign) stays as it is.
+    let lower: String = line
+        .chars()
+        .map(|c| {
+            let mut lowered = c.to_lowercase();
+            match (lowered.next(), lowered.next()) {
+                (Some(l), None) if l.len_utf8() == c.len_utf8() => l,
+                _ => c,
+            }
+        })
+        .collect();
+    let needle = label.to_lowercase();
+    let mut masked = vec![false; line.len()];
+    for link in reference_links(1, line) {
+        masked[link.start..link.end].fill(true);
+    }
+    let mut depth = 0usize;
+    // Inside the destination of an inline link `[text](path)`, which is not
+    // prose; the count tracks balanced parentheses within it.
+    let mut destination = 0usize;
+    let bytes = line.as_bytes();
+    for (i, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'[' if destination == 0 => depth += 1,
+            b']' if destination == 0 => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 && bytes.get(i + 1) == Some(&b'(') {
+                    destination = 1;
+                }
+            }
+            b'(' if destination > 0 && i > 0 && bytes[i - 1] != b']' => destination += 1,
+            b')' if destination > 0 => {
+                masked[i] = true;
+                destination -= 1;
+            }
+            _ => {}
+        }
+        if depth > 0 || destination > 0 {
+            masked[i] = true;
+        }
+    }
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(&needle) {
+        let start = from + at;
+        let mut end = start + needle.len();
+        // The plural: `changes`, `harnesses`, `statuses`. A label that ends
+        // in s takes `es` only.
+        if lower[end..].starts_with("es") {
+            end += 2;
+        } else if lower[end..].starts_with('s') && !needle.ends_with('s') {
+            end += 1;
+        }
+        let before = lower[..start].chars().next_back();
+        let after = lower[end..].chars().next();
+        let boundary =
+            |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
+        if boundary(before)
+            && boundary(after)
+            && !masked[start..end].iter().any(|m| *m)
+            && !lower[..start].ends_with('*')
+        {
+            found.push(PlainOccurrence { start, end });
+        }
+        from = end.max(start + 1);
+    }
+    found
+}
+
 /// The reference-style links of one prose line, in order. An image
 /// `![alt][TAG]` is not a link to a page.
 pub(super) fn reference_links(number: usize, line: &str) -> Vec<TermLink> {
@@ -582,6 +666,38 @@ mod tests {
             ),
             "glossary/a.md"
         );
+    }
+
+    #[test]
+    fn plain_occurrences_skip_links_headings_code_and_partial_words() {
+        let line = "A [change][CHANGE] and a change, two changes, no changed,          masked.";
+        let hits: Vec<&str> = plain_occurrences(line, "change")
+            .into_iter()
+            .map(|hit| &line[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change", "changes"]);
+        assert!(plain_occurrences("## The change", "change").is_empty());
+        assert!(plain_occurrences("*[change][CHANGE]* only", "change").is_empty());
+        let inline = "See [the design](../changes/x/design.md) for the change.";
+        let hits: Vec<&str> = plain_occurrences(inline, "change")
+            .into_iter()
+            .map(|hit| &inline[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change"]);
+        let nested = "See [x](dir(foo)/change.md) then a change.";
+        assert_eq!(plain_occurrences(nested, "change").len(), 1);
+        let plural = "The harnesses and the harness.";
+        let hits: Vec<&str> = plain_occurrences(plural, "harness")
+            .into_iter()
+            .map(|hit| &plural[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["harnesses", "harness"]);
+        let unicode = "İ change. K change.";
+        let hits: Vec<&str> = plain_occurrences(unicode, "change")
+            .into_iter()
+            .map(|hit| &unicode[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change", "change"]);
     }
 
     #[test]

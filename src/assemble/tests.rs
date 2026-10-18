@@ -211,6 +211,16 @@ fn strip_removes_both_markers_and_definitions() {
 }
 
 #[test]
+fn strip_unlinks_term_links_and_keeps_their_text() {
+    let content = "The *[validator][VALIDATOR]* reads it. A [validator][VALIDATOR] again, and [plain][OTHER].\n\n[VALIDATOR]: ../../docs/specs/glossary/validator.md\n";
+    let result = references::strip(content);
+    assert_eq!(
+        result,
+        "The *validator* reads it. A validator again, and [plain][OTHER].\n"
+    );
+}
+
+#[test]
 fn strip_preserves_content_without_refs() {
     let result = references::strip(PLAIN_NO_REFS);
     assert_eq!(result, PLAIN_NO_REFS);

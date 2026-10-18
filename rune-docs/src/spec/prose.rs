@@ -70,16 +70,38 @@ fn front_matter_end(content: &str) -> Option<usize> {
 /// text never matches a rule.
 fn without_inline_code(line: &str) -> String {
     let mut result = String::with_capacity(line.len());
-    let mut inside = false;
-    for character in line.chars() {
-        if character == '`' {
-            inside = !inside;
-            result.push(' ');
-        } else if inside {
-            result.extend(std::iter::repeat_n(' ', character.len_utf8()));
-        } else {
-            result.push(character);
+    let chars: Vec<char> = line.chars().collect();
+    // A code span opens with a run of backticks and closes with a run of the
+    // same length, so ``a ` b`` is one span.
+    let mut open: Option<usize> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '`' {
+            let run = chars[i..].iter().take_while(|c| **c == '`').count();
+            match open {
+                Some(width) if width == run => open = None,
+                Some(_) => {}
+                None => {
+                    let closes = chars[i + run..].windows(run).enumerate().any(|(j, w)| {
+                        w.iter().all(|c| *c == '`')
+                            && chars.get(i + run + j + run) != Some(&'`')
+                            && (j == 0 || chars[i + run + j - 1] != '`')
+                    });
+                    if closes {
+                        open = Some(run);
+                    }
+                }
+            }
+            result.extend(std::iter::repeat_n(' ', run));
+            i += run;
+            continue;
         }
+        if open.is_some() {
+            result.extend(std::iter::repeat_n(' ', chars[i].len_utf8()));
+        } else {
+            result.push(chars[i]);
+        }
+        i += 1;
     }
     result
 }

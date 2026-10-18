@@ -591,6 +591,41 @@ fn front_matter_fences_and_images_are_not_term_links() {
 }
 
 #[test]
+fn a_plain_occurrence_of_a_linked_term_is_reported_with_the_form_to_write() {
+    let root = ontology_root();
+    let path = root.path().join("docs/decisions/X.md");
+    let terms = Terms::load(root.path(), &root.path().join("docs/specs")).unwrap();
+    let mut diagnostics = Vec::new();
+    lint_document(
+        LintTarget {
+            repository: root.path(),
+            path: &path,
+            capability: None,
+            change: None,
+        },
+        "# X\n\nA harness first. Then *[harness][HARNESS]* and two harnesses.\n\n[HARNESS]: ../specs/glossary/harness.md\n",
+        &terms,
+        &mut diagnostics,
+    );
+    let unlinked: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == "spec-term-unlinked")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(unlinked.len(), 2, "{diagnostics:?}");
+    assert!(
+        unlinked[0].contains("write `*[harness][HARNESS]*, which becomes the first use`"),
+        "{}",
+        unlinked[0]
+    );
+    assert!(
+        unlinked[1].contains("write `[harnesses][HARNESS]`"),
+        "{}",
+        unlinked[1]
+    );
+}
+
+#[test]
 fn a_repository_without_an_ontology_checks_no_links() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("docs/specs/search/spec.md");

@@ -16,7 +16,7 @@ When a consumer names an ontology source, the deployer MUST copy that ontology, 
 #### Scenario: Consumer cites a deck term
 
 - **WHEN** the deployment completes and a delta specification in the consumer cites a term the source ontology defines
-- **THEN** validation of that change passes, and the copy, its sidecar, and its manifest entry exist
+- **THEN** validation of that change passes, and the copy, its [sidecar][SIDECAR], and its manifest entry exist
 
 ### Requirement: Consumer without the key installs as before
 

@@ -1,17 +1,21 @@
 use std::collections::HashSet;
 
-/// Remove reference-style link definitions (`[1]: url`, `[MADR]: url`) and
-/// the inline markers (` [1]`, ` [MADR]`) that point at them. Only markers
+/// Remove reference-style link definitions (`[1]: url`, `[MADR]: url`),
+/// the inline markers (` [1]`, ` [MADR]`) that point at them, and the term
+/// links (`[validator][VALIDATOR]`), which keep their text. Only markers
 /// whose label is actually defined are touched, so unrelated bracketed prose
 /// (`Use [optional]`, `> [!NOTE]`) survives.
 pub fn strip(content: &str) -> String {
     static INLINE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static LINK_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static DEF_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
     let had_newline = content.ends_with('\n');
 
     let inline_re =
         INLINE_RE.get_or_init(|| regex::Regex::new(r" \[([\w][\w-]*)\]").expect("valid regex"));
+    let link_re = LINK_RE
+        .get_or_init(|| regex::Regex::new(r"\[([^\]\n]+)\]\[([\w][\w-]*)\]").expect("valid regex"));
     let def_re =
         DEF_RE.get_or_init(|| regex::Regex::new(r"^\[([\w][\w-]*)\]:").expect("valid regex"));
 
@@ -42,8 +46,15 @@ pub fn strip(content: &str) -> String {
             continue;
         }
         removed_definition = false;
+        let unlinked = link_re.replace_all(line, |caps: &regex::Captures<'_>| {
+            if defined.contains(caps.get(2).expect("tag group").as_str()) {
+                caps.get(1).expect("text group").as_str().to_string()
+            } else {
+                caps.get(0).expect("whole match").as_str().to_string()
+            }
+        });
         let cleaned = inline_re
-            .replace_all(line, |caps: &regex::Captures<'_>| {
+            .replace_all(&unlinked, |caps: &regex::Captures<'_>| {
                 if defined.contains(caps.get(1).expect("label group").as_str()) {
                     String::new()
                 } else {

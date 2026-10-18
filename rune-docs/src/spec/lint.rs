@@ -290,6 +290,8 @@ fn lint_terms(
         file_dir: target.path.parent().unwrap_or(Path::new("")),
         seen: BTreeSet::new(),
         reported: BTreeSet::new(),
+        tags: BTreeMap::new(),
+        first_link: BTreeMap::new(),
         pages: BTreeMap::new(),
         diagnostics,
     };
@@ -316,6 +318,7 @@ fn lint_terms(
             lint.link(&link, &definitions);
         }
     }
+    lint.plain_occurrences(&view);
 }
 
 /// The state of the term rules over one file.
@@ -328,6 +331,11 @@ struct TermLint<'a> {
     seen: BTreeSet<String>,
     /// Findings reported once per term and rule.
     reported: BTreeSet<(String, &'static str)>,
+    /// The tag this file writes for each linked term, first link wins.
+    tags: BTreeMap<String, String>,
+    /// Where the first link of each term sits, as (line, column), so a plain
+    /// use before it gets the emphasized form as its hint.
+    first_link: BTreeMap<String, (usize, usize)>,
     /// Whether each page read so far matches its render.
     pages: BTreeMap<std::path::PathBuf, bool>,
     diagnostics: &'a mut Vec<SpecViolation>,
@@ -391,6 +399,12 @@ impl TermLint<'_> {
             ),
             Resolution::Term { term, via, page } => {
                 let first = self.seen.insert(term.iri.clone());
+                self.tags
+                    .entry(term.iri.clone())
+                    .or_insert_with(|| link.tag.clone());
+                self.first_link
+                    .entry(term.iri.clone())
+                    .or_insert((link.line, link.start));
                 self.first_use(link, first);
                 if term.draft && self.once(&term.iri, "draft") {
                     self.report(
@@ -405,6 +419,74 @@ impl TermLint<'_> {
                     );
                 }
                 self.reached(link, term, via, page);
+            }
+        }
+    }
+
+    /// Every occurrence of a term in a file is a link. Once a file links a
+    /// term, a plain later occurrence of its label is a finding.
+    fn plain_occurrences(&mut self, view: &[(usize, String)]) {
+        let linked: Vec<(String, String, String)> = self
+            .seen
+            .iter()
+            .filter_map(|iri| self.terms.by_iri(iri))
+            .map(|term| {
+                let tag = self
+                    .tags
+                    .get(&term.iri)
+                    .cloned()
+                    .unwrap_or_else(|| term.name.to_uppercase());
+                (term.iri.clone(), term.label.clone(), tag)
+            })
+            .collect();
+        for (number, line) in view {
+            // The same selection as the fixer: where two terms overlap, the
+            // longer wins, so one span gets one diagnostic.
+            let mut hits: Vec<(usize, usize, &str, &str, &str)> = linked
+                .iter()
+                .flat_map(|(iri, label, tag)| {
+                    super::term_links::plain_occurrences(line, label)
+                        .into_iter()
+                        .map(move |hit| {
+                            (
+                                hit.start,
+                                hit.end,
+                                iri.as_str(),
+                                label.as_str(),
+                                tag.as_str(),
+                            )
+                        })
+                })
+                .collect();
+            hits.sort_by_key(|(start, end, ..)| (*start, std::cmp::Reverse(*end)));
+            let mut last_end = 0;
+            for (start, end, iri, label, tag) in hits {
+                if start < last_end {
+                    continue;
+                }
+                last_end = end;
+                let text = &line[start..end];
+                let before_first =
+                    self.first_link
+                        .get(iri)
+                        .is_some_and(|(first_line, first_start)| {
+                            (*number, start) < (*first_line, *first_start)
+                        });
+                let form = if before_first {
+                    format!("*[{text}][{tag}]*, which becomes the first use")
+                } else {
+                    format!("[{text}][{tag}]")
+                };
+                if self.once(&format!("{iri}:{number}:{start}"), "unlinked") {
+                    self.report(
+                        "unlinked",
+                        DiagnosticSeverity::Error,
+                        *number,
+                        format!(
+                            "'{text}' is the term '{label}' and this file links it elsewhere; every occurrence links, write `{form}`"
+                        ),
+                    );
+                }
             }
         }
     }

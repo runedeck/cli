@@ -494,6 +494,15 @@ fn check_references(
             ));
             continue;
         };
+        // Only a reference-style link is a term link: the assembler strips
+        // that form before deployment, and an inline link survives it.
+        if matches!(
+            link_type,
+            LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut
+        ) && is_term_link(&path)
+        {
+            continue;
+        }
         let relative = Path::new(document)
             .parent()
             .unwrap_or(Path::new(""))
@@ -526,6 +535,30 @@ fn check_references(
             )),
         }
     }
+}
+
+/// A term link points at a glossary page the repository generates from its
+/// ontology: a climb out of the skill, then `docs/specs/glossary/<page>.md`.
+/// The assembler strips term links before an instance is deployed, so the
+/// deployed bundle never carries one, and the source bundle may.
+fn is_term_link(path: &str) -> bool {
+    let mut components = path.split('/').skip_while(|component| *component == "..");
+    let Some(page) = (components.next() == Some("docs")
+        && components.next() == Some("specs")
+        && components.next() == Some("glossary"))
+    .then(|| components.next())
+    .flatten() else {
+        return false;
+    };
+    // A generated page name is kebab case, so a backslash, a dot segment,
+    // or an upper-case letter never passes, however it was encoded.
+    let page_name = page.strip_suffix(".md").unwrap_or("");
+    components.next().is_none()
+        && !page_name.is_empty()
+        && page_name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && path.starts_with("../")
 }
 
 fn is_external_reference(destination: &str) -> bool {

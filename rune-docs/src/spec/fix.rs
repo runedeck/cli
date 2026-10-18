@@ -264,6 +264,8 @@ pub(super) fn migrate_links(content: &str, path: &Path, terms: &Terms) -> Option
         }
     }
 
+    link_every_occurrence(&mut lines, terms, file_dir);
+
     // The first use of each term is emphasized and no later use is.
     let view = prose(&join(&lines));
     let definitions = definitions_of(&view);
@@ -314,6 +316,43 @@ pub(super) fn migrate_links(content: &str, path: &Path, terms: &Terms) -> Option
         result.push('\n');
     }
     (result != content).then_some(result)
+}
+
+/// Every occurrence of a term the file links is a link: a plain later
+/// occurrence of the label takes the tag the file already uses.
+fn link_every_occurrence(lines: &mut [String], terms: &Terms, file_dir: &Path) {
+    let view = prose(&join(lines));
+    let definitions = definitions_of(&view);
+    let mut tags: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for (number, line) in &view {
+        for link in reference_links(*number, line) {
+            if let Resolution::Term { term, .. } = resolve(terms, &link, &definitions, file_dir) {
+                tags.entry(term.iri.clone())
+                    .or_insert_with(|| (term.label.clone(), link.tag.clone()));
+            }
+        }
+    }
+    for (number, line) in &view {
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for (label, tag) in tags.values() {
+            for hit in super::term_links::plain_occurrences(line, label) {
+                let text = &line[hit.start..hit.end];
+                edits.push((hit.start, hit.end, format!("[{text}][{tag}]")));
+            }
+        }
+        // Where two terms overlap, the longer one is the more specific
+        // term, so it wins: `missed requirement` over `requirement`.
+        edits.sort_by_key(|(start, end, _)| (*start, std::cmp::Reverse(*end)));
+        let mut kept: Vec<(usize, usize, String)> = Vec::new();
+        for edit in edits {
+            if kept.last().is_none_or(|(_, end, _)| edit.0 >= *end) {
+                kept.push(edit);
+            }
+        }
+        for (start, end, replacement) in kept.into_iter().rev() {
+            lines[number - 1].replace_range(start..end, &replacement);
+        }
+    }
 }
 
 fn join(lines: &[String]) -> String {
@@ -408,6 +447,52 @@ mod tests {
         let again = fix_output(source(&root), false, true).unwrap();
         assert!(again.rewritten.is_empty(), "{again:?}");
         assert_eq!(std::fs::read_to_string(&record).unwrap(), migrated);
+    }
+
+    #[test]
+    fn links_make_every_later_occurrence_of_a_linked_term_a_link() {
+        let root = repository();
+        let path = root
+            .path()
+            .join("docs/changes/add-the-gadget-rules/specs/search/spec.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "## ADDED Requirements\n\nA *[change][CHANGE]* MUST name one change. Two changes share a change id.\n\n[CHANGE]: ../../../../specs/glossary/change.md\n",
+        )
+        .unwrap();
+        let terms = Terms::load(root.path(), &root.path().join("docs/specs")).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let fixed = migrate_links(&content, &path, &terms).expect("later occurrences change");
+        assert!(
+            fixed.contains(
+                "MUST name one [change][CHANGE]. Two [changes][CHANGE] share a [change][CHANGE] id."
+            ),
+            "{fixed}"
+        );
+        assert!(migrate_links(&fixed, &path, &terms).is_none(), "idempotent");
+    }
+
+    #[test]
+    fn links_prefer_the_longer_term_where_two_overlap() {
+        let root = repository();
+        let turtle =
+            format!("{TURTLE}\nrune:PlainStage a rdfs:Class ;\n    rdfs:label \"stage\" .\n");
+        std::fs::write(root.path().join("ontology/rune.ttl"), turtle).unwrap();
+        write_glossary_output(root.path().to_str().unwrap(), None).unwrap();
+        let record = root.path().join("docs/decisions/Y.md");
+        std::fs::write(
+            &record,
+            "# Y\n\nA *[lifecycle stage][STAGE]* and a *[stage][PLAINSTAGE]*. The lifecycle stage, then the stage.\n\n[STAGE]: ../specs/glossary/lifecycle-stage.md\n[PLAINSTAGE]: ../specs/glossary/stage.md\n",
+        )
+        .unwrap();
+        let terms = Terms::load(root.path(), &root.path().join("docs/specs")).unwrap();
+        let content = std::fs::read_to_string(&record).unwrap();
+        let fixed = migrate_links(&content, &record, &terms).expect("plain uses change");
+        assert!(
+            fixed.contains("The [lifecycle stage][STAGE], then the [stage][PLAINSTAGE]."),
+            "{fixed}"
+        );
     }
 
     #[test]
