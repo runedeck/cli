@@ -113,6 +113,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Resolve a term link through its page's `iri`, or through the tag when the page is absent. Plain italics are emphasis and are not checked.
 - Report `spec-term-undefined` when a link names no term, including a reference tag with no definition in the file, and `spec-term-draft` (warning) when the term is a draft.
 - Report `spec-term-first-use` when the first use of a term in a file is not emphasized, or a later use is.
+- Report `spec-term-unlinked` when a file links a term and writes it plain elsewhere, and link every occurrence in `rune spec fix --links`; where two terms start at one word, the longer wins.
 - Report `spec-term-legacy` (warning) on the old `*term* [TAG]` form or an IRI definition, naming the new form. A delta gets `delta-` twins of every term code.
 - Apply the term link rules in `rune validate` to `docs/decisions` and `runes` of a deck, and to the record and rune directories of a module, when the root has an ontology.
 - Add `rune spec fix --terms`: adds a draft ontology entry for every term link that names no term and writes its page.
@@ -342,6 +343,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fix claude in `rune run --mode workspace-write` editing but never running a command: the run sends one `--settings` object that turns on Claude Code's sandbox, so Bash runs only inside it.
 - Fix the drop warning for a codex `model` config key or a claude `model` settings key whose value equals the model the run passes.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
+- Fix the bundle check to accept a reference-style term link into the repository's glossary, the form the assembler strips before deployment.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Number a console fence error by the line of the README file, not of the body under the frontmatter.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.

@@ -14,7 +14,7 @@ CLI-0040 made an italic term an error unless `docs/specs/glossary.md` defines it
 
 - A term is a Markdown link to its glossary page: emphasized at the first use in a file, plain after it, with a reference definition at the end of the file that points at the page by relative path. Plain italics are emphasis and are not checked.
 - The term source is the ontology. A repository without one has no terms, so the glossary fallback goes away. A term may carry a draft status.
-- The validator reports a link that names no term, a draft term, a first use that is not emphasized or a later use that is, a page that is missing or stale, and the legacy italics form, which still resolves and warns with the new form to write. The design's Commands table names the diagnostic ids. rumdl MD052 and MD053 keep reporting an undefined and an unused tag.
+- The validator reports a link that names no term, a draft term, a plain occurrence of a linked term, a first use that is not emphasized or a later use that is, a page that is missing or stale, and the legacy italics form, which still resolves and warns with the new form to write. The design's Commands table names the diagnostic ids. rumdl MD052 and MD053 keep reporting an undefined and an unused tag.
 - `rune spec glossary` prints the term list with tags and page definitions.
 - `rune spec fix --terms` adds a draft entry and a page for every link that names no term. `rune spec fix --links` migrates the legacy form in every Markdown file. Both change nothing on a second run.
 - `rune spec archive` refuses a change whose files link to a draft term or to no term.
