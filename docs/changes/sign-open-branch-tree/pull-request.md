@@ -10,7 +10,7 @@ Four rough edges from tonight's landings, each with a test: `open` refused a `jj
 - Accept an owner-signed head in `open`, refuse a signature from a key outside `KEYS`, document `--repo`.
 - Take a new capability's purpose from the proposal in `archive`, report parse issues with their line in `doctor`, and refuse divergent provider copies in `promote`.
 - Add `rune-docs` to the Cargo workspace, run `cargo test --workspace` in `test.yaml`, `release.yaml`, and the push hook, and fix the five broken unit tests, the two clippy findings, and the rustfmt drift.
-- Update the `sealed-review-ceremony` delta and add `docs/changes/sign-open-branch-tree/`.
+- Update the `owner-key-signs-merges` delta and add `docs/changes/sign-open-branch-tree/`.
 
 ## Testing
 

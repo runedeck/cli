@@ -335,7 +335,7 @@ fn keys_fingerprints_at(repo: &queue::repo::Repo, reference: &str) -> Result<Vec
 }
 
 /// Every fingerprint `KEYS` pins. The file is `signer FINGERPRINT ADDRESS...`
-/// lines (skeleton `trusted-key-anchor`): the fingerprint is
+/// lines (skeleton `sign-with-trusted-keys`): the fingerprint is
 /// the pin and the addresses say where a verifier fetches the bytes. The
 /// cli needs only the pins, because it verifies with the owner's own gpg
 /// keyring, which holds the key. A `KEYS` that is still an armored block

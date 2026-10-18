@@ -27,7 +27,7 @@ Tonight's landings hit four rough edges. `rune sign open` refused a head the own
 
 ### Modified Capabilities
 
-- `sealed-review-ceremony`: the open refusal list drops the signed head and gains the foreign key, and a new requirement covers the owner-signed head and the branch body.
+- `owner-key-signs-merges`: the open refusal list drops the signed head and gains the foreign key, and a new requirement covers the owner-signed head and the branch body.
 
 ## Impact
 

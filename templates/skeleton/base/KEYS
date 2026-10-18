@@ -1,4 +1,4 @@
-# Trusted signers for this repository (docs/specs/trusted-key-anchor).
+# Trusted signers for this repository (docs/specs/sign-with-trusted-keys).
 # One line per signer: the pinned fingerprint, then the addresses whose Web
 # Key Directory (or GitHub key list) supplies the bytes, tried in order.
 # scripts/trusted-keys resolves this file; nothing is trusted but the pin.

@@ -61,7 +61,7 @@ For example, the skill sidecar is `build/claude/skills/MySkill/.provenance/SKILL
 Adjacent authored YAML remains content and is copied with the selected bundle.
 Deployment also writes provenance into target `.provenance` directories and records its path in `.manifest`.
 The complete selected-source snapshot uses `.provenance/source-snapshot.json` in build and target metadata.
-See the [current metadata contract](../changes/codex-skill-identity/design.md#separate-source-and-build-metadata).
+See the [current metadata contract](../changes/codex-assembly-fully-compatible/design.md#separate-source-and-build-metadata).
 This note records implementation behavior. It does not change this ADR's accepted status or approve the new draft ADR.
 
 ```text

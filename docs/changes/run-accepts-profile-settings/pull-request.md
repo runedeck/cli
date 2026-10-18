@@ -2,7 +2,7 @@
 
 ## Plan
 
-Change `run-accepts-profile-settings`: proposal, design, one ADDED delta under `harness-run-command`, tasks, and `adr.md` under `docs/changes/run-accepts-profile-settings/`. Proof under `docs/proofs/run-accepts-profile-settings/`. Reviewed by astra and grok before the push. Their eight fixes are in.
+Change `run-accepts-profile-settings`: proposal, design, one ADDED delta under `execute-prompts-off-session`, tasks, and `adr.md` under `docs/changes/run-accepts-profile-settings/`. Proof under `docs/proofs/run-accepts-profile-settings/`. Reviewed by astra and grok before the push. Their eight fixes are in.
 
 ## Changes
 

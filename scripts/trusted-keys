@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a gpg keyring from a KEYS file (docs/specs/trusted-key-anchor).
+# Build a gpg keyring from a KEYS file (docs/specs/sign-with-trusted-keys).
 #
 #   trusted-keys --keys FILE --homedir DIR [--offline]
 #

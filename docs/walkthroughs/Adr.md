@@ -1,6 +1,6 @@
 # ADR Walkthrough
 
-Design spec and future review session for `rune adr` (not yet implemented, this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todo-adr/design.md.
+Design spec and future review session for `rune adr` (not yet implemented, this document is the contract the implementation must satisfy). Full design: docs/changes/docs-todos-and-records/design.md.
 
 ## Format
 

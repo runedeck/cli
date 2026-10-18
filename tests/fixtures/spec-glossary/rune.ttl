@@ -1,4 +1,4 @@
-# A four-term ontology for the render-spec-glossary proof: a class and a
+# A four-term ontology for the glossary-renders-from-ontology proof: a class and a
 # property that share a label, a SKOS concept, and a class without a comment.
 @prefix rune: <https://runedeck.ai/ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .

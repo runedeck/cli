@@ -1,28 +1,22 @@
 frontmatter:
     fields:
-        # rune convention: required for module skills
         - name: name
           type: string
         - name: description
           type: string
-        - name: version
-          type: string
-
-        # Claude Code optional fields
-        # https://code.claude.com/docs/en/skills#frontmatter-reference
-        # `hooks` is intentionally omitted: mdschema has no `object` type yet,
-        # and a hooks map (`{ PreToolUse: [...] }`) cannot be represented as
-        # one of string|number|boolean|array|date.
-        - name: when_to_use
+        - name: license
           type: string
           optional: true
-        - name: argument-hint
+        - name: compatibility
           type: string
           optional: true
-        - name: arguments
-          type: array
+        - name: metadata
+          type: object
           optional: true
         - name: allowed-tools
+          type: string
+          optional: true
+        - name: targets
           type: array
           optional: true
         - name: disable-model-invocation
@@ -31,42 +25,35 @@ frontmatter:
         - name: user-invocable
           type: boolean
           optional: true
-        - name: model
-          type: string
-          optional: true
-        - name: effort
-          type: string
-          optional: true
-        - name: context
-          type: string
-          optional: true
-        - name: agent
-          type: string
-          optional: true
-        - name: paths
-          type: array
-          optional: true
-        - name: shell
-          type: string
-          optional: true
 
 heading_rules:
     no_skip_levels: true
+    unique_per_level: true
     max_depth: 3
 
 structure:
     - heading:
-          pattern: "^# .+"
-          regex: true
-      allow_additional: true
+          pattern: "# .+"
+      count:
+          max: 1
       children:
-          - heading:
-                pattern: "## Workflow Routing"
+          - heading: "## Prerequisites"
             optional: true
-            tables:
-                - min: 1
-          - heading:
-                pattern: "## Constraints"
+
+          - heading: "## Constraints"
             optional: true
-            lists:
-                - min: 1
+            allow_additional: true
+
+          - heading: "## Instructions"
+            allow_additional: true
+
+          - heading: "## Verification"
+            optional: true
+            allow_additional: true
+
+          - heading: "## Troubleshooting"
+            optional: true
+            allow_additional: true
+
+          - heading: "## References"
+            optional: true

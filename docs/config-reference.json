@@ -350,14 +350,14 @@
     },
     {
       "default": {
-        "min_name_words": null,
+        "min_name_words": 4,
         "root": null
       },
       "key": "spec",
       "type": "object"
     },
     {
-      "default": null,
+      "default": 4,
       "key": "spec.min_name_words",
       "type": "integer | null"
     },

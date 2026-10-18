@@ -20,7 +20,7 @@ decisions: ["Automated run drops the profile arguments it owns and keeps the res
 
 ## Capabilities
 
-- harness-run-command (modified)
+- execute-prompts-off-session (modified)
 
 ## Impact
 

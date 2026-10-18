@@ -60,7 +60,7 @@ Without that replacement, one provider/model or provider variant combines with t
 User companions replace the same relative paths. Provider/model companion folders do not merge into the emitted bundle.
 Model qualifiers use a nested provider/model path, such as `claude/claude-opus-4-6/`.
 See the [current skill
-contract](../changes/codex-skill-identity/design.md#store-variant-text-in-existing-qualifier-folders).
+contract](../changes/codex-assembly-fully-compatible/design.md#store-variant-text-in-existing-qualifier-folders).
 This note records implementation behavior. It does not change this ADR's accepted status or approve the new draft ADR.
 
 Steps:

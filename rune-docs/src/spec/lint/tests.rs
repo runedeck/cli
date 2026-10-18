@@ -255,7 +255,7 @@ fn short_capability_and_change_names_are_errors_by_the_default_rule() {
     let codes: Vec<&str> = diagnostics.iter().map(|d| d.code.as_str()).collect();
     assert!(codes.contains(&"delta-capability-name-short"), "{codes:?}");
     assert!(codes.contains(&"change-name-short"), "{codes:?}");
-    assert_eq!(name_words("sign-before-publish-guard"), 4);
+    assert_eq!(name_words("sign-before-publishing-online"), 4);
     assert_eq!(name_words("a--b"), 2);
 }
 

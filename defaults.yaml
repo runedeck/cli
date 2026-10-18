@@ -132,3 +132,7 @@ providers:
             strong: [claude-opus-4-6]
             fast: [claude-sonnet-4-6]
             light: [claude-sonnet-4-6]
+
+# A change id or a capability name says what it guarantees, in at least four words.
+spec:
+    min_name_words: 4

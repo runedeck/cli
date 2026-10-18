@@ -2,41 +2,41 @@
 
 ### Requirement: Archive takes a new capability's purpose from the proposal
 
-`rune spec archive` MUST write the purpose of a capability that has no canonical specification from the proposal's `### New Capabilities` bullet for that capability, and MUST fall back to the OpenSpec placeholder only when the proposal has no such bullet.
+The archiver MUST write the purpose of a capability that has no canonical specification from the proposal's new-capabilities bullet for that capability. It MUST fall back to the OpenSpec placeholder only when the proposal has no such bullet.
 
 #### Scenario: Proposal names the capability
 
-- **WHEN** `proposal.md` holds `- \`search\`: find a rune by name.` under `### New Capabilities` and the change is archived
-- **THEN** `docs/specs/search/spec.md` opens with `## Purpose` and `find a rune by name.`
+- **WHEN** the proposal lists the capability `search` with the purpose `find a rune by name.` under its new capabilities and the archiver archives the change
+- **THEN** the canonical specification for `search` opens with a purpose section that reads `find a rune by name.`
 
 #### Scenario: Proposal has no bullet
 
 - **WHEN** the proposal names no bullet for the capability
-- **THEN** the archived purpose is the `TBD - created by archiving change <id>` placeholder
+- **THEN** the archived purpose is the placeholder that names the archived change
 
-### Requirement: Doctor names a parse refusal
+### Requirement: The validator names a parse refusal
 
-`rune spec doctor` MUST report each parse issue of a canonical specification it cannot read as an error with the file and line, and MUST report `no recognized requirements` only for a specification that parses and holds none.
+The validator MUST report each parse issue of a canonical specification it cannot read as an error, with the file and line. It MUST report that no requirement was recognized only for a specification that parses and holds none.
 
 #### Scenario: Requirement without MUST
 
 - **WHEN** a canonical requirement body carries no normative keyword
-- **THEN** doctor prints the parser's `must contain` message with the file path and line as an error
+- **THEN** the validator reports the parser's finding, which names the missing keyword, with the file path and line as an error
 
-### Requirement: Promote refuses divergent provider copies
+### Requirement: Promotion refuses divergent provider copies
 
-`rune promote` MUST compare every provider copy of the draft it promotes and MUST refuse, touching nothing, when two copies differ, naming both paths.
+The promotion step MUST compare every provider copy of the draft it promotes and MUST refuse, touching nothing, when two copies differ, naming both paths.
 
 #### Scenario: Copies differ
 
-- **WHEN** `.claude/skills/X/SKILL.md` and `.codex/skills/X/SKILL.md` are both registered for draft `X` and their bytes differ
-- **THEN** `rune promote X` exits nonzero with `differs between`, and the deck, the change stub, and the register are unchanged
+- **WHEN** two provider copies of the draft `X` are both registered and their bytes differ
+- **THEN** promotion exits nonzero, names both copies, and the deck, the change stub, and the register are unchanged
 
 ### Requirement: The rune-docs crate is a workspace member
 
-The repository MUST declare `rune-docs` as a Cargo workspace member, and the push hook and CI MUST run `cargo test --workspace`, so the crate's unit tests run wherever the CLI's do.
+The repository MUST declare the `rune-docs` crate as a member of its one build workspace. The push hook and the continuous integration MUST run the tests of the whole workspace. So the crate's unit tests run wherever the command line tool's do.
 
 #### Scenario: Unit test fails in rune-docs
 
 - **WHEN** a `rune-docs` unit test fails
-- **THEN** `prek run --stage pre-push` and the release workflow fail with it
+- **THEN** the pre-push hook stage and the release workflow fail with it
