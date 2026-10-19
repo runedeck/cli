@@ -250,3 +250,65 @@ fn dry_run_reports_a_session_name_the_harness_cannot_take() {
         ))
         .stdout(predicate::str::contains("session_name_flag: none"));
 }
+
+#[test]
+fn dry_run_reports_the_answer_only_mode() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+            "--mode",
+            "answer-only",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: answer-only"));
+}
+
+#[cfg(unix)]
+#[test]
+fn answer_only_run_starts_claude_with_no_tools() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
+printf 'answer reply\n'
+"#,
+    );
+
+    rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "answer-only",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("answer reply"));
+
+    let recorded = std::fs::read_to_string(home.path().join("argv.txt")).expect("recorded argv");
+    let argv: Vec<&str> = recorded.lines().collect();
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair[0] == "--tools" && pair[1].is_empty()),
+        "argv: {argv:?}"
+    );
+    assert!(!argv.contains(&"Read,Glob,Grep"), "argv: {argv:?}");
+}

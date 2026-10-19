@@ -789,3 +789,38 @@ fn session_name_flag_names_the_two_harnesses_that_take_one() {
     assert_eq!(session_name_flag(Surface::Agy), None);
     assert_eq!(session_name_flag(Surface::Grok), None);
 }
+
+#[test]
+fn claude_answer_only_switches_every_tool_off() {
+    let mut invocation = invocation(Surface::Claude, &[]);
+    invocation.mode = AccessMode::AnswerOnly;
+    let args = strings(&claude_args(&invocation));
+    assert!(
+        args.windows(2).any(|pair| pair == ["--tools", ""]),
+        "{args:?}"
+    );
+    assert!(!args.iter().any(|arg| arg == "Read,Glob,Grep"), "{args:?}");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--permission-mode", "plan"]),
+        "{args:?}"
+    );
+}
+
+#[test]
+fn harnesses_that_cannot_drop_their_tools_refuse_answer_only() {
+    for surface in [Surface::Codex, Surface::Grok, Surface::Agy] {
+        let mut invocation = invocation(surface, &[]);
+        invocation.mode = AccessMode::AnswerOnly;
+        let refused = refuse_answer_only(&invocation).expect_err("must refuse");
+        assert!(
+            refused
+                .to_string()
+                .contains("answer-only mode needs a harness"),
+            "{surface:?}: {refused}"
+        );
+    }
+    let mut claude = invocation(Surface::Claude, &[]);
+    claude.mode = AccessMode::AnswerOnly;
+    assert!(refuse_answer_only(&claude).is_ok());
+}

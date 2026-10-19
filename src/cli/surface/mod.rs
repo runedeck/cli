@@ -41,6 +41,10 @@ impl Surface {
 pub(crate) enum AccessMode {
     ReadOnly,
     WorkspaceWrite,
+    /// No tool at all: the harness answers from its prompt alone. For a seat
+    /// the owner does not trust with the repository. Claude and `OpenCode` can
+    /// run so; codex, agy and grok cannot switch their tools off and refuse.
+    AnswerOnly,
 }
 
 impl AccessMode {
@@ -48,8 +52,25 @@ impl AccessMode {
         match self {
             Self::ReadOnly => "read-only",
             Self::WorkspaceWrite => "workspace-write",
+            Self::AnswerOnly => "answer-only",
         }
     }
+}
+
+/// The refusal of a harness that cannot run without tools under answer-only
+/// mode: codex, grok and agy have no switch for it. Claude and `OpenCode` pass.
+fn refuse_answer_only(invocation: &SurfaceInvocation) -> Result<(), SurfaceFailure> {
+    let cannot = matches!(
+        invocation.surface,
+        Surface::Codex | Surface::Grok | Surface::Agy
+    );
+    if invocation.mode == AccessMode::AnswerOnly && cannot {
+        return Err(SurfaceFailure::Arguments(format!(
+            "answer-only mode needs a harness that runs without tools (claude or opencode); {} cannot switch its tools off",
+            surface_name(invocation.surface)
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -804,20 +825,23 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
         OsString::from("text"),
         OsString::from("--permission-mode"),
         OsString::from(match invocation.mode {
-            AccessMode::ReadOnly => "plan",
+            AccessMode::ReadOnly | AccessMode::AnswerOnly => "plan",
             AccessMode::WorkspaceWrite => "acceptEdits",
         }),
     ];
     if invocation.clean_state_root.is_some() {
         args.extend([OsString::from("--setting-sources"), OsString::from("")]);
     }
-    if invocation.mode == AccessMode::ReadOnly {
-        args.extend([
+    match invocation.mode {
+        AccessMode::ReadOnly => args.extend([
             OsString::from("--tools"),
             OsString::from(READ_ONLY_TOOLS),
             OsString::from("--allowedTools"),
             OsString::from(READ_ONLY_TOOLS),
-        ]);
+        ]),
+        // `--tools ""` is claude's own switch for no built-in tool at all.
+        AccessMode::AnswerOnly => args.extend([OsString::from("--tools"), OsString::from("")]),
+        AccessMode::WorkspaceWrite => {}
     }
     if let Some(model) = &invocation.model {
         args.push(OsString::from("--model"));
@@ -911,6 +935,7 @@ fn read_codex_final_message(
 }
 
 fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+    refuse_answer_only(invocation)?;
     let scratch = create_scratch_directory("codex")?;
     let result = (|| {
         let final_message_path = scratch.join("last-message.txt");
@@ -925,7 +950,7 @@ fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceF
             invocation.repository.as_os_str().to_os_string(),
             OsString::from("-s"),
             OsString::from(match invocation.mode {
-                AccessMode::ReadOnly => "read-only",
+                AccessMode::ReadOnly | AccessMode::AnswerOnly => "read-only",
                 AccessMode::WorkspaceWrite => "workspace-write",
             }),
         ];
@@ -988,12 +1013,12 @@ fn grok_args(invocation: &SurfaceInvocation, prompt_path: &Path) -> Vec<OsString
         OsString::from("--no-memory"),
         OsString::from("--sandbox"),
         OsString::from(match invocation.mode {
-            AccessMode::ReadOnly => "read-only",
+            AccessMode::ReadOnly | AccessMode::AnswerOnly => "read-only",
             AccessMode::WorkspaceWrite => "workspace",
         }),
         OsString::from("--permission-mode"),
         OsString::from(match invocation.mode {
-            AccessMode::ReadOnly => "dontAsk",
+            AccessMode::ReadOnly | AccessMode::AnswerOnly => "dontAsk",
             AccessMode::WorkspaceWrite => "acceptEdits",
         }),
     ];
@@ -1043,6 +1068,7 @@ fn grok_final_text(stdout: &str) -> Result<String, SurfaceFailure> {
 }
 
 fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+    refuse_answer_only(invocation)?;
     let scratch = create_scratch_directory("grok")?;
     let result = (|| {
         let prompt_path = scratch.join("prompt.txt");
@@ -1067,11 +1093,12 @@ fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFa
 }
 
 fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+    refuse_answer_only(invocation)?;
     let mut args = vec![
         OsString::from("--sandbox"),
         OsString::from("--mode"),
         OsString::from(match invocation.mode {
-            AccessMode::ReadOnly => "plan",
+            AccessMode::ReadOnly | AccessMode::AnswerOnly => "plan",
             AccessMode::WorkspaceWrite => "accept-edits",
         }),
         OsString::from("--print"),
@@ -1146,6 +1173,12 @@ fn opencode_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
 
 fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
     let mut request = process_request(invocation, opencode_args(invocation), None);
+    if invocation.mode == AccessMode::AnswerOnly {
+        request.env.push((
+            OsString::from("OPENCODE_PERMISSION"),
+            OsString::from(r#"{"*":"deny"}"#),
+        ));
+    }
     if invocation.mode == AccessMode::ReadOnly {
         let permissions = if invocation.clean_state_root.is_some() {
             r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow"}"#

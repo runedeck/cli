@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - Read the consumer manifest from `.rune/manifest.yaml` when `.rune` is a directory, so it shares the directory with the records home. A `.rune` directory without a manifest is no consumer.
+- Add `rune run --mode answer-only`: claude gets `--tools ""` and opencode a deny-all permission. Codex, agy and grok cannot switch their tools off and are refused by name.
 - Add `rune run --session-name <NAME>`: claude receives it as `--name` and opencode as `run --title`. Codex, agy and grok take none, and the dry run says `session_name_flag: none`.
 - Add the `.rune` key `ontology: <source>`: `rune install` copies that source's ontology to `ontology/rune.ttl` with a manifest and a sidecar, so `rune spec validate` reads the deck's terms there.
 - Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.

@@ -801,7 +801,7 @@ enum Command {
         #[arg(long, value_name = "DIR", default_value = ".")]
         repo: std::path::PathBuf,
 
-        /// What the coding surface may access: read-only or workspace-write.
+        /// What the coding surface may access: read-only, workspace-write, or answer-only (no tool at all; claude and opencode).
         #[arg(long, value_enum, default_value_t = run::AccessMode::ReadOnly)]
         mode: run::AccessMode,
 

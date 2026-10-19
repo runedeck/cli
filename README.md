@@ -383,6 +383,12 @@ rune run codex --prompt-file brief.md
 command cat brief.md | rune run lumo@opencode
 ```
 
+Run with no tool at all, for a model that may read the prompt and nothing else (claude and opencode can, the others refuse):
+
+```sh
+rune run kimi@claude --mode answer-only --clean "Which shell idiom cleans a temp file on exit?"
+```
+
 Name the harness session, where the harness takes a name (claude `--name`, opencode `run --title`). Codex, agy, and grok take none, and the plan says so:
 
 ```sh
