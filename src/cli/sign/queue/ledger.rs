@@ -9,6 +9,10 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+/// The required check that verifies the merge-seal. It fails on every
+/// head that carries no merge-seal yet, by design.
+const MERGE_SEAL_CHECK: &str = "owner-seal";
+
 /// Lane statuses the controller records once a lane is done with a head.
 const TERMINAL: [&str; 6] = [
     "completed",
@@ -168,7 +172,14 @@ pub(crate) fn admit(
             }
         }
     }
-    if let Some(check) = checks.iter().find(|check| check.bucket != "pass") {
+    // The merge-seal check is red by design until the merge-seal exists,
+    // which is what this request asks the owner to create, so it is the one
+    // required check that cannot gate the request. The open-seal check
+    // reports under its own name and stays required.
+    if let Some(check) = checks
+        .iter()
+        .find(|check| check.name != MERGE_SEAL_CHECK && check.bucket != "pass")
+    {
         return Err(format!("required check {} is {}", check.name, check.bucket));
     }
     Ok(Coverage {
@@ -300,6 +311,20 @@ mod tests {
             admit(&clean, &line(2), "o/r", 7, "main", SHA, &failing)
                 .unwrap_err()
                 .contains("required check quality is fail")
+        );
+        let seal_pending = vec![
+            Check {
+                name: "quality".to_string(),
+                bucket: "pass".to_string(),
+            },
+            Check {
+                name: "owner-seal".to_string(),
+                bucket: "fail".to_string(),
+            },
+        ];
+        assert!(
+            admit(&clean, &line(2), "o/r", 7, "main", SHA, &seal_pending).is_ok(),
+            "the merge-seal check cannot gate the request that creates the merge-seal"
         );
         let mut findings = clean.clone();
         findings.verdict.as_mut().unwrap().verdict = "findings".to_string();
