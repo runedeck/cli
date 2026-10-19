@@ -47,6 +47,11 @@ static LEGACY_LINK: LazyLock<Regex> = LazyLock::new(|| {
         .expect("legacy link regex is valid")
 });
 /// A reference definition, `[TAG]: <target>`, indented up to three spaces.
+static NOT_PROSE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\])]+|<[^<>\n]*>")
+        .expect("not-prose regex is valid")
+});
+
 static REFERENCE_DEFINITION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^ {0,3}\[([A-Za-z0-9][A-Za-z0-9_-]*)\]:\s*(\S+)")
         .expect("reference definition regex is valid")
@@ -78,6 +83,115 @@ impl TermLink {
             format!("[{}][{}]", self.text, self.tag)
         }
     }
+}
+
+/// A plain occurrence of a term's label on a prose line: the label or its
+/// plural as whole words, outside any link, heading, or inline code (the
+/// prose view blanks code), compared without case. Every occurrence of a
+/// term in a file is a link, so a plain one is a finding and the fixer
+/// links it with the tag the file already uses for the term.
+pub(super) struct PlainOccurrence {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub(super) fn plain_occurrences(line: &str, label: &str) -> Vec<PlainOccurrence> {
+    if line.trim_start().starts_with('#') || label.is_empty() || is_definition(line) {
+        return Vec::new();
+    }
+    // Lower-case per character, keeping every byte offset: a character whose
+    // lower-case form has another length (`İ`, the Kelvin sign) stays as it is.
+    let lower: String = line
+        .chars()
+        .map(|c| {
+            let mut lowered = c.to_lowercase();
+            match (lowered.next(), lowered.next()) {
+                (Some(l), None) if l.len_utf8() == c.len_utf8() => l,
+                _ => c,
+            }
+        })
+        .collect();
+    let needle = label.to_lowercase();
+    let mut masked = vec![false; line.len()];
+    for link in reference_links(1, line) {
+        masked[link.start..link.end].fill(true);
+    }
+    // A bare URL and anything in angle brackets (an autolink, an HTML tag
+    // with its attributes) are not prose.
+    for span in NOT_PROSE.find_iter(line) {
+        masked[span.start()..span.end()].fill(true);
+    }
+    let mut depth = 0usize;
+    // Inside the destination of an inline link `[text](path)`, which is not
+    // prose; the count tracks balanced parentheses within it.
+    let mut destination = 0usize;
+    let bytes = line.as_bytes();
+    for (i, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'[' if destination == 0 => depth += 1,
+            b']' if destination == 0 => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 && bytes.get(i + 1) == Some(&b'(') {
+                    destination = 1;
+                }
+            }
+            b'(' if destination > 0 && i > 0 && bytes[i - 1] != b']' => destination += 1,
+            b')' if destination > 0 => {
+                masked[i] = true;
+                destination -= 1;
+            }
+            _ => {}
+        }
+        if depth > 0 || destination > 0 {
+            masked[i] = true;
+        }
+    }
+    // A label that ends in a consonant and y pluralizes to `ies`
+    // (`capabilities`), so the search runs on the stem and accepts both
+    // endings.
+    let y_plural = needle.len() > 1
+        && needle.ends_with('y')
+        && !needle[..needle.len() - 1].ends_with(['a', 'e', 'i', 'o', 'u']);
+    let stem = if y_plural {
+        &needle[..needle.len() - 1]
+    } else {
+        needle.as_str()
+    };
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(stem) {
+        let start = from + at;
+        let mut end = start + stem.len();
+        if y_plural {
+            if lower[end..].starts_with("ies") {
+                end += 3;
+            } else if lower[end..].starts_with('y') {
+                end += 1;
+            } else {
+                from = end.max(start + 1);
+                continue;
+            }
+        } else if lower[end..].starts_with("es") {
+            // The plural: `changes`, `harnesses`, `statuses`. A label that
+            // ends in s takes `es` only.
+            end += 2;
+        } else if lower[end..].starts_with('s') && !needle.ends_with('s') {
+            end += 1;
+        }
+        let before = lower[..start].chars().next_back();
+        let after = lower[end..].chars().next();
+        let boundary =
+            |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
+        if boundary(before)
+            && boundary(after)
+            && !masked[start..end].iter().any(|m| *m)
+            && !lower[..start].ends_with('*')
+        {
+            found.push(PlainOccurrence { start, end });
+        }
+        from = end.max(start + 1);
+    }
+    found
 }
 
 /// The reference-style links of one prose line, in order. An image
@@ -582,6 +696,47 @@ mod tests {
             ),
             "glossary/a.md"
         );
+    }
+
+    #[test]
+    fn plain_occurrences_skip_links_headings_code_and_partial_words() {
+        let line = "A [change][CHANGE] and a change, two changes, no changed,          masked.";
+        let hits: Vec<&str> = plain_occurrences(line, "change")
+            .into_iter()
+            .map(|hit| &line[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change", "changes"]);
+        assert!(plain_occurrences("## The change", "change").is_empty());
+        assert!(plain_occurrences("*[change][CHANGE]* only", "change").is_empty());
+        let inline = "See [the design](../changes/x/design.md) for the change.";
+        let hits: Vec<&str> = plain_occurrences(inline, "change")
+            .into_iter()
+            .map(|hit| &inline[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change"]);
+        let nested = "See [x](dir(foo)/change.md) then a change.";
+        assert_eq!(plain_occurrences(nested, "change").len(), 1);
+        let plural = "The harnesses and the harness.";
+        let hits: Vec<&str> = plain_occurrences(plural, "harness")
+            .into_iter()
+            .map(|hit| &plural[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["harnesses", "harness"]);
+        let plural_y = "Two capabilities, one capability, no capabilitys.";
+        let hits: Vec<&str> = plain_occurrences(plural_y, "capability")
+            .into_iter()
+            .map(|hit| &plural_y[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["capabilities", "capability"]);
+        let not_prose =
+            "See https://example.com/harness and <a href=\"harness\">harness</a>, then a harness.";
+        assert_eq!(plain_occurrences(not_prose, "harness").len(), 2);
+        let unicode = "İ change. K change.";
+        let hits: Vec<&str> = plain_occurrences(unicode, "change")
+            .into_iter()
+            .map(|hit| &unicode[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["change", "change"]);
     }
 
     #[test]

@@ -38,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Resolve a term link through its page's `iri`, or through the tag when the page is absent. Plain italics are emphasis and are not checked.
 - Report `spec-term-undefined` when a link names no term, including a reference tag with no definition in the file, and `spec-term-draft` (warning) when the term is a draft.
 - Report `spec-term-first-use` when the first use of a term in a file is not emphasized, or a later use is.
+- Report `spec-term-unlinked` when a file links a term and writes it plain elsewhere, and link every occurrence in `rune spec fix --links`; where two terms start at one word, the longer wins.
 - Report `spec-term-legacy` (warning) on the old `*term* [TAG]` form or an IRI definition, naming the new form. A delta gets `delta-` twins of every term code.
 - Apply the term link rules in `rune validate` to `docs/decisions` and `runes` of a deck, and to the record and rune directories of a module, when the root has an ontology.
 - Add `rune spec fix --terms`: adds a draft ontology entry for every term link that names no term and writes its page.
@@ -227,6 +228,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix the bundle check to accept a full reference-style term link (`[text][TAG]`) into the repository's glossary, the one form the assembler strips before deployment.
+- Check a collapsed or shortcut reference into the glossary like any other reference, because assembly does not strip it.
+- Strip a term link whatever the case of its tag, and leave a fenced block or a code span untouched, so an example of the syntax survives assembly.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
