@@ -196,6 +196,10 @@ rune add development
 uses `RUNE_DECK`, then the `deck` key in `~/.config/rune/config.yaml`. An
 explicit `--source <path-or-url>` always selects the requested source.
 
+The manifest is the file `.rune`, or `.rune/manifest.yaml` when `.rune` is a
+directory. The directory form lets the manifest share `.rune/` with the records
+home `.rune/records/`. A `.rune` directory without a manifest is no consumer.
+
 ### Review comments
 
 The TUI stores code-review comments in `.rune-comments.yaml` at the quest root.

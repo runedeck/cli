@@ -74,7 +74,7 @@ repos:
 
           - id: rune-validate
             name: rune validate
-            entry: sh -c 'if command -v rune >/dev/null 2>&1 && { [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ]; }; then rune validate; fi'
+            entry: sh -c 'if command -v rune >/dev/null 2>&1 && { [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ] || [ -f .rune/manifest.yaml ]; }; then rune validate; fi'
             language: system
             pass_filenames: false
 

@@ -230,7 +230,7 @@ pub fn execute(path: &str, json: bool, scan: bool, force: bool) -> Result<i32, E
     let module_root = Path::new(path);
     let is_source = rune::deck::is_deck(module_root)
         || module_root.join("module.yaml").is_file()
-        || module_root.join(".rune").is_file();
+        || crate::cli::dotrune::exists(module_root);
     if !is_source && !force {
         return Err(Error::new(
             ErrorKind::Config,
@@ -284,7 +284,7 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
             }
             append_report(&mut aggregate, deck_entry_report);
         }
-        if module_root.join(".rune").exists() {
+        if crate::cli::dotrune::exists(module_root) {
             let mut consumer_report = ValidationReport::default();
             consumer_checks(module_root, &mut consumer_report)?;
             append_report(&mut aggregate, consumer_report);
@@ -292,7 +292,7 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
         return Ok(aggregate);
     }
     let is_module = module_root.join("module.yaml").is_file();
-    let is_consumer = module_root.join(".rune").exists();
+    let is_consumer = crate::cli::dotrune::exists(module_root);
     if is_consumer && !is_module {
         return validate_consumer(module_root, scan);
     }
@@ -305,7 +305,7 @@ fn validate(path: &str, scan: bool) -> Result<ValidationReport, Error> {
     Ok(report)
 }
 
-/// Consumer roots (a `.rune` file, no deck or module manifest) hold deployed
+/// Consumer roots (a consumer manifest, no deck or module manifest) hold deployed
 /// provider trees, not source artifacts; module structure rules do not apply.
 fn validate_consumer(consumer_root: &Path, scan: bool) -> Result<ValidationReport, Error> {
     let mut report = ValidationReport::default();

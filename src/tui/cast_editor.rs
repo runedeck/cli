@@ -85,7 +85,10 @@ impl CastEditor {
             editor.status =
                 "Read-only: no cwd .rune or bound target manifest; Space cannot write".to_string();
         } else if let Some(root) = &editor.manifest_root {
-            editor.status = format!("Editing {}", root.join(".rune").display());
+            editor.status = format!(
+                "Editing {}",
+                crate::cli::dotrune::manifest_path(root).display()
+            );
         }
         Ok(editor)
     }
@@ -325,7 +328,7 @@ impl CastEditor {
                         "{} {} and wrote {}",
                         if item.checked { "Unchecked" } else { "Checked" },
                         item.id,
-                        root.join(".rune").display()
+                        crate::cli::dotrune::manifest_path(&root).display()
                     )
                 } else {
                     format!(
@@ -534,10 +537,11 @@ pub enum EditorAction {
 
 fn manifest_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    if cwd.join(".rune").is_file() {
+    if crate::cli::dotrune::exists(&cwd) {
         return Some(cwd);
     }
-    crate::cli::target::bound_target_silent().filter(|consumer| consumer.join(".rune").is_file())
+    crate::cli::target::bound_target_silent()
+        .filter(|consumer| crate::cli::dotrune::exists(consumer))
 }
 
 fn display_install_target(path: &Path) -> String {

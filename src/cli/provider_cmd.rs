@@ -144,7 +144,9 @@ fn fix_command(root: &Path, detection: &ProviderDetection) -> Option<String> {
 }
 
 fn installable_source(root: &Path) -> bool {
-    root.join("module.yaml").is_file() || root.join(".rune").is_file() || rune::deck::is_deck(root)
+    root.join("module.yaml").is_file()
+        || crate::cli::dotrune::exists(root)
+        || rune::deck::is_deck(root)
 }
 
 fn take_named_report(

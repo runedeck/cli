@@ -311,7 +311,7 @@ fn install_fix_command(
     provider: Option<&crate::cli::config::RegisteredProviderTarget>,
 ) -> Option<String> {
     if !target_is_empty(target)
-        || (!source_root.join("module.yaml").is_file() && !source_root.join(".rune").is_file())
+        || (!source_root.join("module.yaml").is_file() && !crate::cli::dotrune::exists(source_root))
     {
         return None;
     }

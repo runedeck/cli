@@ -30,7 +30,7 @@ pub struct DotRune {
     pub runes: BTreeMap<String, RuneList>,
     /// Workspace directories associated with this consumer (schema v2):
     /// wiki, data, out, and other members that tools like `rune todo --all`
-    /// aggregate over. Committed paths are relative to the `.rune` file;
+    /// aggregate over. Committed paths are relative to the repository root;
     /// machine-specific absolute paths belong in a gitignored `.rune.local`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<WorkspaceDir>,
@@ -325,7 +325,7 @@ pub fn parse(content: &str) -> Result<DotRune, Error> {
             return Err(Error::new(
                 ErrorKind::Parse,
                 format!(
-                    ".rune: dirs path '{}' must be relative to the .rune file; machine paths belong in .rune.local",
+                    ".rune: dirs path '{}' must be relative to the repository root; machine paths belong in .rune.local",
                     member.path
                 ),
             ));

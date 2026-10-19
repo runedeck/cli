@@ -79,7 +79,7 @@ repos:
           # case. REQUIRE_GATES stays the pinned linters' variable.
           - id: rune-validate
             name: rune validate
-            entry: sh -c 'if [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ]; then .githooks/rune-here validate; fi'
+            entry: sh -c 'if [ -f module.yaml ] || [ -f deck.yaml ] || [ -f .rune ] || [ -f .rune/manifest.yaml ]; then .githooks/rune-here validate; fi'
             language: system
             pass_filenames: false
 

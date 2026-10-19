@@ -1094,7 +1094,7 @@ fn inspect_build_tree(
         && manifests
             .get(&resolve_target(target_base, config.default_target()))
             .is_some_and(|entries| entries.contains_key(VIRTUAL_WIRING_ENTRY));
-    let kinds = if source_root.join(".rune").is_file() {
+    let kinds = if crate::consumer::manifest_exists(source_root) {
         ContentKind::DECK_ALL
     } else {
         ContentKind::ALL

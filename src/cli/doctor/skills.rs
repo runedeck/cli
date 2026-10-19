@@ -26,13 +26,11 @@ pub(super) fn inspect(
     let mut roots = Vec::new();
     let mut configuration = BTreeMap::new();
     let mut skill_target = None;
-    for name in [
-        ".rune",
-        "config.yaml",
-        "defaults.yaml",
-        "module.yaml",
-        "deck.yaml",
-    ] {
+    hash_config(
+        &crate::cli::dotrune::manifest_path(source),
+        &mut configuration,
+    )?;
+    for name in ["config.yaml", "defaults.yaml", "module.yaml", "deck.yaml"] {
         hash_config(&source.join(name), &mut configuration)?;
     }
     for ancestor in target.ancestors() {

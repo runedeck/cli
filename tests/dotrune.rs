@@ -319,15 +319,15 @@ fn dotrune_defaults_target_to_source_when_omitted() {
 }
 
 #[test]
-fn dotrune_rejects_directory_named_like_manifest() {
+fn dotrune_directory_without_a_manifest_is_no_consumer() {
     let consumer = tempfile::tempdir().unwrap();
-    fs::create_dir(consumer.path().join(".rune")).unwrap();
+    fs::create_dir_all(consumer.path().join(".rune/records")).unwrap();
 
     let output = install(consumer.path()).failure();
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(
-        stderr.contains(".rune") && stderr.contains("directory"),
-        "error must name the invalid .rune directory: {stderr}"
+        stderr.contains("no module.yaml or .rune"),
+        "a .rune directory without a manifest is no consumer: {stderr}"
     );
 }
 
@@ -649,4 +649,51 @@ fn single_module_source_still_resolves_bare_name() {
             .join(".claude/skills/LegacyBareName/SKILL.md")
             .is_file()
     );
+}
+
+#[test]
+fn dotrune_manifest_inside_a_rune_directory_installs_too() {
+    let producer = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    scaffold_producer(producer.path(), "producer-a");
+    write_skill(producer.path(), "AlphaSkill");
+    // The records home shares the directory, and the manifest sits inside it.
+    fs::create_dir_all(consumer.path().join(".rune/records")).unwrap();
+    fs::write(
+        consumer.path().join(".rune/manifest.yaml"),
+        format!(
+            "version: 1\nsources:\n  producer-a:\n    local: {}\nrunes:\n  producer-a:\n    skills: [AlphaSkill]\n",
+            producer.path().display()
+        ),
+    )
+    .unwrap();
+
+    install(consumer.path()).success();
+
+    assert!(
+        consumer
+            .path()
+            .join(".claude/skills/AlphaSkill/SKILL.md")
+            .is_file(),
+        "AlphaSkill must deploy from the directory form"
+    );
+    assert!(
+        consumer.path().join(".rune").is_dir(),
+        ".rune stays a directory"
+    );
+    assert!(consumer.path().join(".rune/records").is_dir());
+}
+
+#[test]
+fn context_reads_a_records_only_directory_as_plain() {
+    // A `.rune` directory that holds records and no manifest is no consumer, and no error.
+    let repo = tempfile::tempdir().unwrap();
+    fs::create_dir_all(repo.path().join(".rune/records")).unwrap();
+
+    rune()
+        .args(["context", "--json"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"role\": \"plain\""));
 }

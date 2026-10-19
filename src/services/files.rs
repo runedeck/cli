@@ -143,7 +143,7 @@ pub fn collect_rune_config_files_with_home(root: &Path, home: Option<&Path>) -> 
             files.push(file);
         }
     }
-    let manifest_path = root.join(".rune");
+    let manifest_path = crate::consumer::manifest_path(root);
     if let Some(file) = read_config_file("Consumer manifest", &manifest_path, "yaml", home) {
         files.push(file);
     }

@@ -30,32 +30,44 @@ use std::path::Path;
 pub use git::cached_worktree;
 pub use parse::{DotRune, RuneList, SCHEMA_VERSION, Source, validate_commit_sha, validate_git_url};
 pub use resolve::{enumerate_ids, materialize_source, resolve_sources};
+pub use rune::consumer::manifest_path;
 
 const MAX_BYTES: usize = 64 * 1024;
 
-/// Return whether `repo_root` has a consumer manifest.
+/// Return whether `repo_root` has a consumer manifest, as the file `.rune`
+/// or as `.rune/manifest.yaml` inside a `.rune` directory.
 pub fn exists(repo_root: &Path) -> bool {
-    repo_root.join(".rune").exists()
+    rune::consumer::manifest_exists(repo_root)
 }
 
-/// Load `.rune` from `repo_root`.
+/// Load the consumer manifest of `repo_root`, from the file `.rune` or from
+/// `.rune/manifest.yaml` when `.rune` is a directory.
 ///
 /// Returns `Ok(None)` when no manifest exists at the given root (the normal
-/// `module.yaml`-driven path takes over). Returns `Ok(Some(...))` after a
-/// successful parse and `Err` on size-cap violation, malformed YAML, or
-/// schema mismatch. The size cap (64 KiB) is checked before YAML parsing
-/// to defend against memory-bomb / billion-laughs shapes.
+/// `module.yaml`-driven path takes over), a `.rune` directory without one
+/// included. Returns `Ok(Some(...))` after a successful parse and `Err` on
+/// size-cap violation, malformed YAML, or schema mismatch. The size cap
+/// (64 KiB) is checked before YAML parsing to defend against memory-bomb /
+/// billion-laughs shapes.
 pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
-    let path = repo_root.join(".rune");
-    if path.is_dir() {
+    if rune::consumer::is_linked_directory(repo_root) {
         return Err(Error::new(
             ErrorKind::Config,
-            format!("{} must be a file, not a directory", path.display()),
+            format!(
+                "{} is a symbolic link to a directory; the manifest must be a real file or a real directory",
+                repo_root.join(".rune").display()
+            ),
         ));
     }
+    let path = manifest_path(repo_root);
     if !path.is_file() {
         return Ok(None);
     }
+    // The form that was read, relative to the root: `.rune` or `.rune/manifest.yaml`.
+    let shown = path.strip_prefix(repo_root).map_or_else(
+        |_| path.display().to_string(),
+        |relative| relative.display().to_string(),
+    );
 
     let bytes = fs::read(&path).map_err(|error| {
         Error::new(
@@ -68,7 +80,7 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
         return Err(Error::new(
             ErrorKind::Parse,
             format!(
-                ".rune: file is {} bytes; limit is {} bytes (the manifest is a pointer file, not a payload)",
+                "{shown}: file is {} bytes; limit is {} bytes (the manifest is a pointer file, not a payload)",
                 bytes.len(),
                 MAX_BYTES
             ),
@@ -76,7 +88,10 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
     }
 
     let content = std::str::from_utf8(&bytes).map_err(|error| {
-        Error::new(ErrorKind::Parse, format!(".rune: not valid UTF-8: {error}"))
+        Error::new(
+            ErrorKind::Parse,
+            format!("{shown}: not valid UTF-8: {error}"),
+        )
     })?;
 
     parse::parse(content).map(Some)
@@ -85,7 +100,7 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
 /// Atomically replace `.rune` with pre-rendered content. The toggle writer
 /// uses this path so a surgical edit keeps every unrelated byte.
 pub(crate) fn write_atomic_content(repo_root: &Path, content: &str) -> Result<(), Error> {
-    crate::cli::config::write_atomic(&repo_root.join(".rune"), content)
+    crate::cli::config::write_atomic(&manifest_path(repo_root), content)
 }
 
 /// Serialize and atomically replace a consumer manifest.
@@ -96,5 +111,5 @@ pub fn write_atomic(repo_root: &Path, manifest: &DotRune) -> Result<(), Error> {
     let content = serde_yaml::to_string(manifest).map_err(|error| {
         Error::new(ErrorKind::Parse, format!("cannot serialize .rune: {error}"))
     })?;
-    crate::cli::config::write_atomic(&repo_root.join(".rune"), content)
+    crate::cli::config::write_atomic(&manifest_path(repo_root), content)
 }

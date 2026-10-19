@@ -8,8 +8,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// The consumer manifest is not in this list: its path depends on the form
+// (`.rune`, or `.rune/manifest.yaml` under a directory), and the directory
+// also holds the records home, which is no input of an assembly.
 const AUTHORED_PATHS: &[&str] = &[
-    ".rune",
     "config.yaml",
     "defaults.yaml",
     "module.yaml",
@@ -45,10 +47,10 @@ fn source_inputs_with_cache(
     let root = canonical_directory(root)?;
     if !root.join("module.yaml").is_file()
         && !root.join("deck.yaml").is_file()
-        && !root.join(".rune").is_file()
+        && !dotrune::exists(&root)
     {
         return Err(incomplete(
-            "source root has no module.yaml, deck.yaml, or .rune",
+            "source root has no module.yaml, deck.yaml, or consumer manifest (.rune, or .rune/manifest.yaml)",
         ));
     }
     let mut inputs = Vec::new();
@@ -131,6 +133,10 @@ fn stable_value(value: serde_json::Value) -> serde_json::Value {
 }
 
 fn append_inputs(inputs: &mut Vec<SourceInput>, label: &str, root: &Path) {
+    inputs.push(SourceInput::optional(
+        format!("{label}:.rune"),
+        dotrune::manifest_path(root),
+    ));
     for relative in AUTHORED_PATHS {
         inputs.push(SourceInput::optional(
             format!("{label}:{relative}"),

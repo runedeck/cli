@@ -81,7 +81,7 @@ project skeleton distinct.
 
 ### Consumer manifests
 
-A non-module consumer can declare requested artifacts in a root `.rune` file. Resolution lives under `src/cli/dotrune/`.
+A non-module consumer can declare requested artifacts in a root `.rune` file, or in `.rune/manifest.yaml` when `.rune` is a directory. Resolution lives under `src/cli/dotrune/`.
 Local sources use ordinary relative or absolute paths. Git sources use HTTPS repositories pinned to full commit SHAs and
 are materialized through Rune's cache. Test-only transport allowances must remain feature-gated.
 

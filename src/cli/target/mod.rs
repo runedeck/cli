@@ -38,7 +38,7 @@ pub fn execute(target: Option<&str>, clone: bool, unbind: bool, list: bool) -> R
         .and_then(|name| name.to_str())
         .unwrap_or(requested);
     println!("bound target '{label}' → {}", resolved.display());
-    if resolved.join(".rune").is_file() {
+    if crate::cli::dotrune::exists(&resolved) {
         println!("next: rune tui --edit to review (or: rune install)");
     } else {
         println!("next: rune add <deck-or-rune> to stage runes (no .rune manifest yet)");
@@ -84,7 +84,7 @@ fn state_path() -> Result<PathBuf, Error> {
 
 fn show_binding(state_path: &Path) -> i32 {
     if let Some(target) = bound_target() {
-        let status = if target.join(".rune").is_file() {
+        let status = if crate::cli::dotrune::exists(&target) {
             "manifest: .rune"
         } else {
             "manifest: none"

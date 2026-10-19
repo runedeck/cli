@@ -479,7 +479,7 @@ fn discover_deck_targets(
 }
 
 fn target_points_at_deck(target: &Path, deck_root: &Path, deck_remote: Option<&str>) -> bool {
-    let manifest_path = target.join(".rune");
+    let manifest_path = crate::consumer::manifest_path(target);
     if !manifest_path.is_file() {
         return false;
     }

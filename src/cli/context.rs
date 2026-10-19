@@ -206,7 +206,7 @@ fn suggest_next_steps(
     }
     if role == "plain" {
         steps.push(
-            "no .rune here; rune add creates one (or bind a repo with rune target <slug>)"
+            "no consumer manifest here (a .rune file or .rune/manifest.yaml); rune add creates one (or bind a repo with rune target <slug>)"
                 .to_string(),
         );
     }

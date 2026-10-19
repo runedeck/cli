@@ -25,7 +25,7 @@ fn prepare_for(
             format!("cannot read current directory: {error}"),
         )
     })?;
-    let repo_root = if current_dir.join(".rune").is_file() {
+    let repo_root = if crate::cli::dotrune::exists(&current_dir) {
         current_dir
     } else if let Some(bound) = crate::cli::target::bound_target() {
         if staging && bound != current_dir && !confirm_redirect(&bound)? {
@@ -41,7 +41,7 @@ fn prepare_for(
     } else {
         current_dir
     };
-    let manifest_path = repo_root.join(".rune");
+    let manifest_path = crate::cli::dotrune::manifest_path(&repo_root);
     let mut manifest = if manifest_path.is_file() {
         crate::cli::dotrune::load(&repo_root)?.ok_or_else(|| {
             Error::new(ErrorKind::Config, "cannot load existing .rune".to_string())
@@ -479,7 +479,7 @@ fn valid_qualifiers(repo_root: &Path) -> Result<std::collections::HashSet<String
 }
 
 fn stage(mut target: Target, selection_kind: &str, selections: &[String]) -> Result<i32, Error> {
-    let manifest_path = target.repo_root.join(".rune");
+    let manifest_path = crate::cli::dotrune::manifest_path(&target.repo_root);
     let manifest_existed = manifest_path.is_file();
     let entry = target
         .manifest

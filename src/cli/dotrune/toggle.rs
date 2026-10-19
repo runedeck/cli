@@ -120,7 +120,7 @@ pub fn apply(
     }
     lists.retain(|_, toggles| !toggles.is_empty());
 
-    let path = repo_root.join(".rune");
+    let path = super::manifest_path(repo_root);
     let content = std::fs::read_to_string(&path).map_err(|error| {
         Error::new(
             ErrorKind::Io,
@@ -339,6 +339,36 @@ mod tests {
     }
 
     const TOGGLED: &str = include_str!("../../../tests/fixtures/toggle/toggled.rune");
+
+    #[test]
+    fn apply_writes_the_manifest_inside_a_rune_directory_and_keeps_the_directory() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".rune/records")).unwrap();
+        std::fs::write(root.path().join(".rune/manifest.yaml"), TOGGLED).unwrap();
+
+        let lines = apply(
+            root.path(),
+            "deck",
+            "rules/Style",
+            &["codex".to_string()],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(lines, ["rules/Style off for codex"]);
+        assert!(root.path().join(".rune").is_dir());
+        assert!(root.path().join(".rune/records").is_dir());
+        let written = std::fs::read_to_string(root.path().join(".rune/manifest.yaml")).unwrap();
+        assert!(written.contains("codex:"), "{written}");
+        assert!(
+            toggled_off(
+                &toggle_map(&manifest(&written)),
+                "codex",
+                &file("rules/Style.md", rune::provider::ContentKind::Rules)
+            ),
+            "{written}"
+        );
+    }
 
     #[test]
     fn excluded_file_is_off_for_the_named_provider_only() {

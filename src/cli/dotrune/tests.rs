@@ -433,3 +433,35 @@ ontology: other
     assert!(message.contains("ontology 'other'"), "{message}");
     assert!(message.contains("sources"), "{message}");
 }
+
+#[test]
+fn load_reads_the_manifest_inside_a_rune_directory() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".rune/records")).unwrap();
+    std::fs::write(root.path().join(".rune/manifest.yaml"), MINIMAL).unwrap();
+    let manifest = super::load(root.path())
+        .unwrap()
+        .expect("the directory form must load");
+    assert_eq!(manifest.runes["rune-core"].skills, vec!["BuildSkill"]);
+    assert!(super::exists(root.path()));
+}
+
+#[test]
+fn a_rune_directory_without_a_manifest_is_no_consumer() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".rune/records")).unwrap();
+    assert!(super::load(root.path()).unwrap().is_none());
+    assert!(!super::exists(root.path()));
+}
+
+#[test]
+fn write_atomic_keeps_the_directory_form() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".rune/records")).unwrap();
+    std::fs::write(root.path().join(".rune/manifest.yaml"), MINIMAL).unwrap();
+    let manifest = super::load(root.path()).unwrap().unwrap();
+    super::write_atomic(root.path(), &manifest).unwrap();
+    assert!(root.path().join(".rune").is_dir());
+    assert!(root.path().join(".rune/manifest.yaml").is_file());
+    assert!(root.path().join(".rune/records").is_dir());
+}
