@@ -333,6 +333,7 @@ fn benchmark_surface_invocation(
         native_timeout: None,
         timeout: Some(timeout),
         clean_state_root: None,
+        session_name: None,
     })
 }
 

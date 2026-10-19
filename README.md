@@ -379,6 +379,12 @@ rune run codex --prompt-file brief.md
 command cat brief.md | rune run lumo@opencode
 ```
 
+Name the harness session, where the harness takes a name (claude `--name`, opencode `run --title`). Codex, agy, and grok take none, and the plan says so:
+
+```sh
+rune run sol@claude --session-name claude/runedeck/mods/council "Review this repository"
+```
+
 Run a helper script bundled with a skill:
 
 ```sh

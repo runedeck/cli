@@ -181,3 +181,72 @@ printf '%s\n' '{"response":"provider reply","usage":{"output_tokens":17}}'
     assert!(input_tokens.is_null());
     assert!(total_tokens.is_null());
 }
+
+#[test]
+fn dry_run_reports_the_session_name_and_the_flag_that_carries_it() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+            "--session-name",
+            "claude/runedeck/mods/council",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "session_name: claude/runedeck/mods/council",
+        ))
+        .stdout(predicate::str::contains("session_name_flag: --name"));
+}
+
+#[test]
+fn dry_run_without_a_session_name_says_none() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("session_name: none"))
+        .stdout(predicate::str::contains("session_name_flag: --name"));
+}
+
+#[test]
+fn dry_run_reports_a_session_name_the_harness_cannot_take() {
+    // agy has no flag for a session name: the plan says so, and nothing is sent.
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .args([
+            "run",
+            "agy",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+            "--session-name",
+            "agy/runedeck/mods/council",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "session_name: agy/runedeck/mods/council",
+        ))
+        .stdout(predicate::str::contains("session_name_flag: none"));
+}

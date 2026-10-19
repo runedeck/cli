@@ -14,6 +14,7 @@ fn invocation(surface: Surface, extra_args: &[&str]) -> SurfaceInvocation {
         native_timeout: None,
         timeout: None,
         clean_state_root: None,
+        session_name: None,
     }
 }
 
@@ -192,6 +193,7 @@ fn claude_read_only_limits_available_tools() {
         native_timeout: None,
         timeout: None,
         clean_state_root: None,
+        session_name: None,
     };
 
     assert_eq!(
@@ -226,6 +228,7 @@ fn grok_read_only_limits_tools_and_denies_writes() {
         native_timeout: None,
         timeout: None,
         clean_state_root: None,
+        session_name: None,
     };
 
     assert_eq!(
@@ -399,6 +402,7 @@ fn clean_claude_overrides_system_prompt() {
         native_timeout: None,
         timeout: None,
         clean_state_root: Some(PathBuf::from("/clean")),
+        session_name: None,
     };
     let args = claude_args(&invocation);
 
@@ -449,6 +453,7 @@ fn clean_grok_uses_neutral_system_prompt() {
         native_timeout: None,
         timeout: None,
         clean_state_root: Some(PathBuf::from("/clean")),
+        session_name: None,
     };
     let args = grok_args(&invocation, &PathBuf::from("/scratch/prompt.txt"));
 
@@ -472,6 +477,7 @@ fn grok_system_prompt_accepts_frontmatter() {
         native_timeout: None,
         timeout: None,
         clean_state_root: None,
+        session_name: None,
     };
     let args = grok_args(&invocation, &PathBuf::from("/scratch/prompt.txt"));
 
@@ -533,6 +539,7 @@ fn clean_state_redirects_codex_and_agy_data() {
             native_timeout: None,
             timeout: None,
             clean_state_root: Some(PathBuf::from("/clean")),
+            session_name: None,
         };
         let request = process_request(&invocation, Vec::new(), None);
 
@@ -606,6 +613,7 @@ fn clean_opencode_redirects_xdg_state() {
         native_timeout: None,
         timeout: None,
         clean_state_root: Some(PathBuf::from("/clean")),
+        session_name: None,
     };
     let request = process_request(&invocation, Vec::new(), None);
 
@@ -652,6 +660,7 @@ fn clean_grok_moves_home_after_the_shim_target() {
         native_timeout: None,
         timeout: None,
         clean_state_root: Some(PathBuf::from("/clean")),
+        session_name: None,
     };
     let request = process_request(&invocation, Vec::new(), None);
 
@@ -727,4 +736,56 @@ fn clean_codex_config_with_two_custom_providers_names_none() {
     assert!(clean.get("model_provider").is_none(), "{clean}");
     assert!(clean["model_providers"].get("a").is_some());
     assert!(clean["model_providers"].get("b").is_some());
+}
+
+#[test]
+fn claude_session_name_goes_as_the_name_flag() {
+    let mut invocation = invocation(Surface::Claude, &[]);
+    invocation.session_name = Some("claude/runedeck/mods/council".to_string());
+    let args = strings(&claude_args(&invocation));
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--name", "claude/runedeck/mods/council"]),
+        "{args:?}"
+    );
+}
+
+#[test]
+fn opencode_session_name_goes_as_the_title_flag() {
+    let mut invocation = invocation(Surface::Opencode, &[]);
+    invocation.session_name = Some("opencode/runedeck/mods/council".to_string());
+    let args = strings(&opencode_args(&invocation));
+    assert_eq!(args[0], "run");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--title", "opencode/runedeck/mods/council"]),
+        "{args:?}"
+    );
+}
+
+#[test]
+fn no_session_name_sends_no_name_flag() {
+    let claude = strings(&claude_args(&invocation(Surface::Claude, &[])));
+    assert!(!claude.iter().any(|arg| arg == "--name"), "{claude:?}");
+    let opencode = strings(&opencode_args(&invocation(Surface::Opencode, &[])));
+    assert!(!opencode.iter().any(|arg| arg == "--title"), "{opencode:?}");
+}
+
+#[test]
+fn profile_name_and_title_are_owned_by_the_run() {
+    let claude = filter_surface_args(&invocation(Surface::Claude, &["--name", "mine"]));
+    assert_eq!(claude.kept, [] as [std::ffi::OsString; 0]);
+    assert_eq!(claude.warnings.len(), 1, "{:?}", claude.warnings);
+    let opencode = filter_surface_args(&invocation(Surface::Opencode, &["--title", "mine"]));
+    assert_eq!(opencode.kept, [] as [std::ffi::OsString; 0]);
+    assert_eq!(opencode.warnings.len(), 1, "{:?}", opencode.warnings);
+}
+
+#[test]
+fn session_name_flag_names_the_two_harnesses_that_take_one() {
+    assert_eq!(session_name_flag(Surface::Claude), Some("--name"));
+    assert_eq!(session_name_flag(Surface::Opencode), Some("--title"));
+    assert_eq!(session_name_flag(Surface::Codex), None);
+    assert_eq!(session_name_flag(Surface::Agy), None);
+    assert_eq!(session_name_flag(Surface::Grok), None);
 }

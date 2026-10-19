@@ -767,7 +767,7 @@ enum Command {
 
     /// Run a coding tool noninteractively with supervised output
     #[command(
-        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default.\n\nPROFILE ARGUMENTS:\n  The run sets the print, output, permission, tool, model, and directory\n  flags itself. A profile value for one of them is dropped with a warning,\n  never passed through. Codex --config and claude --settings are filtered\n  per key: model and access keys are dropped, everything else stays."
+        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default.\n\nSESSION NAMES:\n  --session-name <NAME> goes to claude as --name and to opencode as --title.\n  Codex, agy and grok take no session name; the plan reports it as not sent.\n\nPROFILE ARGUMENTS:\n  The run sets the print, output, permission, tool, model, and directory\n  flags itself. A profile value for one of them is dropped with a warning,\n  never passed through. Codex --config and claude --settings are filtered\n  per key: model and access keys are dropped, everything else stays."
     )]
     Run {
         /// Coding tool to run, such as `codex` or `sol@claude`.
@@ -817,6 +817,12 @@ enum Command {
         /// model the run would send as served or missing. Sends no prompt.
         #[arg(long, conflicts_with = "dry_run")]
         check: bool,
+
+        /// Name the harness session, where the harness takes a name: claude
+        /// `--name`, opencode `run --title`. Codex, agy and grok take none; the
+        /// plan and the JSON result say the name was not sent.
+        #[arg(long, value_name = "NAME")]
+        session_name: Option<String>,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -2038,6 +2044,7 @@ pub fn run() -> i32 {
             timeout,
             dry_run,
             check,
+            session_name,
         } => {
             return exit_code(
                 run::execute(&run::RunOptions {
@@ -2051,6 +2058,7 @@ pub fn run() -> i32 {
                     repository: repo,
                     mode,
                     timeout,
+                    session_name,
                     plan: run::RunPlan::from_flags(dry_run, check),
                     json: args.json,
                 }),

@@ -66,6 +66,9 @@ pub(crate) struct SurfaceInvocation {
     pub(crate) native_timeout: Option<Duration>,
     pub(crate) timeout: Option<Duration>,
     pub(crate) clean_state_root: Option<PathBuf>,
+    /// A name for the harness session, sent where the harness takes one (see
+    /// [`session_name_flag`]); the dry run and the JSON result say whether it went.
+    pub(crate) session_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +129,17 @@ fn surface_name(surface: Surface) -> &'static str {
         Surface::Agy => "agy",
         Surface::Grok => "grok",
         Surface::Opencode => "opencode",
+    }
+}
+
+/// The flag that names a session on `surface`: claude `--name`, opencode
+/// `run --title`. Codex, agy and grok take none, and a session name given to
+/// them is reported, not sent.
+pub(crate) fn session_name_flag(surface: Surface) -> Option<&'static str> {
+    match surface {
+        Surface::Claude => Some("--name"),
+        Surface::Opencode => Some("--title"),
+        Surface::Codex | Surface::Agy | Surface::Grok => None,
     }
 }
 
@@ -809,6 +823,10 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
         args.push(OsString::from("--model"));
         args.push(OsString::from(model));
     }
+    if let Some(name) = &invocation.session_name {
+        args.push(OsString::from("--name"));
+        args.push(OsString::from(name));
+    }
     if invocation.clean_state_root.is_some() {
         args.push(OsString::from("--system-prompt"));
         args.push(OsString::from(clean_system_prompt(
@@ -1102,7 +1120,7 @@ struct AgyUsage {
     output_tokens: Option<f64>,
 }
 
-fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+fn opencode_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("run"),
         OsString::from("--dir"),
@@ -1117,9 +1135,17 @@ fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, Surfa
     if invocation.mode == AccessMode::WorkspaceWrite {
         args.push(OsString::from("--auto"));
     }
+    if let Some(name) = &invocation.session_name {
+        args.push(OsString::from("--title"));
+        args.push(OsString::from(name));
+    }
     args.extend(invocation.extra_args.clone());
     args.push(OsString::from(combined_prompt(invocation)));
-    let mut request = process_request(invocation, args, None);
+    args
+}
+
+fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+    let mut request = process_request(invocation, opencode_args(invocation), None);
     if invocation.mode == AccessMode::ReadOnly {
         let permissions = if invocation.clean_state_root.is_some() {
             r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow"}"#
@@ -1156,6 +1182,8 @@ fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, Surfa
 
 /// The flags the automated run sets itself for each surface. A profile
 /// value for one of them is dropped with a warning, never passed through.
+// A table per surface, read as data; its length is the flag count, not logic.
+#[allow(clippy::too_many_lines)]
 fn owned_options(surface: Surface) -> &'static [&'static str] {
     match surface {
         Surface::Claude => &[
@@ -1176,6 +1204,8 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
             "--add-dir",
             "--settings",
             "--setting-sources",
+            "-n",
+            "--name",
         ],
         Surface::Codex => &[
             "-s",
@@ -1254,6 +1284,7 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
             "--password",
             "-u",
             "--username",
+            "--title",
         ],
     }
 }

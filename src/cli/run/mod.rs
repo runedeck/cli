@@ -2,7 +2,7 @@ use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
     Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface,
-    prepare_clean_state,
+    prepare_clean_state, session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -25,6 +25,8 @@ pub(crate) struct RunOptions {
     pub(crate) repository: PathBuf,
     pub(crate) mode: AccessMode,
     pub(crate) timeout: Option<String>,
+    /// A name for the harness session; `session_name_flag` says which harness takes it.
+    pub(crate) session_name: Option<String>,
     pub(crate) plan: RunPlan,
     pub(crate) json: bool,
 }
@@ -122,12 +124,14 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         let mut dry_run_argv = resolved.argv.clone();
         dry_run_argv[0].clone_from(&binary);
         println!(
-            "{}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}",
+            "{}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",
             resolved.format_dry_run_with_overrides(&dry_run_argv, options.model.as_deref()),
             repository.display(),
             options.mode.label(),
             duration_label(outer_timeout),
-            duration_label(native_timeout)
+            duration_label(native_timeout),
+            options.session_name.as_deref().unwrap_or("none"),
+            session_name_flag(surface).unwrap_or("none")
         );
         return Ok(0);
     }
@@ -159,6 +163,7 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         native_timeout,
         timeout: outer_timeout,
         clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
+        session_name: options.session_name.clone(),
     };
 
     // Profile arguments the run owns are dropped here, once, and each drop
@@ -196,6 +201,8 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
                         "text": reply.text,
                         "duration_ms": started.elapsed().as_millis(),
                         "clean": options.clean,
+                        "session_name": options.session_name.as_deref(),
+                        "session_name_flag": session_name_flag(invocation.surface),
                         "usage": {
                             "input_tokens": Value::Null,
                             "cache_creation_input_tokens": Value::Null,
