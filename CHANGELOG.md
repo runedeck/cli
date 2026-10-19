@@ -228,7 +228,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Fix the bundle check to accept a reference-style term link into the repository's glossary, the form the assembler strips before deployment.
+- Fix the bundle check to accept a full reference-style term link (`[text][TAG]`) into the repository's glossary, the one form the assembler strips before deployment.
+- Check a collapsed or shortcut reference into the glossary like any other reference, because assembly does not strip it.
+- Strip a term link whatever the case of its tag, and leave a fenced block or a code span untouched, so an example of the syntax survives assembly.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
 - Fix `rune run grok@grok --clean-harness-state` exiting 127 through the `harness-run` shim: the clean run names the real `~/.grok/bin` in `HARNESS_REAL_BIN_DIR` before it moves `HOME`.
