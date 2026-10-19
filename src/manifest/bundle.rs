@@ -494,13 +494,11 @@ fn check_references(
             ));
             continue;
         };
-        // Only a reference-style link is a term link: the assembler strips
-        // that form before deployment, and an inline link survives it.
-        if matches!(
-            link_type,
-            LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut
-        ) && is_term_link(&path)
-        {
+        // Only the full reference form `[text][TAG]` is a term link: the
+        // assembler strips that form to its text before deployment. An
+        // inline, collapsed, or shortcut link survives assembly, so it is
+        // checked like any other reference.
+        if link_type == LinkType::Reference && is_term_link(&path) {
             continue;
         }
         let relative = Path::new(document)

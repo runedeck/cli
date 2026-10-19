@@ -223,6 +223,8 @@ fn term_link_into_the_repository_glossary_is_not_an_escape() {
         b"# Alpha\n[escape](../../docs/specs/glossary/)\n".as_slice(),
         b"# Alpha\n[escape](../../docs/specs/glossary/..%5c..%5c..%5csecret.md)\n",
         b"# Alpha\n[escape](../../docs/specs/glossary/Secret.MD)\n",
+        b"# Alpha\n[validator][]\n\n[validator]: ../../docs/specs/glossary/validator.md\n",
+        b"# Alpha\n[validator]\n\n[validator]: ../../docs/specs/glossary/validator.md\n",
     ] {
         write(&root, "SKILL.md", escape);
         has_problem(

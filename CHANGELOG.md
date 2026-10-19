@@ -343,7 +343,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fix claude in `rune run --mode workspace-write` editing but never running a command: the run sends one `--settings` object that turns on Claude Code's sandbox, so Bash runs only inside it.
 - Fix the drop warning for a codex `model` config key or a claude `model` settings key whose value equals the model the run passes.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
-- Fix the bundle check to accept a reference-style term link into the repository's glossary, the form the assembler strips before deployment.
+- Fix the bundle check to accept a full reference-style term link (`[text][TAG]`) into the repository's glossary, the one form the assembler strips before deployment.
+- Check a collapsed or shortcut reference into the glossary like any other reference, because assembly does not strip it.
+- Strip a term link whatever the case of its tag, and leave a fenced block or a code span untouched, so an example of the syntax survives assembly.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Number a console fence error by the line of the README file, not of the body under the frontmatter.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
