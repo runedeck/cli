@@ -1038,9 +1038,10 @@ enum SpecAction {
         terms: bool,
 
         /// Rewrite the legacy `*term* [TAG]` form to `*[term][TAG]*` in the
-        /// Markdown files under the source root, emphasize only the first
-        /// use of a term in a file, point every definition at the term's
-        /// page, and add a missing definition. The walk skips version
+        /// Markdown files under the source root, link every occurrence of a
+        /// term the file links, emphasize only the first use of a term in a
+        /// file, point every definition at the term's page, and add a
+        /// missing definition. The walk skips version
         /// control, build, dependency, and fixture trees, a deployed tree
         /// (a directory with a `.manifest`), the change archive, and the
         /// glossary. Idempotent on converted files.

@@ -47,6 +47,11 @@ static LEGACY_LINK: LazyLock<Regex> = LazyLock::new(|| {
         .expect("legacy link regex is valid")
 });
 /// A reference definition, `[TAG]: <target>`, indented up to three spaces.
+static NOT_PROSE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\])]+|<[^<>\n]*>")
+        .expect("not-prose regex is valid")
+});
+
 static REFERENCE_DEFINITION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^ {0,3}\[([A-Za-z0-9][A-Za-z0-9_-]*)\]:\s*(\S+)")
         .expect("reference definition regex is valid")
@@ -111,6 +116,11 @@ pub(super) fn plain_occurrences(line: &str, label: &str) -> Vec<PlainOccurrence>
     for link in reference_links(1, line) {
         masked[link.start..link.end].fill(true);
     }
+    // A bare URL and anything in angle brackets (an autolink, an HTML tag
+    // with its attributes) are not prose.
+    for span in NOT_PROSE.find_iter(line) {
+        masked[span.start()..span.end()].fill(true);
+    }
     let mut depth = 0usize;
     // Inside the destination of an inline link `[text](path)`, which is not
     // prose; the count tracks balanced parentheses within it.
@@ -136,14 +146,34 @@ pub(super) fn plain_occurrences(line: &str, label: &str) -> Vec<PlainOccurrence>
             masked[i] = true;
         }
     }
+    // A label that ends in a consonant and y pluralizes to `ies`
+    // (`capabilities`), so the search runs on the stem and accepts both
+    // endings.
+    let y_plural = needle.len() > 1
+        && needle.ends_with('y')
+        && !needle[..needle.len() - 1].ends_with(['a', 'e', 'i', 'o', 'u']);
+    let stem = if y_plural {
+        &needle[..needle.len() - 1]
+    } else {
+        needle.as_str()
+    };
     let mut found = Vec::new();
     let mut from = 0;
-    while let Some(at) = lower[from..].find(&needle) {
+    while let Some(at) = lower[from..].find(stem) {
         let start = from + at;
-        let mut end = start + needle.len();
-        // The plural: `changes`, `harnesses`, `statuses`. A label that ends
-        // in s takes `es` only.
-        if lower[end..].starts_with("es") {
+        let mut end = start + stem.len();
+        if y_plural {
+            if lower[end..].starts_with("ies") {
+                end += 3;
+            } else if lower[end..].starts_with('y') {
+                end += 1;
+            } else {
+                from = end.max(start + 1);
+                continue;
+            }
+        } else if lower[end..].starts_with("es") {
+            // The plural: `changes`, `harnesses`, `statuses`. A label that
+            // ends in s takes `es` only.
             end += 2;
         } else if lower[end..].starts_with('s') && !needle.ends_with('s') {
             end += 1;
@@ -692,6 +722,15 @@ mod tests {
             .map(|hit| &plural[hit.start..hit.end])
             .collect();
         assert_eq!(hits, vec!["harnesses", "harness"]);
+        let plural_y = "Two capabilities, one capability, no capabilitys.";
+        let hits: Vec<&str> = plain_occurrences(plural_y, "capability")
+            .into_iter()
+            .map(|hit| &plural_y[hit.start..hit.end])
+            .collect();
+        assert_eq!(hits, vec!["capabilities", "capability"]);
+        let not_prose =
+            "See https://example.com/harness and <a href=\"harness\">harness</a>, then a harness.";
+        assert_eq!(plain_occurrences(not_prose, "harness").len(), 2);
         let unicode = "İ change. K change.";
         let hits: Vec<&str> = plain_occurrences(unicode, "change")
             .into_iter()
