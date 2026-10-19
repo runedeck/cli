@@ -272,6 +272,22 @@ fn automated_providers_drop_read_only_bypass_arguments() {
         (Surface::Agy, "--dangerously-skip-permissions"),
         (Surface::Opencode, "--attach=http://127.0.0.1:4096"),
         (Surface::Opencode, "-mproton-lumo/lumo-max"),
+        (Surface::Cursor, "--yolo"),
+        (Surface::Cursor, "--force"),
+        (Surface::Cursor, "-f"),
+        (Surface::Cursor, "--sandbox=disabled"),
+        (Surface::Cursor, "--mode=agent"),
+        (Surface::Cursor, "--workspace=/"),
+        (Surface::Cursor, "--approve-mcps"),
+        (Surface::Cursor, "--plugin-dir=/tmp/plugin"),
+        (Surface::Cursor, "-wscratch"),
+        (Surface::Cursor, "--allowed-tools=shell"),
+        (Surface::Cursor, "--data-dir=/tmp/other"),
+        (Surface::Cursor, "-k"),
+        (
+            Surface::Cursor,
+            "--header=x-cursor-agent-allowed-tools: shell",
+        ),
     ] {
         let filtered = filter_surface_args(&invocation(surface, &[argument]));
         assert!(
@@ -727,4 +743,333 @@ fn clean_codex_config_with_two_custom_providers_names_none() {
     assert!(clean.get("model_provider").is_none(), "{clean}");
     assert!(clean["model_providers"].get("a").is_some());
     assert!(clean["model_providers"].get("b").is_some());
+}
+
+#[test]
+fn cursor_read_only_run_uses_ask_mode_and_the_model() {
+    let invocation = SurfaceInvocation {
+        model: Some("claude-fable-5-1-high".to_string()),
+        repository: PathBuf::from("/repo"),
+        ..invocation(Surface::Cursor, &["-H", "X-Trace: rune"])
+    };
+
+    assert_eq!(
+        strings(&cursor::args(&invocation)),
+        [
+            "-p",
+            "--output-format",
+            "json",
+            "--workspace",
+            "/repo",
+            "--trust",
+            "--mode",
+            "ask",
+            "--model",
+            "claude-fable-5-1-high",
+            "-H",
+            "X-Trace: rune",
+        ]
+    );
+}
+
+#[test]
+fn cursor_workspace_write_run_forces_edits_inside_its_sandbox() {
+    let invocation = SurfaceInvocation {
+        mode: AccessMode::WorkspaceWrite,
+        ..invocation(Surface::Cursor, &[])
+    };
+    let args = strings(&cursor::args(&invocation));
+
+    assert!(args.ends_with(&[
+        "--force".to_string(),
+        "--sandbox".to_string(),
+        "enabled".to_string(),
+    ]));
+    assert!(!args.contains(&"--mode".to_string()));
+    assert!(!args.contains(&"--model".to_string()));
+}
+
+#[test]
+fn cursor_prompt_travels_on_stdin_behind_the_system_prompt() {
+    let plain = SurfaceInvocation {
+        system_prompt: "Be brief.".to_string(),
+        ..invocation(Surface::Cursor, &[])
+    };
+    let clean = SurfaceInvocation {
+        clean_state_root: Some(PathBuf::from("/clean")),
+        ..plain.clone()
+    };
+
+    assert_eq!(cursor::prompt_input(&plain), "Be brief.\n\nInspect only\n");
+    assert_eq!(
+        cursor::prompt_input(&clean),
+        format!("{CLEAN_SYSTEM_PROMPT}\n\nBe brief.\n\nInspect only\n")
+    );
+    assert!(!strings(&cursor::args(&plain)).contains(&"Inspect only".to_string()));
+}
+
+#[test]
+fn cursor_result_object_gives_text_and_output_tokens() {
+    let reply = cursor::parse(
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"pong","usage":{"inputTokens":12874,"outputTokens":3}}"#,
+        String::new(),
+    )
+    .expect("reply");
+
+    assert_eq!(reply.text, "pong");
+    assert_eq!(reply.completion_tokens, Some(3.0));
+}
+
+#[test]
+fn cursor_result_without_usage_still_succeeds() {
+    let reply =
+        cursor::parse(r#"{"type":"result","result":"pong"}"#, String::new()).expect("reply");
+
+    assert_eq!(reply.text, "pong");
+    assert_eq!(reply.completion_tokens, None);
+}
+
+#[test]
+fn cursor_reported_error_fails_the_run() {
+    let failure = cursor::parse(
+        r#"{"type":"result","is_error":true,"result":"rate limited"}"#,
+        String::new(),
+    )
+    .expect_err("error result");
+
+    assert_eq!(
+        failure,
+        SurfaceFailure::Reported("cursor-agent reported an error: rate limited".to_string())
+    );
+}
+
+#[test]
+fn cursor_output_without_a_result_object_fails_the_run() {
+    for stdout in [
+        "",
+        "not json",
+        r#"{"type":"assistant","result":"pong"}"#,
+        r#"{"type":"result","result":42}"#,
+    ] {
+        assert_eq!(
+            cursor::parse(stdout, String::new()),
+            Err(SurfaceFailure::Reported(
+                "cursor-agent printed no JSON result object".to_string()
+            )),
+            "{stdout}"
+        );
+    }
+    assert!(matches!(
+        cursor::parse(r#"{"type":"result","result":"  "}"#, String::new()),
+        Err(SurfaceFailure::Reported(message)) if message.contains("no final response")
+    ));
+}
+
+#[test]
+fn clean_cursor_state_needs_an_api_key() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+
+    let failure =
+        cursor::prepare_clean_state(temporary.path(), false).expect_err("missing key refusal");
+    assert!(matches!(&failure, SurfaceFailure::Arguments(_)));
+    let message = failure.to_string();
+    assert!(message.contains("CURSOR_API_KEY"), "{message}");
+    assert!(message.contains("Keychain"), "{message}");
+    assert!(message.contains("~/.cursor/rules"), "{message}");
+    assert!(!temporary.path().join(".cursor").exists());
+
+    cursor::prepare_clean_state(temporary.path(), true).expect("clean state");
+    assert!(temporary.path().join(".cursor").is_dir());
+}
+
+#[test]
+fn cursor_api_key_from_the_launch_environment_counts() {
+    let key = |value: &str| (OsString::from("CURSOR_API_KEY"), OsString::from(value));
+
+    assert!(cursor::has_api_key(&[key("from-profile")]));
+    assert!(!cursor::has_api_key(&[key("")]));
+    assert!(cursor::has_api_key(&[key(""), key("last-wins")]));
+}
+
+#[test]
+fn cursor_error_without_a_message_names_its_subtype() {
+    let failure = cursor::parse(
+        r#"{"type":"result","subtype":"error","is_error":true,"result":""}"#,
+        String::new(),
+    )
+    .expect_err("error result");
+
+    assert_eq!(
+        failure,
+        SurfaceFailure::Reported("cursor-agent reported an error: error".to_string())
+    );
+}
+
+#[test]
+fn cursor_profile_keeps_only_endpoint_flags() {
+    for (args, kept, warnings) in [
+        (&["install-shell-integration"][..], &[][..], 1),
+        (&["worker", "--pool", "p"][..], &[][..], 3),
+        (&["--skip-worktree-setup", "logout"][..], &[][..], 2),
+        (&["--", "-f", "prompt"][..], &[][..], 2),
+        (
+            &["--data-dir=/tmp/x", "--allowed-tools", "shell", "-k"][..],
+            &[][..],
+            4,
+        ),
+        (
+            &["--api-key", "k", "-H", "X-A: 1", "--endpoint", "https://e"][..],
+            &["--endpoint", "https://e"][..],
+            4,
+        ),
+        (
+            &["--api-key=k", "-e", "https://e", "--endpoint=https://g"][..],
+            &["-e", "https://e", "--endpoint=https://g"][..],
+            1,
+        ),
+        (&["-ehttps://f", "-e=https://f"][..], &[][..], 2),
+        (
+            &[
+                "--endpoint",
+                "-e",
+                "https://e",
+                "--endpoint",
+                "--",
+                "x",
+                "--endpoint",
+            ][..],
+            &["-e", "https://e"][..],
+            3,
+        ),
+    ] {
+        let filtered = filter_surface_args(&invocation(Surface::Cursor, args));
+        assert_eq!(
+            filtered.kept,
+            kept.iter().map(OsString::from).collect::<Vec<_>>(),
+            "{args:?}"
+        );
+        assert_eq!(
+            filtered.warnings.len(),
+            warnings,
+            "{args:?}: {:?}",
+            filtered.warnings
+        );
+    }
+}
+
+#[test]
+fn cursor_warnings_never_show_a_dropped_value() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Cursor,
+        &[
+            "--token=secret-value",
+            "--token",
+            "secret-value",
+            "-ksecret-value",
+            "-\u{e9}secret-value",
+        ],
+    ));
+
+    assert!(filtered.kept.is_empty(), "{:?}", filtered.kept);
+    assert_eq!(filtered.warnings.len(), 5, "{:?}", filtered.warnings);
+    assert!(
+        filtered
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("secret-value")),
+        "{:?}",
+        filtered.warnings
+    );
+}
+
+#[test]
+fn read_only_cursor_run_refuses_unrestricted_approval() {
+    let config = tempfile::tempdir().expect("config directory");
+    cursor::check_approval_mode(config.path()).expect("missing config passes");
+
+    for (mode, refused) in [
+        ("allowlist", false),
+        ("auto-review", false),
+        ("unrestricted", true),
+    ] {
+        std::fs::write(
+            config.path().join("cli-config.json"),
+            format!(r#"{{"version":1,"approvalMode":"{mode}"}}"#),
+        )
+        .expect("config");
+        let result = cursor::check_approval_mode(config.path());
+        assert_eq!(result.is_err(), refused, "{mode}");
+        if let Err(failure) = result {
+            assert!(failure.to_string().contains("ask mode"), "{failure}");
+        }
+    }
+}
+
+#[test]
+fn cursor_profile_with_a_two_token_sandbox_value_keeps_nothing() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Cursor,
+        &["--yolo", "--sandbox", "disabled"],
+    ));
+
+    assert!(filtered.kept.is_empty(), "{:?}", filtered.kept);
+    assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
+}
+
+#[test]
+fn clean_cursor_run_moves_home_and_config_and_keeps_the_key_out_of_argv() {
+    let invocation = SurfaceInvocation {
+        clean_state_root: Some(PathBuf::from("/clean")),
+        ..invocation(Surface::Cursor, &[])
+    };
+    let request = process_request(&invocation, cursor::args(&invocation), None);
+
+    assert!(
+        request
+            .env
+            .contains(&(OsString::from("HOME"), OsString::from("/clean")))
+    );
+    assert!(request.env.contains(&(
+        OsString::from("CURSOR_CONFIG_DIR"),
+        OsString::from("/clean/.cursor")
+    )));
+    assert!(
+        !request
+            .args
+            .iter()
+            .any(|arg| arg.to_string_lossy().contains("CURSOR_API_KEY"))
+    );
+}
+
+#[test]
+fn cursor_sandbox_hint_matches_only_the_sandbox_signature() {
+    let keychain = "ERROR: failed to copy trust settings of system certificate-25291\n";
+    let login = "Error: Authentication required. Please run 'agent login' first";
+
+    assert!(cursor::sandbox_hint(keychain, false).is_some());
+    assert!(cursor::sandbox_hint(login, true).is_some());
+    assert!(cursor::sandbox_hint(login, false).is_none());
+    assert!(cursor::sandbox_hint("rate limited", true).is_none());
+}
+
+#[test]
+fn cursor_sandbox_hint_leads_the_kept_stderr() {
+    let stderr = format!(
+        "{}Error: Authentication required.\n",
+        "ERROR: failed to copy trust settings of system certificate-25291\n".repeat(8)
+    );
+    let failure = cursor::with_sandbox_hint(
+        SurfaceFailure::Exit {
+            termination: ProcessTermination::Exited(1),
+            stderr: stderr.clone(),
+        },
+        true,
+    );
+
+    let SurfaceFailure::Exit { stderr: hinted, .. } = &failure else {
+        panic!("exit failure expected: {failure:?}");
+    };
+    assert!(hinted.starts_with("hint: "), "{hinted}");
+    assert!(hinted.ends_with(&stderr));
+    assert!(failure.to_string().contains("outside the sandbox"));
 }

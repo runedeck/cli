@@ -25,7 +25,13 @@ const SENSITIVE_ENV_KEYS: &[&str] = &[
     "DYLD_LIBRARY_PATH",
 ];
 
-const KNOWN_TOOLS: &[&str] = &["claude", "codex", "agy", "opencode", "grok", "ollama"];
+const KNOWN_TOOLS: &[&str] = &[
+    "claude", "codex", "agy", "opencode", "grok", "cursor", "ollama",
+];
+/// Profiles that `<profile>@<tool>` selects when the config defines no
+/// profile of that name, as (tool, profile, model route). Config profiles
+/// win.
+const BUILT_IN_PROFILES: &[(&str, &str, &str)] = &[("cursor", "fable", "fable-cursor")];
 const CLAUDE_MODEL_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_MODEL",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
@@ -74,7 +80,7 @@ fn resolve_with_config(
     config: ontology::ResolvedConfig,
 ) -> Result<ResolvedLaunch, String> {
     let (tool_name, profile_name) = split_invocation(invocation);
-    let profile = resolve_profile(tool_name, profile_name, &config.launch)?.cloned();
+    let profile = resolve_profile(tool_name, profile_name, &config.launch)?;
     let mut options = parse_cli_tail(rest, &config.launch)?;
     if let Some(profile) = &profile {
         if !options.direct {
@@ -101,6 +107,8 @@ fn resolve_with_config(
     if let Some(profile) = &profile {
         apply_profile_env(profile, &mut plan, context.config.env_file().as_deref())?;
     }
+    let model_args = model_args(tool_name, model.as_ref());
+    options.args.splice(0..0, model_args.iter().cloned());
     let argv = build_argv(&tool, &options.args, &plan);
     let env = process_env(&tool, &plan);
     let display_env = final_env(&tool, &plan);
@@ -117,11 +125,24 @@ fn resolve_with_config(
         pre: plan.pre,
         warnings: plan.warnings,
         model,
+        model_args,
         dry_run: options.dry_run,
         check: options.check,
         display_env,
         base_url: plan.base_url,
     })
+}
+
+/// The arguments that give the tool its route's model, in front of the
+/// profile arguments. Claude gets the model as environment instead, and
+/// the other tools name it in their profile arguments.
+fn model_args(tool: &str, model: Option<&ResolvedModel>) -> Vec<OsString> {
+    match model {
+        Some(model) if tool == "cursor" => {
+            vec![OsString::from("--model"), OsString::from(&model.id)]
+        }
+        _ => Vec::new(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +194,9 @@ pub(crate) struct ResolvedLaunch {
     pub(crate) argv: Vec<OsString>,
     pub(crate) env: Vec<(OsString, OsString)>,
     pub(crate) model: Option<ResolvedModel>,
+    /// The leading tool arguments that `model_args` generated. `rune run`
+    /// sets the model itself and strips them.
+    pub(crate) model_args: Vec<OsString>,
     pub(crate) dry_run: bool,
     pub(crate) check: bool,
     wrap: Vec<Vec<OsString>>,
@@ -337,36 +361,63 @@ fn split_invocation(invocation: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// A named profile must exist when requested for a non-ollama tool; for
-/// ollama the name falls back to a model for `ollama run`.
-fn resolve_profile<'config>(
+/// A named profile must exist in the config or in `BUILT_IN_PROFILES` when
+/// requested for a non-ollama tool; for ollama the name falls back to a
+/// model for `ollama run`.
+fn resolve_profile(
     tool: &str,
     profile: Option<&str>,
-    launch: &'config Launch,
-) -> Result<Option<&'config ontology::LaunchProfile>, String> {
+    launch: &Launch,
+) -> Result<Option<ontology::LaunchProfile>, String> {
     let Some(name) = profile else {
         return Ok(None);
     };
-    let found = launch
+    if let Some(found) = launch
         .profiles
         .get(tool)
-        .and_then(|profiles| profiles.get(name));
-    if found.is_none() && tool != "ollama" {
-        let known = launch
-            .profiles
-            .get(tool)
-            .map(|profiles| {
-                let mut names: Vec<&str> = profiles.keys().map(String::as_str).collect();
-                names.sort_unstable();
-                names.join(", ")
-            })
-            .filter(|names| !names.is_empty())
-            .unwrap_or_else(|| "none defined".to_string());
-        return Err(format!(
-            "no launch profile '{name}' for {tool} (profiles: {known})"
-        ));
+        .and_then(|profiles| profiles.get(name))
+    {
+        return Ok(Some(found.clone()));
     }
-    Ok(found)
+    if let Some((_, _, route)) = BUILT_IN_PROFILES
+        .iter()
+        .find(|(built_in_tool, built_in_name, _)| *built_in_tool == tool && *built_in_name == name)
+    {
+        return Ok(Some(ontology::LaunchProfile {
+            model: Some((*route).to_string()),
+            ..ontology::LaunchProfile::default()
+        }));
+    }
+    if tool == "ollama" {
+        return Ok(None);
+    }
+    let names = profile_names(tool, launch);
+    let known = if names.is_empty() {
+        "none defined".to_string()
+    } else {
+        names.join(", ")
+    };
+    Err(format!(
+        "no launch profile '{name}' for {tool} (profiles: {known})"
+    ))
+}
+
+/// Configured and built-in profile names for one tool, sorted, each once.
+fn profile_names<'launch>(tool: &str, launch: &'launch Launch) -> Vec<&'launch str> {
+    let mut names: Vec<&str> = launch
+        .profiles
+        .get(tool)
+        .map(|profiles| profiles.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    names.extend(
+        BUILT_IN_PROFILES
+            .iter()
+            .filter(|(built_in_tool, _, _)| *built_in_tool == tool)
+            .map(|(_, built_in_name, _)| *built_in_name),
+    );
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 fn apply_profile_model(
@@ -425,52 +476,44 @@ fn apply_profile_model(
     }))
 }
 
+/// Model routes that need no config, as (alias, id, context). A configured
+/// `models.<alias>` replaces the whole entry.
+const BUILT_IN_ROUTES: &[(&str, &str, u64)] = &[
+    ("sol", "gpt-5.6-sol", 272_000),
+    ("sol-api", "gpt-5.6-sol", 1_050_000),
+    ("grok", "grok-4.6", 500_000),
+    ("lumo", "lumo-max", 131_072),
+    // Kimi K3 on the Standard tier. The proxy names a `kimi-k3-256k`
+    // route beside `kimi-k3` and publishes no limit; 262144 is the
+    // recorded assumption (CLI decision "Model routes are checked
+    // against the endpoint on demand").
+    ("kimi", "kimi-k3", 262_144),
+    // Cursor names each Fable 5.1 effort level as its own id. `high` is
+    // the one its model list labels without an effort suffix, as
+    // "Claude Fable 5.1 1M".
+    ("fable-cursor", "claude-fable-5-1-high", 1_000_000),
+];
+
 fn resolve_model(alias: &str, launch: &Launch) -> Result<(LaunchModel, ModelSource), String> {
     if let Some(model) = launch.models.get(alias) {
         return Ok((model.clone(), ModelSource::Config));
     }
-    let model = match alias {
-        "sol" => LaunchModel {
-            id: "gpt-5.6-sol".to_string(),
-            context: 272_000,
+    if let Some((_, id, context)) = BUILT_IN_ROUTES.iter().find(|(name, _, _)| *name == alias) {
+        let model = LaunchModel {
+            id: (*id).to_string(),
+            context: *context,
             compact: None,
-        },
-        "sol-api" => LaunchModel {
-            id: "gpt-5.6-sol".to_string(),
-            context: 1_050_000,
-            compact: None,
-        },
-        "grok" => LaunchModel {
-            id: "grok-4.6".to_string(),
-            context: 500_000,
-            compact: None,
-        },
-        "lumo" => LaunchModel {
-            id: "lumo-max".to_string(),
-            context: 131_072,
-            compact: None,
-        },
-        // Kimi K3 on the Standard tier. The proxy names a `kimi-k3-256k`
-        // route beside `kimi-k3` and publishes no limit; 262144 is the
-        // recorded assumption (CLI decision "Model routes are checked
-        // against the endpoint on demand"). Config `models.kimi` overrides.
-        "kimi" => LaunchModel {
-            id: "kimi-k3".to_string(),
-            context: 262_144,
-            compact: None,
-        },
-        _ => {
-            let mut known = vec!["grok", "kimi", "lumo", "sol", "sol-api"];
-            known.extend(launch.models.keys().map(String::as_str));
-            known.sort_unstable();
-            known.dedup();
-            return Err(format!(
-                "unknown launch model route '{alias}' (models: {})",
-                known.join(", ")
-            ));
-        }
-    };
-    Ok((model, ModelSource::BuiltIn))
+        };
+        return Ok((model, ModelSource::BuiltIn));
+    }
+    let mut known: Vec<&str> = BUILT_IN_ROUTES.iter().map(|(name, _, _)| *name).collect();
+    known.extend(launch.models.keys().map(String::as_str));
+    known.sort_unstable();
+    known.dedup();
+    Err(format!(
+        "unknown launch model route '{alias}' (models: {})",
+        known.join(", ")
+    ))
 }
 
 fn validate_model(alias: &str, model: &LaunchModel) -> Result<(), String> {
@@ -580,19 +623,14 @@ fn list_tools(launch: &Launch) -> i32 {
             .tools
             .get(*tool)
             .and_then(|configured| configured.binary.clone())
-            .unwrap_or_else(|| (*tool).to_string());
+            .unwrap_or_else(|| default_binary(tool).to_string());
         let installed = which_on_path(&binary);
         let state = if installed {
             sheet.green("installed")
         } else {
             sheet.dim("not found")
         };
-        let mut profiles: Vec<&str> = launch
-            .profiles
-            .get(*tool)
-            .map(|profiles| profiles.keys().map(String::as_str).collect())
-            .unwrap_or_default();
-        profiles.sort_unstable();
+        let profiles = profile_names(tool, launch);
         let suffix = if profiles.is_empty() {
             String::new()
         } else {
@@ -615,12 +653,21 @@ fn which_on_path(binary: &str) -> bool {
     std::env::split_paths(&paths).any(|directory| directory.join(binary).is_file())
 }
 
+/// The binary a tool starts when the config names none. The `cursor` command
+/// on a Mac opens the editor, so the Cursor tool starts its agent CLI.
+fn default_binary(name: &str) -> &str {
+    match name {
+        "cursor" => "cursor-agent",
+        other => other,
+    }
+}
+
 fn resolve_tool(name: &str, launch: &Launch) -> ResolvedTool {
     let configured = launch.tools.get(name);
     let default_base_env = (name == "claude").then(|| "ANTHROPIC_BASE_URL".to_string());
     let binary = configured
         .and_then(|tool| tool.binary.as_ref())
-        .map_or_else(|| name.to_string(), Clone::clone);
+        .map_or_else(|| default_binary(name).to_string(), Clone::clone);
     let base_url_env = configured
         .and_then(|tool| tool.base_url_env.as_ref())
         .cloned()
