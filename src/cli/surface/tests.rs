@@ -1592,6 +1592,12 @@ fn claude_workspace_write_names_its_tools_and_sandboxes_the_shell() {
     assert_eq!(settings[0]["sandbox"]["enabled"], true);
     assert_eq!(settings[0]["sandbox"]["failIfUnavailable"], true);
     assert_eq!(settings[0]["sandbox"]["autoAllowBashIfSandboxed"], true);
+    assert_eq!(settings[0]["sandbox"]["allowUnsandboxedCommands"], false);
+    assert!(
+        settings[0]["sandbox"].get("excludedCommands").is_none(),
+        "the run names no excluded command: {:?}",
+        settings[0]
+    );
 }
 
 #[test]
@@ -1621,6 +1627,7 @@ fn a_profile_sandbox_setting_is_dropped_by_key_and_the_runs_sandbox_wins() {
     assert_eq!(settings.len(), 1);
     assert_eq!(settings[0]["sandbox"]["enabled"], true);
     assert_eq!(settings[0]["sandbox"]["failIfUnavailable"], true);
+    assert_eq!(settings[0]["sandbox"]["allowUnsandboxedCommands"], false);
     assert_eq!(settings[0]["env"]["X"], "1");
 }
 

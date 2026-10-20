@@ -1430,10 +1430,12 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
 const WORKSPACE_WRITE_TOOLS: &str = "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit";
 /// The settings a workspace-write run adds: Claude Code's own sandbox
 /// around the shell, a sandboxed Bash command allowed without a prompt,
-/// and no silent fallback to an unsandboxed shell when the sandbox cannot
-/// start. The keys are the ones Claude Code's settings file takes.
-const WORKSPACE_WRITE_SETTINGS: &str =
-    r#"{"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":true}}"#;
+/// no silent fallback to an unsandboxed shell when the sandbox cannot
+/// start, and no unsandboxed retry of a command the sandbox blocked. With
+/// the retry forbidden through `--settings` the sandbox is admin-required,
+/// and claude ignores a repository's `excludedCommands`. The keys are the
+/// ones Claude Code's settings file takes.
+const WORKSPACE_WRITE_SETTINGS: &str = r#"{"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false}}"#;
 
 /// The one `--settings` object a claude run sends, and the profile
 /// arguments without theirs. Claude reads one `--settings` value, so the

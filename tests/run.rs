@@ -930,6 +930,7 @@ printf 'built\n'
     assert_eq!(settings["sandbox"]["enabled"], true);
     assert_eq!(settings["sandbox"]["failIfUnavailable"], true);
     assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
+    assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
     assert_eq!(argv.iter().filter(|part| **part == "--settings").count(), 1);
 }
 
