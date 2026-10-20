@@ -1246,3 +1246,39 @@ fn dry_run_endpoint_prefers_the_settings_env_over_the_process_env() {
             "base_url: http://127.0.0.1:9/settings",
         ));
 }
+
+#[test]
+fn dry_run_prints_a_model_name_that_equals_a_credential_value() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      local:\n        env:\n",
+            "          ANTHROPIC_AUTH_TOKEN: ollama\n",
+            "          ANTHROPIC_BASE_URL: http://127.0.0.1:11434\n",
+            "        args:\n          - '--name'\n          - 'ollama-review'\n",
+        ),
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+
+    rune(home.path())
+        .args([
+            "run",
+            "local@claude",
+            "x",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--model",
+            "qwen3-ollama:30b",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--model qwen3-ollama:30b"))
+        .stdout(predicate::str::contains("ANTHROPIC_AUTH_TOKEN=<redacted>"))
+        .stdout(predicate::str::contains("ANTHROPIC_AUTH_TOKEN=ollama").not());
+}

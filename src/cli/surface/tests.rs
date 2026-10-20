@@ -1321,6 +1321,20 @@ fn clean_exit_without_an_answer_carries_the_output() {
             .contains("stderr tail:\n  model refused"),
         "{failure}"
     );
+    let short_beside_its_name = SurfaceFailure::Reported("no answer".to_string()).with_output(
+        &ProcessOutput {
+            termination: ProcessTermination::Exited(0),
+            stdout: String::new(),
+            stderr: "auth failed for ANTHROPIC_AUTH_TOKEN=ab12".to_string(),
+        },
+        &[],
+    );
+    assert!(
+        short_beside_its_name
+            .to_string()
+            .contains("ANTHROPIC_AUTH_TOKEN=<redacted>"),
+        "{short_beside_its_name}"
+    );
     let untouched = SurfaceFailure::Io("disk".to_string()).with_output(&output, &[]);
     assert_eq!(untouched, SurfaceFailure::Io("disk".to_string()));
 }
@@ -1756,7 +1770,13 @@ fn child_secrets_hold_the_route_credentials_longest_first() {
         .expect("short route credential");
     assert!(long < short, "{secrets:?}");
     assert!(!secrets.contains(&"gpt-5.6-sol".to_string()));
-    assert!(!secrets.contains(&"ab".to_string()), "too short to be one");
+    // A short value stays in the set for the structural pass and is never
+    // substituted by text: only values of eight characters or more are.
+    assert!(secrets.contains(&"ab".to_string()), "{secrets:?}");
+    assert_eq!(
+        launch::redact_credentials("ab fake-r fake-route-secret-long", &secrets),
+        "ab fake-r <redacted>"
+    );
 }
 
 #[test]

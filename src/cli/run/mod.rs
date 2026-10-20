@@ -312,7 +312,7 @@ fn dry_run_outcome(
         options.session_name.as_deref().unwrap_or("none"),
         session_name_flag(invocation.surface).unwrap_or("none")
     );
-    let argv = launch::redact_argv(&argv, &launch::credential_values(&planned.env));
+    let argv = launch::redact_argv(&argv);
     let env: serde_json::Map<String, Value> = launch::redacted_env(&planned.env)
         .into_iter()
         .map(|(key, value)| (key, Value::String(value)))

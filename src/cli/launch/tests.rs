@@ -994,19 +994,23 @@ fn credential_key_classifier_reads_env_settings_config_and_header_names() {
 }
 
 #[test]
-fn credential_values_skip_values_too_short_to_be_one() {
+fn short_credential_values_are_kept_for_the_structural_pass_and_never_substituted() {
     let values = credential_values(&names(&[
         ("A_TOKEN", "fake-long-secret"),
         ("B_KEY", "ok"),
         ("C_MODEL", "fake-model-name"),
     ]));
-    assert_eq!(values, ["fake-long-secret"]);
+    assert_eq!(values, ["fake-long-secret", "ok"]);
+    assert_eq!(
+        redact_credentials("ok fake-long-secret ok", &values),
+        "ok <redacted> ok"
+    );
 }
 
 #[test]
 fn redact_argument_hides_a_credential_inside_a_structured_value() {
     let settings = r#"{"env":{"MY_TOKEN":"fake-settings-secret","X":"1"},"apiKeyHelper":"echo fake-helper-secret","permissions":{"allow":["Bash"]}}"#;
-    let redacted = redact_argument(settings, &[]);
+    let redacted = redact_argument(settings);
     assert!(!redacted.contains("fake-"), "{redacted}");
     let parsed: serde_json::Value = serde_json::from_str(&redacted).expect("still JSON");
     assert_eq!(parsed["env"]["MY_TOKEN"], "<redacted>");
@@ -1015,36 +1019,149 @@ fn redact_argument_hides_a_credential_inside_a_structured_value() {
     assert_eq!(parsed["permissions"]["allow"][0], "Bash");
 
     let attached = format!("--settings={settings}");
-    let redacted = redact_argument(&attached, &[]);
+    let redacted = redact_argument(&attached);
     assert!(redacted.starts_with("--settings={"), "{redacted}");
     assert!(!redacted.contains("fake-settings-secret"), "{redacted}");
 
     assert_eq!(
-        redact_argument(
-            "http_headers.Authorization=\"Bearer fake-header-secret\"",
-            &[]
-        ),
+        redact_argument("http_headers.Authorization=\"Bearer fake-header-secret\""),
         "http_headers.Authorization=<redacted>"
     );
     assert_eq!(
-        redact_argument("experimental_bearer_token=\"fake-bearer-secret\"", &[]),
+        redact_argument("experimental_bearer_token=\"fake-bearer-secret\""),
         "experimental_bearer_token=<redacted>"
     );
     assert_eq!(
-        redact_argument(
-            "http_headers={Authorization=\"Bearer fake-header-secret\"}",
-            &[]
-        ),
+        redact_argument("http_headers={Authorization=\"Bearer fake-header-secret\"}"),
         "http_headers=<redacted>"
     );
     assert_eq!(
-        redact_argument("model_reasoning_effort=\"high\"", &[]),
+        redact_argument("model_reasoning_effort=\"high\""),
         "model_reasoning_effort=\"high\""
     );
-    assert_eq!(redact_argument("--verbose", &[]), "--verbose");
+    assert_eq!(redact_argument("--verbose"), "--verbose");
+}
+
+#[test]
+fn plans_redact_by_name_and_never_by_value() {
+    // A token's value that is also a model name: the model prints intact.
+    let env = names(&[
+        ("ANTHROPIC_AUTH_TOKEN", "ollama"),
+        ("ANTHROPIC_MODEL", "ollama"),
+    ]);
     assert_eq!(
-        redact_argument("fake-env-secret", &["fake-env-secret".to_string()]),
-        "<redacted>"
+        redacted_env(&env),
+        [
+            ("ANTHROPIC_AUTH_TOKEN".to_string(), "<redacted>".to_string()),
+            ("ANTHROPIC_MODEL".to_string(), "ollama".to_string()),
+        ]
+    );
+    let argv = [
+        "claude",
+        "--model",
+        "qwen3-ollama:30b",
+        "--name",
+        "ollama-review",
+        "--api-key",
+        "fake-flag-secret",
+        "--api-key=fake-attached-secret",
+        "--password",
+        "fake-password-secret",
+        "--token",
+        "fake-token-secret",
+        "--verbose",
+    ]
+    .map(OsString::from);
+    assert_eq!(
+        redact_argv(&argv),
+        [
+            "claude",
+            "--model",
+            "qwen3-ollama:30b",
+            "--name",
+            "ollama-review",
+            "--api-key",
+            "<redacted>",
+            "--api-key=<redacted>",
+            "--password",
+            "<redacted>",
+            "--token",
+            "<redacted>",
+            "--verbose",
+        ]
+    );
+}
+
+#[test]
+fn assignments_with_whitespace_and_exempt_keys_redact_by_key() {
+    assert_eq!(
+        redact_argument("http_headers.Authorization = \"Bearer fake-header-secret\""),
+        "http_headers.Authorization=<redacted>"
+    );
+    assert_eq!(
+        redact_argument("env_key = \"PROXY_KEY\""),
+        "env_key = \"PROXY_KEY\"",
+        "env_key names a variable, it holds no credential"
+    );
+    assert_eq!(
+        redact_argument("model_token_limit = 4096"),
+        "model_token_limit = 4096"
+    );
+    assert!(!is_credential_env_key("RATE_LIMIT"));
+    assert!(!is_credential_env_key("env_key"));
+    assert!(is_credential_env_key("TOKEN_LIMIT_KEY"));
+}
+
+#[test]
+fn urls_lose_their_password_and_credential_query_parameters() {
+    assert_eq!(
+        redact_urls("https://user:fake-url-secret@127.0.0.1:9/v1?token=fake-query-secret&x=1#f"),
+        "https://user:<redacted>@127.0.0.1:9/v1?token=<redacted>&x=1#f"
+    );
+    assert_eq!(
+        redact_urls(
+            "see http://127.0.0.1:9/?api-key=fake-query-secret&key=fake-key-secret and http://h/?a=b"
+        ),
+        "see http://127.0.0.1:9/?api-key=<redacted>&key=<redacted> and http://h/?a=b"
+    );
+    assert_eq!(
+        redact_argument(
+            "--attach=http://u:fake-url-secret@127.0.0.1:4096/?access_token=fake-query-secret"
+        ),
+        "--attach=http://u:<redacted>@127.0.0.1:4096/?access_token=<redacted>"
+    );
+    let env = names(&[(
+        "OPENAI_BASE_URL",
+        "https://u:fake-url-secret@proxy/v1?password=fake-query-secret",
+    )]);
+    assert_eq!(
+        redacted_env(&env)[0].1,
+        "https://u:<redacted>@proxy/v1?password=<redacted>"
+    );
+}
+
+#[test]
+fn tails_redact_beside_a_name_first_then_known_values_of_eight_or_more() {
+    let secrets = vec!["fake-long-secret-value".to_string(), "ab12".to_string()];
+    let text = concat!(
+        "ANTHROPIC_AUTH_TOKEN=ab12 \"api_key\":\"zz\" token: short",
+        " model=ollama rest fake-long-secret-value ab12 done",
+    );
+    assert_eq!(
+        redact_text(text, &secrets),
+        concat!(
+            "ANTHROPIC_AUTH_TOKEN=<redacted> \"api_key\":\"<redacted>\" token: <redacted>",
+            " model=ollama rest <redacted> ab12 done",
+        ),
+        "the short value is hidden beside its name only"
+    );
+    assert_eq!(
+        credential_values(&names(&[
+            ("A_KEY", "fake-short"),
+            ("B_KEY", "fake-longer-secret")
+        ])),
+        ["fake-longer-secret", "fake-short"],
+        "longest first"
     );
 }
 

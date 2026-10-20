@@ -1062,9 +1062,14 @@ const CREDENTIAL_KEY_MARKERS: &[&str] = &[
 /// A count of tokens (`MAX_CONTEXT_TOKENS`) is a limit, not a credential.
 const NON_CREDENTIAL_KEY_WORD: &str = "TOKENS";
 const CREDENTIAL_KEY_SUFFIX: &str = "_AUTH";
-/// A credential shorter than this is not one; replacing every occurrence of
-/// `1` or `ok` in a harness's output would destroy it.
-const CREDENTIAL_VALUE_MIN_CHARS: usize = 6;
+/// Keys the markers match that name no credential: a limit, and codex's
+/// `env_key`, which names the variable that holds one.
+const NON_CREDENTIAL_KEY_SUFFIX: &str = "_LIMIT";
+const NON_CREDENTIAL_KEYS: &[&str] = &["ENV_KEY"];
+/// A value shorter than this is never replaced by substring: replacing every
+/// `1` or `ok` in a harness's output would destroy it. The structural pass
+/// covers a short value where it sits beside its key.
+const SUBSTRING_MIN_CHARS: usize = 8;
 
 pub(crate) const REDACTED_VALUE: &str = "<redacted>";
 
@@ -1106,7 +1111,10 @@ pub(crate) fn env_value(env: &[(OsString, OsString)], key: &str) -> Option<Strin
         .map(|(_, value)| value.to_string_lossy().into_owned())
 }
 
-/// The environment as printable pairs, every credential value hidden.
+/// The environment as printable pairs: a credential-named key's value is
+/// hidden whole, and a URL value loses its password and credential-named
+/// query parameters. Nothing is matched by value: a model named after a
+/// token's value prints intact.
 pub(crate) fn redacted_env(env: &[(OsString, OsString)]) -> Vec<(String, String)> {
     env.iter()
         .map(|(key, value)| {
@@ -1114,7 +1122,7 @@ pub(crate) fn redacted_env(env: &[(OsString, OsString)]) -> Vec<(String, String)
             let value = if is_credential_env_key(&key) {
                 REDACTED_VALUE.to_string()
             } else {
-                value.to_string_lossy().into_owned()
+                redact_urls(&value.to_string_lossy())
             };
             (key, value)
         })
@@ -1122,60 +1130,178 @@ pub(crate) fn redacted_env(env: &[(OsString, OsString)]) -> Vec<(String, String)
 }
 
 pub(crate) fn is_credential_env_key(key: &str) -> bool {
-    let upper = key
-        .to_ascii_uppercase()
-        .replace(NON_CREDENTIAL_KEY_WORD, "");
+    let upper = key.trim().to_ascii_uppercase();
+    if upper.ends_with(NON_CREDENTIAL_KEY_SUFFIX) || NON_CREDENTIAL_KEYS.contains(&upper.as_str()) {
+        return false;
+    }
+    let upper = upper.replace(NON_CREDENTIAL_KEY_WORD, "");
     upper.ends_with(CREDENTIAL_KEY_SUFFIX)
         || CREDENTIAL_KEY_MARKERS
             .iter()
             .any(|marker| upper.contains(marker))
 }
 
-/// The values to hide in any text: every credential-named key's value in
-/// `env`, long enough to be a credential.
+/// The values to hide in free text: every credential-named key's value in
+/// `env`, longest first so a value that contains another is replaced whole.
 pub(crate) fn credential_values(env: &[(OsString, OsString)]) -> Vec<String> {
-    env.iter()
+    let mut values: Vec<String> = env
+        .iter()
         .filter(|(key, _)| is_credential_env_key(&key.to_string_lossy()))
         .map(|(_, value)| value.to_string_lossy().into_owned())
-        .filter(|value| value.chars().count() >= CREDENTIAL_VALUE_MIN_CHARS)
-        .collect()
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort_unstable_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));
+    values.dedup();
+    values
 }
 
+/// Replace every known credential value of eight characters or more in
+/// `text`, longest first. A shorter value is left to the structural pass.
 pub(crate) fn redact_credentials(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |redacted, secret| {
-        redacted.replace(secret.as_str(), REDACTED_VALUE)
-    })
+    secrets
+        .iter()
+        .filter(|secret| secret.chars().count() >= SUBSTRING_MIN_CHARS)
+        .fold(text.to_string(), |redacted, secret| {
+            redacted.replace(secret.as_str(), REDACTED_VALUE)
+        })
 }
 
-/// One argument as the dry run prints it: the known credential values
-/// replaced, and a credential-named key inside a structured value hidden
-/// too: a JSON object (claude `--settings`, `env.*` and `apiKeyHelper`
-/// included) and a `key=value` assignment (codex `-c`, with a TOML inline
-/// table as the value).
-pub(crate) fn redact_argument(part: &str, secrets: &[String]) -> String {
-    let text = redact_credentials(part, secrets);
-    if let Ok(serde_json::Value::Object(object)) = serde_json::from_str(&text) {
+/// A credential beside its name in free text: `NAME=value`, `"NAME":"value"`
+/// and `NAME: value`, where the name is credential-named.
+static STRUCTURAL_CREDENTIAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?P<lead>"?)(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?P<trail>"?)(?P<sep>\s*[=:]\s*)(?P<value>"[^"]*"|[^\s,;&}\]]+)"#,
+    )
+    .expect("structural credential pattern")
+});
+
+/// Hide every credential that sits beside its name in `text`, whatever its
+/// length: the first pass over a failure tail, before the known values.
+pub(crate) fn redact_structural(text: &str) -> String {
+    STRUCTURAL_CREDENTIAL
+        .replace_all(text, |captures: &regex::Captures<'_>| {
+            let key = &captures["key"];
+            let value = &captures["value"];
+            if is_credential_env_key(key) {
+                let replacement = if value.starts_with('"') {
+                    format!("\"{REDACTED_VALUE}\"")
+                } else {
+                    REDACTED_VALUE.to_string()
+                };
+                format!(
+                    "{}{key}{}{}{replacement}",
+                    &captures["lead"], &captures["trail"], &captures["sep"]
+                )
+            } else {
+                captures[0].to_string()
+            }
+        })
+        .into_owned()
+}
+
+/// A failure tail or message as it may be shown: the structural pass, then
+/// the known values of eight characters or more.
+pub(crate) fn redact_text(text: &str, secrets: &[String]) -> String {
+    redact_credentials(&redact_structural(text), secrets)
+}
+
+/// Every URL in `text` with its userinfo password and its credential-named
+/// query parameters hidden. The rest of the text is untouched.
+pub(crate) fn redact_urls(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(scheme_end) = rest.find("://") {
+        let (before, from_scheme) = rest.split_at(scheme_end + 3);
+        out.push_str(before);
+        let url_len = from_scheme
+            .find(|character: char| {
+                character.is_whitespace() || character == '\'' || character == '"'
+            })
+            .unwrap_or(from_scheme.len());
+        let (url, after) = from_scheme.split_at(url_len);
+        out.push_str(&redact_one_url(url));
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `userinfo@host/path?query#fragment` after the scheme, with the password
+/// and the credential-named query values hidden.
+fn redact_one_url(url: &str) -> String {
+    let authority_end = url.find(['/', '?', '#']).unwrap_or(url.len());
+    let (authority, tail) = url.split_at(authority_end);
+    let authority = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => match userinfo.split_once(':') {
+            Some((user, _)) => format!("{user}:{REDACTED_VALUE}@{host}"),
+            None => authority.to_string(),
+        },
+        None => authority.to_string(),
+    };
+    let Some(query_start) = tail.find('?') else {
+        return format!("{authority}{tail}");
+    };
+    let (path, from_query) = tail.split_at(query_start + 1);
+    let fragment_start = from_query.find('#').unwrap_or(from_query.len());
+    let (query, fragment) = from_query.split_at(fragment_start);
+    let query: Vec<String> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, _)) if is_credential_env_key(name) => {
+                format!("{name}={REDACTED_VALUE}")
+            }
+            _ => pair.to_string(),
+        })
+        .collect();
+    format!("{authority}{path}{}{fragment}", query.join("&"))
+}
+
+/// One argument as the dry run prints it, hidden by name only: a JSON
+/// object's credential-named keys (claude `--settings`, `env.*` and
+/// `apiKeyHelper` included), a credential-named `--flag=value`, a
+/// `key = value` assignment whose key path or TOML table value is
+/// credential-named (codex `-c`), and a URL's password and credential-named
+/// query parameters. A value is never matched by its text.
+pub(crate) fn redact_argument(part: &str) -> String {
+    if let Ok(serde_json::Value::Object(object)) = serde_json::from_str(part) {
         return redact_json(serde_json::Value::Object(object)).to_string();
     }
-    if let Some((flag, rest)) = text.split_once('=')
+    if let Some((flag, rest)) = part.split_once('=')
         && flag.starts_with("--")
         && !flag.contains(['{', '"', ' '])
     {
-        return format!("{flag}={}", redact_argument(rest, secrets));
+        if is_credential_env_key(flag.trim_start_matches('-')) {
+            return format!("{flag}={REDACTED_VALUE}");
+        }
+        return format!("{flag}={}", redact_argument(rest));
     }
-    if let Some((key, value)) = text.split_once('=')
-        && !key.contains(['{', '"', ' ', '['])
+    if let Some((key, value)) = part.split_once('=')
+        && !key.trim().is_empty()
+        && !key.contains(['{', '"', '[', '/', ':'])
+        && !key.trim().contains(' ')
     {
+        let key = key.trim();
         let key_is_credential = key.split('.').any(is_credential_env_key);
-        let value_holds_credential = toml::from_str::<toml::Value>(&format!("v = {value}"))
-            .ok()
-            .and_then(|parsed| parsed.get("v").cloned())
-            .is_some_and(|parsed| toml_holds_credential(&parsed));
+        let value_holds_credential =
+            toml::from_str::<toml::Value>(&format!("v = {}", value.trim()))
+                .ok()
+                .and_then(|parsed| parsed.get("v").cloned())
+                .is_some_and(|parsed| toml_holds_credential(&parsed));
         if key_is_credential || value_holds_credential {
             return format!("{key}={REDACTED_VALUE}");
         }
     }
-    text
+    // A wrapped command line (env KEY=value claude ... under tmux) is one
+    // part: a credential beside its name inside it is hidden by that name.
+    redact_urls(&redact_structural(part))
+}
+
+/// Whether a flag takes a credential as its separate value: `--api-key x`,
+/// `--password x`, `--token x`.
+fn is_credential_flag(part: &str) -> bool {
+    part.starts_with("--")
+        && !part.contains('=')
+        && is_credential_env_key(part.trim_start_matches('-'))
 }
 
 fn redact_json(value: serde_json::Value) -> serde_json::Value {
@@ -1209,11 +1335,23 @@ fn toml_holds_credential(value: &toml::Value) -> bool {
     }
 }
 
-/// The argv as the dry run prints it, one redacted part per argument.
-pub(crate) fn redact_argv(argv: &[OsString], secrets: &[String]) -> Vec<String> {
-    argv.iter()
-        .map(|part| redact_argument(&part.to_string_lossy(), secrets))
-        .collect()
+/// The argv as the dry run prints it, hidden by name: each part through
+/// [`redact_argument`], and the separate value of a credential-named flag
+/// (`--api-key x`) hidden whole.
+pub(crate) fn redact_argv(argv: &[OsString]) -> Vec<String> {
+    let mut out = Vec::with_capacity(argv.len());
+    let mut previous_is_credential_flag = false;
+    for part in argv {
+        let part = part.to_string_lossy();
+        if previous_is_credential_flag && !part.starts_with('-') {
+            out.push(REDACTED_VALUE.to_string());
+            previous_is_credential_flag = false;
+            continue;
+        }
+        previous_is_credential_flag = is_credential_flag(&part);
+        out.push(redact_argument(&part));
+    }
+    out
 }
 
 /// The command line with every wrapper applied. `removals` are the parent
@@ -1489,13 +1627,9 @@ fn format_dry_run_parts(
     wrap: &[Vec<OsString>],
     pre: &[PreStep],
 ) -> String {
-    let secrets = credential_values(parts.env);
     let mut lines = vec![format!("tool: {}", parts.tool)];
     lines.extend(model_lines(parts.model, parts.model_override));
-    lines.push(format!(
-        "argv: {}",
-        redact_argv(parts.argv, &secrets).join(" ")
-    ));
+    lines.push(format!("argv: {}", redact_argv(parts.argv).join(" ")));
     lines.push("env:".to_string());
     lines.extend(
         redacted_env(parts.env)

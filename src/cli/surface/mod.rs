@@ -3,7 +3,7 @@
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
-use crate::cli::launch::{REDACTED_VALUE, credential_values, inherited_env, redact_credentials};
+use crate::cli::launch::{REDACTED_VALUE, credential_values, inherited_env, redact_text};
 use crate::cli::process::{
     ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination, run_process_request,
 };
@@ -384,7 +384,7 @@ impl SurfaceFailure {
     /// its tails. The tails are built redacted already; this is the last
     /// word for the process layer's partial output and for messages.
     fn redacted(self, secrets: &[String]) -> Self {
-        let hide = |text: String| redact_credentials(&text, secrets);
+        let hide = |text: String| redact_text(&text, secrets);
         match self {
             Self::Process(failure) => Self::Process(match failure {
                 ProcessFailure::Timeout {
@@ -1282,10 +1282,11 @@ pub(crate) fn planned_request(
     Ok(process_request(&planned, args, stdin))
 }
 
-/// The tail of one stream with the credential values hidden first, so a
-/// value cut by the tail boundary cannot leak in part.
+/// The tail of one stream with the credentials hidden first (beside their
+/// names, then the known values), so a value cut by the tail boundary
+/// cannot leak in part.
 fn redacted_tail(text: &str, secrets: &[String]) -> String {
-    output_tail(&redact_credentials(text, secrets))
+    output_tail(&redact_text(text, secrets))
 }
 
 fn require_success(
@@ -1974,7 +1975,7 @@ pub(crate) fn invoke_surface(
     };
     match result {
         Ok(reply) => Ok(SurfaceReply {
-            stderr: redact_credentials(&reply.stderr, &secrets),
+            stderr: redact_text(&reply.stderr, &secrets),
             ..reply
         }),
         Err(failure) => Err(failure.redacted(&secrets)),
