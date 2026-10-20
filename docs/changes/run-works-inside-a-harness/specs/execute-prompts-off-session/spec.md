@@ -3,9 +3,9 @@
 ### Requirement: The child harness starts free of the parent harness's session
 
 The runner and the launcher MUST remove the parent harness's session variables from the child's environment before they
-apply the route's environment. The route's own values MUST win over anything inherited. When a route sets an Anthropic
-or OpenAI endpoint and sets no credential for it, the runner MUST NOT pass an inherited credential of that family to
-the endpoint.
+apply the route's environment. The route's own values MUST win over anything inherited. When a route sets any key of
+the Anthropic or OpenAI family (its endpoint or a credential, a claude `--settings` env included), the runner MUST NOT
+pass an inherited key of that family the route does not set.
 
 #### Scenario: Desktop session starts a proxied claude route
 
@@ -72,7 +72,7 @@ list the environment keys the run sets or removes and MUST hide every credential
 #### Scenario: Credential in the plan
 
 - **WHEN** the plan carries a credential variable
-- **THEN** the dry run prints the variable's name and a placeholder, never its value
+- **THEN** the dry run prints the variable's name and `<redacted>`, never its value
 
 ### Requirement: Clean state bridges only what exists
 
@@ -102,20 +102,38 @@ permission mode cannot remove them.
 
 ### Requirement: A failure caused by a sandbox says so
 
-When a failed run's output carries a known sandbox denial, such as `Operation not permitted` or the certificate error
-`-26276`, the runner MUST add a hint that an outer sandbox blocked the harness.
+When a failed run's stderr carries a known sandbox denial, such as `Operation not permitted`, or its stderr or a
+harness-reported error carries the certificate error `-26276`, the runner MUST add a hint that an outer sandbox blocked
+the harness. Model text on stdout MUST NOT earn the hint, and a success MUST NOT carry one.
 
 #### Scenario: Proxy certificate fails inside a sandbox
 
-- **WHEN** a run fails and its output carries `-26276`
+- **WHEN** a run fails and its stderr carries `-26276`
 - **THEN** the error carries a hint that an outer sandbox blocked the certificate check
 
-### Requirement: A profile model the run passes is not reported as dropped
+#### Scenario: Model text quotes a denial
 
-When the runner drops a profile's model key because it passes the model itself, and the two values match, the runner MUST
-NOT warn about the drop. It MUST still warn when the values differ.
+- **WHEN** a run fails and only its stdout carries `Operation not permitted`
+- **THEN** the error carries no hint
+
+### Requirement: A dropped profile model equal to the run's model is not reported
+
+This refines "Codex config and Claude settings are filtered per key". When the runner drops a profile's `model` key
+because it passes the model itself, and the two values match, the runner MUST NOT warn about the drop. It MUST still
+warn when the values differ. Every warning for a dropped config or settings key MUST name the key and `<redacted>`,
+never the dropped value.
 
 #### Scenario: Codex profile names the routed model
 
 - **WHEN** `sol@codex` runs and its profile sets `model="gpt-5.6-sol"` while the run passes `gpt-5.6-sol`
 - **THEN** the run prints no drop warning
+
+#### Scenario: Codex profile names another model
+
+- **WHEN** a codex profile sets `model="gpt-6-astra"` while the run passes `gpt-5.6-sol`
+- **THEN** the run drops the key and warns "owns config key model" without the value
+
+#### Scenario: Claude settings carry a permission grant
+
+- **WHEN** the `--settings` object holds `permissions` beside `env`
+- **THEN** the run removes `permissions`, warns "owns settings key permissions" without the value, and keeps `env`

@@ -15,8 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Print `rune run --dry-run --json` as one JSON object with `model_id`, `tool`, `model`, `argv`, `base_url`, `env` (credential values hidden), `env_removed`, `repository`, `mode`, `timeout`, and `session_name`. The text dry run keeps its `model_id:` line.
-- List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld credential names the endpoint that bound it.
+- Print `rune run --dry-run --json` as one JSON object with `model_id`, `tool`, `model`, `argv`, `base_url`, `env` (credential values `<redacted>`), `env_removed`, `inherited_withheld`, `repository`, `mode`, `timeout`, and `session_name`. The text dry run keeps its `model_id:` line.
+- List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld inherited key names the route key of its family that displaced it.
+- Print one `configuration_error` JSON object for a usage error when `--json` is on the command line (a bad `--mode`, `--dry-run` beside `--check`, a missing TOOL), with clap's exit code; an unknown profile adds `details.profiles`.
+- Carry the error messages a harness reports in its own event stream (codex's JSONL, claude's `API Error:` lines) as `details.harness_errors` and a "harness errors:" section, apart from the raw stream tails.
 - Add a `hint` to a failed `rune run`, in the text error and the JSON object, when its output carries a known sandbox denial: `Operation not permitted`, OSStatus `-26276`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE` from the filtering proxy, or a blocked keyring read.
 - Read the consumer manifest from `.rune/manifest.yaml` when `.rune` is a directory, so it shares the directory with the records home. A `.rune` directory without a manifest is no consumer.
 - Add `rune run --mode answer-only`: claude gets `--tools ""` and opencode a deny-all permission. Codex, agy and grok cannot switch their tools off and are refused by name.
@@ -158,7 +160,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- Report the last 40 lines, or 4000 characters, of both stdout and stderr when `rune run` exits nonzero, times out, or returns no answer, in the text error and as `details.stdout_tail` and `details.stderr_tail`. The `details.stderr` field is gone, and the process layer keeps the partial output it read before a deadline.
+- **Breaking:** The JSON failure field `details.stderr` is replaced by `details.stdout_tail` and `details.stderr_tail`, the last 40 lines (or 4000 characters) of each stream, on a nonzero exit, a timeout, a forwarded signal, an output limit, and a clean exit without an answer; the text error shows the same. New fields: a top-level `hint` (an outer sandbox, else null) and `details.harness_errors`. Every credential value the child could echo is `<redacted>` in the tails, in a drop warning, and in the dry-run argv, inside a `--settings` object or a `-c key=value` assignment included.
 - Render the `rune run` dry run from the surface's own argument builder: the argv shows the flags the run adds, the prompt as `<prompt>`, and `base_url` from the profile key or the tool's base URL key in the environment. Every outcome under `--json` is one JSON object on stdout, the dry run and configuration errors included.
 - Hide the value of an environment key whose name contains `AUTHORIZATION` in dry runs.
 - Share one path-confinement helper and one atomic-replace writer across adopt, deploy, doctor, the review record, and the bench writers.
@@ -236,9 +238,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Fix `rune run` and `rune launch` hanging or exiting 1 when another harness starts them: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_TMPDIR`, `CLAUDE_PREVIEW_*`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`) leave the child's environment before the route's environment applies, and a route that sets an Anthropic or OpenAI endpoint without a credential of that family withholds the inherited one.
+- Fix `rune run` and `rune launch` hanging or exiting 1 when another harness starts them: the parent session's variables (`CLAUDECODE`, the `CLAUDE_CODE_*` session names the desktop app sets, by exact name, `CLAUDE_AGENT_SDK_*`, `CLAUDE_PREVIEW_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_TMPDIR`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`) leave the child's environment before the route's environment applies; owner controls such as `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_CLIENT_CERT` stay. When the route sets any key of the Anthropic or OpenAI family (endpoint or credential, a claude `--settings` env included), every inherited key of that family it does not set is withheld. A tmux wrapper unsets the same keys inside the wrapped command line.
 - Fix `rune run --clean` for grok refusing to start without `~/.grok/auth.json`, although the route authenticates through its environment.
-- Fix claude in `rune run --mode workspace-write` editing but never running a command: the run names its allowed tools (`Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash`) and sends one `--settings` object that turns on Claude Code's sandbox with `autoAllowBashIfSandboxed`, merged with the profile's kept settings keys.
+- Fix claude in `rune run --mode workspace-write` editing but never running a command: the run names its allowed tools (`Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit`) and sends one `--settings` object that turns on Claude Code's sandbox with `failIfUnavailable` and `autoAllowBashIfSandboxed`, merged with the profile's kept settings keys. Bash runs only inside that sandbox, never through an allow rule that would also approve an unsandboxed retry.
 - Fix the drop warning for a codex `model` config key or a claude `model` settings key whose value equals the model the run passes.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
