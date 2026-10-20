@@ -1446,14 +1446,45 @@ fn claude_workspace_write_names_its_tools_and_sandboxes_the_shell() {
         args.windows(2).any(|pair| pair
             == [
                 "--allowedTools",
-                "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash"
+                "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit"
             ]),
         "{args:?}"
     );
     let settings = claude_settings_in(&args);
     assert_eq!(settings.len(), 1, "{args:?}");
     assert_eq!(settings[0]["sandbox"]["enabled"], true);
+    assert_eq!(settings[0]["sandbox"]["failIfUnavailable"], true);
     assert_eq!(settings[0]["sandbox"]["autoAllowBashIfSandboxed"], true);
+}
+
+#[test]
+fn a_profile_sandbox_setting_is_dropped_by_key_and_the_runs_sandbox_wins() {
+    let mut invocation = invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"sandbox":{"enabled":false,"failIfUnavailable":false},"env":{"X":"1"}}"#,
+        ],
+    );
+    invocation.mode = AccessMode::WorkspaceWrite;
+    let filtered = filter_surface_args(&invocation);
+    assert_eq!(filtered.warnings.len(), 1, "{:?}", filtered.warnings);
+    assert!(filtered.warnings[0].contains("owns settings key sandbox"));
+    assert!(
+        !filtered.warnings[0].contains("false"),
+        "{}",
+        filtered.warnings[0]
+    );
+
+    let invocation = SurfaceInvocation {
+        extra_args: filtered.kept,
+        ..invocation
+    };
+    let settings = claude_settings_in(&strings(&claude_args(&invocation)));
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0]["sandbox"]["enabled"], true);
+    assert_eq!(settings[0]["sandbox"]["failIfUnavailable"], true);
+    assert_eq!(settings[0]["env"]["X"], "1");
 }
 
 #[test]

@@ -27,18 +27,18 @@ Under a tmux wrapper the removals travel inside the wrapped command line as `env
 - The dry run renders from the same argument builder the spawn uses, so the printed argv cannot drift from the started one. The prompt becomes `<prompt>`. Credential values become `<hidden>`. The base URL comes from the profile key or, failing that, the route's environment.
 - `--json` routes the dry run, the check, and every configuration error through one printer.
 - Grok clean state uses the existing `copy_optional_auth_file`.
-- Claude workspace-write: `--permission-mode acceptEdits`, an explicit `--allowedTools` list (`Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash`), and one `--settings` object that turns on Claude Code's sandbox with `autoAllowBashIfSandboxed`. The run merges the profile's kept settings keys into that one object, because claude reads one `--settings` value.
+- Claude workspace-write: `--permission-mode acceptEdits`, an explicit `--allowedTools` list of the readers and editors (`Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit`), and one `--settings` object that turns on Claude Code's sandbox with `failIfUnavailable` and `autoAllowBashIfSandboxed`. Bash is not on the allow list: an allow rule that matches a command also approves claude's unsandboxed retry of it, so the shell runs only inside the sandbox, and without `failIfUnavailable` a sandbox that cannot start falls back to an unsandboxed shell in silence. The run merges the profile's kept settings keys into that one object, because claude reads one `--settings` value; a profile's own `sandbox` keys are dropped with a warning that names the key, and the run's keys win.
 - The codex and claude model filters compare the dropped value with the model the run passes and warn only when they differ.
 
 ## Commands
 
 | Role | Command |
 | --- | --- |
-| The runner starts a claude seat that may edit and build | `claude --print --permission-mode acceptEdits --allowedTools Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}'` |
+| The runner starts a claude seat that may edit and build | `claude --print --permission-mode acceptEdits --allowedTools Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":true}}'` |
 | The runner shows its plan as JSON | `rune run <route> --dry-run --json` |
 
 ## Risks
 
 - A harness may add a new session variable. A new Claude or codex name is a one-line table change with a test row; only the SDK and preview hosts match by prefix.
-- Claude Code's sandbox cannot start inside another Seatbelt sandbox. A nested run then has no shell, and the failure carries the sandbox hint. The owner runs the runner unsandboxed for implementation seats, as today.
+- Claude Code's sandbox cannot start inside another Seatbelt sandbox. With `failIfUnavailable` a nested run fails, and the failure carries the sandbox hint, instead of running a shell outside any sandbox. The owner runs the runner unsandboxed for implementation seats, as today.
 - Removing an inherited Anthropic credential changes a route that relied on the leak. Such a route now fails with the endpoint's own 401, which the failure tail shows, and the profile must name its credential.

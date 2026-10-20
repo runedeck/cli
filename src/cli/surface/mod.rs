@@ -1304,14 +1304,17 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     args
 }
 
-/// The tools a workspace-write claude run may use: the readers, the
-/// editors, and the shell, which the sandbox settings confine.
-const WORKSPACE_WRITE_TOOLS: &str = "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash";
+/// The tools a workspace-write claude run may use without a prompt: the
+/// readers and the editors. Bash is not on the list on purpose: an allow
+/// rule that matches a command also approves claude's unsandboxed retry of
+/// it, so the shell is allowed through the sandbox settings alone.
+const WORKSPACE_WRITE_TOOLS: &str = "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit";
 /// The settings a workspace-write run adds: Claude Code's own sandbox
-/// around the shell, with a sandboxed Bash command allowed without a
-/// prompt. The keys are the ones Claude Code's settings file takes.
+/// around the shell, a sandboxed Bash command allowed without a prompt,
+/// and no silent fallback to an unsandboxed shell when the sandbox cannot
+/// start. The keys are the ones Claude Code's settings file takes.
 const WORKSPACE_WRITE_SETTINGS: &str =
-    r#"{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}"#;
+    r#"{"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":true}}"#;
 
 /// The one `--settings` object a claude run sends, and the profile
 /// arguments without theirs. Claude reads one `--settings` value, so the

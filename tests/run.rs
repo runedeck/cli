@@ -911,10 +911,15 @@ printf 'built\n'
 
     let recorded = std::fs::read_to_string(home.path().join("argv.txt")).expect("recorded argv");
     let argv: Vec<&str> = recorded.lines().collect();
+    let allowed = argv
+        .windows(2)
+        .find(|pair| pair[0] == "--allowedTools")
+        .map(|pair| pair[1])
+        .expect("an --allowedTools value");
+    assert!(allowed.ends_with(",NotebookEdit"), "argv: {argv:?}");
     assert!(
-        argv.windows(2)
-            .any(|pair| pair[0] == "--allowedTools" && pair[1].ends_with(",Bash")),
-        "argv: {argv:?}"
+        !allowed.split(',').any(|tool| tool == "Bash"),
+        "Bash is allowed through the sandbox alone: {argv:?}"
     );
     let settings = argv
         .windows(2)
@@ -922,6 +927,8 @@ printf 'built\n'
         .map(|pair| pair[1])
         .expect("one --settings value");
     let settings: serde_json::Value = serde_json::from_str(settings).expect("settings JSON");
+    assert_eq!(settings["sandbox"]["enabled"], true);
+    assert_eq!(settings["sandbox"]["failIfUnavailable"], true);
     assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
     assert_eq!(argv.iter().filter(|part| **part == "--settings").count(), 1);
 }
