@@ -53,7 +53,11 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
     if resolved.dry_run {
         let isolation = surface::parent_session_isolation(&resolved.route_keys());
         let inherited = inherited_env(&isolation.removals());
-        println!("{}", resolved.format_dry_run(&isolation, &inherited));
+        if json {
+            println!("{}", resolved.plan_json_for_launch(&isolation, &inherited));
+        } else {
+            println!("{}", resolved.format_dry_run(&isolation, &inherited));
+        }
         return Ok(0);
     }
     for warning in &resolved.warnings {
@@ -252,6 +256,84 @@ impl ResolvedLaunch {
         format_dry_run_parts(parts, &self.wrap, &self.pre)
     }
 
+    /// The launch plan as the one JSON object `--json` prints: the same
+    /// object the runner's dry run prints, without the runner's own fields.
+    pub(crate) fn plan_json_for_launch(
+        &self,
+        isolation: &surface::Isolation,
+        inherited: &[(OsString, OsString)],
+    ) -> serde_json::Value {
+        let base_url = self.endpoint(&self.effective_env(), inherited);
+        self.plan_json(
+            &DryRunParts {
+                tool: &self.tool,
+                argv: &self.argv,
+                env: &self.display_env,
+                env_removed: &isolation.lines(),
+                base_url: base_url.as_deref(),
+                model: self.model.as_ref(),
+                model_override: None,
+                warnings: &self.warnings,
+            },
+            isolation,
+        )
+    }
+
+    /// The plan from `parts` as one JSON object, shared by the launcher and
+    /// the runner, which adds its own fields to it. Every value is hidden
+    /// the way the text plan hides it.
+    pub(crate) fn plan_json(
+        &self,
+        parts: &DryRunParts<'_>,
+        isolation: &surface::Isolation,
+    ) -> serde_json::Value {
+        let (model, model_id, model_context, model_source) =
+            match (parts.model_override, parts.model) {
+                (Some(id), _) => (
+                    Some(id.to_string()),
+                    Some(id.to_string()),
+                    None,
+                    Some("argument"),
+                ),
+                (None, Some(model)) => (
+                    Some(model.alias.clone()),
+                    Some(model.id.clone()),
+                    Some(model.context),
+                    Some(model.source.label()),
+                ),
+                (None, None) => (None, None, None, None),
+            };
+        let env: serde_json::Map<String, serde_json::Value> = redacted_env(parts.env)
+            .into_iter()
+            .map(|(key, value)| (key, serde_json::Value::String(value)))
+            .collect();
+        serde_json::json!({
+            "ok": true,
+            "kind": "dry_run",
+            "tool": parts.tool,
+            "model": model,
+            "model_id": model_id,
+            "model_context": model_context,
+            "model_source": model_source,
+            "argv": redact_argv(parts.argv),
+            "base_url": parts.base_url,
+            "env": env,
+            "env_removed": isolation
+                .removals()
+                .iter()
+                .map(|key| key.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            "inherited_withheld": isolation
+                .withheld
+                .iter()
+                .map(|(key, route_key)| serde_json::json!({ "key": key, "route_sets": route_key }))
+                .collect::<Vec<_>>(),
+            "wrap": self.wrap.iter().map(|wrap| redact_argv(wrap)).collect::<Vec<_>>(),
+            "pre": serde_json::to_value(&self.pre).unwrap_or(serde_json::Value::Null),
+            "warnings": parts.warnings,
+        })
+    }
+
     /// The endpoint the child would reach, from its effective environment:
     /// the plan's base URL, else the tool's base URL key in the route `env`,
     /// else the same key in `inherited`, the parent environment minus the
@@ -280,10 +362,6 @@ impl ResolvedLaunch {
     /// the `env` of the one settings object, which wins where they overlap.
     pub(crate) fn effective_env(&self) -> Vec<(OsString, OsString)> {
         effective_env_of(&self.tool, &self.display_env, &self.argv)
-    }
-
-    pub(crate) fn pre_steps(&self) -> &[PreStep] {
-        &self.pre
     }
 
     pub(crate) fn run_pre_steps(&self) {

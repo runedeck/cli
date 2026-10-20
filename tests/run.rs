@@ -1283,3 +1283,68 @@ fn dry_run_prints_a_model_name_that_equals_a_credential_value() {
         .stdout(predicate::str::contains("ANTHROPIC_AUTH_TOKEN=<redacted>"))
         .stdout(predicate::str::contains("ANTHROPIC_AUTH_TOKEN=ollama").not());
 }
+
+#[test]
+fn launch_dry_run_json_is_the_runners_plan_object() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+
+    let launched = rune(home.path())
+        .args(["--json", "launch", "sol@claude", "--dry-run"])
+        .output()
+        .expect("launch output");
+    assert!(
+        launched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&launched.stderr)
+    );
+    let plan: serde_json::Value =
+        serde_json::from_slice(&launched.stdout).expect("one JSON object");
+    assert_eq!(plan["ok"], true);
+    assert_eq!(plan["kind"], "dry_run");
+    assert_eq!(plan["tool"], "claude");
+    assert_eq!(plan["model"], "sol");
+    assert_eq!(plan["model_id"], "gpt-5.6-sol");
+    assert_eq!(plan["argv"][0], "claude");
+    assert_eq!(plan["env"]["ANTHROPIC_AUTH_TOKEN"], "<redacted>");
+    assert_eq!(plan["base_url"], "http://127.0.0.1:8317");
+    assert!(plan["env_removed"].is_array(), "{plan}");
+    assert!(plan["wrap"].is_array(), "{plan}");
+    assert!(plan["pre"].is_array(), "{plan}");
+    assert!(
+        !launched
+            .stdout
+            .windows(10)
+            .any(|window| window == b"test-token")
+    );
+
+    let ran = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "x",
+            "--repo",
+            repo,
+            "--dry-run",
+        ])
+        .output()
+        .expect("run output");
+    let runner: serde_json::Value = serde_json::from_slice(&ran.stdout).expect("one JSON object");
+    for field in [
+        "kind",
+        "tool",
+        "model",
+        "model_id",
+        "model_context",
+        "model_source",
+        "base_url",
+        "env",
+        "env_removed",
+        "inherited_withheld",
+        "pre",
+    ] {
+        assert_eq!(plan[field], runner[field], "{field}");
+    }
+}

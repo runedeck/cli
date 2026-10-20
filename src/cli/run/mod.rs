@@ -292,18 +292,19 @@ fn dry_run_outcome(
     );
     let base_url = resolved.endpoint(&effective, &launch::inherited_env(&isolation.removals()));
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
+    let parts = launch::DryRunParts {
+        tool: &resolved.tool,
+        argv: &argv,
+        env: &planned.env,
+        env_removed: &env_removed,
+        base_url: base_url.as_deref(),
+        model: resolved.model.as_ref(),
+        model_override: options.model.as_deref(),
+        warnings: &warnings,
+    };
     let text = format!(
         "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",
-        resolved.format_dry_run_with(&launch::DryRunParts {
-            tool: &resolved.tool,
-            argv: &argv,
-            env: &planned.env,
-            env_removed: &env_removed,
-            base_url: base_url.as_deref(),
-            model: resolved.model.as_ref(),
-            model_override: options.model.as_deref(),
-            warnings: &warnings,
-        }),
+        resolved.format_dry_run_with(&parts),
         stdin.unwrap_or("none"),
         invocation.repository.display(),
         options.mode.label(),
@@ -312,47 +313,37 @@ fn dry_run_outcome(
         options.session_name.as_deref().unwrap_or("none"),
         session_name_flag(invocation.surface).unwrap_or("none")
     );
-    let argv = launch::redact_argv(&argv);
-    let env: serde_json::Map<String, Value> = launch::redacted_env(&planned.env)
-        .into_iter()
-        .map(|(key, value)| (key, Value::String(value)))
-        .collect();
-    let (model_alias, model_context, model_source) = match (&options.model, &resolved.model) {
-        (Some(id), _) => (Some(id.clone()), None, Some("argument")),
-        (None, Some(model)) => (
-            Some(model.alias.clone()),
-            Some(model.context),
-            Some(model.source.label()),
-        ),
-        (None, None) => (None, None, None),
-    };
-    let json = json!({
-        "ok": true,
-        "kind": "dry_run",
-        "tool": resolved.tool,
-        "requested_route": options.tool,
-        "resolved_route": resolved.tool,
-        "resolved_binary": planned.binary.to_string_lossy(),
-        "model": model_alias,
-        "model_id": invocation.model,
-        "model_context": model_context,
-        "model_source": model_source,
-        "argv": argv,
-        "stdin": stdin,
-        "base_url": base_url,
-        "env": env,
-        "env_removed": isolation.removals().iter().map(|key| key.to_string_lossy().into_owned()).collect::<Vec<_>>(),
-        "inherited_withheld": isolation.withheld.iter().map(|(key, route_key)| json!({ "key": key, "route_sets": route_key })).collect::<Vec<_>>(),
-        "repository": invocation.repository.display().to_string(),
-        "mode": options.mode.label(),
-        "timeout": invocation.timeout.map(|timeout| timeout.as_millis()),
-        "native_timeout": invocation.native_timeout.map(|timeout| timeout.as_millis()),
-        "session_name": options.session_name.as_deref(),
-        "session_name_flag": session_name_flag(invocation.surface),
-        "clean": options.clean,
-        "pre": serde_json::to_value(resolved.pre_steps()).unwrap_or(Value::Null),
-        "warnings": warnings,
-    });
+    // The launcher's plan object, plus the runner's own fields.
+    let mut json = resolved.plan_json(&parts, &isolation);
+    if let Some(object) = json.as_object_mut() {
+        for (key, value) in [
+            ("requested_route", json!(options.tool)),
+            ("resolved_route", json!(resolved.tool)),
+            ("resolved_binary", json!(planned.binary.to_string_lossy())),
+            ("stdin", json!(stdin)),
+            (
+                "repository",
+                json!(invocation.repository.display().to_string()),
+            ),
+            ("mode", json!(options.mode.label())),
+            (
+                "timeout",
+                json!(invocation.timeout.map(|timeout| timeout.as_millis())),
+            ),
+            (
+                "native_timeout",
+                json!(invocation.native_timeout.map(|timeout| timeout.as_millis())),
+            ),
+            ("session_name", json!(options.session_name.as_deref())),
+            (
+                "session_name_flag",
+                json!(session_name_flag(invocation.surface)),
+            ),
+            ("clean", json!(options.clean)),
+        ] {
+            object.insert(key.to_string(), value);
+        }
+    }
     Ok(Outcome {
         exit_code: 0,
         json,
