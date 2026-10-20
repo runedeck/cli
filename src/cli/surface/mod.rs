@@ -127,6 +127,12 @@ pub(crate) enum SurfaceFailure {
     Reported(String),
     Io(String),
     Arguments(String),
+    /// A failure with a note from the cleanup after it: the failure keeps
+    /// its kind, its tails and its hint, and the note is appended.
+    Noted {
+        inner: Box<SurfaceFailure>,
+        note: String,
+    },
 }
 
 /// The last lines of one stream for an error: 40 lines or 4000 characters,
@@ -417,7 +423,15 @@ impl SurfaceFailure {
                     stderr: hide(stderr),
                 },
                 ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
-                ProcessFailure::Wait(message) => ProcessFailure::Wait(hide(message)),
+                ProcessFailure::Wait {
+                    message,
+                    stdout,
+                    stderr,
+                } => ProcessFailure::Wait {
+                    message: hide(message),
+                    stdout: hide(stdout),
+                    stderr: hide(stderr),
+                },
                 ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
                 ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
                 ProcessFailure::Stderr(message) => ProcessFailure::Stderr(hide(message)),
@@ -447,6 +461,27 @@ impl SurfaceFailure {
             Self::Reported(message) => Self::Reported(hide(message)),
             Self::Io(message) => Self::Io(hide(message)),
             Self::Arguments(message) => Self::Arguments(hide(message)),
+            Self::Noted { inner, note } => Self::Noted {
+                inner: Box::new(inner.redacted(secrets)),
+                note: hide(note),
+            },
+        }
+    }
+
+    /// The failure a cleanup note wraps, else the failure itself.
+    pub(crate) fn unwrapped(&self) -> &Self {
+        match self {
+            Self::Noted { inner, .. } => inner.unwrapped(),
+            other => other,
+        }
+    }
+
+    /// The same failure with a cleanup note appended, its kind and tails
+    /// kept.
+    fn with_note(self, note: String) -> Self {
+        Self::Noted {
+            inner: Box::new(self),
+            note,
         }
     }
 
@@ -458,8 +493,10 @@ impl SurfaceFailure {
             Self::Process(
                 ProcessFailure::Timeout { stdout, stderr, .. }
                 | ProcessFailure::ForwardedSignal { stdout, stderr, .. }
-                | ProcessFailure::OutputLimit { stdout, stderr, .. },
+                | ProcessFailure::OutputLimit { stdout, stderr, .. }
+                | ProcessFailure::Wait { stdout, stderr, .. },
             ) => Some((stdout, stderr)),
+            Self::Noted { inner, .. } => inner.tails(),
             Self::Exit {
                 stdout_tail,
                 stderr_tail,
@@ -480,6 +517,7 @@ impl SurfaceFailure {
             Self::Exit { harness_errors, .. } | Self::NoAnswer { harness_errors, .. } => {
                 harness_errors
             }
+            Self::Noted { inner, .. } => inner.harness_errors(),
             _ => &[],
         }
     }
@@ -518,7 +556,7 @@ impl SurfaceFailure {
     /// message, or a harness-reported error carries a known denial. Stdout
     /// is never read: it holds the model's text.
     pub(crate) fn hint(&self) -> Option<&'static str> {
-        let message = match self {
+        let message = match self.unwrapped() {
             Self::Process(failure) => Some(failure.to_string()),
             _ => None,
         };
@@ -585,6 +623,10 @@ impl fmt::Display for SurfaceFailure {
             | Self::Reported(message)
             | Self::Io(message)
             | Self::Arguments(message) => formatter.write_str(message)?,
+            Self::Noted { inner, note } => {
+                inner.fmt(formatter)?;
+                return write!(formatter, "\nnote: {note}");
+            }
         }
         write_tails_and_hint(formatter, self)
     }
@@ -1334,6 +1376,9 @@ fn create_scratch_directory(kind: &str) -> Result<PathBuf, SurfaceFailure> {
     Ok(scratch)
 }
 
+/// Remove the scratch directory. A cleanup failure after a run failure
+/// keeps that failure, its kind and its tails, with the cleanup error as a
+/// note; after a success it is the failure.
 fn finish_scratch<T>(
     result: Result<T, SurfaceFailure>,
     scratch: &PathBuf,
@@ -1341,17 +1386,14 @@ fn finish_scratch<T>(
     match std::fs::remove_dir_all(scratch) {
         Ok(()) => result,
         Err(cleanup_error) => {
-            let message = match result {
-                Ok(_) => format!(
-                    "cannot remove scratch directory {}: {cleanup_error}",
-                    scratch.display()
-                ),
-                Err(failure) => format!(
-                    "{failure}; cannot remove scratch directory {}: {cleanup_error}",
-                    scratch.display()
-                ),
-            };
-            Err(SurfaceFailure::Io(message))
+            let note = format!(
+                "cannot remove scratch directory {}: {cleanup_error}",
+                scratch.display()
+            );
+            match result {
+                Ok(_) => Err(SurfaceFailure::Io(note)),
+                Err(failure) => Err(failure.with_note(note)),
+            }
         }
     }
 }

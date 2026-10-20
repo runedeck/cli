@@ -43,7 +43,13 @@ impl ProcessOutput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProcessFailure {
     Spawn(String),
-    Wait(String),
+    /// The supervisor could not wait for, signal, or reap the process; the
+    /// streams read before that travel with it.
+    Wait {
+        message: String,
+        stdout: String,
+        stderr: String,
+    },
     Stdin(String),
     Stdout(String),
     Stderr(String),
@@ -74,7 +80,7 @@ impl fmt::Display for ProcessFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Spawn(message)
-            | Self::Wait(message)
+            | Self::Wait { message, .. }
             | Self::Stdin(message)
             | Self::Stdout(message)
             | Self::Stderr(message) => formatter.write_str(message),
@@ -96,6 +102,50 @@ impl fmt::Display for ProcessFailure {
                 )
             }
         }
+    }
+}
+
+/// Every stop and every supervision failure carries what the process
+/// wrote before it.
+fn with_streams(mut failure: ProcessFailure, stdout: &str, stderr: &str) -> ProcessFailure {
+    match &mut failure {
+        ProcessFailure::Timeout {
+            stdout: partial_stdout,
+            stderr: partial_stderr,
+            ..
+        }
+        | ProcessFailure::ForwardedSignal {
+            stdout: partial_stdout,
+            stderr: partial_stderr,
+            ..
+        }
+        | ProcessFailure::OutputLimit {
+            stdout: partial_stdout,
+            stderr: partial_stderr,
+            ..
+        }
+        | ProcessFailure::Wait {
+            stdout: partial_stdout,
+            stderr: partial_stderr,
+            ..
+        } => {
+            *partial_stdout = stdout.to_string();
+            *partial_stderr = stderr.to_string();
+        }
+        ProcessFailure::Spawn(_)
+        | ProcessFailure::Stdin(_)
+        | ProcessFailure::Stdout(_)
+        | ProcessFailure::Stderr(_) => {}
+    }
+    failure
+}
+
+/// A supervision failure before any stream is attached.
+fn wait_failure(message: String) -> ProcessFailure {
+    ProcessFailure::Wait {
+        message,
+        stdout: String::new(),
+        stderr: String::new(),
     }
 }
 
@@ -153,15 +203,13 @@ impl SignalFlags {
         let interrupt = Arc::new(AtomicBool::new(false));
         let terminate = Arc::new(AtomicBool::new(false));
         let interrupt_registration = signal_hook::flag::register(SIGINT, Arc::clone(&interrupt))
-            .map_err(|error| {
-                ProcessFailure::Wait(format!("cannot register SIGINT handler: {error}"))
-            })?;
+            .map_err(|error| wait_failure(format!("cannot register SIGINT handler: {error}")))?;
         let terminate_registration =
             match signal_hook::flag::register(SIGTERM, Arc::clone(&terminate)) {
                 Ok(registration) => registration,
                 Err(error) => {
                     signal_hook::low_level::unregister(interrupt_registration);
-                    return Err(ProcessFailure::Wait(format!(
+                    return Err(wait_failure(format!(
                         "cannot register SIGTERM handler: {error}"
                     )));
                 }
@@ -224,13 +272,30 @@ fn spawn_command(request: &ProcessRequest) -> Command {
     command
 }
 
+/// Drain one stream to its tail. `finished` is set when the pipe closes or
+/// the read fails, so the supervisor can tell a reader that is held open by
+/// a descendant of the process from one that is done.
 fn reader_thread<R: Read + Send + 'static>(
     stream_name: &'static str,
     source: Option<R>,
     limit: usize,
     exceeded_limit: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<Result<CapturedStream, ProcessFailure>> {
     std::thread::spawn(move || {
+        let result = read_stream(stream_name, source, limit, &exceeded_limit);
+        finished.store(true, Ordering::Relaxed);
+        result
+    })
+}
+
+fn read_stream<R: Read>(
+    stream_name: &'static str,
+    source: Option<R>,
+    limit: usize,
+    exceeded_limit: &AtomicBool,
+) -> Result<CapturedStream, ProcessFailure> {
+    {
         let mut source = source.ok_or_else(|| {
             let message = format!("cannot capture process {stream_name}: pipe is unavailable");
             if stream_name == "stdout" {
@@ -271,7 +336,43 @@ fn reader_thread<R: Read + Send + 'static>(
             tail,
             exceeded_limit: total > limit,
         })
-    })
+    }
+}
+
+/// Wait for every reader to finish, up to `grace` after the process
+/// leader is gone. A descendant that inherited a pipe and outlived the
+/// leader would hold a reader open forever, so on the deadline the whole
+/// process group is killed; the readers then see the pipes close.
+fn wait_for_readers(
+    child: &mut Child,
+    finished: &[&AtomicBool],
+    grace: Duration,
+) -> Result<(), ProcessFailure> {
+    let deadline = Instant::now() + grace;
+    while !finished.iter().all(|flag| flag.load(Ordering::Relaxed)) {
+        if Instant::now() >= deadline {
+            #[cfg(unix)]
+            {
+                use signal_hook::consts::signal::SIGKILL;
+                return send_process_group_signal(child, SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                return child
+                    .kill()
+                    .or_else(|error| {
+                        if error.kind() == std::io::ErrorKind::InvalidInput {
+                            Ok(())
+                        } else {
+                            Err(error)
+                        }
+                    })
+                    .map_err(|error| wait_failure(format!("cannot kill process: {error}")));
+            }
+        }
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+    Ok(())
 }
 
 fn writer_thread(
@@ -301,10 +402,10 @@ fn send_process_group_signal(child: &Child, signal: i32) -> Result<(), ProcessFa
     use nix::unistd::Pid;
 
     let signal = Signal::try_from(signal)
-        .map_err(|error| ProcessFailure::Wait(format!("invalid process signal: {error}")))?;
+        .map_err(|error| wait_failure(format!("invalid process signal: {error}")))?;
     match killpg(Pid::from_raw(child.id().cast_signed()), signal) {
         Ok(()) | Err(Errno::ESRCH) => Ok(()),
-        Err(error) => Err(ProcessFailure::Wait(format!(
+        Err(error) => Err(wait_failure(format!(
             "cannot signal process group {}: {error}",
             child.id()
         ))),
@@ -315,7 +416,7 @@ fn send_process_group_signal(child: &Child, signal: i32) -> Result<(), ProcessFa
 fn send_process_group_signal(child: &mut Child, _signal: i32) -> Result<(), ProcessFailure> {
     child
         .kill()
-        .map_err(|error| ProcessFailure::Wait(format!("cannot stop process: {error}")))
+        .map_err(|error| wait_failure(format!("cannot stop process: {error}")))
 }
 
 fn reap_after_failure(
@@ -329,7 +430,7 @@ fn reap_after_failure(
             let kill_detail = kill_error.map_or_else(String::new, |error| {
                 format!("; direct child kill also failed: {error}")
             });
-            Err(ProcessFailure::Wait(format!(
+            Err(wait_failure(format!(
                 "{failure}{kill_detail}; cannot reap process: {wait_error}"
             )))
         }
@@ -361,7 +462,7 @@ fn wait_after_signal(
             Err(error) => {
                 return reap_after_failure(
                     child,
-                    ProcessFailure::Wait(format!("cannot wait for process after signal: {error}")),
+                    wait_failure(format!("cannot wait for process after signal: {error}")),
                 );
             }
         }
@@ -377,10 +478,10 @@ fn wait_after_signal(
     #[cfg(not(unix))]
     child
         .kill()
-        .map_err(|error| ProcessFailure::Wait(format!("cannot kill process: {error}")))?;
+        .map_err(|error| wait_failure(format!("cannot kill process: {error}")))?;
     child
         .wait()
-        .map_err(|error| ProcessFailure::Wait(format!("cannot reap process: {error}")))
+        .map_err(|error| wait_failure(format!("cannot reap process: {error}")))
 }
 
 fn termination_from_status(status: ExitStatus) -> ProcessTermination {
@@ -489,7 +590,7 @@ fn wait_for_process(
             Ok(Some(status)) => return Ok((status, None)),
             Ok(None) => {}
             Err(error) => {
-                let failure = ProcessFailure::Wait(format!("{binary} wait failed: {error}"));
+                let failure = wait_failure(format!("{binary} wait failed: {error}"));
                 let status =
                     wait_after_signal(child, stopping_signal(&failure), request.termination_grace)?;
                 return Ok((status, Some(failure)));
@@ -531,17 +632,21 @@ pub(crate) fn run_process_request(
         .map_err(|error| ProcessFailure::Spawn(format!("{binary} not runnable: {error}")))?;
     let stdout_exceeded = Arc::new(AtomicBool::new(false));
     let stderr_exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_finished = Arc::new(AtomicBool::new(false));
+    let stderr_finished = Arc::new(AtomicBool::new(false));
     let stdout_handle = reader_thread(
         "stdout",
         child.stdout.take(),
         request.output_limit,
         Arc::clone(&stdout_exceeded),
+        Arc::clone(&stdout_finished),
     );
     let stderr_handle = reader_thread(
         "stderr",
         child.stderr.take(),
         request.output_limit,
         Arc::clone(&stderr_exceeded),
+        Arc::clone(&stderr_finished),
     );
     let stdin_handle = request
         .stdin
@@ -556,41 +661,32 @@ pub(crate) fn run_process_request(
         &binary,
     );
     let stdin_result = join_writer(stdin_handle);
+    // The leader is gone or stopping. The group is cleaned until the
+    // readers see their pipes close, so what was read is never lost to a
+    // survivor, and a wait failure carries it too.
+    let readers_result = wait_for_readers(
+        &mut child,
+        &[&stdout_finished, &stderr_finished],
+        request.termination_grace,
+    );
     let stdout_result = join_reader("stdout", stdout_handle);
     let stderr_result = join_reader("stderr", stderr_handle);
-
-    let (status, stop_failure) = wait_result?;
-    stdin_result?;
     let stdout_capture = stdout_result?;
     let stderr_capture = stderr_result?;
     let stdout_exceeded_limit = stdout_capture.exceeded_limit;
     let stderr_exceeded_limit = stderr_capture.exceeded_limit;
     let stdout = stdout_capture.into_string();
     let stderr = stderr_capture.into_string();
-    if let Some(mut failure) = stop_failure {
-        // Every stop carries what the process wrote before it.
-        match &mut failure {
-            ProcessFailure::Timeout {
-                stdout: partial_stdout,
-                stderr: partial_stderr,
-                ..
-            }
-            | ProcessFailure::ForwardedSignal {
-                stdout: partial_stdout,
-                stderr: partial_stderr,
-                ..
-            }
-            | ProcessFailure::OutputLimit {
-                stdout: partial_stdout,
-                stderr: partial_stderr,
-                ..
-            } => {
-                partial_stdout.clone_from(&stdout);
-                partial_stderr.clone_from(&stderr);
-            }
-            _ => {}
-        }
-        return Err(failure);
+    let (status, stop_failure) = match wait_result {
+        Ok(outcome) => outcome,
+        Err(failure) => return Err(with_streams(failure, &stdout, &stderr)),
+    };
+    if let Err(failure) = readers_result {
+        return Err(with_streams(failure, &stdout, &stderr));
+    }
+    stdin_result?;
+    if let Some(failure) = stop_failure {
+        return Err(with_streams(failure, &stdout, &stderr));
     }
     if stdout_exceeded_limit || stderr_exceeded_limit {
         return Err(ProcessFailure::OutputLimit {

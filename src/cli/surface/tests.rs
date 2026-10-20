@@ -1899,3 +1899,52 @@ fn tmux_removals_cover_the_whole_tables_whatever_rune_inherited() {
         "{removals:?}"
     );
 }
+
+#[test]
+fn a_scratch_cleanup_failure_keeps_the_run_failure_and_its_tails() {
+    let missing = PathBuf::from("/nonexistent/rune-scratch-that-never-was");
+    let failure = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "API Error: 400".to_string(),
+        stderr_tail: "warning".to_string(),
+        harness_errors: vec!["quota".to_string()],
+    };
+
+    let noted = finish_scratch::<()>(Err(failure), &missing).expect_err("still a failure");
+
+    assert_eq!(noted.tails(), Some(("API Error: 400", "warning")));
+    assert_eq!(noted.harness_errors(), ["quota"]);
+    let text = noted.to_string();
+    assert!(text.starts_with("process Exited(1)"), "{text}");
+    assert!(text.contains("stdout tail:\n  API Error: 400"), "{text}");
+    assert!(
+        text.contains(
+            "note: cannot remove scratch directory /nonexistent/rune-scratch-that-never-was"
+        ),
+        "{text}"
+    );
+    let redacted = noted.redacted(&["API Error: 400".to_string()]);
+    assert_eq!(redacted.tails(), Some(("<redacted>", "warning")));
+
+    let after_success = finish_scratch(Ok(()), &missing).expect_err("the cleanup failed");
+    assert!(
+        matches!(after_success, SurfaceFailure::Io(_)),
+        "{after_success}"
+    );
+}
+
+#[test]
+fn a_wait_failure_carries_the_streams_read_before_it() {
+    let failure = SurfaceFailure::Process(ProcessFailure::Wait {
+        message: "cannot signal process group 7: gone".to_string(),
+        stdout: "read so far".to_string(),
+        stderr: "still going".to_string(),
+    });
+    assert_eq!(failure.tails(), Some(("read so far", "still going")));
+    let text = failure.to_string();
+    assert!(
+        text.starts_with("cannot signal process group 7: gone"),
+        "{text}"
+    );
+    assert!(text.contains("stdout tail:\n  read so far"), "{text}");
+}

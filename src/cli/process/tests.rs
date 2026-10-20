@@ -98,6 +98,25 @@ fn process_drains_output_after_limit_is_crossed() {
 }
 
 #[test]
+fn process_cleanup_kills_a_descendant_that_holds_the_pipe() {
+    // The leader exits at once; a background child keeps stdout open. The
+    // supervisor kills the group after the grace period instead of waiting
+    // for the child to end.
+    let mut request = shell_request("printf before; sleep 5 & exit 7");
+    request.termination_grace = Duration::from_millis(100);
+    let started = Instant::now();
+    let output = run_process_request(&request).expect("process output");
+
+    assert_eq!(output.termination, ProcessTermination::Exited(7));
+    assert_eq!(output.stdout, "before");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "the survivor held the pipe for {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn process_request_removes_inherited_automation_mode() {
     let mut request = shell_request("printf %s \"${HARNESS_AUTOMATED-unset}\"");
     request.env = vec![(OsString::from("HARNESS_AUTOMATED"), OsString::from("1"))];

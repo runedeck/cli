@@ -491,6 +491,7 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
             termination: ProcessTermination::Exited(code),
             ..
         } => *code,
+        SurfaceFailure::Noted { inner, .. } => failure_exit_code(inner),
         SurfaceFailure::Process(_)
         | SurfaceFailure::NoAnswer { .. }
         | SurfaceFailure::Reported(_)
@@ -504,6 +505,13 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
 /// `details.stderr_tail`; `hint` names an outer sandbox when the output
 /// shows one, else null.
 fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
+    if let SurfaceFailure::Noted { inner, note } = failure {
+        let mut json = failure_json(tool, inner);
+        if let Some(details) = json["details"].as_object_mut() {
+            details.insert("note".to_string(), Value::String(note.clone()));
+        }
+        return json;
+    }
     let (kind, mut details) = match failure {
         SurfaceFailure::Process(ProcessFailure::Timeout { timeout, .. }) => {
             ("timeout", json!({ "timeout_ms": timeout.as_millis() }))
@@ -540,6 +548,7 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
         }
         SurfaceFailure::Io(message) => ("io_error", json!({ "message": message })),
         SurfaceFailure::Arguments(message) => ("argument_error", json!({ "message": message })),
+        SurfaceFailure::Noted { .. } => unreachable!("a note is unwrapped above"),
     };
     if let (Some((stdout_tail, stderr_tail)), Some(details)) =
         (failure.tails(), details.as_object_mut())
@@ -660,6 +669,42 @@ mod tests {
         assert_eq!(json["kind"], "surface_error");
         assert_eq!(json["details"]["stderr_tail"], "model refused");
         assert_eq!(failure_exit_code(&silent), 1);
+    }
+
+    #[test]
+    fn a_cleanup_note_keeps_the_failures_kind_tails_and_exit_code() {
+        let noted = SurfaceFailure::Noted {
+            inner: Box::new(SurfaceFailure::Exit {
+                termination: ProcessTermination::Exited(3),
+                stdout_tail: "half".to_string(),
+                stderr_tail: "OSStatus -26276".to_string(),
+                harness_errors: Vec::new(),
+            }),
+            note: "cannot remove scratch directory /x: gone".to_string(),
+        };
+        let json = failure_json("codex", &noted);
+        assert_eq!(json["kind"], "exit");
+        assert_eq!(json["details"]["exit_code"], 3);
+        assert_eq!(json["details"]["stdout_tail"], "half");
+        assert_eq!(
+            json["details"]["note"],
+            "cannot remove scratch directory /x: gone"
+        );
+        assert!(
+            json["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("certificate"))
+        );
+        assert_eq!(failure_exit_code(&noted), 3);
+
+        let wait = SurfaceFailure::Process(ProcessFailure::Wait {
+            message: "cannot signal process group 7: gone".to_string(),
+            stdout: "read so far".to_string(),
+            stderr: String::new(),
+        });
+        let json = failure_json("codex", &wait);
+        assert_eq!(json["kind"], "process_failure");
+        assert_eq!(json["details"]["stdout_tail"], "read so far");
     }
 
     #[test]
