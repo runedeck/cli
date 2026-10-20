@@ -982,3 +982,118 @@ fn process_request_never_removes_a_key_the_route_sets() {
         );
     }
 }
+
+#[test]
+fn exit_failure_names_the_exit_code_and_shows_both_streams() {
+    let failure = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "API Error: 400 {\"error\":\"unknown model\"}".to_string(),
+        stderr_tail: "[claude-code:unrecognized_model] {\"model\":\"gpt-5.6-sol\"}".to_string(),
+    };
+    let text = failure.to_string();
+
+    assert!(text.starts_with("process Exited(1)"), "{text}");
+    assert!(text.contains("stdout tail:\n  API Error: 400"), "{text}");
+    assert!(
+        text.contains("stderr tail:\n  [claude-code:unrecognized_model]"),
+        "{text}"
+    );
+    assert!(!text.contains("hint:"), "{text}");
+}
+
+#[test]
+fn output_tail_keeps_the_last_lines_or_characters_whichever_is_shorter() {
+    let fifty_lines = (1..=50)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail = output_tail(&fifty_lines);
+    assert!(tail.starts_with("line 11\n"), "{tail}");
+    assert!(tail.ends_with("line 50"), "{tail}");
+    assert_eq!(tail.lines().count(), 40);
+
+    let long_line = "x".repeat(4100);
+    assert_eq!(output_tail(&long_line).chars().count(), 4000);
+    assert_eq!(output_tail("short\n\n"), "short");
+}
+
+#[test]
+fn timeout_failure_carries_the_partial_output() {
+    let failure = SurfaceFailure::Process(ProcessFailure::Timeout {
+        timeout: Duration::from_secs(30),
+        stdout: "thinking...\n".to_string(),
+        stderr: String::new(),
+    });
+    let text = failure.to_string();
+
+    assert!(
+        text.starts_with("process timed out after 30 seconds"),
+        "{text}"
+    );
+    assert!(text.contains("stdout tail:\n  thinking..."), "{text}");
+    assert!(!text.contains("stderr tail:"), "{text}");
+    assert_eq!(failure.tails(), Some(("thinking...\n", "")));
+}
+
+#[test]
+fn clean_exit_without_an_answer_carries_the_output() {
+    let output = ProcessOutput {
+        termination: ProcessTermination::Exited(0),
+        stdout: "   \n".to_string(),
+        stderr: "model refused".to_string(),
+    };
+    let failure = nonempty_text(&output.stdout, "claude print")
+        .expect_err("empty answer")
+        .with_output(&output);
+
+    assert_eq!(
+        failure,
+        SurfaceFailure::NoAnswer {
+            message: "claude print produced no final response".to_string(),
+            stdout_tail: String::new(),
+            stderr_tail: "model refused".to_string(),
+        }
+    );
+    assert!(
+        failure
+            .to_string()
+            .contains("stderr tail:\n  model refused"),
+        "{failure}"
+    );
+    let untouched = SurfaceFailure::Io("disk".to_string()).with_output(&output);
+    assert_eq!(untouched, SurfaceFailure::Io("disk".to_string()));
+}
+
+#[test]
+fn sandbox_signature_in_the_output_adds_a_hint() {
+    let certificate = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: "TLS handshake failed: OSStatus -26276".to_string(),
+    };
+    let hint = certificate.hint().expect("certificate hint");
+    assert!(hint.contains("certificate"), "{hint}");
+    assert!(
+        certificate.to_string().contains(&format!("\nhint: {hint}")),
+        "{certificate}"
+    );
+
+    let keyring = SurfaceFailure::NoAnswer {
+        message: "codex exec produced no final agent message".to_string(),
+        stdout_tail: "failed to load CLI auth from keyring".to_string(),
+        stderr_tail: String::new(),
+    };
+    assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
+
+    let spawn = SurfaceFailure::Process(ProcessFailure::Spawn(
+        "claude not runnable: Operation not permitted (os error 1)".to_string(),
+    ));
+    assert!(spawn.hint().is_some_and(|hint| hint.contains("sandbox")));
+
+    let plain = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(2),
+        stdout_tail: "usage: claude".to_string(),
+        stderr_tail: String::new(),
+    };
+    assert_eq!(plain.hint(), None);
+}

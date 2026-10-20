@@ -54,15 +54,23 @@ fn process_reports_signal_termination() {
 }
 
 #[test]
-fn process_timeout_uses_grace_then_reports_timeout() {
-    let mut request = shell_request("trap '' TERM; sleep 5");
+fn process_timeout_uses_grace_then_reports_timeout_with_partial_output() {
+    let mut request =
+        shell_request("printf partial; printf 'still going' >&2; trap '' TERM; sleep 5");
     request.stdin = Some(vec![b'x'; DEFAULT_OUTPUT_LIMIT_BYTES * 2]);
     request.timeout = Some(Duration::from_millis(50));
     request.termination_grace = Duration::from_millis(50);
     let started = Instant::now();
     let failure = run_process_request(&request).expect_err("timeout");
 
-    assert_eq!(failure, ProcessFailure::Timeout(Duration::from_millis(50)));
+    assert_eq!(
+        failure,
+        ProcessFailure::Timeout {
+            timeout: Duration::from_millis(50),
+            stdout: "partial".to_string(),
+            stderr: "still going".to_string(),
+        }
+    );
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 

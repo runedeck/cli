@@ -447,3 +447,103 @@ fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
         "the inherited credential reached the route endpoint: {env:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn failed_run_shows_what_the_harness_wrote_on_both_streams() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf '[claude-code:unrecognized_model] {"model":"gpt-5.6-sol"}\n' >&2
+printf 'API Error: 400 {"error":{"message":"unknown model"}}\n'
+exit 1
+"#,
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("process Exited(1)"))
+        .stderr(predicate::str::contains("stdout tail:\n  API Error: 400"))
+        .stderr(predicate::str::contains(
+            "stderr tail:\n  [claude-code:unrecognized_model]",
+        ));
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(1));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "exit");
+    assert_eq!(result["details"]["exit_code"], 1);
+    assert!(
+        result["details"]["stdout_tail"]
+            .as_str()
+            .is_some_and(|tail| tail.starts_with("API Error: 400")),
+        "{result}"
+    );
+    assert!(
+        result["details"]["stderr_tail"]
+            .as_str()
+            .is_some_and(|tail| tail.contains("unrecognized_model")),
+        "{result}"
+    );
+    assert!(result["hint"].is_null(), "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn timed_out_run_reports_the_partial_output() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf 'partial answer'\nsleep 5\n",
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--timeout",
+            "200ms",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(124));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "timeout");
+    assert_eq!(result["details"]["timeout_ms"], 200);
+    assert_eq!(result["details"]["stdout_tail"], "partial answer");
+}

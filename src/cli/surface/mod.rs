@@ -105,34 +105,152 @@ pub(crate) struct SurfaceReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SurfaceFailure {
     Process(ProcessFailure),
+    /// A nonzero exit or a signal, with the last lines of both streams:
+    /// `claude --print` and `opencode run` write their errors on stdout.
     Exit {
         termination: ProcessTermination,
-        stderr: String,
+        stdout_tail: String,
+        stderr_tail: String,
+    },
+    /// A clean exit without a usable answer, with the last lines of both
+    /// streams, which hold the reason.
+    NoAnswer {
+        message: String,
+        stdout_tail: String,
+        stderr_tail: String,
     },
     Reported(String),
     Io(String),
     Arguments(String),
 }
 
+/// The last lines of one stream for an error: 40 lines or 4000 characters,
+/// whichever is shorter.
+const TAIL_LINES: usize = 40;
+const TAIL_CHARS: usize = 4000;
+
+pub(crate) fn output_tail(text: &str) -> String {
+    let text = text.trim_end();
+    let lines: Vec<&str> = text.lines().collect();
+    let from_line = lines.len().saturating_sub(TAIL_LINES);
+    let by_lines = lines[from_line..].join("\n");
+    let chars = by_lines.chars().count();
+    if chars <= TAIL_CHARS {
+        return by_lines;
+    }
+    by_lines.chars().skip(chars - TAIL_CHARS).collect()
+}
+
+/// A known sandbox denial in a failure's output, and the sentence that names
+/// the sandbox. The signatures come from runs inside an outer macOS
+/// Seatbelt sandbox: a blocked syscall, a blocked TLS trust evaluation for
+/// the proxy certificate, and a blocked keyring read.
+const SANDBOX_HINTS: &[(&str, &str)] = &[
+    (
+        "Operation not permitted",
+        "an outer sandbox blocked a file or network operation of the harness; run rune outside the sandbox",
+    ),
+    (
+        "-26276",
+        "an outer sandbox blocked the certificate check for the proxy (OSStatus -26276); run rune outside the sandbox",
+    ),
+    (
+        "failed to load CLI auth from keyring",
+        "an outer sandbox blocked the keyring that holds the harness credential; run rune outside the sandbox",
+    ),
+];
+
+fn sandbox_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<&'static str> {
+    let texts: Vec<&str> = texts.into_iter().collect();
+    SANDBOX_HINTS
+        .iter()
+        .find(|(signature, _)| texts.iter().any(|text| text.contains(signature)))
+        .map(|(_, hint)| *hint)
+}
+
+impl SurfaceFailure {
+    /// The last lines of stdout and stderr, for failures that carry them.
+    pub(crate) fn tails(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Process(ProcessFailure::Timeout { stdout, stderr, .. }) => Some((stdout, stderr)),
+            Self::Exit {
+                stdout_tail,
+                stderr_tail,
+                ..
+            }
+            | Self::NoAnswer {
+                stdout_tail,
+                stderr_tail,
+                ..
+            } => Some((stdout_tail, stderr_tail)),
+            Self::Process(_) | Self::Reported(_) | Self::Io(_) | Self::Arguments(_) => None,
+        }
+    }
+
+    /// The sandbox sentence when the failure's output or message carries a
+    /// known denial.
+    pub(crate) fn hint(&self) -> Option<&'static str> {
+        let message = match self {
+            Self::Process(failure) => Some(failure.to_string()),
+            _ => None,
+        };
+        let (stdout_tail, stderr_tail) = self.tails().unwrap_or_default();
+        sandbox_hint(
+            [stdout_tail, stderr_tail]
+                .into_iter()
+                .chain(message.as_deref()),
+        )
+    }
+
+    /// Turn a parse failure of a clean exit into a `NoAnswer` that carries
+    /// the output the parse rejected.
+    fn with_output(self, output: &ProcessOutput) -> Self {
+        match self {
+            Self::Reported(message) => Self::NoAnswer {
+                message,
+                stdout_tail: output_tail(&output.stdout),
+                stderr_tail: output_tail(&output.stderr),
+            },
+            other => other,
+        }
+    }
+}
+
+/// `stdout tail:` and `stderr tail:` sections, each line indented, then the
+/// sandbox hint when there is one.
+fn write_tails_and_hint(
+    formatter: &mut fmt::Formatter<'_>,
+    failure: &SurfaceFailure,
+) -> fmt::Result {
+    if let Some((stdout_tail, stderr_tail)) = failure.tails() {
+        for (name, tail) in [("stdout", stdout_tail), ("stderr", stderr_tail)] {
+            let tail = output_tail(tail);
+            if tail.is_empty() {
+                continue;
+            }
+            write!(formatter, "\n{name} tail:")?;
+            for line in tail.lines() {
+                write!(formatter, "\n  {line}")?;
+            }
+        }
+    }
+    if let Some(hint) = failure.hint() {
+        write!(formatter, "\nhint: {hint}")?;
+    }
+    Ok(())
+}
+
 impl fmt::Display for SurfaceFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Process(failure) => failure.fmt(formatter),
-            Self::Exit {
-                termination,
-                stderr,
-            } => {
-                let detail: String = stderr.trim().chars().take(500).collect();
-                write!(formatter, "process {termination:?}")?;
-                if !detail.is_empty() {
-                    write!(formatter, ": {detail}")?;
-                }
-                Ok(())
-            }
-            Self::Reported(message) | Self::Io(message) | Self::Arguments(message) => {
-                formatter.write_str(message)
-            }
+            Self::Process(failure) => failure.fmt(formatter)?,
+            Self::Exit { termination, .. } => write!(formatter, "process {termination:?}")?,
+            Self::NoAnswer { message, .. }
+            | Self::Reported(message)
+            | Self::Io(message)
+            | Self::Arguments(message) => formatter.write_str(message)?,
         }
+        write_tails_and_hint(formatter, self)
     }
 }
 
@@ -755,7 +873,8 @@ fn require_success(output: ProcessOutput) -> Result<ProcessOutput, SurfaceFailur
     }
     Err(SurfaceFailure::Exit {
         termination: output.termination,
-        stderr: output.stderr,
+        stdout_tail: output_tail(&output.stdout),
+        stderr_tail: output_tail(&output.stderr),
     })
 }
 
@@ -875,7 +994,8 @@ fn invoke_claude(invocation: &SurfaceInvocation) -> Result<SurfaceReply, Surface
         Some(format!("{}\n", invocation.prompt).into_bytes()),
     ))?)?;
     Ok(SurfaceReply {
-        text: nonempty_text(&output.stdout, "claude print")?,
+        text: nonempty_text(&output.stdout, "claude print")
+            .map_err(|failure| failure.with_output(&output))?,
         stderr: output.stderr,
         completion_tokens: None,
     })
@@ -979,17 +1099,24 @@ fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceF
         if output.termination != ProcessTermination::Exited(0) {
             return Err(SurfaceFailure::Exit {
                 termination: output.termination,
-                stderr: with_surface_diagnostics(&reported_errors, &output.stderr),
+                stdout_tail: output_tail(&output.stdout),
+                stderr_tail: output_tail(&with_surface_diagnostics(
+                    &reported_errors,
+                    &output.stderr,
+                )),
             });
         }
         if !reported_errors.is_empty() && !final_message_path.exists() {
             return Err(SurfaceFailure::Reported(format!(
                 "codex exec error: {}",
                 reported_errors.join("; ")
-            )));
+            ))
+            .with_output(&output));
         }
-        let final_message = read_codex_final_message(&final_message_path, &events)?;
-        let text = nonempty_text(&final_message, "codex exec")?;
+        let final_message = read_codex_final_message(&final_message_path, &events)
+            .map_err(|failure| failure.with_output(&output))?;
+        let text = nonempty_text(&final_message, "codex exec")
+            .map_err(|failure| failure.with_output(&output))?;
         let completion_tokens = events
             .iter()
             .filter(|event| event.kind.as_deref() == Some("turn.completed"))
@@ -1088,7 +1215,8 @@ fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFa
             None,
         ))?)?;
         Ok(SurfaceReply {
-            text: grok_final_text(&output.stdout)?,
+            text: grok_final_text(&output.stdout)
+                .map_err(|failure| failure.with_output(&output))?,
             stderr: output.stderr,
             completion_tokens: None,
         })
@@ -1127,9 +1255,11 @@ fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFai
     ))?)?;
     let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
         SurfaceFailure::Reported(format!("agy returned invalid JSON output: {error}"))
+            .with_output(&output)
     })?;
     Ok(SurfaceReply {
-        text: nonempty_text(&response.response, "agy print")?,
+        text: nonempty_text(&response.response, "agy print")
+            .map_err(|failure| failure.with_output(&output))?,
         stderr: output.stderr,
         completion_tokens: response
             .usage
@@ -1197,11 +1327,12 @@ fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, Surfa
     let output = require_success(run_process_request(&request)?)?;
     let events: Vec<OpencodeEvent> = parse_jsonl(&output.stdout);
     if let Some(message) = opencode_session_error(&events) {
-        return Err(SurfaceFailure::Reported(format!(
-            "opencode session error: {message}"
-        )));
+        return Err(
+            SurfaceFailure::Reported(format!("opencode session error: {message}"))
+                .with_output(&output),
+        );
     }
-    let text = opencode_final_text(&events)?;
+    let text = opencode_final_text(&events).map_err(|failure| failure.with_output(&output))?;
     let completion_tokens = events
         .iter()
         .filter(|event| event.kind.as_deref() == Some("step_finish"))

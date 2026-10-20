@@ -1,7 +1,7 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface,
+    Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface, output_tail,
     prepare_clean_state, session_name_flag,
 };
 use serde_json::{Value, json};
@@ -350,7 +350,7 @@ fn duration_label(timeout: Option<Duration>) -> String {
 
 fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
-        SurfaceFailure::Process(ProcessFailure::Timeout(_)) => 124,
+        SurfaceFailure::Process(ProcessFailure::Timeout { .. }) => 124,
         SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal))
         | SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
@@ -363,15 +363,20 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
             ..
         } => *code,
         SurfaceFailure::Process(_)
+        | SurfaceFailure::NoAnswer { .. }
         | SurfaceFailure::Reported(_)
         | SurfaceFailure::Io(_)
         | SurfaceFailure::Arguments(_) => 1,
     }
 }
 
+/// The failure as one JSON object. A failure that carries the harness's
+/// output puts its last lines in `details.stdout_tail` and
+/// `details.stderr_tail`; `hint` names an outer sandbox when the output
+/// shows one, else null.
 fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
-    let (kind, details) = match failure {
-        SurfaceFailure::Process(ProcessFailure::Timeout(timeout)) => {
+    let (kind, mut details) = match failure {
+        SurfaceFailure::Process(ProcessFailure::Timeout { timeout, .. }) => {
             ("timeout", json!({ "timeout_ms": timeout.as_millis() }))
         }
         SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal)) => {
@@ -390,21 +395,36 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
         }
         SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
-            stderr,
-        } => ("exit", json!({ "exit_code": code, "stderr": stderr })),
+            ..
+        } => ("exit", json!({ "exit_code": code })),
         SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
-            stderr,
-        } => ("signal", json!({ "signal": signal, "stderr": stderr })),
-        SurfaceFailure::Reported(message) => ("surface_error", json!({ "message": message })),
+            ..
+        } => ("signal", json!({ "signal": signal })),
+        SurfaceFailure::NoAnswer { message, .. } | SurfaceFailure::Reported(message) => {
+            ("surface_error", json!({ "message": message }))
+        }
         SurfaceFailure::Io(message) => ("io_error", json!({ "message": message })),
         SurfaceFailure::Arguments(message) => ("argument_error", json!({ "message": message })),
     };
+    if let (Some((stdout_tail, stderr_tail)), Some(details)) =
+        (failure.tails(), details.as_object_mut())
+    {
+        details.insert(
+            "stdout_tail".to_string(),
+            Value::String(output_tail(stdout_tail)),
+        );
+        details.insert(
+            "stderr_tail".to_string(),
+            Value::String(output_tail(stderr_tail)),
+        );
+    }
     json!({
         "ok": false,
         "kind": kind,
         "tool": tool,
         "details": details,
+        "hint": failure.hint(),
     })
 }
 
@@ -448,6 +468,49 @@ mod tests {
     }
 
     #[test]
+    fn typed_json_carries_both_tails_and_the_sandbox_hint() {
+        let exit = SurfaceFailure::Exit {
+            termination: ProcessTermination::Exited(1),
+            stdout_tail: "API Error: 400".to_string(),
+            stderr_tail: "OSStatus -26276".to_string(),
+        };
+        let json = failure_json("claude", &exit);
+        assert_eq!(json["kind"], "exit");
+        assert_eq!(json["details"]["exit_code"], 1);
+        assert_eq!(json["details"]["stdout_tail"], "API Error: 400");
+        assert_eq!(json["details"]["stderr_tail"], "OSStatus -26276");
+        assert!(
+            json["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("certificate")),
+            "{json}"
+        );
+
+        let timeout = SurfaceFailure::Process(ProcessFailure::Timeout {
+            timeout: Duration::from_secs(5),
+            stdout: "partial".to_string(),
+            stderr: String::new(),
+        });
+        let json = failure_json("codex", &timeout);
+        assert_eq!(json["kind"], "timeout");
+        assert_eq!(json["details"]["timeout_ms"], 5000);
+        assert_eq!(json["details"]["stdout_tail"], "partial");
+        assert_eq!(json["details"]["stderr_tail"], "");
+        assert!(json["hint"].is_null(), "{json}");
+        assert_eq!(failure_exit_code(&timeout), 124);
+
+        let silent = SurfaceFailure::NoAnswer {
+            message: "claude print produced no final response".to_string(),
+            stdout_tail: String::new(),
+            stderr_tail: "model refused".to_string(),
+        };
+        let json = failure_json("claude", &silent);
+        assert_eq!(json["kind"], "surface_error");
+        assert_eq!(json["details"]["stderr_tail"], "model refused");
+        assert_eq!(failure_exit_code(&silent), 1);
+    }
+
+    #[test]
     fn typed_json_distinguishes_output_limit() {
         let failure = SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream: "stdout",
@@ -465,6 +528,7 @@ mod tests {
                     "limit": 64,
                     "tail": "last bytes",
                 },
+                "hint": null,
             })
         );
     }

@@ -47,7 +47,13 @@ pub(crate) enum ProcessFailure {
     Stdin(String),
     Stdout(String),
     Stderr(String),
-    Timeout(Duration),
+    /// The deadline passed; `stdout` and `stderr` hold what the process
+    /// wrote before it, so the caller can show the last lines.
+    Timeout {
+        timeout: Duration,
+        stdout: String,
+        stderr: String,
+    },
     ForwardedSignal(i32),
     OutputLimit {
         stream: &'static str,
@@ -64,7 +70,7 @@ impl fmt::Display for ProcessFailure {
             | Self::Stdin(message)
             | Self::Stdout(message)
             | Self::Stderr(message) => formatter.write_str(message),
-            Self::Timeout(timeout) => write!(
+            Self::Timeout { timeout, .. } => write!(
                 formatter,
                 "process timed out after {} seconds",
                 timeout.as_secs_f64()
@@ -442,7 +448,11 @@ fn requested_stop(
     request
         .timeout
         .filter(|timeout| started.elapsed() >= *timeout)
-        .map(ProcessFailure::Timeout)
+        .map(|timeout| ProcessFailure::Timeout {
+            timeout,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
 }
 
 fn stopping_signal(failure: &ProcessFailure) -> i32 {
@@ -552,12 +562,23 @@ pub(crate) fn run_process_request(
     let stdout = stdout_capture.into_string();
     let stderr = stderr_capture.into_string();
     if let Some(mut failure) = stop_failure {
-        if let ProcessFailure::OutputLimit { stream, tail, .. } = &mut failure {
-            *tail = if *stream == "stdout" {
-                stdout.clone()
-            } else {
-                stderr.clone()
-            };
+        match &mut failure {
+            ProcessFailure::OutputLimit { stream, tail, .. } => {
+                *tail = if *stream == "stdout" {
+                    stdout.clone()
+                } else {
+                    stderr.clone()
+                };
+            }
+            ProcessFailure::Timeout {
+                stdout: partial_stdout,
+                stderr: partial_stderr,
+                ..
+            } => {
+                partial_stdout.clone_from(&stdout);
+                partial_stderr.clone_from(&stderr);
+            }
+            _ => {}
         }
         return Err(failure);
     }
