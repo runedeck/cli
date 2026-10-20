@@ -1028,3 +1028,72 @@ fn route_credential_or_settings_endpoint_withholds_the_inherited_family_keys() {
     let env = recorded_env(home.path());
     assert!(!has_key(&env, "ANTHROPIC_AUTH_TOKEN"), "{env:?}");
 }
+
+#[test]
+fn dry_run_endpoint_follows_the_effective_child_environment() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "launch:\n  profiles:\n    claude:\n      tokened:\n        env:\n          ANTHROPIC_AUTH_TOKEN: fake-route-secret\n",
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+
+    // A retained inherited endpoint is the one plain claude reaches.
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .args(["run", "claude", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/gateway",
+        ));
+    let output = rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .args(["--json", "run", "claude", "x", "--repo", repo, "--dry-run"])
+        .output()
+        .expect("run output");
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON object");
+    assert_eq!(result["base_url"], "http://127.0.0.1:9/gateway");
+
+    // A withheld inherited endpoint is not.
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .args(["run", "tokened@claude", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("base_url: <none>"))
+        .stdout(predicate::str::contains("fake-route-secret").not());
+
+    // Codex and grok read their own keys.
+    rune(home.path())
+        .env("OPENAI_BASE_URL", "http://127.0.0.1:9/openai")
+        .args(["run", "codex", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/openai",
+        ));
+    rune(home.path())
+        .env("GROK_MODELS_BASE_URL", "http://127.0.0.1:9/grok")
+        .args(["run", "grok", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/grok",
+        ));
+
+    // The launch dry run shows the same endpoint.
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .args(["launch", "claude", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/gateway",
+        ));
+}

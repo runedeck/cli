@@ -3,7 +3,7 @@
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
-use crate::cli::launch::{REDACTED_VALUE, credential_values, redact_credentials};
+use crate::cli::launch::{REDACTED_VALUE, credential_values, inherited_env, redact_credentials};
 use crate::cli::process::{
     ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination, run_process_request,
 };
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod isolation;
-pub(crate) use isolation::parent_session_isolation;
+pub(crate) use isolation::{Isolation, parent_session_isolation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {
@@ -235,9 +235,7 @@ fn settings_objects(
 /// inherited ones the isolation leaves in place.
 pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
     let removals = parent_session_isolation(&route_keys(invocation)).removals();
-    let inherited: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(key, _)| !removals.contains(key))
-        .collect();
+    let inherited = inherited_env(&removals);
     let mut secrets = credential_values(&invocation.env);
     secrets.extend(credential_values(&inherited));
     secrets.sort_unstable_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));

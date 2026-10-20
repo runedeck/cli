@@ -52,7 +52,8 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
     }
     if resolved.dry_run {
         let isolation = surface::parent_session_isolation(&resolved.route_keys());
-        println!("{}", resolved.format_dry_run(&isolation.lines()));
+        let inherited = inherited_env(&isolation.removals());
+        println!("{}", resolved.format_dry_run(&isolation, &inherited));
         return Ok(0);
     }
     for warning in &resolved.warnings {
@@ -224,15 +225,21 @@ pub(crate) struct ResolvedLaunch {
 }
 
 impl ResolvedLaunch {
-    /// The launch plan as text, with `env_removed` as the keys the child
-    /// does not inherit.
-    pub(crate) fn format_dry_run(&self, env_removed: &[String]) -> String {
+    /// The launch plan as text: `isolation` names the keys the child does
+    /// not inherit, and `inherited` is what it does inherit, so the endpoint
+    /// line shows the one the child would reach.
+    pub(crate) fn format_dry_run(
+        &self,
+        isolation: &surface::Isolation,
+        inherited: &[(OsString, OsString)],
+    ) -> String {
+        let base_url = self.endpoint(&self.display_env, inherited);
         self.format_dry_run_with(&DryRunParts {
             tool: &self.tool,
             argv: &self.argv,
             env: &self.display_env,
-            env_removed,
-            base_url: self.base_url.as_deref(),
+            env_removed: &isolation.lines(),
+            base_url: base_url.as_deref(),
             model: self.model.as_ref(),
             model_override: None,
             warnings: &self.warnings,
@@ -246,18 +253,22 @@ impl ResolvedLaunch {
         format_dry_run_parts(parts, &self.wrap, &self.pre)
     }
 
-    /// The endpoint the child would reach: the plan's base URL, or the
-    /// value of the tool's base URL key in `env`.
-    pub(crate) fn endpoint(&self, env: &[(OsString, OsString)]) -> Option<String> {
-        self.base_url
-            .clone()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                self.base_url_env
-                    .as_deref()
-                    .and_then(|key| env_value(env, key))
-                    .filter(|value| !value.is_empty())
-            })
+    /// The endpoint the child would reach, from its effective environment:
+    /// the plan's base URL, else the tool's base URL key in the route `env`,
+    /// else the same key in `inherited`, the parent environment minus the
+    /// keys the isolation removes.
+    pub(crate) fn endpoint(
+        &self,
+        env: &[(OsString, OsString)],
+        inherited: &[(OsString, OsString)],
+    ) -> Option<String> {
+        let nonempty = |value: String| (!value.is_empty()).then_some(value);
+        self.base_url.clone().and_then(nonempty).or_else(|| {
+            let key = self.base_url_env.as_deref()?;
+            env_value(env, key)
+                .and_then(nonempty)
+                .or_else(|| env_value(inherited, key).and_then(nonempty))
+        })
     }
 
     /// The keys the route sets for the child: the final env, and for claude
@@ -692,9 +703,20 @@ fn which_on_path(binary: &str) -> bool {
     std::env::split_paths(&paths).any(|directory| directory.join(binary).is_file())
 }
 
+/// The environment key each tool reads its base URL from, when the
+/// configuration names none.
+fn default_base_url_env(tool: &str) -> Option<&'static str> {
+    match tool {
+        "claude" => Some("ANTHROPIC_BASE_URL"),
+        "codex" => Some("OPENAI_BASE_URL"),
+        "grok" => Some("GROK_MODELS_BASE_URL"),
+        _ => None,
+    }
+}
+
 fn resolve_tool(name: &str, launch: &Launch) -> ResolvedTool {
     let configured = launch.tools.get(name);
-    let default_base_env = (name == "claude").then(|| "ANTHROPIC_BASE_URL".to_string());
+    let default_base_env = default_base_url_env(name).map(str::to_string);
     let binary = configured
         .and_then(|tool| tool.binary.as_ref())
         .map_or_else(|| name.to_string(), Clone::clone);
@@ -1042,6 +1064,13 @@ pub(crate) const REDACTED_VALUE: &str = "<redacted>";
 /// The keys of `env`.
 pub(crate) fn env_keys(env: &[(OsString, OsString)]) -> Vec<OsString> {
     env.iter().map(|(key, _)| key.clone()).collect()
+}
+
+/// What the child inherits: this process's environment minus `removals`.
+pub(crate) fn inherited_env(removals: &[OsString]) -> Vec<(OsString, OsString)> {
+    std::env::vars_os()
+        .filter(|(key, _)| !removals.contains(key))
+        .collect()
 }
 
 fn route_keys_of(tool: &str, env: &[(OsString, OsString)], args: &[OsString]) -> Vec<OsString> {

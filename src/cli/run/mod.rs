@@ -282,7 +282,7 @@ fn dry_run_outcome(
         .chain(filter_warnings)
         .cloned()
         .collect();
-    let base_url = resolved.endpoint(&planned.env);
+    let base_url = resolved.endpoint(&planned.env, &launch::inherited_env(&isolation.removals()));
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
     let text = format!(
         "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",

@@ -273,7 +273,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
         vec![OsString::from("claude"), OsString::from("--resume")]
     );
     assert_eq!(
-        resolved.format_dry_run(&[]),
+        resolved.format_dry_run(&surface::Isolation::default(), &[]),
         "tool: claude\nargv: claude --resume\nenv:\nenv_removed:\nbase_url: <none>\nwrap:\npre:"
     );
 }
@@ -910,10 +910,29 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
     )
     .expect("resolved launch");
 
-    assert_eq!(resolved.endpoint(&[]), None);
+    assert_eq!(resolved.endpoint(&[], &[]), None);
     assert_eq!(
-        resolved.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")])),
+        resolved.endpoint(
+            &names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]),
+            &[]
+        ),
         Some("http://127.0.0.1:8317".to_string())
+    );
+    assert_eq!(
+        resolved.endpoint(
+            &[],
+            &names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")])
+        ),
+        Some("http://127.0.0.1:9/gateway".to_string()),
+        "a retained inherited endpoint is the one the child reaches"
+    );
+    assert_eq!(
+        resolved.endpoint(
+            &names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]),
+            &names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")])
+        ),
+        Some("http://127.0.0.1:8317".to_string()),
+        "the route env wins over the inherited value"
     );
 
     let proxied = resolve_with_config(
@@ -925,10 +944,27 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
     )
     .expect("resolved launch");
     assert_eq!(
-        proxied.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://elsewhere")])),
+        proxied.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://elsewhere")]), &[]),
         Some("http://127.0.0.1:47821".to_string()),
         "the plan's base URL wins over the env"
     );
+}
+
+#[test]
+fn each_tool_reads_its_base_url_from_its_own_key_by_default() {
+    for (tool, key) in [
+        ("claude", Some("ANTHROPIC_BASE_URL")),
+        ("codex", Some("OPENAI_BASE_URL")),
+        ("grok", Some("GROK_MODELS_BASE_URL")),
+        ("opencode", None),
+        ("agy", None),
+    ] {
+        assert_eq!(
+            resolve_tool(tool, &Launch::default()).base_url_env,
+            key.map(OsString::from),
+            "{tool}"
+        );
+    }
 }
 
 #[test]
