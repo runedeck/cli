@@ -108,10 +108,13 @@ pub(crate) enum SurfaceFailure {
     Process(ProcessFailure),
     /// A nonzero exit or a signal, with the last lines of both streams:
     /// `claude --print` and `opencode run` write their errors on stdout.
+    /// `harness_errors` are the messages a harness reports in its own
+    /// event stream (codex's JSONL), apart from the raw tails.
     Exit {
         termination: ProcessTermination,
         stdout_tail: String,
         stderr_tail: String,
+        harness_errors: Vec<String>,
     },
     /// A clean exit without a usable answer, with the last lines of both
     /// streams, which hold the reason.
@@ -119,6 +122,7 @@ pub(crate) enum SurfaceFailure {
         message: String,
         stdout_tail: String,
         stderr_tail: String,
+        harness_errors: Vec<String>,
     },
     Reported(String),
     Io(String),
@@ -263,36 +267,50 @@ impl SurfaceFailure {
                 ProcessFailure::OutputLimit {
                     stream,
                     limit,
-                    tail,
+                    stdout,
+                    stderr,
                 } => ProcessFailure::OutputLimit {
                     stream,
                     limit,
-                    tail: hide(tail),
+                    stdout: hide(stdout),
+                    stderr: hide(stderr),
+                },
+                ProcessFailure::ForwardedSignal {
+                    signal,
+                    stdout,
+                    stderr,
+                } => ProcessFailure::ForwardedSignal {
+                    signal,
+                    stdout: hide(stdout),
+                    stderr: hide(stderr),
                 },
                 ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
                 ProcessFailure::Wait(message) => ProcessFailure::Wait(hide(message)),
                 ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
                 ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
                 ProcessFailure::Stderr(message) => ProcessFailure::Stderr(hide(message)),
-                other @ ProcessFailure::ForwardedSignal(_) => other,
             }),
             Self::Exit {
                 termination,
                 stdout_tail,
                 stderr_tail,
+                harness_errors,
             } => Self::Exit {
                 termination,
                 stdout_tail: hide(stdout_tail),
                 stderr_tail: hide(stderr_tail),
+                harness_errors: harness_errors.into_iter().map(hide).collect(),
             },
             Self::NoAnswer {
                 message,
                 stdout_tail,
                 stderr_tail,
+                harness_errors,
             } => Self::NoAnswer {
                 message: hide(message),
                 stdout_tail: hide(stdout_tail),
                 stderr_tail: hide(stderr_tail),
+                harness_errors: harness_errors.into_iter().map(hide).collect(),
             },
             Self::Reported(message) => Self::Reported(hide(message)),
             Self::Io(message) => Self::Io(hide(message)),
@@ -300,10 +318,16 @@ impl SurfaceFailure {
         }
     }
 
-    /// The last lines of stdout and stderr, for failures that carry them.
+    /// The last lines of stdout and stderr, for failures that carry them:
+    /// an exit, a clean exit without an answer, and every stop the
+    /// supervisor forced (deadline, forwarded signal, output limit).
     pub(crate) fn tails(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Process(ProcessFailure::Timeout { stdout, stderr, .. }) => Some((stdout, stderr)),
+            Self::Process(
+                ProcessFailure::Timeout { stdout, stderr, .. }
+                | ProcessFailure::ForwardedSignal { stdout, stderr, .. }
+                | ProcessFailure::OutputLimit { stdout, stderr, .. },
+            ) => Some((stdout, stderr)),
             Self::Exit {
                 stdout_tail,
                 stderr_tail,
@@ -315,6 +339,46 @@ impl SurfaceFailure {
                 ..
             } => Some((stdout_tail, stderr_tail)),
             Self::Process(_) | Self::Reported(_) | Self::Io(_) | Self::Arguments(_) => None,
+        }
+    }
+
+    /// The messages the harness reported in its own event stream.
+    pub(crate) fn harness_errors(&self) -> &[String] {
+        match self {
+            Self::Exit { harness_errors, .. } | Self::NoAnswer { harness_errors, .. } => {
+                harness_errors
+            }
+            _ => &[],
+        }
+    }
+
+    /// The same failure with the harness's own error messages attached,
+    /// where the failure can carry them.
+    fn with_harness_errors(self, errors: Vec<String>) -> Self {
+        match self {
+            Self::Exit {
+                termination,
+                stdout_tail,
+                stderr_tail,
+                ..
+            } => Self::Exit {
+                termination,
+                stdout_tail,
+                stderr_tail,
+                harness_errors: errors,
+            },
+            Self::NoAnswer {
+                message,
+                stdout_tail,
+                stderr_tail,
+                ..
+            } => Self::NoAnswer {
+                message,
+                stdout_tail,
+                stderr_tail,
+                harness_errors: errors,
+            },
+            other => other,
         }
     }
 
@@ -342,18 +406,26 @@ impl SurfaceFailure {
                 message,
                 stdout_tail: redacted_tail(&output.stdout, secrets),
                 stderr_tail: redacted_tail(&output.stderr, secrets),
+                harness_errors: Vec::new(),
             },
             other => other,
         }
     }
 }
 
-/// `stdout tail:` and `stderr tail:` sections, each line indented, then the
-/// sandbox hint when there is one.
+/// `harness errors:`, `stdout tail:` and `stderr tail:` sections, each
+/// line indented, then the sandbox hint when there is one.
 fn write_tails_and_hint(
     formatter: &mut fmt::Formatter<'_>,
     failure: &SurfaceFailure,
 ) -> fmt::Result {
+    let harness_errors = failure.harness_errors();
+    if !harness_errors.is_empty() {
+        write!(formatter, "\nharness errors:")?;
+        for error in harness_errors {
+            write!(formatter, "\n  {}", shown(error))?;
+        }
+    }
     if let Some((stdout_tail, stderr_tail)) = failure.tails() {
         for (name, tail) in [("stdout", stdout_tail), ("stderr", stderr_tail)] {
             let tail = output_tail(tail);
@@ -1091,6 +1163,7 @@ fn require_success(
         termination: output.termination,
         stdout_tail: redacted_tail(&output.stdout, secrets),
         stderr_tail: redacted_tail(&output.stderr, secrets),
+        harness_errors: Vec::new(),
     })
 }
 
@@ -1280,14 +1353,6 @@ fn codex_error_messages(events: &[CodexEvent]) -> Vec<String> {
         .collect()
 }
 
-fn with_surface_diagnostics(messages: &[String], stderr: &str) -> String {
-    let mut sections: Vec<&str> = messages.iter().map(String::as_str).collect();
-    if !stderr.trim().is_empty() {
-        sections.push(stderr.trim());
-    }
-    sections.join("\n")
-}
-
 fn read_codex_final_message(
     path: &PathBuf,
     events: &[CodexEvent],
@@ -1363,27 +1428,25 @@ fn invoke_codex(
         ))?;
         let events: Vec<CodexEvent> = parse_jsonl(&output.stdout);
         let reported_errors = codex_error_messages(&events);
+        // The harness's own messages stay apart from the raw stream tails.
+        let with_output = |failure: SurfaceFailure| {
+            failure
+                .with_output(&output, secrets)
+                .with_harness_errors(reported_errors.clone())
+        };
         if output.termination != ProcessTermination::Exited(0) {
-            return Err(SurfaceFailure::Exit {
-                termination: output.termination,
-                stdout_tail: redacted_tail(&output.stdout, secrets),
-                stderr_tail: redacted_tail(
-                    &with_surface_diagnostics(&reported_errors, &output.stderr),
-                    secrets,
-                ),
-            });
+            return Err(require_success(output.clone(), secrets)
+                .expect_err("a nonzero exit")
+                .with_harness_errors(reported_errors));
         }
         if !reported_errors.is_empty() && !final_message_path.exists() {
-            return Err(SurfaceFailure::Reported(format!(
-                "codex exec error: {}",
-                reported_errors.join("; ")
-            ))
-            .with_output(&output, secrets));
+            return Err(with_output(SurfaceFailure::Reported(
+                "codex exec reported an error and no final agent message".to_string(),
+            )));
         }
-        let final_message = read_codex_final_message(&final_message_path, &events)
-            .map_err(|failure| failure.with_output(&output, secrets))?;
-        let text = nonempty_text(&final_message, "codex exec")
-            .map_err(|failure| failure.with_output(&output, secrets))?;
+        let final_message =
+            read_codex_final_message(&final_message_path, &events).map_err(with_output)?;
+        let text = nonempty_text(&final_message, "codex exec").map_err(with_output)?;
         let completion_tokens = events
             .iter()
             .filter(|event| event.kind.as_deref() == Some("turn.completed"))

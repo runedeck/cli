@@ -472,7 +472,7 @@ fn duration_label(timeout: Option<Duration>) -> String {
 fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
         SurfaceFailure::Process(ProcessFailure::Timeout { .. }) => 124,
-        SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal))
+        SurfaceFailure::Process(ProcessFailure::ForwardedSignal { signal, .. })
         | SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
             ..
@@ -500,16 +500,21 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
         SurfaceFailure::Process(ProcessFailure::Timeout { timeout, .. }) => {
             ("timeout", json!({ "timeout_ms": timeout.as_millis() }))
         }
-        SurfaceFailure::Process(ProcessFailure::ForwardedSignal(signal)) => {
+        SurfaceFailure::Process(ProcessFailure::ForwardedSignal { signal, .. }) => {
             ("signal", json!({ "signal": signal }))
         }
         SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream,
             limit,
-            tail,
+            stdout,
+            stderr,
         }) => (
             "output_limit",
-            json!({ "stream": stream, "limit": limit, "tail": tail }),
+            json!({
+                "stream": stream,
+                "limit": limit,
+                "tail": output_tail(if *stream == "stdout" { stdout } else { stderr }),
+            }),
         ),
         SurfaceFailure::Process(failure) => {
             ("process_failure", json!({ "message": failure.to_string() }))
@@ -538,6 +543,18 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
         details.insert(
             "stderr_tail".to_string(),
             Value::String(output_tail(stderr_tail)),
+        );
+    }
+    if let (true, Some(details)) = (
+        matches!(
+            failure,
+            SurfaceFailure::Exit { .. } | SurfaceFailure::NoAnswer { .. }
+        ),
+        details.as_object_mut(),
+    ) {
+        details.insert(
+            "harness_errors".to_string(),
+            json!(failure.harness_errors()),
         );
     }
     json!({
@@ -594,12 +611,17 @@ mod tests {
             termination: ProcessTermination::Exited(1),
             stdout_tail: "API Error: 400".to_string(),
             stderr_tail: "OSStatus -26276".to_string(),
+            harness_errors: vec!["quota exhausted".to_string()],
         };
         let json = failure_json("claude", &exit);
         assert_eq!(json["kind"], "exit");
         assert_eq!(json["details"]["exit_code"], 1);
         assert_eq!(json["details"]["stdout_tail"], "API Error: 400");
         assert_eq!(json["details"]["stderr_tail"], "OSStatus -26276");
+        assert_eq!(
+            json["details"]["harness_errors"],
+            json!(["quota exhausted"])
+        );
         assert!(
             json["hint"]
                 .as_str()
@@ -624,6 +646,7 @@ mod tests {
             message: "claude print produced no final response".to_string(),
             stdout_tail: String::new(),
             stderr_tail: "model refused".to_string(),
+            harness_errors: Vec::new(),
         };
         let json = failure_json("claude", &silent);
         assert_eq!(json["kind"], "surface_error");
@@ -636,7 +659,8 @@ mod tests {
         let failure = SurfaceFailure::Process(ProcessFailure::OutputLimit {
             stream: "stdout",
             limit: 64,
-            tail: "last bytes".to_string(),
+            stdout: "last bytes".to_string(),
+            stderr: "a warning".to_string(),
         });
         assert_eq!(
             failure_json("codex", &failure),
@@ -648,9 +672,20 @@ mod tests {
                     "stream": "stdout",
                     "limit": 64,
                     "tail": "last bytes",
+                    "stdout_tail": "last bytes",
+                    "stderr_tail": "a warning",
                 },
                 "hint": null,
             })
         );
+        let signal = SurfaceFailure::Process(ProcessFailure::ForwardedSignal {
+            signal: 15,
+            stdout: "half".to_string(),
+            stderr: String::new(),
+        });
+        let json = failure_json("codex", &signal);
+        assert_eq!(json["kind"], "signal");
+        assert_eq!(json["details"]["stdout_tail"], "half");
+        assert_eq!(failure_exit_code(&signal), 143);
     }
 }

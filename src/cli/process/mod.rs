@@ -54,11 +54,19 @@ pub(crate) enum ProcessFailure {
         stdout: String,
         stderr: String,
     },
-    ForwardedSignal(i32),
+    /// A signal reached the supervisor and was forwarded; the output so far
+    /// travels with it, because a hung seat is killed this way.
+    ForwardedSignal {
+        signal: i32,
+        stdout: String,
+        stderr: String,
+    },
+    /// One stream crossed the limit; both streams' captured tails travel.
     OutputLimit {
         stream: &'static str,
         limit: usize,
-        tail: String,
+        stdout: String,
+        stderr: String,
     },
 }
 
@@ -75,26 +83,17 @@ impl fmt::Display for ProcessFailure {
                 "process timed out after {} seconds",
                 timeout.as_secs_f64()
             ),
-            Self::ForwardedSignal(signal) => {
+            Self::ForwardedSignal { signal, .. } => {
                 write!(
                     formatter,
                     "process stopped after forwarding signal {signal}"
                 )
             }
-            Self::OutputLimit {
-                stream,
-                limit,
-                tail,
-            } => {
+            Self::OutputLimit { stream, limit, .. } => {
                 write!(
                     formatter,
                     "process {stream} exceeded the {limit}-byte output limit"
-                )?;
-                if !tail.trim().is_empty() {
-                    let diagnostic: String = tail.trim().chars().take(500).collect();
-                    write!(formatter, ": {diagnostic}")?;
-                }
-                Ok(())
+                )
             }
         }
     }
@@ -433,18 +432,24 @@ fn requested_stop(
         return Some(ProcessFailure::OutputLimit {
             stream: "stdout",
             limit: request.output_limit,
-            tail: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
         });
     }
     if stderr_exceeded.load(Ordering::Relaxed) {
         return Some(ProcessFailure::OutputLimit {
             stream: "stderr",
             limit: request.output_limit,
-            tail: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
         });
     }
     if let Some(signal) = signal_flags.received() {
-        return Some(ProcessFailure::ForwardedSignal(signal));
+        return Some(ProcessFailure::ForwardedSignal {
+            signal,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
     }
     request
         .timeout
@@ -462,7 +467,7 @@ fn stopping_signal(failure: &ProcessFailure) -> i32 {
         use signal_hook::consts::signal::SIGTERM;
 
         match failure {
-            ProcessFailure::ForwardedSignal(signal) => *signal,
+            ProcessFailure::ForwardedSignal { signal, .. } => *signal,
             _ => SIGTERM,
         }
     }
@@ -563,15 +568,19 @@ pub(crate) fn run_process_request(
     let stdout = stdout_capture.into_string();
     let stderr = stderr_capture.into_string();
     if let Some(mut failure) = stop_failure {
+        // Every stop carries what the process wrote before it.
         match &mut failure {
-            ProcessFailure::OutputLimit { stream, tail, .. } => {
-                *tail = if *stream == "stdout" {
-                    stdout.clone()
-                } else {
-                    stderr.clone()
-                };
-            }
             ProcessFailure::Timeout {
+                stdout: partial_stdout,
+                stderr: partial_stderr,
+                ..
+            }
+            | ProcessFailure::ForwardedSignal {
+                stdout: partial_stdout,
+                stderr: partial_stderr,
+                ..
+            }
+            | ProcessFailure::OutputLimit {
                 stdout: partial_stdout,
                 stderr: partial_stderr,
                 ..
@@ -583,18 +592,16 @@ pub(crate) fn run_process_request(
         }
         return Err(failure);
     }
-    if stdout_exceeded_limit {
+    if stdout_exceeded_limit || stderr_exceeded_limit {
         return Err(ProcessFailure::OutputLimit {
-            stream: "stdout",
+            stream: if stdout_exceeded_limit {
+                "stdout"
+            } else {
+                "stderr"
+            },
             limit: request.output_limit,
-            tail: stdout,
-        });
-    }
-    if stderr_exceeded_limit {
-        return Err(ProcessFailure::OutputLimit {
-            stream: "stderr",
-            limit: request.output_limit,
-            tail: stderr,
+            stdout,
+            stderr,
         });
     }
     Ok(ProcessOutput {

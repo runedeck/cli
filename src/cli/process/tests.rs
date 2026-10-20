@@ -85,14 +85,16 @@ fn process_drains_output_after_limit_is_crossed() {
     let ProcessFailure::OutputLimit {
         stream,
         limit,
-        tail,
+        stdout,
+        stderr,
     } = failure
     else {
         panic!("expected output limit failure");
     };
     assert_eq!(stream, "stdout");
     assert_eq!(limit, 64);
-    assert_eq!(tail, format!("6789{}", "0123456789".repeat(6)));
+    assert_eq!(stdout, format!("6789{}", "0123456789".repeat(6)));
+    assert_eq!(stderr, "");
 }
 
 #[test]

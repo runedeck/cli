@@ -308,9 +308,50 @@ fn codex_failure_reports_its_own_error_events() {
             "turn aborted".to_string(),
         ]
     );
-    assert_eq!(
-        with_surface_diagnostics(&codex_error_messages(&events), "cache warning\n"),
-        "hooks loaded twice\nYou've hit your usage limit.\nturn aborted\ncache warning"
+    let failure = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "{\"type\":\"error\"}".to_string(),
+        stderr_tail: "cache warning".to_string(),
+        harness_errors: Vec::new(),
+    }
+    .with_harness_errors(codex_error_messages(&events));
+    let text = failure.to_string();
+    assert!(
+        text.contains(
+            "harness errors:\n  hooks loaded twice\n  You've hit your usage limit.\n  turn aborted"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("stderr tail:\n  cache warning"), "{text}");
+    assert_eq!(failure.harness_errors().len(), 3);
+}
+
+#[test]
+fn signal_and_output_limit_failures_carry_both_tails() {
+    let signal = SurfaceFailure::Process(ProcessFailure::ForwardedSignal {
+        signal: 15,
+        stdout: "half an answer".to_string(),
+        stderr: "still working".to_string(),
+    });
+    assert_eq!(signal.tails(), Some(("half an answer", "still working")));
+    let text = signal.to_string();
+    assert!(
+        text.starts_with("process stopped after forwarding signal 15"),
+        "{text}"
+    );
+    assert!(text.contains("stdout tail:\n  half an answer"), "{text}");
+    assert!(text.contains("stderr tail:\n  still working"), "{text}");
+
+    let limit = SurfaceFailure::Process(ProcessFailure::OutputLimit {
+        stream: "stdout",
+        limit: 64,
+        stdout: "x".repeat(64),
+        stderr: "noisy".to_string(),
+    });
+    assert_eq!(limit.tails(), Some((&"x".repeat(64)[..], "noisy")));
+    assert!(
+        limit.to_string().contains("stderr tail:\n  noisy"),
+        "{limit}"
     );
 }
 
@@ -1084,6 +1125,7 @@ fn exit_failure_names_the_exit_code_and_shows_both_streams() {
         termination: ProcessTermination::Exited(1),
         stdout_tail: "API Error: 400 {\"error\":\"unknown model\"}".to_string(),
         stderr_tail: "[claude-code:unrecognized_model] {\"model\":\"gpt-5.6-sol\"}".to_string(),
+        harness_errors: Vec::new(),
     };
     let text = failure.to_string();
 
@@ -1147,6 +1189,7 @@ fn clean_exit_without_an_answer_carries_the_output() {
             message: "claude print produced no final response".to_string(),
             stdout_tail: String::new(),
             stderr_tail: "model refused".to_string(),
+            harness_errors: Vec::new(),
         }
     );
     assert!(
@@ -1165,6 +1208,7 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         termination: ProcessTermination::Exited(1),
         stdout_tail: String::new(),
         stderr_tail: "TLS handshake failed: OSStatus -26276".to_string(),
+        harness_errors: Vec::new(),
     };
     let hint = certificate.hint().expect("certificate hint");
     assert!(hint.contains("certificate"), "{hint}");
@@ -1177,6 +1221,7 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         message: "codex exec produced no final agent message".to_string(),
         stdout_tail: "failed to load CLI auth from keyring".to_string(),
         stderr_tail: String::new(),
+        harness_errors: Vec::new(),
     };
     assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
 
@@ -1184,6 +1229,7 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         termination: ProcessTermination::Exited(1),
         stdout_tail: "API Error: Unable to connect to API: SSL certificate verification failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)".to_string(),
         stderr_tail: String::new(),
+        harness_errors: Vec::new(),
     };
     assert!(
         node_tls
@@ -1200,6 +1246,7 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         termination: ProcessTermination::Exited(2),
         stdout_tail: "usage: claude".to_string(),
         stderr_tail: String::new(),
+        harness_errors: Vec::new(),
     };
     assert_eq!(plain.hint(), None);
 }
@@ -1526,6 +1573,7 @@ fn failure_tails_hide_the_credential_before_the_tail_is_cut() {
             termination: ProcessTermination::Exited(1),
             stdout_tail: "auth <redacted> rejected".to_string(),
             stderr_tail: "token <redacted>".to_string(),
+            harness_errors: Vec::new(),
         }
     );
     let silent = SurfaceFailure::Reported("no answer".to_string()).with_output(&output, &secrets);

@@ -1097,3 +1097,51 @@ fn dry_run_endpoint_follows_the_effective_child_environment() {
             "base_url: http://127.0.0.1:9/gateway",
         ));
 }
+
+#[cfg(unix)]
+#[test]
+fn codex_harness_errors_stay_apart_from_the_stream_tails() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"error","message":"You have hit your usage limit."}'
+printf 'a cache warning\n' >&2
+exit 1
+"#,
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    let output = rune(home.path())
+        .args([
+            "--json", "run", "codex", "Review", "--repo", repo, "--binary", binary,
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(1));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "exit");
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["You have hit your usage limit."])
+    );
+    assert_eq!(result["details"]["stderr_tail"], "a cache warning");
+    assert!(
+        result["details"]["stdout_tail"]
+            .as_str()
+            .is_some_and(|tail| tail.starts_with("{\"type\":\"error\"")),
+        "{result}"
+    );
+
+    rune(home.path())
+        .args(["run", "codex", "Review", "--repo", repo, "--binary", binary])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "harness errors:\n  You have hit your usage limit.",
+        ))
+        .stderr(predicate::str::contains("stderr tail:\n  a cache warning"));
+}
