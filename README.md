@@ -395,6 +395,23 @@ Name the harness session, where the harness takes a name (claude `--name`, openc
 rune run sol@claude --session-name claude/runedeck/mods/council "Review this repository"
 ```
 
+Run from inside another harness. The runner removes the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*`, codex's sandbox variables) before the route's environment applies, so the child starts as it would from a terminal. A route that sets an endpoint without a credential of that family withholds the inherited credential. `rune launch` does the same.
+
+See what would start, with the prompt as `<prompt>` and every credential value hidden, as text or as one JSON object:
+
+```sh
+rune run sol@claude --dry-run "Review this repository"
+rune --json run sol@claude --dry-run picker
+```
+
+The JSON object carries `model_id`, `tool`, `model`, `argv`, `base_url`, `env`, `env_removed`, `repository`, `mode`, `timeout` (milliseconds, or null), and `session_name`. Under `--json`, every outcome is one JSON object on stdout, a configuration error included. A run that exits nonzero, times out, or returns no answer reports the last lines of both streams, in the text error and as `details.stdout_tail` and `details.stderr_tail`, with a `hint` when the output shows that an outer sandbox blocked the harness.
+
+Let claude build its own work: workspace-write mode allows `Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash` and turns on Claude Code's own sandbox around the shell.
+
+```sh
+rune run sol@claude --mode workspace-write "Fix the failing test, then run cargo test."
+```
+
 Run a helper script bundled with a skill:
 
 ```sh

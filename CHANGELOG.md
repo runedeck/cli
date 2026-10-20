@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Print `rune run --dry-run --json` as one JSON object with `model_id`, `tool`, `model`, `argv`, `base_url`, `env` (credential values hidden), `env_removed`, `repository`, `mode`, `timeout`, and `session_name`. The text dry run keeps its `model_id:` line.
+- List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld credential names the endpoint that bound it.
+- Add a `hint` to a failed `rune run`, in the text error and the JSON object, when its output carries a known sandbox denial: `Operation not permitted`, OSStatus `-26276`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE` from the filtering proxy, or a blocked keyring read.
 - Read the consumer manifest from `.rune/manifest.yaml` when `.rune` is a directory, so it shares the directory with the records home. A `.rune` directory without a manifest is no consumer.
 - Add `rune run --mode answer-only`: claude gets `--tools ""` and opencode a deny-all permission. Codex, agy and grok cannot switch their tools off and are refused by name.
 - Add `rune run --session-name <NAME>`: claude receives it as `--name` and opencode as `run --title`. Codex, agy and grok take none, and the dry run says `session_name_flag: none`.
@@ -155,6 +158,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Report the last 40 lines, or 4000 characters, of both stdout and stderr when `rune run` exits nonzero, times out, or returns no answer, in the text error and as `details.stdout_tail` and `details.stderr_tail`. The `details.stderr` field is gone, and the process layer keeps the partial output it read before a deadline.
+- Render the `rune run` dry run from the surface's own argument builder: the argv shows the flags the run adds, the prompt as `<prompt>`, and `base_url` from the profile key or the tool's base URL key in the environment. Every outcome under `--json` is one JSON object on stdout, the dry run and configuration errors included.
+- Hide the value of an environment key whose name contains `AUTHORIZATION` in dry runs.
 - Share one path-confinement helper and one atomic-replace writer across adopt, deploy, doctor, the review record, and the bench writers.
 - Sort two glossary terms that share a label by kind, the class first, then by name, so `rune spec glossary` keeps one order whatever the order of the ontology file.
 - Run the Vale hook with `--no-global`, so the guarded gate reads the repository's style alone and a rule in the machine's global config cannot fail or mask it.
@@ -230,6 +236,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Fix `rune run` and `rune launch` hanging or exiting 1 when another harness starts them: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_TMPDIR`, `CLAUDE_PREVIEW_*`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`) leave the child's environment before the route's environment applies, and a route that sets an Anthropic or OpenAI endpoint without a credential of that family withholds the inherited one.
+- Fix `rune run --clean` for grok refusing to start without `~/.grok/auth.json`, although the route authenticates through its environment.
+- Fix claude in `rune run --mode workspace-write` editing but never running a command: the run names its allowed tools (`Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash`) and sends one `--settings` object that turns on Claude Code's sandbox with `autoAllowBashIfSandboxed`, merged with the profile's kept settings keys.
+- Fix the drop warning for a codex `model` config key or a claude `model` settings key whose value equals the model the run passes.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.
