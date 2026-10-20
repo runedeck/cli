@@ -8,11 +8,12 @@ The parent-session variables are the ones a harness sets for its own children, n
 
 | Family | Removed |
 | --- | --- |
-| Claude Code and its desktop and SDK hosts | `CLAUDECODE`, every `CLAUDE_CODE_*`, every `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_TMPDIR`, every `CLAUDE_PREVIEW_*` |
-| Codex | `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID` |
+| Claude Code and its desktop host, by exact name | `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, `CLAUDE_CODE_SIMPLE`, `CLAUDE_CODE_DESKTOP_APP_VERSION`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_TMPDIR`, `CLAUDE_CODE_ACCOUNT_UUID`, `CLAUDE_CODE_ORGANIZATION_UUID`, `CLAUDE_CODE_USER_EMAIL`, `CLAUDE_CODE_OAUTH_SCOPES`, `CLAUDE_CODE_TERMINAL_MCP_TOOLS`, `CLAUDE_CODE_STARTUP_FAILURE_RESULTS`, `CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES`, `CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL`, `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`, `CLAUDE_CODE_EAGER_FLUSH`, `CLAUDE_CODE_DISABLE_CRON`, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, `CLAUDE_CODE_TMUX_TRUECOLOR`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_TMPDIR` |
+| Claude SDK and preview hosts, by prefix | every `CLAUDE_AGENT_SDK_*`, every `CLAUDE_PREVIEW_*` |
+| Codex | `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID` |
 | Rune harness wrappers | `HARNESS_AUTOMATED` (already removed) |
 
-`CLAUDE_CONFIG_DIR` is not on the list: the owner may set it, and the clean run sets it on purpose.
+The Claude names are the ones the desktop app set in a live session on 2026-10-20. They are exact, not a `CLAUDE_CODE_*` prefix, so an owner control with that prefix survives: `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. `CLAUDE_CONFIG_DIR` is not on the list: the owner may set it, and the clean run sets it on purpose.
 
 An endpoint and its credentials form a family: Anthropic (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`) and OpenAI (`OPENAI_BASE_URL`, `OPENAI_API_KEY`). When the route sets any key of a family, every inherited key of that family the route does not set is removed from the child: an inherited credential never reaches a route endpoint, and an inherited endpoint never receives a route credential. An endpoint or credential a claude profile sets through `--settings {"env":{...}}` counts as route-set. When the route sets no key of a family, the inherited keys of that family pass together, so plain `claude` inside the desktop app keeps working through the app's gateway. Grok has no family: the owner's grok profile sets only `GROK_MODELS_BASE_URL` and authenticates with an owner-set key variable in the environment, which must stay inherited.
 
@@ -38,6 +39,6 @@ Under a tmux wrapper the removals travel inside the wrapped command line as `env
 
 ## Risks
 
-- A harness may add a new session variable. The denylist uses prefixes for the Claude family, and a new codex variable is a one-line table change with a test row.
+- A harness may add a new session variable. A new Claude or codex name is a one-line table change with a test row; only the SDK and preview hosts match by prefix.
 - Claude Code's sandbox cannot start inside another Seatbelt sandbox. A nested run then has no shell, and the failure carries the sandbox hint. The owner runs the runner unsandboxed for implementation seats, as today.
 - Removing an inherited Anthropic credential changes a route that relied on the leak. Such a route now fails with the endpoint's own 401, which the failure tail shows, and the profile must name its credential.

@@ -12,23 +12,52 @@
 use crate::cli::launch::check::FAMILIES;
 use std::ffi::OsString;
 
-/// Variables a harness sets for its own children, never ones the owner sets.
-/// `CLAUDE_CONFIG_DIR` is not here: the owner may set it, and the clean run
-/// sets it on purpose.
+/// Variables a harness sets for its own children, never ones the owner
+/// sets. The Claude names are the ones the Claude desktop app set in a
+/// live session; they are exact, so an owner control with the same prefix
+/// (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_CLIENT_CERT`,
+/// `CLAUDE_CODE_MAX_OUTPUT_TOKENS`) survives. `CLAUDE_CONFIG_DIR` is not
+/// here: the owner may set it, and the clean run sets it on purpose.
 const PARENT_SESSION_NAMES: &[&str] = &[
     "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_HOST_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+    "CLAUDE_CODE_SIMPLE",
+    "CLAUDE_CODE_DESKTOP_APP_VERSION",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_TMPDIR",
+    "CLAUDE_CODE_ACCOUNT_UUID",
+    "CLAUDE_CODE_ORGANIZATION_UUID",
+    "CLAUDE_CODE_USER_EMAIL",
+    "CLAUDE_CODE_OAUTH_SCOPES",
+    "CLAUDE_CODE_TERMINAL_MCP_TOOLS",
+    "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
+    "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+    "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL",
+    "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+    "CLAUDE_CODE_EAGER_FLUSH",
+    "CLAUDE_CODE_DISABLE_CRON",
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+    "CLAUDE_CODE_TMUX_TRUECOLOR",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
     "CLAUDE_TMPDIR",
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
     "HARNESS_AUTOMATED",
 ];
 
-/// Families of session variables, matched by prefix: Claude Code and its
-/// desktop and SDK hosts rename and add members between releases.
-const PARENT_SESSION_PREFIXES: &[&str] = &["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "CLAUDE_PREVIEW_"];
+/// Families of session variables matched by prefix: the SDK host and the
+/// preview host name every member after themselves and nothing an owner
+/// sets starts so.
+const PARENT_SESSION_PREFIXES: &[&str] = &["CLAUDE_AGENT_SDK_", "CLAUDE_PREVIEW_"];
 
 /// What the child does not inherit: the parent session's variables found in
 /// this process, and the credentials withheld because the route names an

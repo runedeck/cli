@@ -878,6 +878,7 @@ fn codex_session_variables_leave_the_child() {
         "CODEX_SANDBOX",
         "CODEX_SANDBOX_NETWORK_DISABLED",
         "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
         "HARNESS_AUTOMATED",
         "CODEX_HOME",
     ]);
@@ -890,6 +891,7 @@ fn codex_session_variables_leave_the_child() {
             "CODEX_SANDBOX",
             "CODEX_SANDBOX_NETWORK_DISABLED",
             "CODEX_THREAD_ID",
+            "CODEX_SESSION_ID",
             "HARNESS_AUTOMATED",
         ]
     );
@@ -1014,12 +1016,48 @@ fn native_claude_keeps_the_inherited_endpoint_and_credential_as_one_pair() {
 
 #[test]
 fn route_keys_win_over_the_parent_session() {
-    let parent = keys(&["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_ENTRYPOINT"]);
-    let route = env(&[("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "272000")]);
+    // A profile that sets the scrub to 0 on purpose keeps its value.
+    let parent = keys(&["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "CLAUDE_CODE_ENTRYPOINT"]);
+    let route = env(&[("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "0")]);
 
     let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
 
     assert_eq!(isolation.session, ["CLAUDE_CODE_ENTRYPOINT"]);
+}
+
+#[test]
+fn owner_controls_with_the_claude_code_prefix_survive() {
+    let parent = keys(&[
+        "CLAUDE_CODE_CLIENT_CERT",
+        "CLAUDE_CODE_CLIENT_KEY",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_SIMPLE",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLAUDE_PREVIEW_PORT",
+        "CODEX_SESSION_ID",
+    ]);
+
+    let isolation = super::isolation::isolate(&parent, &[]);
+
+    assert_eq!(
+        isolation.session,
+        [
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_SIMPLE",
+            "CLAUDE_AGENT_SDK_VERSION",
+            "CLAUDE_PREVIEW_PORT",
+            "CODEX_SESSION_ID",
+        ]
+    );
 }
 
 #[test]
