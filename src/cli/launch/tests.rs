@@ -1125,3 +1125,29 @@ fn an_unknown_profile_names_the_known_ones_in_the_message_and_as_a_list() {
     assert_eq!(plain.profiles, None);
     assert_eq!(plain.to_string(), "other");
 }
+
+/// A resolved launch for a bare tool with `rest`, from the default config.
+pub(super) fn resolve_with_config_for_tests(
+    tool: &str,
+    rest: &[OsString],
+    root: &Path,
+) -> ResolvedLaunch {
+    resolve_with_config(
+        tool,
+        rest,
+        root.to_path_buf(),
+        root.to_path_buf(),
+        ontology::ResolvedConfig {
+            deck: None,
+            env: None,
+            ontology: ontology::ResolvedOntology::default(),
+            extensions: Vec::new(),
+            setup: None,
+            launch: Launch::default(),
+            bench: Vec::new(),
+
+            theme: None,
+        },
+    )
+    .expect("resolved launch")
+}

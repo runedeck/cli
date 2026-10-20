@@ -1,9 +1,9 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args,
-    invoke_surface, output_tail, parent_session_isolation, planned_request, prepare_clean_state,
-    route_keys, session_name_flag,
+    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, effective_env,
+    filter_surface_args, invoke_surface, output_tail, parent_session_isolation, planned_request,
+    prepare_clean_state, route_keys, session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -282,7 +282,15 @@ fn dry_run_outcome(
         .chain(filter_warnings)
         .cloned()
         .collect();
-    let base_url = resolved.endpoint(&planned.env, &launch::inherited_env(&isolation.removals()));
+    // The endpoint from the child's view: the planned process env, then the
+    // settings env, which claude applies over it.
+    let mut effective = planned.env.clone();
+    effective.extend(
+        effective_env(invocation)
+            .into_iter()
+            .skip(invocation.env.len()),
+    );
+    let base_url = resolved.endpoint(&effective, &launch::inherited_env(&isolation.removals()));
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
     let text = format!(
         "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",

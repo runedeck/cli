@@ -196,26 +196,126 @@ fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<&'static s
 }
 
 /// The keys the route sets for the child: its environment, and for claude
-/// the `env` keys of a profile's `--settings` object, which claude exports
-/// into its own process the same way.
+/// the `env` keys of the one settings object the child reads, which claude
+/// exports into its own process the same way.
 pub(crate) fn route_keys(invocation: &SurfaceInvocation) -> Vec<OsString> {
-    let mut keys: Vec<OsString> = invocation.env.iter().map(|(key, _)| key.clone()).collect();
-    if invocation.surface == Surface::Claude {
-        keys.extend(settings_env_keys(&invocation.extra_args));
-    }
-    keys
+    effective_env(invocation)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect()
 }
 
-/// The `env` keys of every inline `--settings` object in `args`, in the
-/// `--settings <json>` and `--settings=<json>` forms.
-pub(crate) fn settings_env_keys(args: &[OsString]) -> Vec<OsString> {
-    settings_objects(args)
+/// The environment as the child sees it: the route's process env, then for
+/// claude the `env` of the one settings object, which wins where they
+/// overlap because claude applies it inside its own process.
+pub(crate) fn effective_env(invocation: &SurfaceInvocation) -> Vec<(OsString, OsString)> {
+    let mut env = invocation.env.clone();
+    if invocation.surface == Surface::Claude {
+        env.extend(settings_env(&invocation.extra_args));
+    }
+    env
+}
+
+/// The `env` pairs of the one settings object the inline `--settings`
+/// arguments in `args` merge into. A later object replaces `env` whole, as
+/// claude's own merge does, so a key from an earlier object is not set.
+pub(crate) fn settings_env(args: &[OsString]) -> Vec<(OsString, OsString)> {
+    merged_settings(args)
         .0
-        .iter()
-        .filter_map(|settings| settings.get("env"))
-        .filter_map(serde_json::Value::as_object)
-        .flat_map(|env| env.keys().map(OsString::from))
-        .collect()
+        .and_then(|settings| settings.get("env").cloned())
+        .and_then(|env| match env {
+            serde_json::Value::Object(env) => Some(env),
+            _ => None,
+        })
+        .map(|env| {
+            env.into_iter()
+                .map(|(key, value)| {
+                    let value = match value {
+                        serde_json::Value::String(text) => text,
+                        other => other.to_string(),
+                    };
+                    (OsString::from(key), OsString::from(value))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every inline `--settings` object in `args` merged in order, a later
+/// object replacing a key whole, and the arguments that are not one. A
+/// value that is not a JSON object is skipped; `None` when there is none.
+fn merged_settings(
+    args: &[OsString],
+) -> (
+    Option<serde_json::Map<String, serde_json::Value>>,
+    Vec<OsString>,
+) {
+    let (objects, remaining) = settings_objects(args);
+    if objects.is_empty() {
+        return (None, remaining);
+    }
+    let mut merged = serde_json::Map::new();
+    for settings in objects {
+        merged.extend(settings);
+    }
+    (Some(merged), remaining)
+}
+
+/// Every credential-named key's value inside `value`, at any depth, as
+/// text: the values a settings object or a config table could leak.
+fn structured_credential_values(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Object(object) => object
+            .iter()
+            .flat_map(|(key, value)| {
+                if crate::cli::launch::is_credential_env_key(key) {
+                    match value {
+                        serde_json::Value::String(text) => vec![text.clone()],
+                        serde_json::Value::Null => Vec::new(),
+                        other => vec![other.to_string()],
+                    }
+                } else {
+                    structured_credential_values(value)
+                }
+            })
+            .collect(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .flat_map(structured_credential_values)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The values of codex `-c key=value` assignments in `args` whose key path
+/// holds a credential-named segment, as the TOML string when the value is
+/// one, else as written.
+fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let text = args[index].to_string_lossy();
+        let assignment = if text == "-c" || text == "--config" {
+            index += 1;
+            args.get(index)
+                .map(|value| value.to_string_lossy().into_owned())
+        } else if let Some(rest) = text.strip_prefix("--config=") {
+            Some(rest.to_string())
+        } else {
+            text.strip_prefix("-c")
+                .map(|rest| rest.strip_prefix('=').unwrap_or(rest).to_string())
+        };
+        if let Some(assignment) = assignment
+            && let Some((key, value)) = assignment.split_once('=')
+            && key
+                .split('.')
+                .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()))
+        {
+            values.push(codex_config_string(value));
+        }
+        index += 1;
+    }
+    values
 }
 
 /// Every inline `--settings` object in `args`, and the arguments that are
@@ -253,13 +353,27 @@ fn settings_objects(
 }
 
 /// Every credential value the child could echo, longest first so a value
-/// that contains another is replaced whole: the route's own, and the
-/// inherited ones the isolation leaves in place.
+/// that contains another is replaced whole: the effective environment's,
+/// the inherited ones the isolation leaves in place, and the ones inside
+/// the retained structured arguments (the claude settings object, codex
+/// `-c` assignments).
 pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
     let removals = parent_session_isolation(&route_keys(invocation)).removals();
     let inherited = inherited_env(&removals);
-    let mut secrets = credential_values(&invocation.env);
+    let mut secrets = credential_values(&effective_env(invocation));
     secrets.extend(credential_values(&inherited));
+    match invocation.surface {
+        Surface::Claude => {
+            if let (Some(settings), _) = merged_settings(&invocation.extra_args) {
+                secrets.extend(structured_credential_values(&serde_json::Value::Object(
+                    settings,
+                )));
+            }
+        }
+        Surface::Codex => secrets.extend(assignment_credential_values(&invocation.extra_args)),
+        Surface::Agy | Surface::Grok | Surface::Opencode => {}
+    }
+    secrets.retain(|secret| !secret.is_empty());
     secrets.sort_unstable_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));
     secrets.dedup();
     secrets
@@ -749,11 +863,13 @@ fn claude_settings_key(option: &str, json: &str, model: Option<&str>) -> Keyed {
     let Ok(serde_json::Value::Object(mut settings)) =
         serde_json::from_str::<serde_json::Value>(json)
     else {
+        // A settings file is not filtered, so it is not loaded: an endpoint or
+        // credential inside it never reaches the child, and the seat runs on
+        // the route's or the inherited endpoint instead. Said out loud.
         return Some((
             None,
             vec![format!(
-                "automated claude execution dropped --settings {}: only an inline JSON object is filtered",
-                shown(json)
+                "automated claude execution dropped --settings {REDACTED_VALUE}: only an inline JSON object is filtered; an endpoint or credential in that file does not apply, so the run uses the route's or the inherited endpoint"
             )],
         ));
     };
@@ -1321,11 +1437,8 @@ const WORKSPACE_WRITE_SETTINGS: &str =
 /// profile's kept keys (filtered by [`claude_settings_key`]) and the run's
 /// own keys merge into one object; the run's keys win.
 fn claude_settings(invocation: &SurfaceInvocation) -> (Option<String>, Vec<OsString>) {
-    let (objects, remaining) = settings_objects(&invocation.extra_args);
-    let mut merged = serde_json::Map::new();
-    for settings in objects {
-        merged.extend(settings);
-    }
+    let (merged, remaining) = merged_settings(&invocation.extra_args);
+    let mut merged = merged.unwrap_or_default();
     if invocation.mode == AccessMode::WorkspaceWrite
         && let Ok(serde_json::Value::Object(own)) = serde_json::from_str(WORKSPACE_WRITE_SETTINGS)
     {

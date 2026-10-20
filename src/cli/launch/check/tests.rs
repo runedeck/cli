@@ -398,3 +398,27 @@ fn report_serializes_with_the_endpoint_state() {
     assert_eq!(json["endpoints"][0]["served"][0], "kimi-k3");
     assert_eq!(json["endpoints"][0]["base_url"], "http://proxy.test");
 }
+
+#[test]
+fn a_claude_settings_env_sets_the_endpoint_and_credential_the_check_reads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = super::super::tests::resolve_with_config_for_tests(
+        "claude",
+        &[
+            std::ffi::OsString::from("--settings"),
+            std::ffi::OsString::from(
+                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/settings","ANTHROPIC_AUTH_TOKEN":"fake-settings-secret"}}"#,
+            ),
+        ],
+        dir.path(),
+    );
+
+    let checks = plan_checks(&resolved, None);
+
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(checks[0].base_url, "http://127.0.0.1:9/settings");
+    assert_eq!(
+        checks[0].credential_key.as_deref(),
+        Some("ANTHROPIC_AUTH_TOKEN")
+    );
+}

@@ -1212,3 +1212,37 @@ exit 1
         ))
         .stderr(predicate::str::contains("stderr tail:\n  a cache warning"));
 }
+
+#[test]
+fn dry_run_endpoint_prefers_the_settings_env_over_the_process_env() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      settled:\n        env:\n",
+            "          ANTHROPIC_BASE_URL: http://127.0.0.1:9/process\n",
+            "        args:\n          - '--settings'\n",
+            "          - '{\"env\":{\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:9/settings\"}}'\n",
+        ),
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+
+    rune(home.path())
+        .args(["run", "settled@claude", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/settings",
+        ));
+    rune(home.path())
+        .args(["launch", "settled@claude", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/settings",
+        ));
+}

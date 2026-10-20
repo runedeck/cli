@@ -1018,6 +1018,103 @@ fn route_credential_without_an_endpoint_withholds_the_inherited_endpoint() {
 }
 
 #[test]
+fn a_later_settings_object_replaces_env_whole_in_the_childs_view() {
+    let claude = invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"fake-early-secret"}}"#,
+            "--settings",
+            r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/late"},"apiKeyHelper":"echo fake-helper-secret"}"#,
+        ],
+    );
+    let keys = route_keys(&claude);
+    assert!(
+        keys.contains(&OsString::from("ANTHROPIC_BASE_URL")),
+        "{keys:?}"
+    );
+    assert!(
+        !keys.contains(&OsString::from("ANTHROPIC_AUTH_TOKEN")),
+        "{keys:?}"
+    );
+    assert_eq!(
+        settings_env(&claude.extra_args),
+        env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/late")])
+    );
+    assert_eq!(
+        launch::env_value(&effective_env(&claude), "ANTHROPIC_BASE_URL").as_deref(),
+        Some("http://127.0.0.1:9/late")
+    );
+}
+
+#[test]
+fn child_secrets_include_credentials_inside_retained_structured_arguments() {
+    let mut claude = invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"apiKeyHelper":"echo fake-helper-secret","env":{"X_TOKEN":"fake-settings-secret","X":"1"},"hooks":{"PreToolUse":[{"command":"fake-hook-secret"}]}}"#,
+        ],
+    );
+    claude.env = env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]);
+    let secrets = child_secrets(&claude);
+    assert!(
+        secrets.contains(&"echo fake-helper-secret".to_string()),
+        "{secrets:?}"
+    );
+    assert!(
+        secrets.contains(&"fake-settings-secret".to_string()),
+        "{secrets:?}"
+    );
+    assert!(!secrets.contains(&"1".to_string()), "{secrets:?}");
+
+    let codex = invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            "http_headers.Authorization=\"Bearer fake-header-secret\"",
+            "--config=experimental_bearer_token=\"fake-bearer-secret\"",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+        ],
+    );
+    let secrets = child_secrets(&codex);
+    assert!(
+        secrets.contains(&"Bearer fake-header-secret".to_string()),
+        "{secrets:?}"
+    );
+    assert!(
+        secrets.contains(&"fake-bearer-secret".to_string()),
+        "{secrets:?}"
+    );
+    assert!(!secrets.contains(&"high".to_string()), "{secrets:?}");
+}
+
+#[test]
+fn a_settings_file_path_warning_says_the_run_uses_the_inherited_endpoint() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Claude,
+        &["--settings", "/home/me/gateway-settings.json"],
+    ));
+    assert_eq!(filtered.kept, [] as [std::ffi::OsString; 0]);
+    assert!(
+        filtered.warnings[0].contains("dropped --settings <redacted>"),
+        "{}",
+        filtered.warnings[0]
+    );
+    assert!(
+        filtered.warnings[0].contains("the run uses the route's or the inherited endpoint"),
+        "{}",
+        filtered.warnings[0]
+    );
+    assert!(
+        !filtered.warnings[0].contains("gateway-settings"),
+        "{}",
+        filtered.warnings[0]
+    );
+}
+
+#[test]
 fn settings_env_keys_count_as_route_keys_for_claude() {
     let mut claude = invocation(
         Surface::Claude,
@@ -1034,8 +1131,10 @@ fn settings_env_keys_count_as_route_keys_for_claude() {
         keys.contains(&OsString::from("ANTHROPIC_MODEL")),
         "{keys:?}"
     );
+    // The attached object comes later and replaces `env` whole, as claude's
+    // own merge does: only its key is route-set.
     assert!(
-        keys.contains(&OsString::from("ANTHROPIC_BASE_URL")),
+        !keys.contains(&OsString::from("ANTHROPIC_BASE_URL")),
         "{keys:?}"
     );
     assert!(keys.contains(&OsString::from("OPENAI_API_KEY")), "{keys:?}");

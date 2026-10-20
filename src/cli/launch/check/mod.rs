@@ -89,7 +89,10 @@ pub(crate) fn plan_checks(
     resolved: &ResolvedLaunch,
     model_override: Option<&str>,
 ) -> Vec<EndpointCheck> {
-    let env = &resolved.display_env;
+    // The child's view: a claude settings object's `env` wins over the
+    // process env, so the check reads the same endpoint and credential.
+    let effective = resolved.effective_env();
+    let env = &effective;
     let mut checks: Vec<EndpointCheck> = Vec::new();
     for family in FAMILIES {
         // The middleware base URL (`plan.base_url`) reaches the tool through

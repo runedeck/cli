@@ -233,7 +233,7 @@ impl ResolvedLaunch {
         isolation: &surface::Isolation,
         inherited: &[(OsString, OsString)],
     ) -> String {
-        let base_url = self.endpoint(&self.display_env, inherited);
+        let base_url = self.endpoint(&self.effective_env(), inherited);
         self.format_dry_run_with(&DryRunParts {
             tool: &self.tool,
             argv: &self.argv,
@@ -272,9 +272,15 @@ impl ResolvedLaunch {
     }
 
     /// The keys the route sets for the child: the final env, and for claude
-    /// the `env` keys of a profile's `--settings` object.
+    /// the `env` keys of the one settings object in the profile arguments.
     pub(crate) fn route_keys(&self) -> Vec<OsString> {
         route_keys_of(&self.tool, &self.display_env, &self.argv)
+    }
+
+    /// The environment as the child sees it: the final env, then for claude
+    /// the `env` of the one settings object, which wins where they overlap.
+    pub(crate) fn effective_env(&self) -> Vec<(OsString, OsString)> {
+        effective_env_of(&self.tool, &self.display_env, &self.argv)
     }
 
     pub(crate) fn pre_steps(&self) -> &[PreStep] {
@@ -1074,11 +1080,21 @@ pub(crate) fn inherited_env(removals: &[OsString]) -> Vec<(OsString, OsString)> 
 }
 
 fn route_keys_of(tool: &str, env: &[(OsString, OsString)], args: &[OsString]) -> Vec<OsString> {
-    let mut keys = env_keys(env);
+    env_keys(&effective_env_of(tool, env, args))
+}
+
+/// The environment as the child sees it: `env`, then for claude the `env`
+/// of the one settings object in `args`, which wins where they overlap.
+fn effective_env_of(
+    tool: &str,
+    env: &[(OsString, OsString)],
+    args: &[OsString],
+) -> Vec<(OsString, OsString)> {
+    let mut effective = env.to_vec();
     if tool == "claude" {
-        keys.extend(surface::settings_env_keys(args));
+        effective.extend(surface::settings_env(args));
     }
-    keys
+    effective
 }
 
 /// The last value of `key` in `env`, the one the child sees.
