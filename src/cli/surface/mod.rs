@@ -862,9 +862,60 @@ fn process_request(
             }
         }
     }
+    if invocation.surface == Surface::Opencode
+        && let Some(permission) = opencode_permission(invocation)
+    {
+        request.env.push((
+            OsString::from("OPENCODE_PERMISSION"),
+            OsString::from(permission),
+        ));
+    }
     request.stdin = stdin;
     request.timeout = invocation.timeout;
     request
+}
+
+/// The placeholder the dry run prints for the prompt.
+pub(crate) const PROMPT_PLACEHOLDER: &str = "<prompt>";
+/// The placeholder for a system prompt the user supplied; the clean
+/// preamble, a fixed sentence, prints as is.
+const SYSTEM_PROMPT_PLACEHOLDER: &str = "<system-prompt>";
+/// The placeholder for the scratch directory a surface writes beside its
+/// run: codex's final message, grok's prompt file.
+const SCRATCH_PLACEHOLDER: &str = "<scratch>";
+
+/// The process the surface would start, for the dry run: the same argument
+/// builders the spawn uses, so the printed argv cannot drift from the
+/// started one, with the prompt, the system prompt and the scratch paths
+/// as placeholders. `stdin` is set where the prompt travels that way.
+pub(crate) fn planned_request(
+    invocation: &SurfaceInvocation,
+) -> Result<ProcessRequest, SurfaceFailure> {
+    refuse_answer_only(invocation)?;
+    let planned = SurfaceInvocation {
+        prompt: PROMPT_PLACEHOLDER.to_string(),
+        system_prompt: if invocation.system_prompt.trim().is_empty() {
+            String::new()
+        } else {
+            SYSTEM_PROMPT_PLACEHOLDER.to_string()
+        },
+        ..invocation.clone()
+    };
+    let scratch = Path::new(SCRATCH_PLACEHOLDER);
+    let (args, stdin) = match planned.surface {
+        Surface::Claude => (
+            claude_args(&planned),
+            Some(format!("{PROMPT_PLACEHOLDER}\n").into_bytes()),
+        ),
+        Surface::Codex => (
+            codex_args(&planned, &scratch.join("last-message.txt")),
+            Some(format!("{}\n", combined_prompt(&planned)).into_bytes()),
+        ),
+        Surface::Grok => (grok_args(&planned, &scratch.join("prompt.txt")), None),
+        Surface::Agy => (agy_args(&planned), None),
+        Surface::Opencode => (opencode_args(&planned), None),
+    };
+    Ok(process_request(&planned, args, stdin))
 }
 
 fn require_success(output: ProcessOutput) -> Result<ProcessOutput, SurfaceFailure> {
@@ -1058,40 +1109,44 @@ fn read_codex_final_message(
         })
 }
 
+fn codex_args(invocation: &SurfaceInvocation, final_message_path: &Path) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("exec"),
+        OsString::from("--json"),
+        OsString::from("--ephemeral"),
+        OsString::from("--skip-git-repo-check"),
+        OsString::from("--color"),
+        OsString::from("never"),
+        OsString::from("-C"),
+        invocation.repository.as_os_str().to_os_string(),
+        OsString::from("-s"),
+        OsString::from(match invocation.mode {
+            AccessMode::ReadOnly | AccessMode::AnswerOnly => "read-only",
+            AccessMode::WorkspaceWrite => "workspace-write",
+        }),
+    ];
+    if invocation.clean_state_root.is_some() {
+        args.push(OsString::from("--ignore-rules"));
+    }
+    if let Some(model) = &invocation.model {
+        args.push(OsString::from("-m"));
+        args.push(OsString::from(model));
+    }
+    args.extend(invocation.extra_args.clone());
+    args.push(OsString::from("-o"));
+    args.push(final_message_path.as_os_str().to_os_string());
+    args.push(OsString::from("-"));
+    args
+}
+
 fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
     refuse_answer_only(invocation)?;
     let scratch = create_scratch_directory("codex")?;
     let result = (|| {
         let final_message_path = scratch.join("last-message.txt");
-        let mut args = vec![
-            OsString::from("exec"),
-            OsString::from("--json"),
-            OsString::from("--ephemeral"),
-            OsString::from("--skip-git-repo-check"),
-            OsString::from("--color"),
-            OsString::from("never"),
-            OsString::from("-C"),
-            invocation.repository.as_os_str().to_os_string(),
-            OsString::from("-s"),
-            OsString::from(match invocation.mode {
-                AccessMode::ReadOnly | AccessMode::AnswerOnly => "read-only",
-                AccessMode::WorkspaceWrite => "workspace-write",
-            }),
-        ];
-        if invocation.clean_state_root.is_some() {
-            args.push(OsString::from("--ignore-rules"));
-        }
-        if let Some(model) = &invocation.model {
-            args.push(OsString::from("-m"));
-            args.push(OsString::from(model));
-        }
-        args.extend(invocation.extra_args.clone());
-        args.push(OsString::from("-o"));
-        args.push(final_message_path.as_os_str().to_os_string());
-        args.push(OsString::from("-"));
         let output = run_process_request(&process_request(
             invocation,
-            args,
+            codex_args(invocation, &final_message_path),
             Some(format!("{}\n", combined_prompt(invocation)).into_bytes()),
         ))?;
         let events: Vec<CodexEvent> = parse_jsonl(&output.stdout);
@@ -1224,8 +1279,7 @@ fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFa
     finish_scratch(result, &scratch)
 }
 
-fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    refuse_answer_only(invocation)?;
+fn agy_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("--sandbox"),
         OsString::from("--mode"),
@@ -1250,8 +1304,15 @@ fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFai
         args.push(OsString::from(format!("{}ms", timeout.as_millis())));
     }
     args.extend(invocation.extra_args.clone());
+    args
+}
+
+fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+    refuse_answer_only(invocation)?;
     let output = require_success(run_process_request(&process_request(
-        invocation, args, None,
+        invocation,
+        agy_args(invocation),
+        None,
     ))?)?;
     let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
         SurfaceFailure::Reported(format!("agy returned invalid JSON output: {error}"))
@@ -1305,25 +1366,24 @@ fn opencode_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     args
 }
 
+/// The `OPENCODE_PERMISSION` value for the mode: every tool denied for an
+/// answer-only run, the readers alone for a read-only one (plus `skill`
+/// outside a clean run), and nothing for workspace-write.
+fn opencode_permission(invocation: &SurfaceInvocation) -> Option<&'static str> {
+    match invocation.mode {
+        AccessMode::AnswerOnly => Some(r#"{"*":"deny"}"#),
+        AccessMode::ReadOnly if invocation.clean_state_root.is_some() => Some(
+            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow"}"#,
+        ),
+        AccessMode::ReadOnly => Some(
+            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow","skill":"allow"}"#,
+        ),
+        AccessMode::WorkspaceWrite => None,
+    }
+}
+
 fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    let mut request = process_request(invocation, opencode_args(invocation), None);
-    if invocation.mode == AccessMode::AnswerOnly {
-        request.env.push((
-            OsString::from("OPENCODE_PERMISSION"),
-            OsString::from(r#"{"*":"deny"}"#),
-        ));
-    }
-    if invocation.mode == AccessMode::ReadOnly {
-        let permissions = if invocation.clean_state_root.is_some() {
-            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow"}"#
-        } else {
-            r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow","skill":"allow"}"#
-        };
-        request.env.push((
-            OsString::from("OPENCODE_PERMISSION"),
-            OsString::from(permissions),
-        ));
-    }
+    let request = process_request(invocation, opencode_args(invocation), None);
     let output = require_success(run_process_request(&request)?)?;
     let events: Vec<OpencodeEvent> = parse_jsonl(&output.stdout);
     if let Some(message) = opencode_session_error(&events) {

@@ -1097,3 +1097,118 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
     };
     assert_eq!(plain.hint(), None);
 }
+
+#[test]
+fn planned_request_uses_the_spawn_builders_with_placeholders() {
+    let mut claude = invocation(Surface::Claude, &["--verbose"]);
+    claude.system_prompt = "Use the rule.".to_string();
+    let planned = planned_request(&claude).expect("claude plan");
+    let mut expected = invocation(Surface::Claude, &["--verbose"]);
+    expected.prompt = "<prompt>".to_string();
+    expected.system_prompt = "<system-prompt>".to_string();
+    assert_eq!(planned.args, claude_args(&expected));
+    assert_eq!(planned.stdin, Some(b"<prompt>\n".to_vec()));
+    assert!(
+        !planned
+            .args
+            .iter()
+            .any(|arg| arg.to_string_lossy().contains("Use the rule")),
+        "{:?}",
+        planned.args
+    );
+
+    let grok = planned_request(&invocation(Surface::Grok, &[])).expect("grok plan");
+    assert!(
+        strings(&grok.args)
+            .windows(2)
+            .any(|pair| pair == ["--prompt-file", "<scratch>/prompt.txt"]),
+        "{:?}",
+        grok.args
+    );
+    assert_eq!(grok.stdin, None);
+
+    let agy = planned_request(&invocation(Surface::Agy, &[])).expect("agy plan");
+    assert!(
+        strings(&agy.args)
+            .windows(2)
+            .any(|pair| pair == ["--print", "<prompt>"]),
+        "{:?}",
+        agy.args
+    );
+
+    let codex = planned_request(&invocation(Surface::Codex, &[])).expect("codex plan");
+    assert!(
+        strings(&codex.args)
+            .windows(2)
+            .any(|pair| pair == ["-o", "<scratch>/last-message.txt"]),
+        "{:?}",
+        codex.args
+    );
+    assert_eq!(codex.stdin, Some(b"<prompt>\n".to_vec()));
+
+    let opencode = planned_request(&invocation(Surface::Opencode, &[])).expect("opencode plan");
+    assert!(
+        opencode
+            .env
+            .iter()
+            .any(|(key, _)| key == "OPENCODE_PERMISSION"),
+        "{:?}",
+        opencode.env
+    );
+}
+
+#[test]
+fn planned_request_refuses_what_the_run_refuses() {
+    let mut codex = invocation(Surface::Codex, &[]);
+    codex.mode = AccessMode::AnswerOnly;
+    let refused = planned_request(&codex).expect_err("answer-only codex");
+    assert!(
+        refused
+            .to_string()
+            .contains("answer-only mode needs a harness"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn opencode_permission_follows_the_mode() {
+    let mut opencode = invocation(Surface::Opencode, &[]);
+    assert!(
+        process_request(&opencode, Vec::new(), None)
+            .env
+            .contains(&(
+                OsString::from("OPENCODE_PERMISSION"),
+                OsString::from(
+                    r#"{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","lsp":"allow","skill":"allow"}"#
+                )
+            ))
+    );
+    opencode.mode = AccessMode::AnswerOnly;
+    assert!(process_request(&opencode, Vec::new(), None).env.contains(&(
+        OsString::from("OPENCODE_PERMISSION"),
+        OsString::from(r#"{"*":"deny"}"#)
+    )));
+    opencode.mode = AccessMode::WorkspaceWrite;
+    assert!(
+        !process_request(&opencode, Vec::new(), None)
+            .env
+            .iter()
+            .any(|(key, _)| key == "OPENCODE_PERMISSION")
+    );
+}
+
+#[test]
+fn isolation_lines_name_the_withheld_credential_and_its_endpoint() {
+    let parent = keys(&["CLAUDECODE", "ANTHROPIC_API_KEY"]);
+    let route = env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]);
+
+    let lines = super::isolation::isolate(&parent, &route).lines();
+
+    assert_eq!(
+        lines,
+        [
+            "CLAUDECODE",
+            "ANTHROPIC_API_KEY (inherited credential withheld: the route sets ANTHROPIC_BASE_URL without one)",
+        ]
+    );
+}

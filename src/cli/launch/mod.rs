@@ -50,7 +50,8 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         return Ok(report.exit_code);
     }
     if resolved.dry_run {
-        println!("{}", resolved.format_dry_run());
+        let isolation = surface::parent_session_isolation(&resolved.env);
+        println!("{}", resolved.format_dry_run(&isolation.lines()));
         return Ok(0);
     }
     for warning in &resolved.warnings {
@@ -156,6 +157,15 @@ pub(crate) enum ModelSource {
     Config,
 }
 
+impl ModelSource {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::BuiltIn => "built-in",
+            Self::Config => "config",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedModel {
     pub(crate) alias: String,
@@ -185,16 +195,44 @@ pub(crate) struct ResolvedLaunch {
 }
 
 impl ResolvedLaunch {
-    pub(crate) fn format_dry_run(&self) -> String {
-        format_resolved_dry_run(self)
+    /// The launch plan as text, with `env_removed` as the keys the child
+    /// does not inherit.
+    pub(crate) fn format_dry_run(&self, env_removed: &[String]) -> String {
+        self.format_dry_run_with(&DryRunParts {
+            tool: &self.tool,
+            argv: &self.argv,
+            env: &self.display_env,
+            env_removed,
+            base_url: self.base_url.as_deref(),
+            model: self.model.as_ref(),
+            model_override: None,
+            warnings: &self.warnings,
+        })
     }
 
-    pub(crate) fn format_dry_run_with_overrides(
-        &self,
-        argv: &[OsString],
-        model: Option<&str>,
-    ) -> String {
-        format_resolved_dry_run_with_overrides(self, argv, model)
+    /// The plan as text from `parts`, with this launch's wrappers and
+    /// pre-steps: `rune run` passes the argv and environment its surface
+    /// builds.
+    pub(crate) fn format_dry_run_with(&self, parts: &DryRunParts<'_>) -> String {
+        format_dry_run_parts(parts, &self.wrap, &self.pre)
+    }
+
+    /// The endpoint the child would reach: the plan's base URL, or the
+    /// value of the tool's base URL key in `env`.
+    pub(crate) fn endpoint(&self, env: &[(OsString, OsString)]) -> Option<String> {
+        self.base_url
+            .clone()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.base_url_env
+                    .as_deref()
+                    .and_then(|key| env_value(env, key))
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
+    pub(crate) fn pre_steps(&self) -> &[PreStep] {
+        &self.pre
     }
 
     pub(crate) fn run_pre_steps(&self) {
@@ -225,7 +263,7 @@ struct LaunchPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct PreStep {
+pub(crate) struct PreStep {
     name: String,
     host: String,
     port: u16,
@@ -938,12 +976,42 @@ fn is_sensitive_env_key(key: &str) -> bool {
         .any(|sensitive| sensitive.eq_ignore_ascii_case(key))
 }
 
-const CREDENTIAL_KEY_MARKERS: &[&str] = &["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"];
+const CREDENTIAL_KEY_MARKERS: &[&str] = &[
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "CREDENTIAL",
+    "AUTHORIZATION",
+];
 const NON_CREDENTIAL_ENV_KEYS: &[&str] = &["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
 
-const REDACTED_VALUE: &str = "<redacted>";
+pub(crate) const REDACTED_VALUE: &str = "<redacted>";
 
-fn is_credential_env_key(key: &str) -> bool {
+/// The last value of `key` in `env`, the one the child sees.
+pub(crate) fn env_value(env: &[(OsString, OsString)], key: &str) -> Option<String> {
+    env.iter()
+        .rev()
+        .find(|(name, _)| name.to_string_lossy() == key)
+        .map(|(_, value)| value.to_string_lossy().into_owned())
+}
+
+/// The environment as printable pairs, every credential value hidden.
+pub(crate) fn redacted_env(env: &[(OsString, OsString)]) -> Vec<(String, String)> {
+    env.iter()
+        .map(|(key, value)| {
+            let key = key.to_string_lossy().into_owned();
+            let value = if is_credential_env_key(&key) {
+                REDACTED_VALUE.to_string()
+            } else {
+                value.to_string_lossy().into_owned()
+            };
+            (key, value)
+        })
+        .collect()
+}
+
+pub(crate) fn is_credential_env_key(key: &str) -> bool {
     if NON_CREDENTIAL_ENV_KEYS
         .iter()
         .any(|non_credential| non_credential.eq_ignore_ascii_case(key))
@@ -956,7 +1024,7 @@ fn is_credential_env_key(key: &str) -> bool {
         .any(|marker| upper.contains(marker))
 }
 
-fn credential_values(env: &[(OsString, OsString)]) -> Vec<String> {
+pub(crate) fn credential_values(env: &[(OsString, OsString)]) -> Vec<String> {
     env.iter()
         .filter(|(key, _)| is_credential_env_key(&key.to_string_lossy()))
         .map(|(_, value)| value.to_string_lossy().into_owned())
@@ -964,7 +1032,7 @@ fn credential_values(env: &[(OsString, OsString)]) -> Vec<String> {
         .collect()
 }
 
-fn redact_credentials(text: &str, secrets: &[String]) -> String {
+pub(crate) fn redact_credentials(text: &str, secrets: &[String]) -> String {
     secrets.iter().fold(text.to_string(), |redacted, secret| {
         redacted.replace(secret.as_str(), REDACTED_VALUE)
     })
@@ -1177,72 +1245,66 @@ fn is_listening(host: &str, port: u16) -> bool {
         .any(|address| TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok())
 }
 
-fn format_resolved_dry_run(resolved: &ResolvedLaunch) -> String {
-    format_resolved_dry_run_with_overrides(resolved, &resolved.argv, None)
+/// The sections of a dry run. `rune launch` fills them from the resolved
+/// plan; `rune run` replaces the argv, the environment and the endpoint
+/// with the ones its surface builds, and adds the keys it removes.
+pub(crate) struct DryRunParts<'a> {
+    pub(crate) tool: &'a str,
+    pub(crate) argv: &'a [OsString],
+    pub(crate) env: &'a [(OsString, OsString)],
+    pub(crate) env_removed: &'a [String],
+    pub(crate) base_url: Option<&'a str>,
+    pub(crate) model: Option<&'a ResolvedModel>,
+    pub(crate) model_override: Option<&'a str>,
+    pub(crate) warnings: &'a [String],
 }
 
-fn format_resolved_dry_run_with_overrides(
-    resolved: &ResolvedLaunch,
-    argv: &[OsString],
-    model_override: Option<&str>,
-) -> String {
-    format_dry_run_parts(
-        &resolved.tool,
-        argv,
-        &resolved.display_env,
-        resolved.base_url.as_deref(),
-        &resolved.wrap,
-        &resolved.pre,
-        &resolved.warnings,
-        resolved.model.as_ref(),
-        model_override,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn format_dry_run_parts(
-    tool: &str,
-    argv: &[OsString],
-    env: &[(OsString, OsString)],
-    base_url: Option<&str>,
-    wrap: &[Vec<OsString>],
-    pre: &[PreStep],
-    warnings: &[String],
+/// The model lines of a dry run: alias, id, context and source, from the
+/// `--model` override or the route.
+pub(crate) fn model_lines(
     model: Option<&ResolvedModel>,
     model_override: Option<&str>,
-) -> String {
-    let secrets = credential_values(env);
-    let mut lines = vec![format!("tool: {tool}")];
+) -> Vec<String> {
     if let Some(model) = model_override {
-        lines.push(format!("model: {model}"));
-        lines.push(format!("model_id: {model}"));
-        lines.push("model_context: <unknown>".to_string());
-        lines.push("model_source: argument".to_string());
-    } else if let Some(model) = model {
-        let source = match model.source {
-            ModelSource::BuiltIn => "built-in",
-            ModelSource::Config => "config",
-        };
-        lines.push(format!("model: {}", model.alias));
-        lines.push(format!("model_id: {}", model.id));
-        lines.push(format!("model_context: {}", model.context));
-        lines.push(format!("model_source: {source}"));
+        return vec![
+            format!("model: {model}"),
+            format!("model_id: {model}"),
+            "model_context: <unknown>".to_string(),
+            "model_source: argument".to_string(),
+        ];
     }
+    let Some(model) = model else {
+        return Vec::new();
+    };
+    vec![
+        format!("model: {}", model.alias),
+        format!("model_id: {}", model.id),
+        format!("model_context: {}", model.context),
+        format!("model_source: {}", model.source.label()),
+    ]
+}
+
+fn format_dry_run_parts(
+    parts: &DryRunParts<'_>,
+    wrap: &[Vec<OsString>],
+    pre: &[PreStep],
+) -> String {
+    let secrets = credential_values(parts.env);
+    let mut lines = vec![format!("tool: {}", parts.tool)];
+    lines.extend(model_lines(parts.model, parts.model_override));
     lines.push(format!(
         "argv: {}",
-        redact_credentials(&display_argv(argv), &secrets)
+        redact_credentials(&display_argv(parts.argv), &secrets)
     ));
     lines.push("env:".to_string());
-    lines.extend(env.iter().map(|(key, value)| {
-        let key = key.to_string_lossy();
-        let value = if is_credential_env_key(&key) {
-            REDACTED_VALUE.to_string()
-        } else {
-            value.to_string_lossy().into_owned()
-        };
-        format!("  {key}={value}")
-    }));
-    lines.push(format!("base_url: {}", base_url.unwrap_or("<none>")));
+    lines.extend(
+        redacted_env(parts.env)
+            .into_iter()
+            .map(|(key, value)| format!("  {key}={value}")),
+    );
+    lines.push("env_removed:".to_string());
+    lines.extend(parts.env_removed.iter().map(|key| format!("  {key}")));
+    lines.push(format!("base_url: {}", parts.base_url.unwrap_or("<none>")));
     lines.push("wrap:".to_string());
     lines.extend(wrap.iter().map(|wrap| format!("  {}", display_argv(wrap))));
     lines.push("pre:".to_string());
@@ -1254,9 +1316,9 @@ fn format_dry_run_parts(
         };
         format!("  {} {}:{} {}", step.name, step.host, step.port, command)
     }));
-    if !warnings.is_empty() {
+    if !parts.warnings.is_empty() {
         lines.push("warnings:".to_string());
-        lines.extend(warnings.iter().map(|warning| format!("  {warning}")));
+        lines.extend(parts.warnings.iter().map(|warning| format!("  {warning}")));
     }
     lines.join("\n")
 }

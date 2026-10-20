@@ -537,13 +537,202 @@ fn timed_out_run_reports_the_partial_output() {
             "--binary",
             provider.to_str().expect("provider path"),
             "--timeout",
-            "200ms",
+            "1s",
         ])
         .output()
         .expect("run output");
     assert_eq!(output.status.code(), Some(124));
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
     assert_eq!(result["kind"], "timeout");
-    assert_eq!(result["details"]["timeout_ms"], 200);
+    assert_eq!(result["details"]["timeout_ms"], 1000);
     assert_eq!(result["details"]["stdout_tail"], "partial answer");
+}
+
+#[test]
+fn dry_run_json_is_one_object_with_the_model_id_and_the_planned_argv() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    let output = rune(home.path())
+        .env("CLAUDECODE", "1")
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON object");
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["kind"], "dry_run");
+    assert_eq!(result["tool"], "claude");
+    assert_eq!(result["model"], "sol");
+    assert_eq!(result["model_id"], "gpt-5.6-sol");
+    assert_eq!(result["base_url"], "http://127.0.0.1:8317");
+    assert_eq!(result["mode"], "read-only");
+    assert!(result["timeout"].is_null());
+    assert!(result["session_name"].is_null());
+    assert_eq!(result["stdin"], "<prompt>");
+    let argv: Vec<&str> = result["argv"]
+        .as_array()
+        .expect("argv array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(argv.contains(&"--print"), "{argv:?}");
+    assert!(argv.contains(&"--allowedTools"), "{argv:?}");
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair == ["--model", "gpt-5.6-sol"]),
+        "{argv:?}"
+    );
+    assert!(
+        !argv
+            .iter()
+            .any(|part| part.contains("Review this repository")),
+        "{argv:?}"
+    );
+    assert_eq!(result["env"]["ANTHROPIC_AUTH_TOKEN"], "<redacted>");
+    assert_eq!(result["env"]["ANTHROPIC_BASE_URL"], "http://127.0.0.1:8317");
+    assert!(
+        !output
+            .stdout
+            .windows(10)
+            .any(|window| window == b"test-token")
+    );
+    let removed: Vec<&str> = result["env_removed"]
+        .as_array()
+        .expect("env_removed array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(removed.contains(&"CLAUDECODE"), "{removed:?}");
+    assert!(result["repository"].as_str().is_some());
+}
+
+#[test]
+fn dry_run_text_names_the_endpoint_from_the_environment_and_the_removed_keys() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .env("CLAUDECODE", "1")
+        .env("CLAUDE_CODE_ENTRYPOINT", "cli")
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("model_id: gpt-5.6-sol"))
+        .stdout(predicate::str::contains("base_url: http://127.0.0.1:8317"))
+        .stdout(predicate::str::contains("base_url: <none>").not())
+        .stdout(predicate::str::contains(
+            "--print --output-format text --permission-mode plan",
+        ))
+        .stdout(predicate::str::contains("stdin: <prompt>"))
+        .stdout(predicate::str::contains("env_removed:\n"))
+        .stdout(predicate::str::contains("\n  CLAUDECODE\n"))
+        .stdout(predicate::str::contains("\n  CLAUDE_CODE_ENTRYPOINT\n"))
+        .stdout(predicate::str::contains("Review this repository").not())
+        .stdout(predicate::str::contains("test-token").not());
+}
+
+#[test]
+fn dry_run_says_an_inherited_credential_was_withheld() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "launch:\n  profiles:\n    claude:\n      bare:\n        env:\n          ANTHROPIC_BASE_URL: http://127.0.0.1:9/bare\n",
+    )
+    .expect("config");
+
+    rune(home.path())
+        .env("ANTHROPIC_AUTH_TOKEN", "gateway-token")
+        .args([
+            "run",
+            "bare@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "ANTHROPIC_AUTH_TOKEN (inherited credential withheld: the route sets ANTHROPIC_BASE_URL without one)",
+        ))
+        .stdout(predicate::str::contains("base_url: http://127.0.0.1:9/bare"))
+        .stdout(predicate::str::contains("gateway-token").not());
+}
+
+#[test]
+fn unknown_profile_with_json_is_one_object_that_lists_the_known_profiles() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "nope@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(2));
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON object");
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["kind"], "configuration_error");
+    assert!(
+        result["details"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("profiles: grok, sol")),
+        "{result}"
+    );
+}
+
+#[test]
+fn dry_run_of_a_prompt_in_argv_prints_the_placeholder() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+
+    rune(home.path())
+        .args([
+            "run",
+            "agy",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "--print <prompt> --output-format json",
+        ))
+        .stdout(predicate::str::contains("stdin: none"))
+        .stdout(predicate::str::contains("Review this repository").not());
 }

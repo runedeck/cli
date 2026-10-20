@@ -1,8 +1,9 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args, invoke_surface, output_tail,
-    prepare_clean_state, session_name_flag,
+    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args,
+    invoke_surface, output_tail, parent_session_isolation, planned_request, prepare_clean_state,
+    session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -13,6 +14,9 @@ use std::time::Duration;
 pub(crate) use crate::cli::surface::AccessMode;
 
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
+/// The placeholder the dry run prints for the clean state directory a
+/// real run creates.
+const CLEAN_STATE_PLACEHOLDER: &str = "<clean-state>";
 
 pub(crate) struct RunOptions {
     pub(crate) tool: String,
@@ -54,9 +58,36 @@ impl RunPlan {
     }
 }
 
+/// One outcome of `rune run`: its exit code, the one JSON object `--json`
+/// prints on stdout, and the text that goes out otherwise.
+struct Outcome {
+    exit_code: i32,
+    json: Value,
+    text: Text,
+}
+
+/// Where the text form of an outcome goes: a plan or an answer on stdout,
+/// an error on stderr.
+enum Text {
+    Stdout(String),
+    Stderr(String),
+}
+
+/// The one printer: every outcome, a configuration error included, is one
+/// JSON object on stdout under `--json`, and text otherwise.
 pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
     match execute_inner(options) {
-        Ok(exit_code) => Ok(exit_code),
+        Ok(outcome) => {
+            if options.json {
+                println!("{}", outcome.json);
+            } else {
+                match outcome.text {
+                    Text::Stdout(text) => println!("{text}"),
+                    Text::Stderr(text) => eprintln!("{text}"),
+                }
+            }
+            Ok(outcome.exit_code)
+        }
         Err(message) if options.json => {
             println!(
                 "{}",
@@ -74,7 +105,7 @@ pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn execute_inner(options: &RunOptions) -> Result<i32, String> {
+fn execute_inner(options: &RunOptions) -> Result<Outcome, String> {
     if options.plan == RunPlan::Check {
         return execute_check(options);
     }
@@ -119,37 +150,6 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         .model
         .clone()
         .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
-
-    if dry_run || resolved.dry_run {
-        let mut dry_run_argv = resolved.argv.clone();
-        dry_run_argv[0].clone_from(&binary);
-        println!(
-            "{}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",
-            resolved.format_dry_run_with_overrides(&dry_run_argv, options.model.as_deref()),
-            repository.display(),
-            options.mode.label(),
-            duration_label(outer_timeout),
-            duration_label(native_timeout),
-            options.session_name.as_deref().unwrap_or("none"),
-            session_name_flag(surface).unwrap_or("none")
-        );
-        return Ok(0);
-    }
-
-    for warning in resolved.warnings() {
-        eprintln!("warning: {warning}");
-    }
-    resolved.run_pre_steps();
-
-    let clean_state = options
-        .clean
-        .then(|| tempfile::Builder::new().prefix("rune-clean-").tempdir())
-        .transpose()
-        .map_err(|error| format!("cannot create clean harness state: {error}"))?;
-    if let Some(state) = &clean_state {
-        prepare_clean_state(surface, state.path(), model.as_deref())
-            .map_err(|error| error.to_string())?;
-    }
     let invocation = SurfaceInvocation {
         surface,
         binary,
@@ -162,18 +162,38 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
         model,
         native_timeout,
         timeout: outer_timeout,
-        clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
+        clean_state_root: None,
         session_name: options.session_name.clone(),
     };
 
     // Profile arguments the run owns are dropped here, once, and each drop
-    // is a warning on stderr and in the JSON result.
+    // is a warning on stderr, in the plan, and in the JSON result.
     let filtered = filter_surface_args(&invocation);
-    for warning in &filtered.warnings {
-        eprintln!("warning: {warning}");
-    }
     let invocation = SurfaceInvocation {
         extra_args: filtered.kept,
+        ..invocation
+    };
+
+    if dry_run || resolved.dry_run {
+        return dry_run_outcome(options, &resolved, &invocation, &filtered.warnings);
+    }
+
+    for warning in resolved.warnings().iter().chain(&filtered.warnings) {
+        eprintln!("warning: {warning}");
+    }
+    resolved.run_pre_steps();
+
+    let clean_state = options
+        .clean
+        .then(|| tempfile::Builder::new().prefix("rune-clean-").tempdir())
+        .transpose()
+        .map_err(|error| format!("cannot create clean harness state: {error}"))?;
+    if let Some(state) = &clean_state {
+        prepare_clean_state(surface, state.path(), invocation.model.as_deref())
+            .map_err(|error| error.to_string())?;
+    }
+    let invocation = SurfaceInvocation {
+        clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
         ..invocation
     };
     let started = std::time::Instant::now();
@@ -185,63 +205,158 @@ fn execute_inner(options: &RunOptions) -> Result<i32, String> {
                     eprintln!();
                 }
             }
-            if options.json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "kind": "success",
-                        "tool": resolved.tool,
-                        "requested_route": options.tool,
-                        "requested_provider": options.tool,
-                        "resolved_route": resolved.tool,
-                        "resolved_model": invocation.model,
-                        "resolved_binary": invocation.binary.to_string_lossy(),
-                        "model": invocation.model,
-                        "text": reply.text,
-                        "duration_ms": started.elapsed().as_millis(),
-                        "clean": options.clean,
-                        "session_name": options.session_name.as_deref(),
-                        "session_name_flag": session_name_flag(invocation.surface),
-                        "usage": {
-                            "input_tokens": Value::Null,
-                            "cache_creation_input_tokens": Value::Null,
-                            "cache_read_input_tokens": Value::Null,
-                            "output_tokens": reply.completion_tokens,
-                            "total_tokens": Value::Null,
-                        },
-                        "completion_tokens": reply.completion_tokens,
-                        "warnings": filtered.warnings,
-                    })
-                );
-            } else {
-                println!("{}", reply.text);
-            }
-            Ok(0)
+            Ok(Outcome {
+                exit_code: 0,
+                json: json!({
+                    "ok": true,
+                    "kind": "success",
+                    "tool": resolved.tool,
+                    "requested_route": options.tool,
+                    "requested_provider": options.tool,
+                    "resolved_route": resolved.tool,
+                    "resolved_model": invocation.model,
+                    "resolved_binary": invocation.binary.to_string_lossy(),
+                    "model": invocation.model,
+                    "text": reply.text,
+                    "duration_ms": started.elapsed().as_millis(),
+                    "clean": options.clean,
+                    "session_name": options.session_name.as_deref(),
+                    "session_name_flag": session_name_flag(invocation.surface),
+                    "usage": {
+                        "input_tokens": Value::Null,
+                        "cache_creation_input_tokens": Value::Null,
+                        "cache_read_input_tokens": Value::Null,
+                        "output_tokens": reply.completion_tokens,
+                        "total_tokens": Value::Null,
+                    },
+                    "completion_tokens": reply.completion_tokens,
+                    "warnings": filtered.warnings,
+                }),
+                text: Text::Stdout(reply.text),
+            })
         }
-        Err(failure) => {
-            if options.json {
-                println!("{}", failure_json(&resolved.tool, &failure));
-            } else {
-                eprintln!("error: {failure}");
-            }
-            Ok(failure_exit_code(&failure))
-        }
+        Err(failure) => Ok(Outcome {
+            exit_code: failure_exit_code(&failure),
+            json: failure_json(&resolved.tool, &failure),
+            text: Text::Stderr(format!("error: {failure}")),
+        }),
     }
+}
+
+/// The dry run: the process the surface would start, rendered from the
+/// same argument builders the spawn uses, with the prompt as a placeholder
+/// and every credential value hidden. The text keeps the launch plan's
+/// lines (`model_id:` included) and adds the run's own; the JSON object
+/// carries the same fields.
+fn dry_run_outcome(
+    options: &RunOptions,
+    resolved: &launch::ResolvedLaunch,
+    invocation: &SurfaceInvocation,
+    filter_warnings: &[String],
+) -> Result<Outcome, String> {
+    let planned_invocation = SurfaceInvocation {
+        clean_state_root: options
+            .clean
+            .then(|| PathBuf::from(CLEAN_STATE_PLACEHOLDER)),
+        ..invocation.clone()
+    };
+    let planned = planned_request(&planned_invocation).map_err(|failure| failure.to_string())?;
+    let argv: Vec<OsString> = std::iter::once(planned.binary.clone())
+        .chain(planned.args.iter().cloned())
+        .collect();
+    let isolation = parent_session_isolation(&invocation.env);
+    let env_removed = isolation.lines();
+    let warnings: Vec<String> = resolved
+        .warnings()
+        .iter()
+        .chain(filter_warnings)
+        .cloned()
+        .collect();
+    let base_url = resolved.endpoint(&planned.env);
+    let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
+    let text = format!(
+        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",
+        resolved.format_dry_run_with(&launch::DryRunParts {
+            tool: &resolved.tool,
+            argv: &argv,
+            env: &planned.env,
+            env_removed: &env_removed,
+            base_url: base_url.as_deref(),
+            model: resolved.model.as_ref(),
+            model_override: options.model.as_deref(),
+            warnings: &warnings,
+        }),
+        stdin.unwrap_or("none"),
+        invocation.repository.display(),
+        options.mode.label(),
+        duration_label(invocation.timeout),
+        duration_label(invocation.native_timeout),
+        options.session_name.as_deref().unwrap_or("none"),
+        session_name_flag(invocation.surface).unwrap_or("none")
+    );
+    let secrets = launch::credential_values(&planned.env);
+    let argv: Vec<String> = argv
+        .iter()
+        .map(|part| launch::redact_credentials(&part.to_string_lossy(), &secrets))
+        .collect();
+    let env: serde_json::Map<String, Value> = launch::redacted_env(&planned.env)
+        .into_iter()
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect();
+    let (model_alias, model_context, model_source) = match (&options.model, &resolved.model) {
+        (Some(id), _) => (Some(id.clone()), None, Some("argument")),
+        (None, Some(model)) => (
+            Some(model.alias.clone()),
+            Some(model.context),
+            Some(model.source.label()),
+        ),
+        (None, None) => (None, None, None),
+    };
+    let json = json!({
+        "ok": true,
+        "kind": "dry_run",
+        "tool": resolved.tool,
+        "requested_route": options.tool,
+        "resolved_route": resolved.tool,
+        "resolved_binary": planned.binary.to_string_lossy(),
+        "model": model_alias,
+        "model_id": invocation.model,
+        "model_context": model_context,
+        "model_source": model_source,
+        "argv": argv,
+        "stdin": stdin,
+        "base_url": base_url,
+        "env": env,
+        "env_removed": isolation.removals().iter().map(|key| key.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        "credentials_withheld": isolation.withheld.iter().map(|(key, endpoint)| json!({ "key": key, "endpoint": endpoint })).collect::<Vec<_>>(),
+        "repository": invocation.repository.display().to_string(),
+        "mode": options.mode.label(),
+        "timeout": invocation.timeout.map(|timeout| timeout.as_millis()),
+        "native_timeout": invocation.native_timeout.map(|timeout| timeout.as_millis()),
+        "session_name": options.session_name.as_deref(),
+        "session_name_flag": session_name_flag(invocation.surface),
+        "clean": options.clean,
+        "pre": serde_json::to_value(resolved.pre_steps()).unwrap_or(Value::Null),
+        "warnings": warnings,
+    });
+    Ok(Outcome {
+        exit_code: 0,
+        json,
+        text: Text::Stdout(text),
+    })
 }
 
 /// `--check`: verify the model ids the run would send against each base
 /// URL in the plan. No prompt is read and nothing is spawned. The exit
 /// code is the check's: 0 served, 1 missing, 2 endpoint failure.
-fn execute_check(options: &RunOptions) -> Result<i32, String> {
+fn execute_check(options: &RunOptions) -> Result<Outcome, String> {
     let resolved = launch::resolve(&options.tool, &[])?;
     let report = launch::check::run_checks(&resolved, options.model.as_deref());
-    if options.json {
-        println!("{}", launch::check::format_report_json(&report));
-    } else {
-        println!("{}", launch::check::format_report(&report));
-    }
-    Ok(report.exit_code)
+    Ok(Outcome {
+        exit_code: report.exit_code,
+        json: launch::check::report_json(&report),
+        text: Text::Stdout(launch::check::format_report(&report)),
+    })
 }
 
 fn read_prompt(argument: Option<&str>, file: Option<&Path>) -> Result<String, String> {

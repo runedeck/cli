@@ -23,15 +23,18 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
 
 fn format_dry_run(tool: &ResolvedTool, argv: &[OsString], plan: &LaunchPlan) -> String {
     format_dry_run_parts(
-        &tool.name,
-        argv,
-        &final_env(tool, plan),
-        plan.base_url.as_deref(),
+        &DryRunParts {
+            tool: &tool.name,
+            argv,
+            env: &final_env(tool, plan),
+            env_removed: &[],
+            base_url: plan.base_url.as_deref(),
+            model: None,
+            model_override: None,
+            warnings: &plan.warnings,
+        },
         &plan.wrap,
         &plan.pre,
-        &plan.warnings,
-        None,
-        None,
     )
 }
 
@@ -268,8 +271,8 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
         vec![OsString::from("claude"), OsString::from("--resume")]
     );
     assert_eq!(
-        resolved.format_dry_run(),
-        "tool: claude\nargv: claude --resume\nenv:\nbase_url: <none>\nwrap:\npre:"
+        resolved.format_dry_run(&[]),
+        "tool: claude\nargv: claude --resume\nenv:\nenv_removed:\nbase_url: <none>\nwrap:\npre:"
     );
 }
 
@@ -281,7 +284,7 @@ fn unwrapped_launch_dry_run_is_stable() {
 
     assert_eq!(
         format_dry_run(&tool, &argv, &plan),
-        "tool: claude\nargv: claude --resume\nenv:\nbase_url: <none>\nwrap:\npre:"
+        "tool: claude\nargv: claude --resume\nenv:\nenv_removed:\nbase_url: <none>\nwrap:\npre:"
     );
 }
 
@@ -724,15 +727,18 @@ fn model_route_dry_run_reports_provenance_and_generated_settings() {
     let tool = resolve_tool("claude", &Launch::default());
     let argv = build_argv(&tool, &[], &plan);
     let output = format_dry_run_parts(
-        "claude",
-        &argv,
-        &final_env(&tool, &plan),
-        plan.base_url.as_deref(),
+        &DryRunParts {
+            tool: "claude",
+            argv: &argv,
+            env: &final_env(&tool, &plan),
+            env_removed: &[],
+            base_url: plan.base_url.as_deref(),
+            model: Some(&model),
+            model_override: None,
+            warnings: &plan.warnings,
+        },
         &plan.wrap,
         &plan.pre,
-        &plan.warnings,
-        Some(&model),
-        None,
     );
 
     assert!(output.contains("model: sol"), "{output}");
@@ -874,4 +880,48 @@ fn run_child_removes_the_parent_session_keys_before_the_plan_env_applies() {
         "HOME removed and the plan env applied"
     );
     assert_eq!(run_child(&argv, &env, &[]), Ok(1), "HOME inherited");
+}
+
+#[test]
+fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = || ontology::ResolvedConfig {
+        deck: None,
+        env: None,
+        ontology: ontology::ResolvedOntology::default(),
+        extensions: Vec::new(),
+        setup: None,
+        launch: Launch::default(),
+        bench: Vec::new(),
+
+        theme: None,
+    };
+    let resolved = resolve_with_config(
+        "claude",
+        &[],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        config(),
+    )
+    .expect("resolved launch");
+
+    assert_eq!(resolved.endpoint(&[]), None);
+    assert_eq!(
+        resolved.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")])),
+        Some("http://127.0.0.1:8317".to_string())
+    );
+
+    let proxied = resolve_with_config(
+        "claude",
+        &[OsString::from("--pxpipe")],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        config(),
+    )
+    .expect("resolved launch");
+    assert_eq!(
+        proxied.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://elsewhere")])),
+        Some("http://127.0.0.1:47821".to_string()),
+        "the plan's base URL wins over the env"
+    );
 }

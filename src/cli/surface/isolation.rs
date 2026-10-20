@@ -49,6 +49,20 @@ impl Isolation {
             .map(OsString::from)
             .collect()
     }
+
+    /// One line per removed key, for the dry run; a withheld credential
+    /// names the endpoint that bound it.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.session
+            .iter()
+            .cloned()
+            .chain(self.withheld.iter().map(|(key, endpoint)| {
+                format!(
+                    "{key} (inherited credential withheld: the route sets {endpoint} without one)"
+                )
+            }))
+            .collect()
+    }
 }
 
 pub(crate) fn is_parent_session_key(key: &str) -> bool {

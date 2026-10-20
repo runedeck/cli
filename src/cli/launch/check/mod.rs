@@ -3,7 +3,7 @@
 //! there, and report every model id the plan sends as served or missing.
 //! The check never spawns the tool and never prints a credential value.
 
-use super::{ResolvedLaunch, credential_values, redact_credentials};
+use super::{ResolvedLaunch, credential_values, env_value, redact_credentials};
 use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
@@ -239,13 +239,6 @@ fn config_model(assignment: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn env_value(env: &[(OsString, OsString)], key: &str) -> Option<String> {
-    env.iter()
-        .rev()
-        .find(|(name, _)| name.to_string_lossy() == key)
-        .map(|(_, value)| value.to_string_lossy().into_owned())
-}
-
 /// Run every endpoint check and fold the results into one report.
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
     let secrets = credential_values(&resolved.display_env);
@@ -354,7 +347,8 @@ fn parse_model_ids(body: &str) -> Option<Vec<String>> {
 
 /// The JSON report, the same shape `rune run --check --json` prints, so one
 /// consumer reads both commands.
-pub(crate) fn format_report_json(report: &CheckReport) -> String {
+/// The report as the one JSON object `--json` prints.
+pub(crate) fn report_json(report: &CheckReport) -> Value {
     serde_json::json!({
         "ok": report.exit_code == EXIT_SERVED,
         "kind": "check",
@@ -362,7 +356,10 @@ pub(crate) fn format_report_json(report: &CheckReport) -> String {
         "endpoints": report.endpoints,
         "exit_code": report.exit_code,
     })
-    .to_string()
+}
+
+pub(crate) fn format_report_json(report: &CheckReport) -> String {
+    report_json(report).to_string()
 }
 
 /// The text report: one block per endpoint, one line per model.

@@ -100,6 +100,7 @@ impl fmt::Display for ProcessFailure {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ProcessRequest {
     pub(crate) binary: OsString,
     pub(crate) args: Vec<OsString>,
