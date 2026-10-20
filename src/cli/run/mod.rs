@@ -324,7 +324,7 @@ fn dry_run_outcome(
         "base_url": base_url,
         "env": env,
         "env_removed": isolation.removals().iter().map(|key| key.to_string_lossy().into_owned()).collect::<Vec<_>>(),
-        "credentials_withheld": isolation.withheld.iter().map(|(key, endpoint)| json!({ "key": key, "endpoint": endpoint })).collect::<Vec<_>>(),
+        "inherited_withheld": isolation.withheld.iter().map(|(key, route_key)| json!({ "key": key, "route_sets": route_key })).collect::<Vec<_>>(),
         "repository": invocation.repository.display().to_string(),
         "mode": options.mode.label(),
         "timeout": invocation.timeout.map(|timeout| timeout.as_millis()),

@@ -678,7 +678,7 @@ fn dry_run_says_an_inherited_credential_was_withheld() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "ANTHROPIC_AUTH_TOKEN (inherited credential withheld: the route sets ANTHROPIC_BASE_URL without one)",
+            "ANTHROPIC_AUTH_TOKEN (inherited, withheld: the route sets ANTHROPIC_BASE_URL of the same family)",
         ))
         .stdout(predicate::str::contains("base_url: http://127.0.0.1:9/bare"))
         .stdout(predicate::str::contains("gateway-token").not());
@@ -915,4 +915,63 @@ fn dry_run_never_shows_a_credential_inside_a_structured_value() {
             }
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn route_credential_or_settings_endpoint_withholds_the_inherited_family_keys() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = env_recording_provider(home.path(), "fake-claude");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n",
+            "      tokened:\n        env:\n          ANTHROPIC_AUTH_TOKEN: fake-route-secret\n",
+            "      settled:\n        args:\n          - '--settings'\n",
+            "          - '{\"env\":{\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:9/settings\"}}'\n",
+        ),
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    // A route credential: the inherited endpoint and the sibling credential leave.
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .env("ANTHROPIC_API_KEY", "fake-inherited-secret")
+        .args([
+            "run",
+            "tokened@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .assert()
+        .success();
+    let env = recorded_env(home.path());
+    assert!(env.contains(&"ANTHROPIC_AUTH_TOKEN=fake-route-secret".to_string()));
+    assert!(!has_key(&env, "ANTHROPIC_BASE_URL"), "{env:?}");
+    assert!(!has_key(&env, "ANTHROPIC_API_KEY"), "{env:?}");
+
+    // An endpoint in the profile's settings env counts as route-set.
+    rune(home.path())
+        .env("ANTHROPIC_AUTH_TOKEN", "fake-inherited-secret")
+        .args([
+            "run",
+            "settled@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .assert()
+        .success();
+    let env = recorded_env(home.path());
+    assert!(!has_key(&env, "ANTHROPIC_AUTH_TOKEN"), "{env:?}");
 }

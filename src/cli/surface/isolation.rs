@@ -6,6 +6,9 @@
 //! parent session's variables, then apply the route's environment. A denylist
 //! of session names beats an allowlist of inherited keys: an allowlist would
 //! drop the owner's own shell setup (`PATH`, proxy CA paths, tool homes).
+//! Grok has no family here: the owner's grok profile sets only
+//! `GROK_MODELS_BASE_URL` and authenticates with an owner-set key variable
+//! that must stay inherited.
 use crate::cli::launch::check::FAMILIES;
 use std::ffi::OsString;
 
@@ -35,8 +38,8 @@ pub(crate) struct Isolation {
     /// Parent-session keys present in this process, minus the ones the
     /// route sets itself (the route's value wins).
     pub(crate) session: Vec<String>,
-    /// `(credential key, endpoint key)`: the inherited credential and the
-    /// route endpoint it must not reach.
+    /// `(inherited key, route key)`: an inherited endpoint or credential of
+    /// a family, and the key of the same family the route sets instead.
     pub(crate) withheld: Vec<(String, String)>,
 }
 
@@ -50,15 +53,15 @@ impl Isolation {
             .collect()
     }
 
-    /// One line per removed key, for the dry run; a withheld credential
-    /// names the endpoint that bound it.
+    /// One line per removed key, for the dry run; a withheld key names the
+    /// route key of its family that displaced it.
     pub(crate) fn lines(&self) -> Vec<String> {
         self.session
             .iter()
             .cloned()
-            .chain(self.withheld.iter().map(|(key, endpoint)| {
+            .chain(self.withheld.iter().map(|(key, route_key)| {
                 format!(
-                    "{key} (inherited credential withheld: the route sets {endpoint} without one)"
+                    "{key} (inherited, withheld: the route sets {route_key} of the same family)"
                 )
             }))
             .collect()
@@ -93,20 +96,22 @@ pub(crate) fn isolate(parent_keys: &[OsString], route_keys: &[OsString]) -> Isol
             isolation.session.push(name.into_owned());
         }
     }
+    // A family is its endpoint key and its credential keys. When the route
+    // sets any of them, the child gets none of the family's inherited
+    // keys: an inherited endpoint beside a route credential, or an
+    // inherited credential beside a route endpoint, would pair the two
+    // across hosts.
     for family in FAMILIES {
-        let endpoint_without_credential = route_sets(route_keys, family.base_url_key)
-            && !family
-                .credential_keys
-                .iter()
-                .any(|key| route_sets(route_keys, key));
-        if !endpoint_without_credential {
+        let members =
+            std::iter::once(family.base_url_key).chain(family.credential_keys.iter().copied());
+        let Some(route_key) = members.clone().find(|key| route_sets(route_keys, key)) else {
             continue;
-        }
-        for key in family.credential_keys {
-            if parent_keys.iter().any(|name| name == key) {
+        };
+        for key in members {
+            if !route_sets(route_keys, key) && parent_keys.iter().any(|name| name == key) {
                 isolation
                     .withheld
-                    .push(((*key).to_string(), family.base_url_key.to_string()));
+                    .push((key.to_string(), route_key.to_string()));
             }
         }
     }

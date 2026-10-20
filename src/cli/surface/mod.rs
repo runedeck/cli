@@ -173,9 +173,61 @@ fn sandbox_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<&'static
         .map(|(_, hint)| *hint)
 }
 
-/// The keys the route sets for the child: its environment.
+/// The keys the route sets for the child: its environment, and for claude
+/// the `env` keys of a profile's `--settings` object, which claude exports
+/// into its own process the same way.
 pub(crate) fn route_keys(invocation: &SurfaceInvocation) -> Vec<OsString> {
-    invocation.env.iter().map(|(key, _)| key.clone()).collect()
+    let mut keys: Vec<OsString> = invocation.env.iter().map(|(key, _)| key.clone()).collect();
+    if invocation.surface == Surface::Claude {
+        keys.extend(settings_env_keys(&invocation.extra_args));
+    }
+    keys
+}
+
+/// The `env` keys of every inline `--settings` object in `args`, in the
+/// `--settings <json>` and `--settings=<json>` forms.
+pub(crate) fn settings_env_keys(args: &[OsString]) -> Vec<OsString> {
+    settings_objects(args)
+        .0
+        .iter()
+        .filter_map(|settings| settings.get("env"))
+        .filter_map(serde_json::Value::as_object)
+        .flat_map(|env| env.keys().map(OsString::from))
+        .collect()
+}
+
+/// Every inline `--settings` object in `args`, and the arguments that are
+/// not one. A value that is not a JSON object is skipped.
+fn settings_objects(
+    args: &[OsString],
+) -> (
+    Vec<serde_json::Map<String, serde_json::Value>>,
+    Vec<OsString>,
+) {
+    let mut objects = Vec::new();
+    let mut remaining = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let text = args[index].to_string_lossy();
+        let value = if text == "--settings" {
+            index += 1;
+            args.get(index)
+                .map(|value| value.to_string_lossy().into_owned())
+        } else if let Some(value) = text.strip_prefix("--settings=") {
+            Some(value.to_string())
+        } else {
+            remaining.push(args[index].clone());
+            index += 1;
+            continue;
+        };
+        if let Some(serde_json::Value::Object(settings)) =
+            value.and_then(|value| serde_json::from_str(&value).ok())
+        {
+            objects.push(settings);
+        }
+        index += 1;
+    }
+    (objects, remaining)
 }
 
 /// Every credential value the child could echo, longest first so a value
@@ -1177,29 +1229,10 @@ const WORKSPACE_WRITE_SETTINGS: &str =
 /// profile's kept keys (filtered by [`claude_settings_key`]) and the run's
 /// own keys merge into one object; the run's keys win.
 fn claude_settings(invocation: &SurfaceInvocation) -> (Option<String>, Vec<OsString>) {
+    let (objects, remaining) = settings_objects(&invocation.extra_args);
     let mut merged = serde_json::Map::new();
-    let mut remaining = Vec::new();
-    let args = &invocation.extra_args;
-    let mut index = 0;
-    while index < args.len() {
-        let text = args[index].to_string_lossy();
-        let value = if text == "--settings" {
-            index += 1;
-            args.get(index)
-                .map(|value| value.to_string_lossy().into_owned())
-        } else if let Some(value) = text.strip_prefix("--settings=") {
-            Some(value.to_string())
-        } else {
-            remaining.push(args[index].clone());
-            index += 1;
-            continue;
-        };
-        if let Some(serde_json::Value::Object(settings)) =
-            value.and_then(|value| serde_json::from_str(&value).ok())
-        {
-            merged.extend(settings);
-        }
-        index += 1;
+    for settings in objects {
+        merged.extend(settings);
     }
     if invocation.mode == AccessMode::WorkspaceWrite
         && let Ok(serde_json::Value::Object(own)) = serde_json::from_str(WORKSPACE_WRITE_SETTINGS)

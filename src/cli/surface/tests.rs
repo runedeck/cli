@@ -932,10 +932,10 @@ fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
 }
 
 #[test]
-fn route_credential_keeps_the_inherited_sibling_credential() {
-    // The route names its own token; an inherited key of the same family
-    // is not withheld, because the route's values win where they overlap.
-    let parent = keys(&["ANTHROPIC_API_KEY"]);
+fn route_key_of_a_family_withholds_every_inherited_sibling() {
+    // The route names its own endpoint and token; the inherited key of the
+    // same family that the route does not set is withheld too.
+    let parent = keys(&["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
     let route = env(&[
         ("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"),
         ("ANTHROPIC_AUTH_TOKEN", "route-token"),
@@ -943,7 +943,63 @@ fn route_credential_keeps_the_inherited_sibling_credential() {
 
     let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
 
-    assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
+    assert_eq!(
+        isolation.withheld,
+        [(
+            "ANTHROPIC_API_KEY".to_string(),
+            "ANTHROPIC_BASE_URL".to_string()
+        )]
+    );
+}
+
+#[test]
+fn route_credential_without_an_endpoint_withholds_the_inherited_endpoint() {
+    let parent = keys(&["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "PATH"]);
+    let route = env(&[("ANTHROPIC_AUTH_TOKEN", "route-token")]);
+
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
+
+    assert_eq!(
+        isolation.withheld,
+        [
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "ANTHROPIC_AUTH_TOKEN".to_string()
+            ),
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "ANTHROPIC_AUTH_TOKEN".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn settings_env_keys_count_as_route_keys_for_claude() {
+    let mut claude = invocation(
+        Surface::Claude,
+        &[
+            "--verbose",
+            "--settings",
+            r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/settings"}}"#,
+            r#"--settings={"env":{"OPENAI_API_KEY":"fake-settings-secret"}}"#,
+        ],
+    );
+    claude.env = env(&[("ANTHROPIC_MODEL", "gpt-5.6-sol")]);
+    let keys = route_keys(&claude);
+    assert!(
+        keys.contains(&OsString::from("ANTHROPIC_MODEL")),
+        "{keys:?}"
+    );
+    assert!(
+        keys.contains(&OsString::from("ANTHROPIC_BASE_URL")),
+        "{keys:?}"
+    );
+    assert!(keys.contains(&OsString::from("OPENAI_API_KEY")), "{keys:?}");
+
+    let mut codex = invocation(Surface::Codex, &["--settings", r#"{"env":{"X":"1"}}"#]);
+    codex.env = Vec::new();
+    assert_eq!(route_keys(&codex), [] as [std::ffi::OsString; 0]);
 }
 
 #[test]
@@ -1220,7 +1276,7 @@ fn isolation_lines_name_the_withheld_credential_and_its_endpoint() {
         lines,
         [
             "CLAUDECODE",
-            "ANTHROPIC_API_KEY (inherited credential withheld: the route sets ANTHROPIC_BASE_URL without one)",
+            "ANTHROPIC_API_KEY (inherited, withheld: the route sets ANTHROPIC_BASE_URL of the same family)",
         ]
     );
 }

@@ -14,7 +14,9 @@ The parent-session variables are the ones a harness sets for its own children, n
 
 `CLAUDE_CONFIG_DIR` is not on the list: the owner may set it, and the clean run sets it on purpose.
 
-A credential is bound to its endpoint. When the route sets `ANTHROPIC_BASE_URL` and neither `ANTHROPIC_AUTH_TOKEN` nor `ANTHROPIC_API_KEY`, both are removed from the child. The same holds for `OPENAI_BASE_URL` and `OPENAI_API_KEY`. When the route sets no endpoint, an inherited endpoint and credential pass together, so plain `claude` inside the desktop app keeps working through the app's gateway.
+An endpoint and its credentials form a family: Anthropic (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`) and OpenAI (`OPENAI_BASE_URL`, `OPENAI_API_KEY`). When the route sets any key of a family, every inherited key of that family the route does not set is removed from the child: an inherited credential never reaches a route endpoint, and an inherited endpoint never receives a route credential. An endpoint or credential a claude profile sets through `--settings {"env":{...}}` counts as route-set. When the route sets no key of a family, the inherited keys of that family pass together, so plain `claude` inside the desktop app keeps working through the app's gateway. Grok has no family: the owner's grok profile sets only `GROK_MODELS_BASE_URL` and authenticates with an owner-set key variable in the environment, which must stay inherited.
+
+Under a tmux wrapper the removals travel inside the wrapped command line as `env -u KEY`; a docker container inherits nothing but the `-e` assignments, so it needs none.
 
 ## Structure
 

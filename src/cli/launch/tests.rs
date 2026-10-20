@@ -119,6 +119,7 @@ fn tmux_flag_adds_outer_wrap() {
         &tool,
         &[OsString::from("--model"), OsString::from("opus")],
         &plan,
+        &[],
     );
 
     assert_eq!(plan.wrap.len(), 1);
@@ -152,7 +153,7 @@ fn docker_wrap_forwards_final_env_to_container() {
     )
     .expect("compose");
     let tool = resolve_tool("claude", &Launch::default());
-    let argv = build_argv(&tool, &[], &plan);
+    let argv = build_argv(&tool, &[], &plan, &[]);
 
     let rendered = display_argv(&argv);
     assert!(rendered.contains("-e ANTHROPIC_BASE_URL=http://127.0.0.1:47821"));
@@ -169,7 +170,7 @@ fn tmux_wrap_forwards_final_env_to_inner_command() {
     )
     .expect("compose");
     let tool = resolve_tool("claude", &Launch::default());
-    let argv = build_argv(&tool, &[OsString::from("--version")], &plan);
+    let argv = build_argv(&tool, &[OsString::from("--version")], &plan, &[]);
     let inner = argv.last().expect("tmux shell command").to_string_lossy();
 
     assert!(inner.contains("env ANTHROPIC_BASE_URL=http://127.0.0.1:47821 claude --version"));
@@ -186,7 +187,7 @@ fn unwrapped_launch_keeps_env_out_of_argv() {
         OsString::from("rune-launch"),
     ));
     let tool = resolve_tool("claude", &Launch::default());
-    let argv = build_argv(&tool, &[OsString::from("--version")], &plan);
+    let argv = build_argv(&tool, &[OsString::from("--version")], &plan, &[]);
 
     assert_eq!(
         argv,
@@ -233,6 +234,7 @@ fn dry_run_prints_plan_without_launching() {
         &tool,
         &[OsString::from("--model"), OsString::from("opus")],
         &plan,
+        &[],
     );
     let output = format_dry_run(&tool, &argv, &plan);
 
@@ -280,7 +282,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
 fn unwrapped_launch_dry_run_is_stable() {
     let tool = resolve_tool("claude", &Launch::default());
     let plan = LaunchPlan::default();
-    let argv = build_argv(&tool, &[OsString::from("--resume")], &plan);
+    let argv = build_argv(&tool, &[OsString::from("--resume")], &plan, &[]);
 
     assert_eq!(
         format_dry_run(&tool, &argv, &plan),
@@ -306,7 +308,7 @@ fn dry_run_redacts_credential_env_values_everywhere() {
     plan.wrap
         .push(vec![OsString::from("tmux"), OsString::from("new-session")]);
     let tool = resolve_tool("claude", &Launch::default());
-    let argv = build_argv(&tool, &[], &plan);
+    let argv = build_argv(&tool, &[], &plan, &[]);
     let output = format_dry_run(&tool, &argv, &plan);
 
     assert!(!output.contains("sk-manual-test-credential"), "{output}");
@@ -725,7 +727,7 @@ fn model_route_dry_run_reports_provenance_and_generated_settings() {
         .expect("model route")
         .expect("resolved model");
     let tool = resolve_tool("claude", &Launch::default());
-    let argv = build_argv(&tool, &[], &plan);
+    let argv = build_argv(&tool, &[], &plan, &[]);
     let output = format_dry_run_parts(
         &DryRunParts {
             tool: "claude",
@@ -1002,5 +1004,66 @@ fn redact_argument_hides_a_credential_inside_a_structured_value() {
     assert_eq!(
         redact_argument("fake-env-secret", &["fake-env-secret".to_string()]),
         "<redacted>"
+    );
+}
+
+#[test]
+fn tmux_wrap_unsets_the_parent_session_keys_inside_the_wrapped_command() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plan = compose_plan(
+        &["pxpipe".to_string()],
+        Some("work"),
+        &context(dir.path(), Launch::default(), Vec::new()),
+    )
+    .expect("compose");
+    let tool = resolve_tool("claude", &Launch::default());
+    let removals = [
+        OsString::from("CLAUDECODE"),
+        OsString::from("CODEX_SANDBOX"),
+    ];
+    let argv = build_argv(&tool, &[OsString::from("--version")], &plan, &removals);
+    let inner = argv.last().expect("tmux shell command").to_string_lossy();
+
+    assert!(
+        inner.contains(
+            "env -u CLAUDECODE -u CODEX_SANDBOX ANTHROPIC_BASE_URL=http://127.0.0.1:47821 claude --version"
+        ),
+        "{inner}"
+    );
+    assert_eq!(
+        env_command(&[OsString::from("claude")], &[], &removals),
+        ["env", "-u", "CLAUDECODE", "-u", "CODEX_SANDBOX", "claude"].map(OsString::from)
+    );
+}
+
+#[test]
+fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = resolve_with_config(
+        "claude",
+        &[
+            OsString::from("--settings"),
+            OsString::from(r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/settings"}}"#),
+        ],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig {
+            deck: None,
+            env: None,
+            ontology: ontology::ResolvedOntology::default(),
+            extensions: Vec::new(),
+            setup: None,
+            launch: Launch::default(),
+            bench: Vec::new(),
+
+            theme: None,
+        },
+    )
+    .expect("resolved launch");
+
+    assert!(
+        resolved
+            .route_keys()
+            .contains(&OsString::from("ANTHROPIC_BASE_URL"))
     );
 }

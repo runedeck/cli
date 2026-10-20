@@ -50,7 +50,7 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         return Ok(report.exit_code);
     }
     if resolved.dry_run {
-        let isolation = surface::parent_session_isolation(&env_keys(&resolved.env));
+        let isolation = surface::parent_session_isolation(&resolved.route_keys());
         println!("{}", resolved.format_dry_run(&isolation.lines()));
         return Ok(0);
     }
@@ -58,7 +58,7 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         eprintln!("warning: {warning}");
     }
     run_pre_steps(&resolved.pre);
-    let isolation = surface::parent_session_isolation(&env_keys(&resolved.env));
+    let isolation = surface::parent_session_isolation(&resolved.route_keys());
     run_child(&resolved.argv, &resolved.env, &isolation.removals())
 }
 
@@ -104,9 +104,14 @@ fn resolve_with_config(
     if let Some(profile) = &profile {
         apply_profile_env(profile, &mut plan, context.config.env_file().as_deref())?;
     }
-    let argv = build_argv(&tool, &options.args, &plan);
-    let env = process_env(&tool, &plan);
+    // The wrapped command gets the same isolation as a direct child, so the
+    // removals come from the final route env, not the emptied process env.
     let display_env = final_env(&tool, &plan);
+    let removals =
+        surface::parent_session_isolation(&route_keys_of(&tool.name, &display_env, &options.args))
+            .removals();
+    let argv = build_argv(&tool, &options.args, &plan, &removals);
+    let env = process_env(&tool, &plan);
     let base_url_env = tool
         .base_url_env
         .as_ref()
@@ -229,6 +234,12 @@ impl ResolvedLaunch {
                     .and_then(|key| env_value(env, key))
                     .filter(|value| !value.is_empty())
             })
+    }
+
+    /// The keys the route sets for the child: the final env, and for claude
+    /// the `env` keys of a profile's `--settings` object.
+    pub(crate) fn route_keys(&self) -> Vec<OsString> {
+        route_keys_of(&self.tool, &self.display_env, &self.argv)
     }
 
     pub(crate) fn pre_steps(&self) -> &[PreStep] {
@@ -1007,6 +1018,14 @@ pub(crate) fn env_keys(env: &[(OsString, OsString)]) -> Vec<OsString> {
     env.iter().map(|(key, _)| key.clone()).collect()
 }
 
+fn route_keys_of(tool: &str, env: &[(OsString, OsString)], args: &[OsString]) -> Vec<OsString> {
+    let mut keys = env_keys(env);
+    if tool == "claude" {
+        keys.extend(surface::settings_env_keys(args));
+    }
+    keys
+}
+
 /// The last value of `key` in `env`, the one the child sees.
 pub(crate) fn env_value(env: &[(OsString, OsString)], key: &str) -> Option<String> {
     env.iter()
@@ -1125,12 +1144,21 @@ pub(crate) fn redact_argv(argv: &[OsString], secrets: &[String]) -> Vec<String> 
         .collect()
 }
 
-fn build_argv(tool: &ResolvedTool, child_args: &[OsString], plan: &LaunchPlan) -> Vec<OsString> {
+/// The command line with every wrapper applied. `removals` are the parent
+/// session keys the wrapped command must not inherit: a tmux session
+/// unsets them inside the wrapped command line, and a docker container
+/// inherits nothing but the `-e` assignments.
+fn build_argv(
+    tool: &ResolvedTool,
+    child_args: &[OsString],
+    plan: &LaunchPlan,
+    removals: &[OsString],
+) -> Vec<OsString> {
     let mut command_line = vec![tool.binary.clone()];
     command_line.extend(child_args.iter().cloned());
     let env = final_env(tool, plan);
     for wrap in &plan.wrap {
-        command_line = apply_wrap(wrap, &command_line, &env);
+        command_line = apply_wrap(wrap, &command_line, &env, removals);
     }
     command_line
 }
@@ -1139,10 +1167,13 @@ fn apply_wrap(
     wrap: &[OsString],
     inner: &[OsString],
     env: &[(OsString, OsString)],
+    removals: &[OsString],
 ) -> Vec<OsString> {
     let mut argv = wrap.to_vec();
     if wrap.first().is_some_and(|command| command == "tmux") {
-        argv.push(OsString::from(shell_join(&env_command(inner, env))));
+        argv.push(OsString::from(shell_join(&env_command(
+            inner, env, removals,
+        ))));
     } else if wrap.first().is_some_and(|command| command == "docker") {
         argv = docker_argv(wrap, inner, env);
     } else {
@@ -1156,11 +1187,21 @@ fn is_explicit_env_wrapper(wrap: &[OsString]) -> bool {
         .is_some_and(|command| command == "docker" || command == "tmux")
 }
 
-fn env_command(inner: &[OsString], env: &[(OsString, OsString)]) -> Vec<OsString> {
-    if env.is_empty() {
+/// `env -u KEY ... KEY=VALUE ... inner`: the removals first, so the
+/// assignments that follow win where they overlap.
+fn env_command(
+    inner: &[OsString],
+    env: &[(OsString, OsString)],
+    removals: &[OsString],
+) -> Vec<OsString> {
+    if env.is_empty() && removals.is_empty() {
         return inner.to_vec();
     }
     let mut argv = vec![OsString::from("env")];
+    for key in removals {
+        argv.push(OsString::from("-u"));
+        argv.push(key.clone());
+    }
     argv.extend(env.iter().map(env_assignment));
     argv.extend(inner.iter().cloned());
     argv
