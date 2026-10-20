@@ -261,6 +261,7 @@ fn json_report_matches_the_run_shape() {
         tool: "claude".to_string(),
         endpoints: Vec::new(),
         exit_code: EXIT_SERVED,
+        warnings: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&format_report_json(&report)).expect("json");
     assert_eq!(json["ok"], true);
@@ -392,6 +393,7 @@ fn report_serializes_with_the_endpoint_state() {
             },
         }],
         exit_code: EXIT_SERVED,
+        warnings: Vec::new(),
     };
     let json = serde_json::to_value(&report).expect("json");
     assert_eq!(json["endpoints"][0]["state"], "listed");
@@ -485,4 +487,83 @@ fn the_check_never_borrows_a_credential_of_another_family() {
     let checks = plan_checks(&grok, None);
     assert_eq!(checks.len(), 1, "{checks:?}");
     assert_eq!(checks[0].credential_key.as_deref(), Some("GROK_API_KEY"));
+}
+
+fn fixture_root() -> std::ffi::OsString {
+    std::ffi::OsString::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/extra-root.pem"
+    ))
+}
+
+#[test]
+fn an_extra_roots_file_joins_the_bundled_roots() {
+    let (roots, warning) =
+        root_certs_from(|variable| (variable == "NODE_EXTRA_CA_CERTS").then(fixture_root));
+    assert_eq!(warning, None);
+    let ureq::tls::RootCerts::Specific(certificates) = roots else {
+        panic!("the extra root makes the roots explicit: {roots:?}");
+    };
+    assert_eq!(
+        certificates.len(),
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS.len() + 1,
+        "the bundled web PKI roots plus the one certificate in the file"
+    );
+
+    let (roots, warning) =
+        root_certs_from(|variable| (variable == "SSL_CERT_FILE").then(fixture_root));
+    assert_eq!(warning, None);
+    assert!(
+        matches!(roots, ureq::tls::RootCerts::Specific(_)),
+        "SSL_CERT_FILE counts when NODE_EXTRA_CA_CERTS is unset: {roots:?}"
+    );
+}
+
+#[test]
+fn an_unusable_extra_roots_file_is_a_warning_and_the_platform_verifier() {
+    let (roots, warning) = root_certs_from(|_| None);
+    assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
+    assert_eq!(warning, None);
+
+    let (roots, warning) = root_certs_from(|variable| {
+        (variable == "NODE_EXTRA_CA_CERTS")
+            .then(|| std::ffi::OsString::from("/nonexistent/rune-roots.pem"))
+    });
+    assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
+    let warning = warning.expect("an unreadable file warns");
+    assert!(
+        warning.starts_with(
+            "NODE_EXTRA_CA_CERTS names /nonexistent/rune-roots.pem, which cannot be read"
+        ),
+        "{warning}"
+    );
+    assert!(
+        warning.ends_with("the check uses the platform verifier"),
+        "{warning}"
+    );
+
+    let empty = tempfile::NamedTempFile::new().expect("empty file");
+    let path = empty.path().as_os_str().to_os_string();
+    let (roots, warning) =
+        root_certs_from(|variable| (variable == "SSL_CERT_FILE").then(|| path.clone()));
+    assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
+    assert!(
+        warning.is_some_and(|warning| warning.contains("holds no certificate")),
+        "an empty file warns"
+    );
+}
+
+#[test]
+fn the_report_carries_the_roots_warning_in_text_and_json() {
+    let report = CheckReport {
+        tool: "claude".to_string(),
+        endpoints: Vec::new(),
+        exit_code: EXIT_SERVED,
+        warnings: vec!["NODE_EXTRA_CA_CERTS names /x, which holds no certificate; the check uses the platform verifier".to_string()],
+    };
+    assert!(format_report(&report).contains("warning: NODE_EXTRA_CA_CERTS names /x"));
+    assert_eq!(
+        report_json(&report)["warnings"][0],
+        "NODE_EXTRA_CA_CERTS names /x, which holds no certificate; the check uses the platform verifier"
+    );
 }

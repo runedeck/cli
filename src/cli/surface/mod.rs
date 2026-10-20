@@ -176,7 +176,7 @@ const SANDBOX_HINTS: &[(&str, HintSource, &str)] = &[
     (
         "-26276",
         HintSource::StderrOrHarnessError,
-        "an outer sandbox blocked the certificate check for the proxy (OSStatus -26276); run rune outside the sandbox",
+        "an outer sandbox blocked the certificate check for the proxy (OSStatus -26276): set NODE_EXTRA_CA_CERTS to the proxy's root certificate file, or run rune outside the sandbox",
     ),
     (
         "UNABLE_TO_VERIFY_LEAF_SIGNATURE",

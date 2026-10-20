@@ -116,6 +116,17 @@ the harness. Model text on stdout MUST NOT earn the hint, and a success MUST NOT
 - **WHEN** a run fails and only its stdout carries `Operation not permitted`
 - **THEN** the error carries no hint
 
+### Requirement: The check trusts the roots the environment names
+
+When `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` names a readable PEM file, the runner's check MUST verify an endpoint's
+certificate against the bundled web PKI roots plus every certificate in that file. Otherwise it MUST use the platform
+verifier. When the named file cannot be read or holds no certificate, the check MUST warn and use the platform verifier.
+
+#### Scenario: Proxy root named by the environment
+
+- **WHEN** `NODE_EXTRA_CA_CERTS` names a file that holds the proxy's root certificate and the check reaches the proxy
+- **THEN** the certificate check passes with that root and the report carries no warning
+
 ### Requirement: A dropped profile model equal to the run's model is not reported
 
 This refines "Codex config and Claude settings are filtered per key". When the runner drops a profile's `model` key

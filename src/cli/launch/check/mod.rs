@@ -7,10 +7,14 @@ use super::{ResolvedLaunch, credential_values, env_value, redact_credentials};
 use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::time::Duration;
 
 const MODELS_PATH: &str = "/v1/models";
 const TIMEOUT: Duration = Duration::from_secs(5);
+/// The variables that name a PEM file of extra root certificates, in the
+/// order the check reads them: node's, then OpenSSL's.
+const EXTRA_ROOTS_VARIABLES: &[&str] = &["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
 
 /// One API family the plan can address: the environment key that names its
 /// base URL, the credential keys that family reads in order, the model keys
@@ -112,6 +116,60 @@ pub(crate) struct CheckReport {
     pub(crate) tool: String,
     pub(crate) endpoints: Vec<EndpointReport>,
     pub(crate) exit_code: i32,
+    /// What the check could not do as asked: an extra-roots file it could
+    /// not use.
+    pub(crate) warnings: Vec<String>,
+}
+
+/// The root certificates the check verifies an endpoint against. When
+/// `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` names a readable PEM file, the
+/// bundled web PKI roots plus every certificate in that file: a local
+/// proxy's root that only the platform keychain trusts, which a sandbox
+/// without trustd cannot reach. Otherwise the platform verifier. A file
+/// that cannot be read or holds no certificate is a warning, then the
+/// platform verifier.
+pub(crate) fn root_certs_from(
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> (ureq::tls::RootCerts, Option<String>) {
+    let Some((variable, path)) = EXTRA_ROOTS_VARIABLES
+        .iter()
+        .find_map(|variable| lookup(variable).map(|path| (*variable, PathBuf::from(path))))
+    else {
+        return (ureq::tls::RootCerts::PlatformVerifier, None);
+    };
+    let pem = match std::fs::read(&path) {
+        Ok(pem) => pem,
+        Err(error) => {
+            return (
+                ureq::tls::RootCerts::PlatformVerifier,
+                Some(format!(
+                    "{variable} names {}, which cannot be read ({error}); the check uses the platform verifier",
+                    path.display()
+                )),
+            );
+        }
+    };
+    let extra: Vec<ureq::tls::Certificate<'static>> = ureq::tls::parse_pem(&pem)
+        .filter_map(|item| match item {
+            Ok(ureq::tls::PemItem::Certificate(certificate)) => Some(certificate),
+            _ => None,
+        })
+        .collect();
+    if extra.is_empty() {
+        return (
+            ureq::tls::RootCerts::PlatformVerifier,
+            Some(format!(
+                "{variable} names {}, which holds no certificate; the check uses the platform verifier",
+                path.display()
+            )),
+        );
+    }
+    let roots: Vec<ureq::tls::Certificate<'static>> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|der| ureq::tls::Certificate::from_der(der.as_ref()))
+        .chain(extra)
+        .collect();
+    (ureq::tls::RootCerts::new_with_certs(&roots), None)
 }
 
 /// Collect the endpoints the plan talks to. `model_override` is the
@@ -282,6 +340,7 @@ fn config_model(assignment: &str) -> Option<String> {
 /// Run every endpoint check and fold the results into one report.
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
     let secrets = credential_values(&resolved.display_env);
+    let (roots, roots_warning) = root_certs_from(|variable| std::env::var_os(variable));
     let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override)
         .into_iter()
         .map(|check| {
@@ -289,7 +348,7 @@ pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>
                 .credential_key
                 .as_deref()
                 .and_then(|key| env_value(&resolved.display_env, key));
-            let result = match fetch_model_ids(&check.base_url, credential.as_deref()) {
+            let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
                     let (served, missing) = check
                         .models
@@ -310,6 +369,7 @@ pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>
         tool: resolved.tool.clone(),
         endpoints,
         exit_code,
+        warnings: roots_warning.into_iter().collect(),
     }
 }
 
@@ -332,13 +392,15 @@ fn exit_code_for(endpoints: &[EndpointReport]) -> i32 {
 pub(crate) fn fetch_model_ids(
     base_url: &str,
     credential: Option<&str>,
+    roots: &ureq::tls::RootCerts,
 ) -> Result<Vec<String>, String> {
     let url = format!("{}{MODELS_PATH}", base_url.trim_end_matches('/'));
     // A launch endpoint is often a local proxy behind a private CA that the
-    // operating system trusts and the bundled Mozilla roots do not. The
-    // platform verifier reads the same store curl and the harness use.
+    // operating system trusts and the bundled Mozilla roots do not: the
+    // platform verifier reads the same store curl and the harness use, or
+    // the roots an extra-roots file names where that store is unreachable.
     let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .root_certs(roots.clone())
         .build();
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
@@ -395,6 +457,7 @@ pub(crate) fn report_json(report: &CheckReport) -> Value {
         "tool": report.tool,
         "endpoints": report.endpoints,
         "exit_code": report.exit_code,
+        "warnings": report.warnings,
     })
 }
 
@@ -405,6 +468,12 @@ pub(crate) fn format_report_json(report: &CheckReport) -> String {
 /// The text report: one block per endpoint, one line per model.
 pub(crate) fn format_report(report: &CheckReport) -> String {
     let mut lines = vec![format!("tool: {}", report.tool)];
+    lines.extend(
+        report
+            .warnings
+            .iter()
+            .map(|warning| format!("warning: {warning}")),
+    );
     if report.endpoints.is_empty() {
         lines.push("check: nothing to check (the plan has no base URL)".to_string());
         lines.push(format!("exit: {}", report.exit_code));
