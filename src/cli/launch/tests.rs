@@ -855,3 +855,23 @@ fn direct_mode_omits_profile_middleware() {
     assert_eq!(resolved.wrap, [] as [Vec<std::ffi::OsString>; 0]);
     assert_eq!(resolved.pre, [] as [crate::cli::launch::PreStep; 0]);
 }
+
+#[cfg(unix)]
+#[test]
+fn run_child_removes_the_parent_session_keys_before_the_plan_env_applies() {
+    // HOME stands in for a parent-session key: the test process has it, and
+    // the child must not. The plan env still reaches the child afterwards.
+    let argv = vec![
+        OsString::from("/bin/sh"),
+        OsString::from("-c"),
+        OsString::from("test -z \"${HOME+set}\" && test \"$RUNE_ROUTE\" = yes"),
+    ];
+    let env = names(&[("RUNE_ROUTE", "yes")]);
+
+    assert_eq!(
+        run_child(&argv, &env, &[OsString::from("HOME")]),
+        Ok(0),
+        "HOME removed and the plan env applied"
+    );
+    assert_eq!(run_child(&argv, &env, &[]), Ok(1), "HOME inherited");
+}

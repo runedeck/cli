@@ -1,6 +1,7 @@
 pub(crate) mod check;
 
 use crate::cli::dispatch;
+use crate::cli::surface;
 use rune::ontology::{self, DockerConfig, Launch, LaunchModel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -56,7 +57,8 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         eprintln!("warning: {warning}");
     }
     run_pre_steps(&resolved.pre);
-    run_child(&resolved.argv, &resolved.env)
+    let isolation = surface::parent_session_isolation(&resolved.env);
+    run_child(&resolved.argv, &resolved.env, &isolation.removals())
 }
 
 pub(crate) fn resolve(tool: &str, rest: &[OsString]) -> Result<ResolvedLaunch, String> {
@@ -1050,12 +1052,21 @@ fn process_env(tool: &ResolvedTool, plan: &LaunchPlan) -> Vec<(OsString, OsStrin
     final_env(tool, plan)
 }
 
-fn run_child(argv: &[OsString], env: &[(OsString, OsString)]) -> Result<i32, String> {
+/// Start the launched tool: the parent session's keys in `removals` leave
+/// the inherited environment before the plan's `env` applies.
+fn run_child(
+    argv: &[OsString],
+    env: &[(OsString, OsString)],
+    removals: &[OsString],
+) -> Result<i32, String> {
     let Some(command_name) = argv.first() else {
         return Err("launch plan produced an empty argv".to_string());
     };
     let mut command = ProcessCommand::new(command_name);
     command.args(&argv[1..]);
+    for key in removals {
+        command.env_remove(key);
+    }
     dispatch::apply_env(&mut command, env);
     let status = command
         .status()

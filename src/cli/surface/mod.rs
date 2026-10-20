@@ -12,6 +12,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod isolation;
+pub(crate) use isolation::parent_session_isolation;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {
     Claude,
@@ -684,7 +687,9 @@ fn process_request(
     request.args = args;
     request.current_dir = Some(invocation.repository.clone());
     request.env.clone_from(&invocation.env);
-    request.env_remove = vec![OsString::from("HARNESS_AUTOMATED")];
+    // The parent harness's session leaves first; the route's own keys are
+    // not on that list, so the route's values win over anything inherited.
+    request.env_remove = parent_session_isolation(&invocation.env).removals();
     if let Some(root) = &invocation.clean_state_root {
         let root = root.as_os_str().to_os_string();
         match invocation.surface {
@@ -692,7 +697,6 @@ fn process_request(
                 request
                     .env
                     .push((OsString::from("CLAUDE_CONFIG_DIR"), root));
-                request.env_remove.push(OsString::from("CLAUDECODE"));
             }
             Surface::Codex => {
                 request.env.push((OsString::from("CODEX_HOME"), root));

@@ -16,15 +16,16 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// base URL, the credential keys that family reads in order, the model keys
 /// it reads, and the tool whose route model belongs to it. A plan that
 /// carries both families gets one check per family, each with its own
-/// credential and its own model list.
-struct Family {
-    base_url_key: &'static str,
-    credential_keys: &'static [&'static str],
+/// credential and its own model list. The runner's isolation reads the
+/// same table to bind an inherited credential to its endpoint.
+pub(crate) struct Family {
+    pub(crate) base_url_key: &'static str,
+    pub(crate) credential_keys: &'static [&'static str],
     model_keys: &'static [&'static str],
     tool: &'static str,
 }
 
-const FAMILIES: &[Family] = &[
+pub(crate) const FAMILIES: &[Family] = &[
     Family {
         base_url_key: "ANTHROPIC_BASE_URL",
         credential_keys: &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],

@@ -312,3 +312,138 @@ printf 'answer reply\n'
     );
     assert!(!argv.contains(&"Read,Glob,Grep"), "argv: {argv:?}");
 }
+
+/// A fake harness that records its environment beside itself and answers.
+#[cfg(unix)]
+fn env_recording_provider(home: &std::path::Path, name: &str) -> std::path::PathBuf {
+    executable_provider(
+        home,
+        name,
+        r#"#!/bin/sh
+env > "$(dirname "$0")/env.txt"
+printf 'ok\n'
+"#,
+    )
+}
+
+#[cfg(unix)]
+fn recorded_env(home: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(home.join("env.txt"))
+        .expect("recorded env")
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(unix)]
+fn has_key(env: &[String], key: &str) -> bool {
+    env.iter().any(|line| {
+        line.strip_prefix(key)
+            .is_some_and(|rest| rest.starts_with('='))
+    })
+}
+
+#[cfg(unix)]
+#[test]
+fn desktop_session_variables_do_not_reach_the_child() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = env_recording_provider(home.path(), "fake-claude");
+
+    rune(home.path())
+        .env("CLAUDECODE", "1")
+        .env("CLAUDE_CODE_ENTRYPOINT", "cli")
+        .env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+        .env("CODEX_SANDBOX", "seatbelt")
+        .env("CLAUDE_CONFIG_DIR", "/owner/claude")
+        .args([
+            "run",
+            "sol@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok"));
+
+    let env = recorded_env(home.path());
+    for key in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+        "CODEX_SANDBOX",
+    ] {
+        assert!(!has_key(&env, key), "{key} reached the child: {env:?}");
+    }
+    assert!(env.contains(&"CLAUDE_CONFIG_DIR=/owner/claude".to_string()));
+    assert!(env.contains(&"ANTHROPIC_BASE_URL=http://127.0.0.1:8317".to_string()));
+    assert!(env.contains(&"ANTHROPIC_MODEL=gpt-5.6-sol".to_string()));
+    assert!(env.contains(&"ANTHROPIC_AUTH_TOKEN=test-token".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn native_claude_keeps_the_inherited_endpoint_and_credential() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = env_recording_provider(home.path(), "fake-claude");
+
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .env("ANTHROPIC_AUTH_TOKEN", "gateway-token")
+        .args([
+            "run",
+            "claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .assert()
+        .success();
+
+    let env = recorded_env(home.path());
+    assert!(env.contains(&"ANTHROPIC_BASE_URL=http://127.0.0.1:9/gateway".to_string()));
+    assert!(env.contains(&"ANTHROPIC_AUTH_TOKEN=gateway-token".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = env_recording_provider(home.path(), "fake-claude");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "launch:\n  profiles:\n    claude:\n      bare:\n        env:\n          ANTHROPIC_BASE_URL: http://127.0.0.1:9/bare\n",
+    )
+    .expect("config");
+
+    rune(home.path())
+        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/gateway")
+        .env("ANTHROPIC_AUTH_TOKEN", "gateway-token")
+        .args([
+            "run",
+            "bare@claude",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .assert()
+        .success();
+
+    let env = recorded_env(home.path());
+    assert!(env.contains(&"ANTHROPIC_BASE_URL=http://127.0.0.1:9/bare".to_string()));
+    assert!(
+        !has_key(&env, "ANTHROPIC_AUTH_TOKEN"),
+        "the inherited credential reached the route endpoint: {env:?}"
+    );
+}

@@ -824,3 +824,161 @@ fn harnesses_that_cannot_drop_their_tools_refuse_answer_only() {
     claude.mode = AccessMode::AnswerOnly;
     assert!(refuse_answer_only(&claude).is_ok());
 }
+
+fn keys(names: &[&str]) -> Vec<OsString> {
+    names.iter().map(OsString::from).collect()
+}
+
+fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+    pairs
+        .iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        .collect()
+}
+
+#[test]
+fn desktop_session_variables_leave_the_child_and_the_owner_keys_stay() {
+    let parent = keys(&[
+        "PATH",
+        "HOME",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLAUDE_PID",
+        "CLAUDE_PREVIEW_PORT",
+    ]);
+    let route = env(&[
+        ("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"),
+        ("ANTHROPIC_AUTH_TOKEN", "route-token"),
+        ("ANTHROPIC_MODEL", "gpt-5.6-sol"),
+    ]);
+
+    let isolation = super::isolation::isolate(&parent, &route);
+
+    assert_eq!(
+        isolation.session,
+        [
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+            "CLAUDE_AGENT_SDK_VERSION",
+            "CLAUDE_PID",
+            "CLAUDE_PREVIEW_PORT",
+        ]
+    );
+    assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
+}
+
+#[test]
+fn codex_session_variables_leave_the_child() {
+    let parent = keys(&[
+        "CODEX_SANDBOX",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+        "CODEX_THREAD_ID",
+        "HARNESS_AUTOMATED",
+        "CODEX_HOME",
+    ]);
+
+    let isolation = super::isolation::isolate(&parent, &[]);
+
+    assert_eq!(
+        strings(&isolation.removals()),
+        [
+            "CODEX_SANDBOX",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+            "CODEX_THREAD_ID",
+            "HARNESS_AUTOMATED",
+        ]
+    );
+}
+
+#[test]
+fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
+    let parent = keys(&[
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    ]);
+    let anthropic = env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]);
+    let openai = env(&[("OPENAI_BASE_URL", "http://127.0.0.1:8317/v1")]);
+
+    let isolation = super::isolation::isolate(&parent, &anthropic);
+    assert_eq!(
+        isolation.withheld,
+        [
+            (
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                "ANTHROPIC_BASE_URL".to_string()
+            ),
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "ANTHROPIC_BASE_URL".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        strings(&isolation.removals()),
+        ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+    );
+
+    let isolation = super::isolation::isolate(&parent, &openai);
+    assert_eq!(
+        isolation.withheld,
+        [("OPENAI_API_KEY".to_string(), "OPENAI_BASE_URL".to_string())]
+    );
+}
+
+#[test]
+fn route_credential_keeps_the_inherited_sibling_credential() {
+    // The route names its own token; an inherited key of the same family
+    // is not withheld, because the route's values win where they overlap.
+    let parent = keys(&["ANTHROPIC_API_KEY"]);
+    let route = env(&[
+        ("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"),
+        ("ANTHROPIC_AUTH_TOKEN", "route-token"),
+    ]);
+
+    let isolation = super::isolation::isolate(&parent, &route);
+
+    assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
+}
+
+#[test]
+fn native_claude_keeps_the_inherited_endpoint_and_credential_as_one_pair() {
+    let parent = keys(&["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE"]);
+
+    let isolation = super::isolation::isolate(&parent, &[]);
+
+    assert_eq!(isolation.session, ["CLAUDECODE"]);
+    assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
+}
+
+#[test]
+fn route_keys_win_over_the_parent_session() {
+    let parent = keys(&["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_ENTRYPOINT"]);
+    let route = env(&[("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "272000")]);
+
+    let isolation = super::isolation::isolate(&parent, &route);
+
+    assert_eq!(isolation.session, ["CLAUDE_CODE_ENTRYPOINT"]);
+}
+
+#[test]
+fn process_request_never_removes_a_key_the_route_sets() {
+    let mut invocation = invocation(Surface::Claude, &[]);
+    invocation.env = env(&[
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "272000"),
+        ("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"),
+    ]);
+    let request = process_request(&invocation, Vec::new(), None);
+
+    for (key, _) in &invocation.env {
+        assert!(
+            !request.env_remove.contains(key),
+            "{:?}",
+            request.env_remove
+        );
+    }
+}
