@@ -1270,3 +1270,29 @@ pub(super) fn resolve_with_config_for_tests(
     )
     .expect("resolved launch")
 }
+
+#[test]
+fn a_tmux_launch_unsets_the_host_session_names_and_warns_about_attaching() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved =
+        resolve_with_config_for_tests("claude", &[OsString::from("--tmux=work")], dir.path());
+    let inner = resolved
+        .argv
+        .last()
+        .expect("tmux shell command")
+        .to_string_lossy()
+        .into_owned();
+
+    assert!(inner.contains("env -u CLAUDECODE"), "{inner}");
+    assert!(inner.contains("-u CLAUDE_CODE_ENTRYPOINT"), "{inner}");
+    assert!(inner.contains("-u CODEX_SESSION_ID"), "{inner}");
+    assert!(inner.ends_with(" claude"), "{inner}");
+    assert!(
+        resolved
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("attaches to an existing session 'work'")),
+        "{:?}",
+        resolved.warnings()
+    );
+}

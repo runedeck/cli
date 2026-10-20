@@ -129,13 +129,12 @@ fn resolve_with_config(
     if let Some(profile) = &profile {
         apply_profile_env(profile, &mut plan, context.config.env_file().as_deref())?;
     }
-    // The wrapped command gets the same isolation as a direct child, so the
-    // removals come from the final route env, not the emptied process env.
+    // A wrapped command unsets the parent session itself, from the whole
+    // tables: a tmux pane takes the tmux server's environment, not rune's.
     let display_env = final_env(&tool, &plan);
-    let removals =
-        surface::parent_session_isolation(&route_keys_of(&tool.name, &display_env, &options.args))
-            .removals();
-    let argv = build_argv(&tool, &options.args, &plan, &removals);
+    let wrapped_removals =
+        surface::tmux_removals(&route_keys_of(&tool.name, &display_env, &options.args));
+    let argv = build_argv(&tool, &options.args, &plan, &wrapped_removals);
     let env = process_env(&tool, &plan);
     let base_url_env = tool
         .base_url_env
@@ -834,6 +833,11 @@ fn apply_builtin(
         "docker" => plan.wrap.push(docker_wrap(&launch.middleware.docker)),
         "tmux" => {
             let session = argument.unwrap_or("rune");
+            // `new-session -A` attaches when the session exists and runs no
+            // command, so the unsets inside the command line never happen.
+            plan.warnings.push(format!(
+                "tmux new-session -A attaches to an existing session '{session}' without running the command; an attached session keeps its own environment, so the parent session's variables are unset only in a new session"
+            ));
             plan.wrap.push(vec![
                 OsString::from("tmux"),
                 OsString::from("new-session"),

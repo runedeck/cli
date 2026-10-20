@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod isolation;
-pub(crate) use isolation::{Isolation, parent_session_isolation};
+pub(crate) use isolation::{Isolation, parent_session_isolation, tmux_removals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {

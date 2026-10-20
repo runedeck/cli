@@ -1861,3 +1861,34 @@ fn host_bound_family_members_travel_with_the_family() {
     let isolation = super::isolation::isolate(&parent, &[]);
     assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
 }
+
+#[test]
+fn tmux_removals_cover_the_whole_tables_whatever_rune_inherited() {
+    let route = env(&[("ANTHROPIC_AUTH_TOKEN", "fake-route-secret")]);
+    let removals = strings(&tmux_removals(&launch::env_keys(&route)));
+
+    for name in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+        "CODEX_SESSION_ID",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+    ] {
+        assert!(removals.contains(&name.to_string()), "{name}: {removals:?}");
+    }
+    assert!(
+        !removals.contains(&"ANTHROPIC_AUTH_TOKEN".to_string()),
+        "{removals:?}"
+    );
+    assert!(
+        !removals.contains(&"OPENAI_API_KEY".to_string()),
+        "no OpenAI key was set: {removals:?}"
+    );
+    assert!(
+        !removals.contains(&"CLAUDE_CONFIG_DIR".to_string()),
+        "{removals:?}"
+    );
+}

@@ -17,7 +17,7 @@ The Claude names are the ones the desktop app set in a live session on 2026-10-2
 
 An endpoint, its credentials, and the further keys that bind a session to one host form a family: Anthropic (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, and the isolation-only members `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`) and OpenAI (`OPENAI_BASE_URL`, `OPENAI_API_KEY`). The isolation-only members are withheld with the rest of the family and never sent by `--check`, which sends a family's own credential, else the first credential-shaped key that belongs to no family (a proxy token under its own name), and never a key of another family. Any `*_HEADERS` value counts as a credential for display and tails. When the route sets any key of a family, every inherited key of that family the route does not set is removed from the child: an inherited credential never reaches a route endpoint, and an inherited endpoint never receives a route credential. An endpoint or credential a claude profile sets through `--settings {"env":{...}}` counts as route-set. When the route sets no key of a family, the inherited keys of that family pass together, so plain `claude` inside the desktop app keeps working through the app's gateway. Grok has no family: the owner's grok profile sets only `GROK_MODELS_BASE_URL` and authenticates with an owner-set key variable in the environment, which must stay inherited.
 
-Under a tmux wrapper the removals travel inside the wrapped command line as `env -u KEY`; a docker container inherits nothing but the `-e` assignments, so it needs none.
+Under a tmux wrapper the removals travel inside the wrapped command line as `env -u KEY`, and they come from the whole tables (every exact host-session name, every family key the route does not set where it sets one), whether or not rune's own environment holds them, because the pane takes the tmux server's environment. A docker container inherits nothing but the `-e` assignments, so it needs none.
 
 ## Structure
 
@@ -42,5 +42,6 @@ Under a tmux wrapper the removals travel inside the wrapped command line as `env
 ## Risks
 
 - A harness may add a new session variable. A new Claude or codex name is a one-line table change with a test row; only the SDK and preview hosts match by prefix.
+- `tmux new-session -A` attaches to an existing session and runs no command, so the unsets inside the command line never happen there; the plan prints a warning, and an attached session keeps its own environment.
 - Claude Code's sandbox cannot start inside another Seatbelt sandbox. With `failIfUnavailable` a nested run fails, and the failure carries the sandbox hint, instead of running a shell outside any sandbox. The owner runs the runner unsandboxed for implementation seats, as today.
 - Removing an inherited Anthropic credential changes a route that relied on the leak. Such a route now fails with the endpoint's own 401, which the failure tail shows, and the profile must name its credential.

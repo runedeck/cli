@@ -116,6 +116,37 @@ pub(crate) fn parent_session_isolation(route_keys: &[OsString]) -> Isolation {
     isolate(&parent, route_keys)
 }
 
+/// The keys a wrapped command must unset itself, for a tmux pane that
+/// takes the tmux server's environment rather than rune's: every exact
+/// host-session name, every family key the route does not set where the
+/// route sets one of the family, and what the isolation removes from
+/// rune's own environment (the prefix families it found there). Whether
+/// rune's environment holds a key does not matter: the server's may.
+pub(crate) fn tmux_removals(route_keys: &[OsString]) -> Vec<OsString> {
+    let mut removals: Vec<OsString> = PARENT_SESSION_NAMES
+        .iter()
+        .filter(|name| !route_sets(route_keys, name))
+        .map(OsString::from)
+        .collect();
+    for family in FAMILIES {
+        if !family.members().any(|key| route_sets(route_keys, key)) {
+            continue;
+        }
+        removals.extend(
+            family
+                .members()
+                .filter(|key| !route_sets(route_keys, key))
+                .map(OsString::from),
+        );
+    }
+    for key in parent_session_isolation(route_keys).removals() {
+        if !removals.contains(&key) {
+            removals.push(key);
+        }
+    }
+    removals
+}
+
 /// The isolation for a child whose route sets `route_keys`, from a parent
 /// whose environment holds `parent_keys`. Order follows the parent's.
 pub(crate) fn isolate(parent_keys: &[OsString], route_keys: &[OsString]) -> Isolation {
