@@ -155,6 +155,10 @@ const SANDBOX_HINTS: &[(&str, &str)] = &[
         "an outer sandbox blocked the certificate check for the proxy (OSStatus -26276); run rune outside the sandbox",
     ),
     (
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "an outer sandbox's filtering proxy answered the endpoint with a certificate the harness does not trust (UNABLE_TO_VERIFY_LEAF_SIGNATURE); run rune outside the sandbox",
+    ),
+    (
         "failed to load CLI auth from keyring",
         "an outer sandbox blocked the keyring that holds the harness credential; run rune outside the sandbox",
     ),

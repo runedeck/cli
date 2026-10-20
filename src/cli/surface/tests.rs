@@ -1085,6 +1085,17 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
     };
     assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
 
+    let node_tls = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "API Error: Unable to connect to API: SSL certificate verification failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)".to_string(),
+        stderr_tail: String::new(),
+    };
+    assert!(
+        node_tls
+            .hint()
+            .is_some_and(|hint| hint.contains("filtering proxy"))
+    );
+
     let spawn = SurfaceFailure::Process(ProcessFailure::Spawn(
         "claude not runnable: Operation not permitted (os error 1)".to_string(),
     ));
