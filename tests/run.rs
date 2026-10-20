@@ -765,3 +765,50 @@ fn clean_grok_run_starts_without_an_authentication_file() {
         .success()
         .stdout(predicate::str::contains("ok"));
 }
+
+#[cfg(unix)]
+#[test]
+fn workspace_write_run_starts_claude_with_the_shell_in_the_sandbox() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
+printf 'built\n'
+"#,
+    );
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Build this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("built"));
+
+    let recorded = std::fs::read_to_string(home.path().join("argv.txt")).expect("recorded argv");
+    let argv: Vec<&str> = recorded.lines().collect();
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair[0] == "--allowedTools" && pair[1].ends_with(",Bash")),
+        "argv: {argv:?}"
+    );
+    let settings = argv
+        .windows(2)
+        .find(|pair| pair[0] == "--settings")
+        .map(|pair| pair[1])
+        .expect("one --settings value");
+    let settings: serde_json::Value = serde_json::from_str(settings).expect("settings JSON");
+    assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
+    assert_eq!(argv.iter().filter(|part| **part == "--settings").count(), 1);
+}

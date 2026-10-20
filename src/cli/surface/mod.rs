@@ -1003,6 +1003,8 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     if invocation.clean_state_root.is_some() {
         args.extend([OsString::from("--setting-sources"), OsString::from("")]);
     }
+    // The allowed tools are always named: a user setting that resets the
+    // permission mode (the subprocess scrub does) cannot take them away.
     match invocation.mode {
         AccessMode::ReadOnly => args.extend([
             OsString::from("--tools"),
@@ -1012,7 +1014,10 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
         ]),
         // `--tools ""` is claude's own switch for no built-in tool at all.
         AccessMode::AnswerOnly => args.extend([OsString::from("--tools"), OsString::from("")]),
-        AccessMode::WorkspaceWrite => {}
+        AccessMode::WorkspaceWrite => args.extend([
+            OsString::from("--allowedTools"),
+            OsString::from(WORKSPACE_WRITE_TOOLS),
+        ]),
     }
     if let Some(model) = &invocation.model {
         args.push(OsString::from("--model"));
@@ -1031,8 +1036,60 @@ fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
         args.push(OsString::from("--append-system-prompt"));
         args.push(OsString::from(&invocation.system_prompt));
     }
-    args.extend(invocation.extra_args.clone());
+    let (settings, extra_args) = claude_settings(invocation);
+    args.extend(extra_args);
+    if let Some(settings) = settings {
+        args.push(OsString::from("--settings"));
+        args.push(OsString::from(settings));
+    }
     args
+}
+
+/// The tools a workspace-write claude run may use: the readers, the
+/// editors, and the shell, which the sandbox settings confine.
+const WORKSPACE_WRITE_TOOLS: &str = "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash";
+/// The settings a workspace-write run adds: Claude Code's own sandbox
+/// around the shell, with a sandboxed Bash command allowed without a
+/// prompt. The keys are the ones Claude Code's settings file takes.
+const WORKSPACE_WRITE_SETTINGS: &str =
+    r#"{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}"#;
+
+/// The one `--settings` object a claude run sends, and the profile
+/// arguments without theirs. Claude reads one `--settings` value, so the
+/// profile's kept keys (filtered by [`claude_settings_key`]) and the run's
+/// own keys merge into one object; the run's keys win.
+fn claude_settings(invocation: &SurfaceInvocation) -> (Option<String>, Vec<OsString>) {
+    let mut merged = serde_json::Map::new();
+    let mut remaining = Vec::new();
+    let args = &invocation.extra_args;
+    let mut index = 0;
+    while index < args.len() {
+        let text = args[index].to_string_lossy();
+        let value = if text == "--settings" {
+            index += 1;
+            args.get(index)
+                .map(|value| value.to_string_lossy().into_owned())
+        } else if let Some(value) = text.strip_prefix("--settings=") {
+            Some(value.to_string())
+        } else {
+            remaining.push(args[index].clone());
+            index += 1;
+            continue;
+        };
+        if let Some(serde_json::Value::Object(settings)) =
+            value.and_then(|value| serde_json::from_str(&value).ok())
+        {
+            merged.extend(settings);
+        }
+        index += 1;
+    }
+    if invocation.mode == AccessMode::WorkspaceWrite
+        && let Ok(serde_json::Value::Object(own)) = serde_json::from_str(WORKSPACE_WRITE_SETTINGS)
+    {
+        merged.extend(own);
+    }
+    let settings = (!merged.is_empty()).then(|| serde_json::Value::Object(merged).to_string());
+    (settings, remaining)
 }
 
 fn invoke_claude(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {

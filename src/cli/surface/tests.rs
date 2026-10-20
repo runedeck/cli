@@ -1223,3 +1223,73 @@ fn clean_state_bridges_an_absent_authentication_file_as_nothing() {
 
     assert!(!target.exists());
 }
+
+fn claude_settings_in(args: &[String]) -> Vec<serde_json::Value> {
+    args.windows(2)
+        .filter(|pair| pair[0] == "--settings")
+        .map(|pair| serde_json::from_str(&pair[1]).expect("inline settings JSON"))
+        .collect()
+}
+
+#[test]
+fn claude_workspace_write_names_its_tools_and_sandboxes_the_shell() {
+    let mut invocation = invocation(Surface::Claude, &[]);
+    invocation.mode = AccessMode::WorkspaceWrite;
+    let args = strings(&claude_args(&invocation));
+
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--permission-mode", "acceptEdits"]),
+        "{args:?}"
+    );
+    assert!(
+        args.windows(2).any(|pair| pair
+            == [
+                "--allowedTools",
+                "Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,Bash"
+            ]),
+        "{args:?}"
+    );
+    let settings = claude_settings_in(&args);
+    assert_eq!(settings.len(), 1, "{args:?}");
+    assert_eq!(settings[0]["sandbox"]["enabled"], true);
+    assert_eq!(settings[0]["sandbox"]["autoAllowBashIfSandboxed"], true);
+}
+
+#[test]
+fn claude_merges_the_profile_settings_into_the_one_settings_object() {
+    let mut invocation = invocation(
+        Surface::Claude,
+        &["--verbose", "--settings", r#"{"env":{"X":"1"}}"#],
+    );
+    invocation.mode = AccessMode::WorkspaceWrite;
+    let args = strings(&claude_args(&invocation));
+
+    assert!(args.contains(&"--verbose".to_string()), "{args:?}");
+    let settings = claude_settings_in(&args);
+    assert_eq!(settings.len(), 1, "{args:?}");
+    assert_eq!(settings[0]["env"]["X"], "1");
+    assert_eq!(settings[0]["sandbox"]["enabled"], true);
+
+    // The attached form merges too, and read-only adds no sandbox.
+    let read_only = invocation_with_attached_settings();
+    let args = strings(&claude_args(&read_only));
+    let settings = claude_settings_in(&args);
+    assert_eq!(settings.len(), 1, "{args:?}");
+    assert_eq!(settings[0]["env"]["X"], "1");
+    assert!(settings[0].get("sandbox").is_none(), "{args:?}");
+    assert!(
+        !args.iter().any(|arg| arg.starts_with("--settings=")),
+        "{args:?}"
+    );
+}
+
+fn invocation_with_attached_settings() -> SurfaceInvocation {
+    invocation(Surface::Claude, &[r#"--settings={"env":{"X":"1"}}"#])
+}
+
+#[test]
+fn claude_without_settings_sends_none_outside_workspace_write() {
+    let args = strings(&claude_args(&invocation(Surface::Claude, &[])));
+    assert!(!args.iter().any(|arg| arg == "--settings"), "{args:?}");
+}
