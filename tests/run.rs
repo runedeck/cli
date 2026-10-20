@@ -736,3 +736,32 @@ fn dry_run_of_a_prompt_in_argv_prints_the_placeholder() {
         .stdout(predicate::str::contains("stdin: none"))
         .stdout(predicate::str::contains("Review this repository").not());
 }
+
+#[cfg(unix)]
+#[test]
+fn clean_grok_run_starts_without_an_authentication_file() {
+    // The temporary home has no ~/.grok/auth.json: the route authenticates
+    // through its environment, and the clean run starts anyway.
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-grok",
+        "#!/bin/sh\nprintf '%s\\n' '{\"text\":\"ok\"}'\n",
+    );
+
+    rune(home.path())
+        .args([
+            "run",
+            "grok",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok"));
+}

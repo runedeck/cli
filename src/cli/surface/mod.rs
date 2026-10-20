@@ -713,6 +713,9 @@ pub(crate) fn prepare_clean_state(
             copy_codex_route_config(&source_root.join("config.toml"), &root.join("config.toml"))
         }
         Surface::Grok => {
+            // A grok route may authenticate through its environment alone
+            // (`GROK_MODELS_BASE_URL` and an API key variable), so the file
+            // is bridged when it exists and its absence stops nothing.
             let source = home.join(".grok/auth.json");
             let target_root = root.join(".grok");
             std::fs::create_dir_all(&target_root).map_err(|error| {
@@ -721,13 +724,7 @@ pub(crate) fn prepare_clean_state(
                     target_root.display()
                 ))
             })?;
-            std::fs::copy(&source, target_root.join("auth.json")).map_err(|error| {
-                SurfaceFailure::Io(format!(
-                    "cannot bridge Grok authentication {}: {error}",
-                    source.display()
-                ))
-            })?;
-            Ok(())
+            copy_optional_auth_file(&source, &target_root.join("auth.json"), "Grok")
         }
         Surface::Opencode => {
             let source_config_root = std::env::var_os("XDG_CONFIG_HOME")

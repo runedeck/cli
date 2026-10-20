@@ -1212,3 +1212,14 @@ fn isolation_lines_name_the_withheld_credential_and_its_endpoint() {
         ]
     );
 }
+
+#[test]
+fn clean_state_bridges_an_absent_authentication_file_as_nothing() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let target = temporary.path().join("auth.json");
+
+    copy_optional_auth_file(&temporary.path().join("missing/auth.json"), &target, "Grok")
+        .expect("an absent file stops nothing");
+
+    assert!(!target.exists());
+}
