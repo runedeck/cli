@@ -1293,3 +1293,58 @@ fn claude_without_settings_sends_none_outside_workspace_write() {
     let args = strings(&claude_args(&invocation(Surface::Claude, &[])));
     assert!(!args.iter().any(|arg| arg == "--settings"), "{args:?}");
 }
+
+#[test]
+fn codex_profile_model_equal_to_the_run_model_is_dropped_without_a_warning() {
+    let mut same = invocation(Surface::Codex, &["-c", "model=\"gpt-5.6-sol\"", "--search"]);
+    same.model = Some("gpt-5.6-sol".to_string());
+    let filtered = filter_surface_args(&same);
+    assert_eq!(strings(&filtered.kept), ["--search"]);
+    assert_eq!(filtered.warnings, [] as [String; 0]);
+
+    let mut different = invocation(Surface::Codex, &["-c", "model=\"gpt-6-astra\""]);
+    different.model = Some("gpt-5.6-sol".to_string());
+    let filtered = filter_surface_args(&different);
+    assert_eq!(filtered.kept, [] as [std::ffi::OsString; 0]);
+    assert_eq!(filtered.warnings.len(), 1, "{:?}", filtered.warnings);
+    assert!(filtered.warnings[0].contains("config key model"));
+
+    let none = invocation(Surface::Codex, &["-c", "model=\"gpt-5.6-sol\""]);
+    assert_eq!(filter_surface_args(&none).warnings.len(), 1);
+}
+
+#[test]
+fn codex_config_string_reads_a_toml_string_or_a_bare_value() {
+    assert_eq!(codex_config_string("\"gpt-5.6-sol\""), "gpt-5.6-sol");
+    assert_eq!(codex_config_string("'gpt-5.6-sol'"), "gpt-5.6-sol");
+    assert_eq!(codex_config_string(" gpt-5.6-sol "), "gpt-5.6-sol");
+}
+
+#[test]
+fn claude_settings_model_equal_to_the_run_model_is_dropped_without_a_warning() {
+    let mut same = invocation(
+        Surface::Claude,
+        &["--settings", r#"{"model":"gpt-5.6-sol","env":{"X":"1"}}"#],
+    );
+    same.model = Some("gpt-5.6-sol".to_string());
+    let filtered = filter_surface_args(&same);
+    assert_eq!(filtered.warnings, [] as [String; 0]);
+    let kept = strings(&filtered.kept);
+    let settings: serde_json::Value = serde_json::from_str(&kept[1]).expect("json");
+    assert!(settings.get("model").is_none());
+    assert_eq!(settings["env"]["X"], "1");
+
+    let mut only_model = invocation(
+        Surface::Claude,
+        &["--settings", r#"{"model":"gpt-5.6-sol"}"#],
+    );
+    only_model.model = Some("gpt-5.6-sol".to_string());
+    let filtered = filter_surface_args(&only_model);
+    assert_eq!(filtered.kept, [] as [std::ffi::OsString; 0]);
+    assert_eq!(filtered.warnings, [] as [String; 0]);
+
+    let mut different = invocation(Surface::Claude, &["--settings", r#"{"model":"opus"}"#]);
+    different.model = Some("gpt-5.6-sol".to_string());
+    let filtered = filter_surface_args(&different);
+    assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
+}

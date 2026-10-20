@@ -457,8 +457,23 @@ const CODEX_OWNED_KEYS: &[&str] = &[
     "mcp_servers",
 ];
 
-/// Codex `-c key=value`: keep keys the run does not set, drop the rest.
-fn codex_config_key(option: &str, assignment: &str) -> Keyed {
+/// The string a codex `-c model=<value>` names: the TOML string when the
+/// value is one, else the raw value, which codex takes as a bare string.
+fn codex_config_string(value: &str) -> String {
+    toml::from_str::<toml::Value>(&format!("v = {value}"))
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("v")
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| value.trim().to_string())
+}
+
+/// Codex `-c key=value`: keep keys the run does not set, drop the rest. A
+/// `model` the run passes anyway is dropped without a warning.
+fn codex_config_key(option: &str, assignment: &str, model: Option<&str>) -> Keyed {
     if option != "-c" && option != "--config" {
         return None;
     }
@@ -473,17 +488,19 @@ fn codex_config_key(option: &str, assignment: &str) -> Keyed {
     };
     let key = key.trim();
     let head = key.split('.').next().unwrap_or(key);
-    if CODEX_OWNED_KEYS.contains(&head) {
-        Some((
-            None,
-            vec![format!(
-                "automated codex execution owns config key {key}; the profile value {} is dropped",
-                shown(value)
-            )],
-        ))
-    } else {
-        Some((Some(assignment.to_string()), Vec::new()))
+    if !CODEX_OWNED_KEYS.contains(&head) {
+        return Some((Some(assignment.to_string()), Vec::new()));
     }
+    if key == "model" && model.is_some_and(|model| codex_config_string(value) == model) {
+        return Some((None, Vec::new()));
+    }
+    Some((
+        None,
+        vec![format!(
+            "automated codex execution owns config key {key}; the profile value {} is dropped",
+            shown(value)
+        )],
+    ))
 }
 
 /// Claude settings keys that change permissions, hooks, tools, plugins, or
@@ -500,8 +517,9 @@ const CLAUDE_OWNED_SETTINGS: &[&str] = &[
 
 /// Claude `--settings <json>`: keep `env` and unknown keys, drop the keys
 /// the run owns, and drop a value that is not an inline JSON object (a
-/// file path would load unfiltered settings).
-fn claude_settings_key(option: &str, json: &str) -> Keyed {
+/// file path would load unfiltered settings). A `model` the run passes
+/// anyway is dropped without a warning.
+fn claude_settings_key(option: &str, json: &str, model: Option<&str>) -> Keyed {
     if option != "--settings" {
         return None;
     }
@@ -518,18 +536,26 @@ fn claude_settings_key(option: &str, json: &str) -> Keyed {
     };
     let mut warnings = Vec::new();
     for key in CLAUDE_OWNED_SETTINGS {
-        if let Some(value) = settings.remove(*key) {
-            warnings.push(format!(
-                "automated claude execution owns settings key {key}; the profile value {} is dropped",
-                shown(&value.to_string())
-            ));
+        let Some(value) = settings.remove(*key) else {
+            continue;
+        };
+        if *key == "model" && value.as_str().is_some_and(|value| Some(value) == model) {
+            continue;
         }
+        warnings.push(format!(
+            "automated claude execution owns settings key {key}; the profile value {} is dropped",
+            shown(&value.to_string())
+        ));
     }
     if settings.is_empty() {
-        warnings.push(
-            "automated claude execution dropped --settings: nothing remains after the owned keys"
-                .to_string(),
-        );
+        // Nothing to say when every dropped key went silently: the run
+        // sends the same model, so the profile lost nothing.
+        if !warnings.is_empty() {
+            warnings.push(
+                "automated claude execution dropped --settings: nothing remains after the owned keys"
+                    .to_string(),
+            );
+        }
         return Some((None, warnings));
     }
     Some((
@@ -1591,9 +1617,14 @@ pub(crate) fn invoke_surface(
 pub(crate) fn filter_surface_args(invocation: &SurfaceInvocation) -> FilteredArgs {
     let owned = owned_options(invocation.surface);
     let booleans = boolean_options(invocation.surface);
+    let model = invocation.model.as_deref();
     match invocation.surface {
-        Surface::Claude => filter_profile_args(invocation, owned, booleans, &claude_settings_key),
-        Surface::Codex => filter_profile_args(invocation, owned, booleans, &codex_config_key),
+        Surface::Claude => filter_profile_args(invocation, owned, booleans, &|option, value| {
+            claude_settings_key(option, value, model)
+        }),
+        Surface::Codex => filter_profile_args(invocation, owned, booleans, &|option, value| {
+            codex_config_key(option, value, model)
+        }),
         _ => filter_profile_args(invocation, owned, booleans, &drop_whole),
     }
 }
