@@ -758,11 +758,13 @@ fn filter_profile_args(
                 }
                 filtered.warnings.append(&mut notes);
             }
+            // The flag alone: a value (an opencode `--password`, an `--attach`
+            // URL with a token) may be a credential, and the warning reaches
+            // the terminal and the JSON.
             None => filtered.warnings.push(match value.as_deref() {
                 Some(v) if !v.is_empty() => format!(
-                    "automated {name} execution owns {}; the profile value {} is dropped",
-                    arg.option,
-                    shown(v)
+                    "automated {name} execution owns {}; the profile value {REDACTED_VALUE} is dropped",
+                    arg.option
                 ),
                 _ => format!(
                     "automated {name} execution owns {}; the profile flag is dropped",

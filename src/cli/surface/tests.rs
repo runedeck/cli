@@ -162,14 +162,38 @@ fn claude_settings_path_is_dropped_not_loaded() {
 }
 
 #[test]
-fn warnings_escape_control_characters_and_name_the_value() {
+fn warnings_name_the_flag_and_never_the_value() {
     let filtered = filter_surface_args(&invocation(
         Surface::Claude,
         &["--model", "evil\nwarning: forged"],
     ));
     assert_eq!(filtered.warnings.len(), 1);
     assert!(!filtered.warnings[0].contains('\n'));
-    assert!(filtered.warnings[0].contains("evil"));
+    assert!(
+        !filtered.warnings[0].contains("evil"),
+        "{}",
+        filtered.warnings[0]
+    );
+    assert!(filtered.warnings[0].contains("owns --model; the profile value <redacted> is dropped"));
+
+    let opencode = filter_surface_args(&invocation(
+        Surface::Opencode,
+        &[
+            "--password",
+            "fake-opencode-secret",
+            "--attach=http://user:fake-url-secret@127.0.0.1:4096/?token=fake-query-secret",
+            "--model",
+            "proton-lumo/lumo-max",
+        ],
+    ));
+    assert_eq!(opencode.warnings.len(), 3, "{:?}", opencode.warnings);
+    for warning in &opencode.warnings {
+        assert!(!warning.contains("fake-"), "{warning}");
+        assert!(!warning.contains("lumo-max"), "{warning}");
+        assert!(warning.contains("<redacted>"), "{warning}");
+    }
+    assert!(opencode.warnings[0].contains("owns --password"));
+    assert!(opencode.warnings[1].contains("owns --attach"));
 }
 
 #[test]
