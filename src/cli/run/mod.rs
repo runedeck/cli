@@ -3,7 +3,7 @@ use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
     PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, filter_surface_args,
     invoke_surface, output_tail, parent_session_isolation, planned_request, prepare_clean_state,
-    session_name_flag,
+    route_keys, session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -264,7 +264,7 @@ fn dry_run_outcome(
     let argv: Vec<OsString> = std::iter::once(planned.binary.clone())
         .chain(planned.args.iter().cloned())
         .collect();
-    let isolation = parent_session_isolation(&invocation.env);
+    let isolation = parent_session_isolation(&route_keys(invocation));
     let env_removed = isolation.lines();
     let warnings: Vec<String> = resolved
         .warnings()
@@ -294,11 +294,7 @@ fn dry_run_outcome(
         options.session_name.as_deref().unwrap_or("none"),
         session_name_flag(invocation.surface).unwrap_or("none")
     );
-    let secrets = launch::credential_values(&planned.env);
-    let argv: Vec<String> = argv
-        .iter()
-        .map(|part| launch::redact_credentials(&part.to_string_lossy(), &secrets))
-        .collect();
+    let argv = launch::redact_argv(&argv, &launch::credential_values(&planned.env));
     let env: serde_json::Map<String, Value> = launch::redacted_env(&planned.env)
         .into_iter()
         .map(|(key, value)| (key, Value::String(value)))

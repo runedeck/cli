@@ -925,3 +925,82 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
         "the plan's base URL wins over the env"
     );
 }
+
+#[test]
+fn credential_key_classifier_reads_env_settings_config_and_header_names() {
+    for key in [
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "GROK_AUTH",
+        "Authorization",
+        "apiKeyHelper",
+        "experimental_bearer_token",
+        "PROXY_PASSWORD",
+    ] {
+        assert!(is_credential_env_key(key), "{key}");
+    }
+    for key in [
+        "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "model_reasoning_effort",
+        "SSH_AUTH_SOCK",
+    ] {
+        assert!(!is_credential_env_key(key), "{key}");
+    }
+}
+
+#[test]
+fn credential_values_skip_values_too_short_to_be_one() {
+    let values = credential_values(&names(&[
+        ("A_TOKEN", "fake-long-secret"),
+        ("B_KEY", "ok"),
+        ("C_MODEL", "fake-model-name"),
+    ]));
+    assert_eq!(values, ["fake-long-secret"]);
+}
+
+#[test]
+fn redact_argument_hides_a_credential_inside_a_structured_value() {
+    let settings = r#"{"env":{"MY_TOKEN":"fake-settings-secret","X":"1"},"apiKeyHelper":"echo fake-helper-secret","permissions":{"allow":["Bash"]}}"#;
+    let redacted = redact_argument(settings, &[]);
+    assert!(!redacted.contains("fake-"), "{redacted}");
+    let parsed: serde_json::Value = serde_json::from_str(&redacted).expect("still JSON");
+    assert_eq!(parsed["env"]["MY_TOKEN"], "<redacted>");
+    assert_eq!(parsed["env"]["X"], "1");
+    assert_eq!(parsed["apiKeyHelper"], "<redacted>");
+    assert_eq!(parsed["permissions"]["allow"][0], "Bash");
+
+    let attached = format!("--settings={settings}");
+    let redacted = redact_argument(&attached, &[]);
+    assert!(redacted.starts_with("--settings={"), "{redacted}");
+    assert!(!redacted.contains("fake-settings-secret"), "{redacted}");
+
+    assert_eq!(
+        redact_argument(
+            "http_headers.Authorization=\"Bearer fake-header-secret\"",
+            &[]
+        ),
+        "http_headers.Authorization=<redacted>"
+    );
+    assert_eq!(
+        redact_argument("experimental_bearer_token=\"fake-bearer-secret\"", &[]),
+        "experimental_bearer_token=<redacted>"
+    );
+    assert_eq!(
+        redact_argument(
+            "http_headers={Authorization=\"Bearer fake-header-secret\"}",
+            &[]
+        ),
+        "http_headers=<redacted>"
+    );
+    assert_eq!(
+        redact_argument("model_reasoning_effort=\"high\"", &[]),
+        "model_reasoning_effort=\"high\""
+    );
+    assert_eq!(redact_argument("--verbose", &[]), "--verbose");
+    assert_eq!(
+        redact_argument("fake-env-secret", &["fake-env-secret".to_string()]),
+        "<redacted>"
+    );
+}

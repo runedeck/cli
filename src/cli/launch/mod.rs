@@ -50,7 +50,7 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         return Ok(report.exit_code);
     }
     if resolved.dry_run {
-        let isolation = surface::parent_session_isolation(&resolved.env);
+        let isolation = surface::parent_session_isolation(&env_keys(&resolved.env));
         println!("{}", resolved.format_dry_run(&isolation.lines()));
         return Ok(0);
     }
@@ -58,7 +58,7 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         eprintln!("warning: {warning}");
     }
     run_pre_steps(&resolved.pre);
-    let isolation = surface::parent_session_isolation(&resolved.env);
+    let isolation = surface::parent_session_isolation(&env_keys(&resolved.env));
     run_child(&resolved.argv, &resolved.env, &isolation.removals())
 }
 
@@ -810,9 +810,13 @@ fn set_env(plan: &mut LaunchPlan, middleware: &str, key: &str, value: &str) {
         .find(|(candidate, _)| candidate == &key_os)
     {
         if existing != &value_os {
+            let (from, to) = if is_credential_env_key(key) {
+                (REDACTED_VALUE.to_string(), REDACTED_VALUE)
+            } else {
+                (existing.to_string_lossy().into_owned(), value)
+            };
             plan.warnings.push(format!(
-                "middleware '{middleware}' overrides env {key} from '{}' to '{value}'",
-                existing.to_string_lossy()
+                "middleware '{middleware}' overrides env {key} from '{from}' to '{to}'"
             ));
         }
         *existing = value_os;
@@ -976,6 +980,10 @@ fn is_sensitive_env_key(key: &str) -> bool {
         .any(|sensitive| sensitive.eq_ignore_ascii_case(key))
 }
 
+/// A key is credential-named when its upper-case form holds one of these,
+/// or ends in `_AUTH`. The markers read environment keys
+/// (`ANTHROPIC_AUTH_TOKEN`), settings keys (`apiKeyHelper`), config keys
+/// (`experimental_bearer_token`) and header names (`Authorization`) alike.
 const CREDENTIAL_KEY_MARKERS: &[&str] = &[
     "KEY",
     "TOKEN",
@@ -983,10 +991,21 @@ const CREDENTIAL_KEY_MARKERS: &[&str] = &[
     "PASSWORD",
     "CREDENTIAL",
     "AUTHORIZATION",
+    "BEARER",
 ];
-const NON_CREDENTIAL_ENV_KEYS: &[&str] = &["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
+/// A count of tokens (`MAX_CONTEXT_TOKENS`) is a limit, not a credential.
+const NON_CREDENTIAL_KEY_WORD: &str = "TOKENS";
+const CREDENTIAL_KEY_SUFFIX: &str = "_AUTH";
+/// A credential shorter than this is not one; replacing every occurrence of
+/// `1` or `ok` in a harness's output would destroy it.
+const CREDENTIAL_VALUE_MIN_CHARS: usize = 6;
 
 pub(crate) const REDACTED_VALUE: &str = "<redacted>";
+
+/// The keys of `env`.
+pub(crate) fn env_keys(env: &[(OsString, OsString)]) -> Vec<OsString> {
+    env.iter().map(|(key, _)| key.clone()).collect()
+}
 
 /// The last value of `key` in `env`, the one the child sees.
 pub(crate) fn env_value(env: &[(OsString, OsString)], key: &str) -> Option<String> {
@@ -1012,23 +1031,22 @@ pub(crate) fn redacted_env(env: &[(OsString, OsString)]) -> Vec<(String, String)
 }
 
 pub(crate) fn is_credential_env_key(key: &str) -> bool {
-    if NON_CREDENTIAL_ENV_KEYS
-        .iter()
-        .any(|non_credential| non_credential.eq_ignore_ascii_case(key))
-    {
-        return false;
-    }
-    let upper = key.to_ascii_uppercase();
-    CREDENTIAL_KEY_MARKERS
-        .iter()
-        .any(|marker| upper.contains(marker))
+    let upper = key
+        .to_ascii_uppercase()
+        .replace(NON_CREDENTIAL_KEY_WORD, "");
+    upper.ends_with(CREDENTIAL_KEY_SUFFIX)
+        || CREDENTIAL_KEY_MARKERS
+            .iter()
+            .any(|marker| upper.contains(marker))
 }
 
+/// The values to hide in any text: every credential-named key's value in
+/// `env`, long enough to be a credential.
 pub(crate) fn credential_values(env: &[(OsString, OsString)]) -> Vec<String> {
     env.iter()
         .filter(|(key, _)| is_credential_env_key(&key.to_string_lossy()))
         .map(|(_, value)| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty())
+        .filter(|value| value.chars().count() >= CREDENTIAL_VALUE_MIN_CHARS)
         .collect()
 }
 
@@ -1036,6 +1054,75 @@ pub(crate) fn redact_credentials(text: &str, secrets: &[String]) -> String {
     secrets.iter().fold(text.to_string(), |redacted, secret| {
         redacted.replace(secret.as_str(), REDACTED_VALUE)
     })
+}
+
+/// One argument as the dry run prints it: the known credential values
+/// replaced, and a credential-named key inside a structured value hidden
+/// too: a JSON object (claude `--settings`, `env.*` and `apiKeyHelper`
+/// included) and a `key=value` assignment (codex `-c`, with a TOML inline
+/// table as the value).
+pub(crate) fn redact_argument(part: &str, secrets: &[String]) -> String {
+    let text = redact_credentials(part, secrets);
+    if let Ok(serde_json::Value::Object(object)) = serde_json::from_str(&text) {
+        return redact_json(serde_json::Value::Object(object)).to_string();
+    }
+    if let Some((flag, rest)) = text.split_once('=')
+        && flag.starts_with("--")
+        && !flag.contains(['{', '"', ' '])
+    {
+        return format!("{flag}={}", redact_argument(rest, secrets));
+    }
+    if let Some((key, value)) = text.split_once('=')
+        && !key.contains(['{', '"', ' ', '['])
+    {
+        let key_is_credential = key.split('.').any(is_credential_env_key);
+        let value_holds_credential = toml::from_str::<toml::Value>(&format!("v = {value}"))
+            .ok()
+            .and_then(|parsed| parsed.get("v").cloned())
+            .is_some_and(|parsed| toml_holds_credential(&parsed));
+        if key_is_credential || value_holds_credential {
+            return format!("{key}={REDACTED_VALUE}");
+        }
+    }
+    text
+}
+
+fn redact_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| {
+                    if is_credential_env_key(&key) {
+                        (key, serde_json::Value::String(REDACTED_VALUE.to_string()))
+                    } else {
+                        (key, redact_json(value))
+                    }
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_json).collect())
+        }
+        other => other,
+    }
+}
+
+fn toml_holds_credential(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(table) => table
+            .iter()
+            .any(|(key, value)| is_credential_env_key(key) || toml_holds_credential(value)),
+        toml::Value::Array(items) => items.iter().any(toml_holds_credential),
+        _ => false,
+    }
+}
+
+/// The argv as the dry run prints it, one redacted part per argument.
+pub(crate) fn redact_argv(argv: &[OsString], secrets: &[String]) -> Vec<String> {
+    argv.iter()
+        .map(|part| redact_argument(&part.to_string_lossy(), secrets))
+        .collect()
 }
 
 fn build_argv(tool: &ResolvedTool, child_args: &[OsString], plan: &LaunchPlan) -> Vec<OsString> {
@@ -1294,7 +1381,7 @@ fn format_dry_run_parts(
     lines.extend(model_lines(parts.model, parts.model_override));
     lines.push(format!(
         "argv: {}",
-        redact_credentials(&display_argv(parts.argv), &secrets)
+        redact_argv(parts.argv, &secrets).join(" ")
     ));
     lines.push("env:".to_string());
     lines.extend(

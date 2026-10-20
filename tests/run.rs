@@ -812,3 +812,107 @@ printf 'built\n'
     assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
     assert_eq!(argv.iter().filter(|part| **part == "--settings").count(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn failure_output_never_shows_a_credential_value() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf 'route %s inherited %s\n' "$ANTHROPIC_AUTH_TOKEN" "$INHERITED_API_KEY"
+printf 'route %s inherited %s\n' "$ANTHROPIC_AUTH_TOKEN" "$INHERITED_API_KEY" >&2
+exit 1
+"#,
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    for json in [false, true] {
+        let mut command = rune(home.path());
+        command.env("INHERITED_API_KEY", "fake-inherited-secret");
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args([
+                "run",
+                "sol@claude",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+            ])
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(1));
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!printed.contains("test-token"), "{printed}");
+        assert!(!printed.contains("fake-inherited-secret"), "{printed}");
+        assert!(
+            printed.contains("route <redacted> inherited <redacted>"),
+            "{printed}"
+        );
+    }
+}
+
+#[test]
+fn dry_run_never_shows_a_credential_inside_a_structured_value() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      secretive:\n        args:\n",
+            "          - '--settings'\n",
+            "          - '{\"env\":{\"MY_TOKEN\":\"fake-settings-secret\"},\"apiKeyHelper\":\"echo fake-helper-secret\",\"hooks\":{\"PreToolUse\":[{\"command\":\"fake-hook-secret\"}]}}'\n",
+            "    codex:\n      secretive:\n        args:\n",
+            "          - '-c'\n          - 'http_headers.Authorization=\"Bearer fake-header-secret\"'\n",
+            "          - '-c'\n          - 'experimental_bearer_token=\"fake-bearer-secret\"'\n",
+            "          - '-c'\n          - 'mcp_servers.x.env.TOKEN=\"fake-mcp-secret\"'\n",
+        ),
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+
+    for route in ["secretive@claude", "secretive@codex"] {
+        for json in [false, true] {
+            let mut command = rune(home.path());
+            if json {
+                command.arg("--json");
+            }
+            let output = command
+                .args(["run", route, "Review", "--repo", repo, "--dry-run"])
+                .output()
+                .expect("run output");
+            let printed = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.status.success(), "{printed}");
+            for secret in [
+                "fake-settings-secret",
+                "fake-helper-secret",
+                "fake-hook-secret",
+                "fake-header-secret",
+                "fake-bearer-secret",
+                "fake-mcp-secret",
+            ] {
+                assert!(
+                    !printed.contains(secret),
+                    "{route} json={json} leaked {secret}: {printed}"
+                );
+            }
+        }
+    }
+}

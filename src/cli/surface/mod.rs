@@ -3,6 +3,7 @@
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
+use crate::cli::launch::{REDACTED_VALUE, credential_values, redact_credentials};
 use crate::cli::process::{
     ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination, run_process_request,
 };
@@ -172,7 +173,83 @@ fn sandbox_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<&'static
         .map(|(_, hint)| *hint)
 }
 
+/// The keys the route sets for the child: its environment.
+pub(crate) fn route_keys(invocation: &SurfaceInvocation) -> Vec<OsString> {
+    invocation.env.iter().map(|(key, _)| key.clone()).collect()
+}
+
+/// Every credential value the child could echo, longest first so a value
+/// that contains another is replaced whole: the route's own, and the
+/// inherited ones the isolation leaves in place.
+pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
+    let removals = parent_session_isolation(&route_keys(invocation)).removals();
+    let inherited: Vec<(OsString, OsString)> = std::env::vars_os()
+        .filter(|(key, _)| !removals.contains(key))
+        .collect();
+    let mut secrets = credential_values(&invocation.env);
+    secrets.extend(credential_values(&inherited));
+    secrets.sort_unstable_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));
+    secrets.dedup();
+    secrets
+}
+
 impl SurfaceFailure {
+    /// The failure with every credential value hidden in its message and
+    /// its tails. The tails are built redacted already; this is the last
+    /// word for the process layer's partial output and for messages.
+    fn redacted(self, secrets: &[String]) -> Self {
+        let hide = |text: String| redact_credentials(&text, secrets);
+        match self {
+            Self::Process(failure) => Self::Process(match failure {
+                ProcessFailure::Timeout {
+                    timeout,
+                    stdout,
+                    stderr,
+                } => ProcessFailure::Timeout {
+                    timeout,
+                    stdout: hide(stdout),
+                    stderr: hide(stderr),
+                },
+                ProcessFailure::OutputLimit {
+                    stream,
+                    limit,
+                    tail,
+                } => ProcessFailure::OutputLimit {
+                    stream,
+                    limit,
+                    tail: hide(tail),
+                },
+                ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
+                ProcessFailure::Wait(message) => ProcessFailure::Wait(hide(message)),
+                ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
+                ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
+                ProcessFailure::Stderr(message) => ProcessFailure::Stderr(hide(message)),
+                other @ ProcessFailure::ForwardedSignal(_) => other,
+            }),
+            Self::Exit {
+                termination,
+                stdout_tail,
+                stderr_tail,
+            } => Self::Exit {
+                termination,
+                stdout_tail: hide(stdout_tail),
+                stderr_tail: hide(stderr_tail),
+            },
+            Self::NoAnswer {
+                message,
+                stdout_tail,
+                stderr_tail,
+            } => Self::NoAnswer {
+                message: hide(message),
+                stdout_tail: hide(stdout_tail),
+                stderr_tail: hide(stderr_tail),
+            },
+            Self::Reported(message) => Self::Reported(hide(message)),
+            Self::Io(message) => Self::Io(hide(message)),
+            Self::Arguments(message) => Self::Arguments(hide(message)),
+        }
+    }
+
     /// The last lines of stdout and stderr, for failures that carry them.
     pub(crate) fn tails(&self) -> Option<(&str, &str)> {
         match self {
@@ -207,13 +284,14 @@ impl SurfaceFailure {
     }
 
     /// Turn a parse failure of a clean exit into a `NoAnswer` that carries
-    /// the output the parse rejected.
-    fn with_output(self, output: &ProcessOutput) -> Self {
+    /// the output the parse rejected, credential values hidden before the
+    /// tail is cut.
+    fn with_output(self, output: &ProcessOutput, secrets: &[String]) -> Self {
         match self {
             Self::Reported(message) => Self::NoAnswer {
                 message,
-                stdout_tail: output_tail(&output.stdout),
-                stderr_tail: output_tail(&output.stderr),
+                stdout_tail: redacted_tail(&output.stdout, secrets),
+                stderr_tail: redacted_tail(&output.stderr, secrets),
             },
             other => other,
         }
@@ -485,8 +563,7 @@ fn codex_config_key(option: &str, assignment: &str, model: Option<&str>) -> Keye
         return Some((
             None,
             vec![format!(
-                "automated codex execution dropped {option} {}: expected key=value",
-                shown(assignment)
+                "automated codex execution dropped {option} {REDACTED_VALUE}: expected key=value"
             )],
         ));
     };
@@ -498,11 +575,13 @@ fn codex_config_key(option: &str, assignment: &str, model: Option<&str>) -> Keye
     if key == "model" && model.is_some_and(|model| codex_config_string(value) == model) {
         return Some((None, Vec::new()));
     }
+    // The key alone: a value under `mcp_servers.*.env` or `http_headers`
+    // may be a credential, and a warning reaches the terminal and the JSON.
     Some((
         None,
         vec![format!(
-            "automated codex execution owns config key {key}; the profile value {} is dropped",
-            shown(value)
+            "automated codex execution owns config key {}; the profile value {REDACTED_VALUE} is dropped",
+            shown(key)
         )],
     ))
 }
@@ -546,9 +625,9 @@ fn claude_settings_key(option: &str, json: &str, model: Option<&str>) -> Keyed {
         if *key == "model" && value.as_str().is_some_and(|value| Some(value) == model) {
             continue;
         }
+        // The key alone: `hooks` and `env` values may hold a credential.
         warnings.push(format!(
-            "automated claude execution owns settings key {key}; the profile value {} is dropped",
-            shown(&value.to_string())
+            "automated claude execution owns settings key {key}; the profile value {REDACTED_VALUE} is dropped"
         ));
     }
     if settings.is_empty() {
@@ -834,7 +913,7 @@ fn process_request(
     request.env.clone_from(&invocation.env);
     // The parent harness's session leaves first; the route's own keys are
     // not on that list, so the route's values win over anything inherited.
-    request.env_remove = parent_session_isolation(&invocation.env).removals();
+    request.env_remove = parent_session_isolation(&route_keys(invocation)).removals();
     if let Some(root) = &invocation.clean_state_root {
         let root = root.as_os_str().to_os_string();
         match invocation.surface {
@@ -945,14 +1024,23 @@ pub(crate) fn planned_request(
     Ok(process_request(&planned, args, stdin))
 }
 
-fn require_success(output: ProcessOutput) -> Result<ProcessOutput, SurfaceFailure> {
+/// The tail of one stream with the credential values hidden first, so a
+/// value cut by the tail boundary cannot leak in part.
+fn redacted_tail(text: &str, secrets: &[String]) -> String {
+    output_tail(&redact_credentials(text, secrets))
+}
+
+fn require_success(
+    output: ProcessOutput,
+    secrets: &[String],
+) -> Result<ProcessOutput, SurfaceFailure> {
     if output.termination == ProcessTermination::Exited(0) {
         return Ok(output);
     }
     Err(SurfaceFailure::Exit {
         termination: output.termination,
-        stdout_tail: output_tail(&output.stdout),
-        stderr_tail: output_tail(&output.stderr),
+        stdout_tail: redacted_tail(&output.stdout, secrets),
+        stderr_tail: redacted_tail(&output.stderr, secrets),
     })
 }
 
@@ -1122,15 +1210,21 @@ fn claude_settings(invocation: &SurfaceInvocation) -> (Option<String>, Vec<OsStr
     (settings, remaining)
 }
 
-fn invoke_claude(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
-    let output = require_success(run_process_request(&process_request(
-        invocation,
-        claude_args(invocation),
-        Some(format!("{}\n", invocation.prompt).into_bytes()),
-    ))?)?;
+fn invoke_claude(
+    invocation: &SurfaceInvocation,
+    secrets: &[String],
+) -> Result<SurfaceReply, SurfaceFailure> {
+    let output = require_success(
+        run_process_request(&process_request(
+            invocation,
+            claude_args(invocation),
+            Some(format!("{}\n", invocation.prompt).into_bytes()),
+        ))?,
+        secrets,
+    )?;
     Ok(SurfaceReply {
         text: nonempty_text(&output.stdout, "claude print")
-            .map_err(|failure| failure.with_output(&output))?,
+            .map_err(|failure| failure.with_output(&output, secrets))?,
         stderr: output.stderr,
         completion_tokens: None,
     })
@@ -1223,7 +1317,10 @@ fn codex_args(invocation: &SurfaceInvocation, final_message_path: &Path) -> Vec<
     args
 }
 
-fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+fn invoke_codex(
+    invocation: &SurfaceInvocation,
+    secrets: &[String],
+) -> Result<SurfaceReply, SurfaceFailure> {
     refuse_answer_only(invocation)?;
     let scratch = create_scratch_directory("codex")?;
     let result = (|| {
@@ -1238,11 +1335,11 @@ fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceF
         if output.termination != ProcessTermination::Exited(0) {
             return Err(SurfaceFailure::Exit {
                 termination: output.termination,
-                stdout_tail: output_tail(&output.stdout),
-                stderr_tail: output_tail(&with_surface_diagnostics(
-                    &reported_errors,
-                    &output.stderr,
-                )),
+                stdout_tail: redacted_tail(&output.stdout, secrets),
+                stderr_tail: redacted_tail(
+                    &with_surface_diagnostics(&reported_errors, &output.stderr),
+                    secrets,
+                ),
             });
         }
         if !reported_errors.is_empty() && !final_message_path.exists() {
@@ -1250,12 +1347,12 @@ fn invoke_codex(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceF
                 "codex exec error: {}",
                 reported_errors.join("; ")
             ))
-            .with_output(&output));
+            .with_output(&output, secrets));
         }
         let final_message = read_codex_final_message(&final_message_path, &events)
-            .map_err(|failure| failure.with_output(&output))?;
+            .map_err(|failure| failure.with_output(&output, secrets))?;
         let text = nonempty_text(&final_message, "codex exec")
-            .map_err(|failure| failure.with_output(&output))?;
+            .map_err(|failure| failure.with_output(&output, secrets))?;
         let completion_tokens = events
             .iter()
             .filter(|event| event.kind.as_deref() == Some("turn.completed"))
@@ -1337,7 +1434,10 @@ fn grok_final_text(stdout: &str) -> Result<String, SurfaceFailure> {
     nonempty_text(&response.text, "grok single-prompt")
 }
 
-fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+fn invoke_grok(
+    invocation: &SurfaceInvocation,
+    secrets: &[String],
+) -> Result<SurfaceReply, SurfaceFailure> {
     refuse_answer_only(invocation)?;
     let scratch = create_scratch_directory("grok")?;
     let result = (|| {
@@ -1348,14 +1448,17 @@ fn invoke_grok(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFa
                 prompt_path.display()
             ))
         })?;
-        let output = require_success(run_process_request(&process_request(
-            invocation,
-            grok_args(invocation, &prompt_path),
-            None,
-        ))?)?;
+        let output = require_success(
+            run_process_request(&process_request(
+                invocation,
+                grok_args(invocation, &prompt_path),
+                None,
+            ))?,
+            secrets,
+        )?;
         Ok(SurfaceReply {
             text: grok_final_text(&output.stdout)
-                .map_err(|failure| failure.with_output(&output))?,
+                .map_err(|failure| failure.with_output(&output, secrets))?,
             stderr: output.stderr,
             completion_tokens: None,
         })
@@ -1391,20 +1494,22 @@ fn agy_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
     args
 }
 
-fn invoke_agy(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+fn invoke_agy(
+    invocation: &SurfaceInvocation,
+    secrets: &[String],
+) -> Result<SurfaceReply, SurfaceFailure> {
     refuse_answer_only(invocation)?;
-    let output = require_success(run_process_request(&process_request(
-        invocation,
-        agy_args(invocation),
-        None,
-    ))?)?;
+    let output = require_success(
+        run_process_request(&process_request(invocation, agy_args(invocation), None))?,
+        secrets,
+    )?;
     let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
         SurfaceFailure::Reported(format!("agy returned invalid JSON output: {error}"))
-            .with_output(&output)
+            .with_output(&output, secrets)
     })?;
     Ok(SurfaceReply {
         text: nonempty_text(&response.response, "agy print")
-            .map_err(|failure| failure.with_output(&output))?,
+            .map_err(|failure| failure.with_output(&output, secrets))?,
         stderr: output.stderr,
         completion_tokens: response
             .usage
@@ -1466,17 +1571,21 @@ fn opencode_permission(invocation: &SurfaceInvocation) -> Option<&'static str> {
     }
 }
 
-fn invoke_opencode(invocation: &SurfaceInvocation) -> Result<SurfaceReply, SurfaceFailure> {
+fn invoke_opencode(
+    invocation: &SurfaceInvocation,
+    secrets: &[String],
+) -> Result<SurfaceReply, SurfaceFailure> {
     let request = process_request(invocation, opencode_args(invocation), None);
-    let output = require_success(run_process_request(&request)?)?;
+    let output = require_success(run_process_request(&request)?, secrets)?;
     let events: Vec<OpencodeEvent> = parse_jsonl(&output.stdout);
     if let Some(message) = opencode_session_error(&events) {
         return Err(
             SurfaceFailure::Reported(format!("opencode session error: {message}"))
-                .with_output(&output),
+                .with_output(&output, secrets),
         );
     }
-    let text = opencode_final_text(&events).map_err(|failure| failure.with_output(&output))?;
+    let text =
+        opencode_final_text(&events).map_err(|failure| failure.with_output(&output, secrets))?;
     let completion_tokens = events
         .iter()
         .filter(|event| event.kind.as_deref() == Some("step_finish"))
@@ -1607,12 +1716,22 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
 pub(crate) fn invoke_surface(
     invocation: &SurfaceInvocation,
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    match invocation.surface {
-        Surface::Claude => invoke_claude(invocation),
-        Surface::Codex => invoke_codex(invocation),
-        Surface::Agy => invoke_agy(invocation),
-        Surface::Grok => invoke_grok(invocation),
-        Surface::Opencode => invoke_opencode(invocation),
+    // Every failure and the harness's own stderr pass here last, so no
+    // credential value the child could echo reaches the terminal or JSON.
+    let secrets = child_secrets(invocation);
+    let result = match invocation.surface {
+        Surface::Claude => invoke_claude(invocation, &secrets),
+        Surface::Codex => invoke_codex(invocation, &secrets),
+        Surface::Agy => invoke_agy(invocation, &secrets),
+        Surface::Grok => invoke_grok(invocation, &secrets),
+        Surface::Opencode => invoke_opencode(invocation, &secrets),
+    };
+    match result {
+        Ok(reply) => Ok(SurfaceReply {
+            stderr: redact_credentials(&reply.stderr, &secrets),
+            ..reply
+        }),
+        Err(failure) => Err(failure.redacted(&secrets)),
     }
 }
 

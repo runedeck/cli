@@ -72,33 +72,33 @@ pub(crate) fn is_parent_session_key(key: &str) -> bool {
             .any(|prefix| key.starts_with(prefix))
 }
 
-fn route_sets(route_env: &[(OsString, OsString)], key: &str) -> bool {
-    route_env.iter().any(|(name, _)| name == key)
+fn route_sets(route_keys: &[OsString], key: &str) -> bool {
+    route_keys.iter().any(|name| name == key)
 }
 
-/// The isolation for a child that gets `route_env`, computed from the keys
-/// of this process's environment.
-pub(crate) fn parent_session_isolation(route_env: &[(OsString, OsString)]) -> Isolation {
+/// The isolation for a child whose route sets `route_keys`, computed from
+/// the keys of this process's environment.
+pub(crate) fn parent_session_isolation(route_keys: &[OsString]) -> Isolation {
     let parent: Vec<OsString> = std::env::vars_os().map(|(key, _)| key).collect();
-    isolate(&parent, route_env)
+    isolate(&parent, route_keys)
 }
 
-/// The isolation for a child that gets `route_env` from a parent whose
-/// environment holds `parent_keys`. Order follows the parent's.
-pub(crate) fn isolate(parent_keys: &[OsString], route_env: &[(OsString, OsString)]) -> Isolation {
+/// The isolation for a child whose route sets `route_keys`, from a parent
+/// whose environment holds `parent_keys`. Order follows the parent's.
+pub(crate) fn isolate(parent_keys: &[OsString], route_keys: &[OsString]) -> Isolation {
     let mut isolation = Isolation::default();
     for key in parent_keys {
         let name = key.to_string_lossy();
-        if is_parent_session_key(&name) && !route_sets(route_env, &name) {
+        if is_parent_session_key(&name) && !route_sets(route_keys, &name) {
             isolation.session.push(name.into_owned());
         }
     }
     for family in FAMILIES {
-        let endpoint_without_credential = route_sets(route_env, family.base_url_key)
+        let endpoint_without_credential = route_sets(route_keys, family.base_url_key)
             && !family
                 .credential_keys
                 .iter()
-                .any(|key| route_sets(route_env, key));
+                .any(|key| route_sets(route_keys, key));
         if !endpoint_without_credential {
             continue;
         }

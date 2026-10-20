@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::launch;
 
 fn invocation(surface: Surface, extra_args: &[&str]) -> SurfaceInvocation {
     SurfaceInvocation {
@@ -855,7 +856,7 @@ fn desktop_session_variables_leave_the_child_and_the_owner_keys_stay() {
         ("ANTHROPIC_MODEL", "gpt-5.6-sol"),
     ]);
 
-    let isolation = super::isolation::isolate(&parent, &route);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
 
     assert_eq!(
         isolation.session,
@@ -904,7 +905,7 @@ fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
     let anthropic = env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]);
     let openai = env(&[("OPENAI_BASE_URL", "http://127.0.0.1:8317/v1")]);
 
-    let isolation = super::isolation::isolate(&parent, &anthropic);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&anthropic));
     assert_eq!(
         isolation.withheld,
         [
@@ -923,7 +924,7 @@ fn route_endpoint_without_a_credential_withholds_the_inherited_one() {
         ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
     );
 
-    let isolation = super::isolation::isolate(&parent, &openai);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&openai));
     assert_eq!(
         isolation.withheld,
         [("OPENAI_API_KEY".to_string(), "OPENAI_BASE_URL".to_string())]
@@ -940,7 +941,7 @@ fn route_credential_keeps_the_inherited_sibling_credential() {
         ("ANTHROPIC_AUTH_TOKEN", "route-token"),
     ]);
 
-    let isolation = super::isolation::isolate(&parent, &route);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
 
     assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
 }
@@ -960,7 +961,7 @@ fn route_keys_win_over_the_parent_session() {
     let parent = keys(&["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_ENTRYPOINT"]);
     let route = env(&[("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "272000")]);
 
-    let isolation = super::isolation::isolate(&parent, &route);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
 
     assert_eq!(isolation.session, ["CLAUDE_CODE_ENTRYPOINT"]);
 }
@@ -1044,7 +1045,7 @@ fn clean_exit_without_an_answer_carries_the_output() {
     };
     let failure = nonempty_text(&output.stdout, "claude print")
         .expect_err("empty answer")
-        .with_output(&output);
+        .with_output(&output, &[]);
 
     assert_eq!(
         failure,
@@ -1060,7 +1061,7 @@ fn clean_exit_without_an_answer_carries_the_output() {
             .contains("stderr tail:\n  model refused"),
         "{failure}"
     );
-    let untouched = SurfaceFailure::Io("disk".to_string()).with_output(&output);
+    let untouched = SurfaceFailure::Io("disk".to_string()).with_output(&output, &[]);
     assert_eq!(untouched, SurfaceFailure::Io("disk".to_string()));
 }
 
@@ -1213,7 +1214,7 @@ fn isolation_lines_name_the_withheld_credential_and_its_endpoint() {
     let parent = keys(&["CLAUDECODE", "ANTHROPIC_API_KEY"]);
     let route = env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]);
 
-    let lines = super::isolation::isolate(&parent, &route).lines();
+    let lines = super::isolation::isolate(&parent, &launch::env_keys(&route)).lines();
 
     assert_eq!(
         lines,
@@ -1358,4 +1359,99 @@ fn claude_settings_model_equal_to_the_run_model_is_dropped_without_a_warning() {
     different.model = Some("gpt-5.6-sol".to_string());
     let filtered = filter_surface_args(&different);
     assert_eq!(filtered.warnings.len(), 2, "{:?}", filtered.warnings);
+}
+
+#[test]
+fn drop_warnings_name_the_key_and_never_the_value() {
+    let codex = filter_surface_args(&invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            "mcp_servers.x.env.TOKEN=\"fake-mcp-secret\"",
+            "-c",
+            "fake-bare-secret",
+        ],
+    ));
+    assert_eq!(codex.warnings.len(), 2, "{:?}", codex.warnings);
+    assert!(codex.warnings[0].contains("config key mcp_servers.x.env.TOKEN"));
+    assert!(codex.warnings[0].contains("<redacted>"));
+    for warning in &codex.warnings {
+        assert!(!warning.contains("fake-"), "{warning}");
+    }
+
+    let claude = filter_surface_args(&invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"hooks":{"PreToolUse":[{"command":"fake-hook-secret"}]},"env":{"X":"1"}}"#,
+        ],
+    ));
+    assert_eq!(claude.warnings.len(), 1, "{:?}", claude.warnings);
+    assert!(claude.warnings[0].contains("settings key hooks"));
+    assert!(!claude.warnings[0].contains("fake-hook-secret"));
+}
+
+#[test]
+fn child_secrets_hold_the_route_credentials_longest_first() {
+    let mut invocation = invocation(Surface::Claude, &[]);
+    invocation.env = env(&[
+        ("ANTHROPIC_AUTH_TOKEN", "fake-r"),
+        ("ANTHROPIC_API_KEY", "fake-route-secret-long"),
+        ("ANTHROPIC_MODEL", "gpt-5.6-sol"),
+        ("X_SECRET", "ab"),
+    ]);
+    let secrets = child_secrets(&invocation);
+
+    // The test process may carry longer inherited credentials of its own,
+    // so the order is checked between the route's two values only.
+    let long = secrets
+        .iter()
+        .position(|secret| secret == "fake-route-secret-long")
+        .expect("route credential");
+    let short = secrets
+        .iter()
+        .position(|secret| secret == "fake-r")
+        .expect("short route credential");
+    assert!(long < short, "{secrets:?}");
+    assert!(!secrets.contains(&"gpt-5.6-sol".to_string()));
+    assert!(!secrets.contains(&"ab".to_string()), "too short to be one");
+}
+
+#[test]
+fn failure_tails_hide_the_credential_before_the_tail_is_cut() {
+    let secrets = vec!["fake-route-secret".to_string()];
+    let output = ProcessOutput {
+        termination: ProcessTermination::Exited(1),
+        stdout: "auth fake-route-secret rejected".to_string(),
+        stderr: "token fake-route-secret".to_string(),
+    };
+    let exit = require_success(output.clone(), &secrets).expect_err("exit 1");
+    assert_eq!(
+        exit,
+        SurfaceFailure::Exit {
+            termination: ProcessTermination::Exited(1),
+            stdout_tail: "auth <redacted> rejected".to_string(),
+            stderr_tail: "token <redacted>".to_string(),
+        }
+    );
+    let silent = SurfaceFailure::Reported("no answer".to_string()).with_output(&output, &secrets);
+    assert!(
+        !silent.to_string().contains("fake-route-secret"),
+        "{silent}"
+    );
+
+    let timeout = SurfaceFailure::Process(ProcessFailure::Timeout {
+        timeout: Duration::from_secs(1),
+        stdout: "partial fake-route-secret".to_string(),
+        stderr: String::new(),
+    })
+    .redacted(&secrets);
+    assert!(
+        !timeout.to_string().contains("fake-route-secret"),
+        "{timeout}"
+    );
+    assert!(
+        timeout.to_string().contains("partial <redacted>"),
+        "{timeout}"
+    );
 }
