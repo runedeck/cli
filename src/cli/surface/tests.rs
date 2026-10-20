@@ -1203,7 +1203,7 @@ fn clean_exit_without_an_answer_carries_the_output() {
 }
 
 #[test]
-fn sandbox_signature_in_the_output_adds_a_hint() {
+fn sandbox_signature_on_stderr_or_in_a_harness_error_adds_a_hint() {
     let certificate = SurfaceFailure::Exit {
         termination: ProcessTermination::Exited(1),
         stdout_tail: String::new(),
@@ -1217,30 +1217,63 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         "{certificate}"
     );
 
-    let keyring = SurfaceFailure::NoAnswer {
-        message: "codex exec produced no final agent message".to_string(),
-        stdout_tail: "failed to load CLI auth from keyring".to_string(),
-        stderr_tail: String::new(),
-        harness_errors: Vec::new(),
-    };
-    assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
-
-    let node_tls = SurfaceFailure::Exit {
+    let reported = SurfaceFailure::Exit {
         termination: ProcessTermination::Exited(1),
-        stdout_tail: "API Error: Unable to connect to API: SSL certificate verification failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)".to_string(),
+        stdout_tail:
+            "API Error: SSL certificate verification failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)"
+                .to_string(),
         stderr_tail: String::new(),
-        harness_errors: Vec::new(),
+        harness_errors: vec![
+            "API Error: SSL certificate verification failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)"
+                .to_string(),
+        ],
     };
     assert!(
-        node_tls
+        reported
             .hint()
             .is_some_and(|hint| hint.contains("filtering proxy"))
     );
+
+    let keyring = SurfaceFailure::NoAnswer {
+        message: "codex exec produced no final agent message".to_string(),
+        stdout_tail: String::new(),
+        stderr_tail: "failed to load CLI auth from keyring".to_string(),
+        harness_errors: Vec::new(),
+    };
+    assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
 
     let spawn = SurfaceFailure::Process(ProcessFailure::Spawn(
         "claude not runnable: Operation not permitted (os error 1)".to_string(),
     ));
     assert!(spawn.hint().is_some_and(|hint| hint.contains("sandbox")));
+}
+
+#[test]
+fn model_text_on_stdout_never_earns_a_sandbox_hint() {
+    let quoted = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "The shell said: Operation not permitted. Try again outside.".to_string(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    };
+    assert_eq!(quoted.hint(), None);
+
+    let certificate_in_text = SurfaceFailure::NoAnswer {
+        message: "claude print produced no final response".to_string(),
+        stdout_tail: "node prints UNABLE_TO_VERIFY_LEAF_SIGNATURE when a CA is missing".to_string(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    };
+    assert_eq!(certificate_in_text.hint(), None);
+
+    // A syscall denial counts on stderr alone, not as a harness error.
+    let harness_only = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        harness_errors: vec!["Operation not permitted".to_string()],
+    };
+    assert_eq!(harness_only.hint(), None);
 
     let plain = SurfaceFailure::Exit {
         termination: ProcessTermination::Exited(2),
@@ -1249,6 +1282,20 @@ fn sandbox_signature_in_the_output_adds_a_hint() {
         harness_errors: Vec::new(),
     };
     assert_eq!(plain.hint(), None);
+}
+
+#[test]
+fn claude_api_error_lines_are_harness_errors() {
+    let stdout =
+        "Thinking.\nAPI Error: 400 {\"error\":\"unknown model\"}\n  API Error: retry failed\nok\n";
+    assert_eq!(
+        claude_error_messages(stdout),
+        [
+            "API Error: 400 {\"error\":\"unknown model\"}",
+            "API Error: retry failed"
+        ]
+    );
+    assert_eq!(claude_error_messages("plain answer"), [] as [String; 0]);
 }
 
 #[test]

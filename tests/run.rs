@@ -135,6 +135,66 @@ fn json_reports_requested_and_resolved_routes() {
     assert_eq!(result["requested_route"], "sol@claude");
     assert_eq!(result["requested_provider"], "sol@claude");
     assert_eq!(result["resolved_route"], "claude");
+    assert!(
+        result.get("hint").is_none(),
+        "a success never hints: {result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_model_answer_that_quotes_a_sandbox_denial_earns_no_hint_but_stderr_does() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+
+    let quoting = executable_provider(
+        home.path(),
+        "fake-claude-quoting",
+        "#!/bin/sh\nprintf 'The command failed with Operation not permitted, as expected.\\n'\nexit 1\n",
+    );
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            quoting.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "exit");
+    assert!(result["hint"].is_null(), "{result}");
+
+    let denied = executable_provider(
+        home.path(),
+        "fake-claude-denied",
+        "#!/bin/sh\nprintf 'open: Operation not permitted (os error 1)\\n' >&2\nexit 1\n",
+    );
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            denied.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert!(
+        result["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("outer sandbox")),
+        "{result}"
+    );
 }
 
 #[cfg(unix)]

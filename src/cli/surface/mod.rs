@@ -146,35 +146,53 @@ pub(crate) fn output_tail(text: &str) -> String {
     by_lines.chars().skip(chars - TAIL_CHARS).collect()
 }
 
-/// A known sandbox denial in a failure's output, and the sentence that names
-/// the sandbox. The signatures come from runs inside an outer macOS
-/// Seatbelt sandbox: a blocked syscall, a blocked TLS trust evaluation for
-/// the proxy certificate, and a blocked keyring read.
-const SANDBOX_HINTS: &[(&str, &str)] = &[
+/// Where a sandbox signature counts. Free model text on stdout never does:
+/// a model that quotes "Operation not permitted" is not a blocked harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HintSource {
+    /// The harness's stderr, or the supervisor's own message.
+    Stderr,
+    /// Stderr, or an error message the harness reported in its own event
+    /// stream (codex's JSONL, claude's `API Error:` lines).
+    StderrOrHarnessError,
+}
+
+/// A known sandbox denial, where it counts, and the sentence that names the
+/// sandbox. The signatures come from runs inside an outer macOS Seatbelt
+/// sandbox: a blocked syscall, a blocked TLS trust evaluation for the proxy
+/// certificate, and a blocked keyring read.
+const SANDBOX_HINTS: &[(&str, HintSource, &str)] = &[
     (
         "Operation not permitted",
+        HintSource::Stderr,
         "an outer sandbox blocked a file or network operation of the harness; run rune outside the sandbox",
     ),
     (
         "-26276",
+        HintSource::StderrOrHarnessError,
         "an outer sandbox blocked the certificate check for the proxy (OSStatus -26276); run rune outside the sandbox",
     ),
     (
         "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        HintSource::StderrOrHarnessError,
         "an outer sandbox's filtering proxy answered the endpoint with a certificate the harness does not trust (UNABLE_TO_VERIFY_LEAF_SIGNATURE); run rune outside the sandbox",
     ),
     (
         "failed to load CLI auth from keyring",
+        HintSource::Stderr,
         "an outer sandbox blocked the keyring that holds the harness credential; run rune outside the sandbox",
     ),
 ];
 
-fn sandbox_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<&'static str> {
-    let texts: Vec<&str> = texts.into_iter().collect();
+fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<&'static str> {
     SANDBOX_HINTS
         .iter()
-        .find(|(signature, _)| texts.iter().any(|text| text.contains(signature)))
-        .map(|(_, hint)| *hint)
+        .find(|(signature, source, _)| {
+            stderr.iter().any(|text| text.contains(signature))
+                || (*source == HintSource::StderrOrHarnessError
+                    && harness_errors.iter().any(|text| text.contains(signature)))
+        })
+        .map(|(_, _, hint)| *hint)
 }
 
 /// The keys the route sets for the child: its environment, and for claude
@@ -382,19 +400,19 @@ impl SurfaceFailure {
         }
     }
 
-    /// The sandbox sentence when the failure's output or message carries a
-    /// known denial.
+    /// The sandbox sentence when the harness's stderr, the supervisor's own
+    /// message, or a harness-reported error carries a known denial. Stdout
+    /// is never read: it holds the model's text.
     pub(crate) fn hint(&self) -> Option<&'static str> {
         let message = match self {
             Self::Process(failure) => Some(failure.to_string()),
             _ => None,
         };
-        let (stdout_tail, stderr_tail) = self.tails().unwrap_or_default();
-        sandbox_hint(
-            [stdout_tail, stderr_tail]
-                .into_iter()
-                .chain(message.as_deref()),
-        )
+        let (_, stderr_tail) = self.tails().unwrap_or_default();
+        let stderr: Vec<&str> = std::iter::once(stderr_tail)
+            .chain(message.as_deref())
+            .collect();
+        sandbox_hint(&stderr, self.harness_errors())
     }
 
     /// Turn a parse failure of a clean exit into a `NoAnswer` that carries
@@ -1318,20 +1336,36 @@ fn invoke_claude(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    let output = require_success(
-        run_process_request(&process_request(
-            invocation,
-            claude_args(invocation),
-            Some(format!("{}\n", invocation.prompt).into_bytes()),
-        ))?,
-        secrets,
-    )?;
+    let output = run_process_request(&process_request(
+        invocation,
+        claude_args(invocation),
+        Some(format!("{}\n", invocation.prompt).into_bytes()),
+    ))?;
+    // `claude --print` reports its own failures as `API Error:` lines on
+    // stdout, beside the model's text; they are harness errors, not text.
+    let reported_errors = claude_error_messages(&output.stdout);
+    let output = require_success(output, secrets)
+        .map_err(|failure| failure.with_harness_errors(reported_errors.clone()))?;
     Ok(SurfaceReply {
-        text: nonempty_text(&output.stdout, "claude print")
-            .map_err(|failure| failure.with_output(&output, secrets))?,
+        text: nonempty_text(&output.stdout, "claude print").map_err(|failure| {
+            failure
+                .with_output(&output, secrets)
+                .with_harness_errors(reported_errors)
+        })?,
         stderr: output.stderr,
         completion_tokens: None,
     })
+}
+
+/// The `API Error:` lines `claude --print` writes on stdout when the request
+/// itself fails: the harness's report, apart from any model text.
+fn claude_error_messages(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("API Error:"))
+        .map(str::to_string)
+        .collect()
 }
 
 // Codex reports usage limits, auth failures, and turn errors as JSONL events on
