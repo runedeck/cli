@@ -502,9 +502,12 @@ fn profile_resolution_errors_with_known_names() {
     );
 
     let error = resolve_profile("claude", Some("missing"), &launch).unwrap_err();
-    assert!(error.contains("no launch profile 'missing'"), "{error}");
     assert!(
-        error.contains("sol"),
+        error.message.contains("no launch profile 'missing'"),
+        "{error}"
+    );
+    assert!(
+        error.message.contains("sol"),
         "error must list known names: {error}"
     );
 
@@ -1066,4 +1069,23 @@ fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
             .route_keys()
             .contains(&OsString::from("ANTHROPIC_BASE_URL"))
     );
+}
+
+#[test]
+fn an_unknown_profile_names_the_known_ones_in_the_message_and_as_a_list() {
+    let launch = ontology::resolve_launch(&Launch::default());
+    let error = resolve_profile("claude", Some("nope"), &launch).expect_err("unknown profile");
+
+    assert!(
+        error.message.contains("profiles: grok, sol"),
+        "{}",
+        error.message
+    );
+    assert_eq!(
+        error.profiles,
+        Some(vec!["grok".to_string(), "sol".to_string()])
+    );
+    let plain: ResolveError = "other".to_string().into();
+    assert_eq!(plain.profiles, None);
+    assert_eq!(plain.to_string(), "other");
 }

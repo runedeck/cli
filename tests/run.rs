@@ -712,6 +712,59 @@ fn unknown_profile_with_json_is_one_object_that_lists_the_known_profiles() {
             .is_some_and(|message| message.contains("profiles: grok, sol")),
         "{result}"
     );
+    assert_eq!(
+        result["details"]["profiles"],
+        serde_json::json!(["grok", "sol"])
+    );
+}
+
+#[test]
+fn a_usage_error_under_json_is_one_object_with_claps_exit_code() {
+    let home = tempfile::tempdir().expect("home");
+    for (label, args) in [
+        (
+            "bad mode",
+            vec!["--json", "run", "sol@claude", "x", "--mode", "bogus"],
+        ),
+        (
+            "dry-run with check",
+            vec!["--json", "run", "sol@claude", "x", "--dry-run", "--check"],
+        ),
+        ("missing tool", vec!["--json", "run"]),
+        (
+            "json after the subcommand",
+            vec!["run", "sol@claude", "x", "--json", "--mode", "bogus"],
+        ),
+    ] {
+        let output = rune(home.path()).args(&args).output().expect("run output");
+        assert_eq!(output.status.code(), Some(2), "{label}");
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "{label}: stdout is not one JSON object ({error}): {}",
+                    String::from_utf8_lossy(&output.stdout)
+                )
+            });
+        assert_eq!(result["ok"], false, "{label}");
+        assert_eq!(result["kind"], "configuration_error", "{label}");
+        assert!(
+            result["details"]["message"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
+            "{label}: {result}"
+        );
+    }
+}
+
+#[test]
+fn help_keeps_its_own_output_under_json() {
+    let home = tempfile::tempdir().expect("home");
+    rune(home.path())
+        .args(["--json", "run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--dry-run"))
+        .stdout(predicate::str::contains("configuration_error").not());
 }
 
 #[test]

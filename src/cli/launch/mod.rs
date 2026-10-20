@@ -6,6 +6,7 @@ use rune::ontology::{self, DockerConfig, Launch, LaunchModel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -39,7 +40,7 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         let config = ontology::load().map_err(|error| error.to_string())?;
         return Ok(list_tools(&config.launch));
     }
-    let resolved = resolve(tool, rest)?;
+    let resolved = resolve(tool, rest).map_err(|error| error.message)?;
     if resolved.check {
         let report = check::run_checks(&resolved, None);
         if json {
@@ -62,7 +63,30 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
     run_child(&resolved.argv, &resolved.env, &isolation.removals())
 }
 
-pub(crate) fn resolve(tool: &str, rest: &[OsString]) -> Result<ResolvedLaunch, String> {
+/// Why a launch could not be resolved: the message, and for an unknown
+/// profile the profiles the tool does have, so a JSON caller can offer them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolveError {
+    pub(crate) message: String,
+    pub(crate) profiles: Option<Vec<String>>,
+}
+
+impl From<String> for ResolveError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            profiles: None,
+        }
+    }
+}
+
+impl fmt::Display for ResolveError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+pub(crate) fn resolve(tool: &str, rest: &[OsString]) -> Result<ResolvedLaunch, ResolveError> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let root = dispatch::rune_root_from(&cwd)?;
     let config = ontology::load().map_err(|error| error.to_string())?;
@@ -75,7 +99,7 @@ fn resolve_with_config(
     cwd: PathBuf,
     root: PathBuf,
     config: ontology::ResolvedConfig,
-) -> Result<ResolvedLaunch, String> {
+) -> Result<ResolvedLaunch, ResolveError> {
     let (tool_name, profile_name) = split_invocation(invocation);
     let profile = resolve_profile(tool_name, profile_name, &config.launch)?.cloned();
     let mut options = parse_cli_tail(rest, &config.launch)?;
@@ -394,7 +418,7 @@ fn resolve_profile<'config>(
     tool: &str,
     profile: Option<&str>,
     launch: &'config Launch,
-) -> Result<Option<&'config ontology::LaunchProfile>, String> {
+) -> Result<Option<&'config ontology::LaunchProfile>, ResolveError> {
     let Some(name) = profile else {
         return Ok(None);
     };
@@ -403,19 +427,21 @@ fn resolve_profile<'config>(
         .get(tool)
         .and_then(|profiles| profiles.get(name));
     if found.is_none() && tool != "ollama" {
-        let known = launch
+        let mut profiles: Vec<String> = launch
             .profiles
             .get(tool)
-            .map(|profiles| {
-                let mut names: Vec<&str> = profiles.keys().map(String::as_str).collect();
-                names.sort_unstable();
-                names.join(", ")
-            })
-            .filter(|names| !names.is_empty())
-            .unwrap_or_else(|| "none defined".to_string());
-        return Err(format!(
-            "no launch profile '{name}' for {tool} (profiles: {known})"
-        ));
+            .map(|profiles| profiles.keys().cloned().collect())
+            .unwrap_or_default();
+        profiles.sort_unstable();
+        let known = if profiles.is_empty() {
+            "none defined".to_string()
+        } else {
+            profiles.join(", ")
+        };
+        return Err(ResolveError {
+            message: format!("no launch profile '{name}' for {tool} (profiles: {known})"),
+            profiles: Some(profiles),
+        });
     }
     Ok(found)
 }

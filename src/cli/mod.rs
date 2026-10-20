@@ -1556,7 +1556,24 @@ pub fn run() -> i32 {
         return 0;
     }
 
-    let args = Cli::parse();
+    let args = match Cli::try_parse() {
+        Ok(args) => args,
+        // A usage error under --json is one JSON object on stdout, with
+        // clap's own exit code; help and version keep their own output.
+        Err(error) if error.use_stderr() && json_requested(std::env::args_os().skip(1)) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ok": false,
+                    "kind": "configuration_error",
+                    "tool": serde_json::Value::Null,
+                    "details": { "message": error.to_string().trim_end() },
+                })
+            );
+            return error.exit_code();
+        }
+        Err(error) => error.exit(),
+    };
     if args.no_color {
         style::set_global_no_color();
         console::set_colors_enabled(false);
@@ -2280,6 +2297,14 @@ fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {
     };
 
     args.next().is_none() && matches!(argument.to_str(), Some("--help" | "-h" | "help"))
+}
+
+/// Whether `--json` is on the command line, read before clap parses it, so
+/// a parse error can answer in the form the caller asked for. Arguments
+/// after `--` are the child's and do not count.
+fn json_requested(args: impl Iterator<Item = OsString>) -> bool {
+    args.take_while(|argument| argument != "--")
+        .any(|argument| argument == "--json")
 }
 
 #[cfg(test)]

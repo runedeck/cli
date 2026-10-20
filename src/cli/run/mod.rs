@@ -88,24 +88,28 @@ pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
             }
             Ok(outcome.exit_code)
         }
-        Err(message) if options.json => {
+        Err(error) if options.json => {
+            let mut details = json!({ "message": error.message });
+            if let (Some(profiles), Some(details)) = (error.profiles, details.as_object_mut()) {
+                details.insert("profiles".to_string(), json!(profiles));
+            }
             println!(
                 "{}",
                 json!({
                     "ok": false,
                     "kind": "configuration_error",
                     "tool": options.tool,
-                    "details": { "message": message },
+                    "details": details,
                 })
             );
             Ok(2)
         }
-        Err(message) => Err(message),
+        Err(error) => Err(error.message),
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn execute_inner(options: &RunOptions) -> Result<Outcome, String> {
+fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> {
     if options.plan == RunPlan::Check {
         return execute_check(options);
     }
@@ -132,7 +136,8 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, String> {
         return Err(format!(
             "rune run cannot supervise {} wrappers; remove them or use rune launch",
             unsupported.join(", ")
-        ));
+        )
+        .into());
     }
     let (resolved_binary, extra_args) = resolved
         .argv
@@ -175,7 +180,12 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, String> {
     };
 
     if dry_run || resolved.dry_run {
-        return dry_run_outcome(options, &resolved, &invocation, &filtered.warnings);
+        return Ok(dry_run_outcome(
+            options,
+            &resolved,
+            &invocation,
+            &filtered.warnings,
+        )?);
     }
 
     for warning in resolved.warnings().iter().chain(&filtered.warnings) {
@@ -345,7 +355,7 @@ fn dry_run_outcome(
 /// `--check`: verify the model ids the run would send against each base
 /// URL in the plan. No prompt is read and nothing is spawned. The exit
 /// code is the check's: 0 served, 1 missing, 2 endpoint failure.
-fn execute_check(options: &RunOptions) -> Result<Outcome, String> {
+fn execute_check(options: &RunOptions) -> Result<Outcome, launch::ResolveError> {
     let resolved = launch::resolve(&options.tool, &[])?;
     let report = launch::check::run_checks(&resolved, options.model.as_deref());
     Ok(Outcome {
