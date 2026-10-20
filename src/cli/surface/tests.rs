@@ -1774,3 +1774,46 @@ fn failure_tails_hide_the_credential_before_the_tail_is_cut() {
         "{timeout}"
     );
 }
+
+#[test]
+fn host_bound_family_members_travel_with_the_family() {
+    let parent = keys(&[
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+        "CLAUDE_CODE_CLIENT_CERT",
+        "CLAUDE_CODE_CLIENT_KEY",
+        "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+        "ANTHROPIC_BASE_URL",
+    ]);
+
+    // The route sets one Anthropic key: every other member is withheld.
+    let route = env(&[("ANTHROPIC_AUTH_TOKEN", "fake-route-secret")]);
+    let isolation = super::isolation::isolate(&parent, &launch::env_keys(&route));
+    let withheld: Vec<&str> = isolation
+        .withheld
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .collect();
+    for member in [
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+        "CLAUDE_CODE_CLIENT_CERT",
+        "CLAUDE_CODE_CLIENT_KEY",
+        "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        "ANTHROPIC_BASE_URL",
+    ] {
+        assert!(withheld.contains(&member), "{member} kept: {withheld:?}");
+    }
+    assert_eq!(
+        isolation.session,
+        ["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"],
+        "a host-session name, not a family member"
+    );
+
+    // The route sets none: the family passes as a set.
+    let isolation = super::isolation::isolate(&parent, &[]);
+    assert!(isolation.withheld.is_empty(), "{:?}", isolation.withheld);
+}

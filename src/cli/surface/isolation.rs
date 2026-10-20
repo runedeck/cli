@@ -44,6 +44,7 @@ const PARENT_SESSION_NAMES: &[&str] = &[
     "CLAUDE_CODE_DISABLE_CRON",
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
     "CLAUDE_CODE_TMUX_TRUECOLOR",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
     "CLAUDE_TMPDIR",
@@ -125,14 +126,15 @@ pub(crate) fn isolate(parent_keys: &[OsString], route_keys: &[OsString]) -> Isol
             isolation.session.push(name.into_owned());
         }
     }
-    // A family is its endpoint key and its credential keys. When the route
-    // sets any of them, the child gets none of the family's inherited
-    // keys: an inherited endpoint beside a route credential, or an
-    // inherited credential beside a route endpoint, would pair the two
-    // across hosts.
+    // A family is its endpoint key, its credential keys, and the further
+    // keys that bind a session to one host (custom headers, OAuth tokens,
+    // client certificates). When the route sets any of them, the child gets
+    // none of the family's inherited keys: an inherited endpoint beside a
+    // route credential, or an inherited credential beside a route endpoint,
+    // would pair the two across hosts. When the route sets none, the
+    // inherited keys pass together as the set they are.
     for family in FAMILIES {
-        let members =
-            std::iter::once(family.base_url_key).chain(family.credential_keys.iter().copied());
+        let members = family.members();
         let Some(route_key) = members.clone().find(|key| route_sets(route_keys, key)) else {
             continue;
         };

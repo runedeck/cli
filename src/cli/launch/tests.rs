@@ -977,6 +977,8 @@ fn credential_key_classifier_reads_env_settings_config_and_header_names() {
         "apiKeyHelper",
         "experimental_bearer_token",
         "PROXY_PASSWORD",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "http_headers",
     ] {
         assert!(is_credential_env_key(key), "{key}");
     }

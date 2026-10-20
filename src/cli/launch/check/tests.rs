@@ -422,3 +422,67 @@ fn a_claude_settings_env_sets_the_endpoint_and_credential_the_check_reads() {
         Some("ANTHROPIC_AUTH_TOKEN")
     );
 }
+
+#[test]
+fn the_check_never_borrows_a_credential_of_another_family() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A claude plan with an endpoint and only foreign credentials: none is sent.
+    let claude = super::super::tests::resolve_with_config_for_tests(
+        "claude",
+        &[
+            std::ffi::OsString::from("--settings"),
+            std::ffi::OsString::from(
+                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/a","PROXY_TOKEN":"fake-proxy-secret","OPENAI_API_KEY":"fake-openai-secret"}}"#,
+            ),
+        ],
+        dir.path(),
+    );
+    let checks = plan_checks(&claude, None);
+    let anthropic = checks
+        .iter()
+        .find(|check| check.base_url == "http://127.0.0.1:9/a")
+        .expect("anthropic endpoint");
+    assert_eq!(
+        anthropic.credential_key.as_deref(),
+        Some("PROXY_TOKEN"),
+        "a key of no family may stand in, a key of another family never: {checks:?}"
+    );
+
+    // Only a foreign family's credential beside the endpoint: none is sent.
+    let foreign = super::super::tests::resolve_with_config_for_tests(
+        "claude",
+        &[
+            std::ffi::OsString::from("--settings"),
+            std::ffi::OsString::from(
+                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/a","OPENAI_API_KEY":"fake-openai-secret"}}"#,
+            ),
+        ],
+        dir.path(),
+    );
+    let checks = plan_checks(&foreign, None);
+    let anthropic = checks
+        .iter()
+        .find(|check| check.base_url == "http://127.0.0.1:9/a")
+        .expect("anthropic endpoint");
+    assert_eq!(anthropic.credential_key, None, "{checks:?}");
+
+    // A tool outside the families takes a credential that belongs to none.
+    let mut grok = super::super::tests::resolve_with_config_for_tests("grok", &[], dir.path());
+    grok.display_env = vec![
+        (
+            std::ffi::OsString::from("GROK_MODELS_BASE_URL"),
+            std::ffi::OsString::from("http://127.0.0.1:9/grok"),
+        ),
+        (
+            std::ffi::OsString::from("ANTHROPIC_AUTH_TOKEN"),
+            std::ffi::OsString::from("fake-anthropic-secret"),
+        ),
+        (
+            std::ffi::OsString::from("GROK_API_KEY"),
+            std::ffi::OsString::from("fake-grok-secret"),
+        ),
+    ];
+    let checks = plan_checks(&grok, None);
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(checks[0].credential_key.as_deref(), Some("GROK_API_KEY"));
+}

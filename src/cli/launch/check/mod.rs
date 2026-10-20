@@ -20,21 +20,52 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// same table to bind an inherited credential to its endpoint.
 pub(crate) struct Family {
     pub(crate) base_url_key: &'static str,
+    /// The credentials the check sends to the endpoint, in the order the
+    /// tool reads them.
     pub(crate) credential_keys: &'static [&'static str],
+    /// Further keys that bind a session to one host and travel with the
+    /// family in the isolation (headers, OAuth tokens, client certificates),
+    /// never sent by the check.
+    pub(crate) isolation_keys: &'static [&'static str],
     model_keys: &'static [&'static str],
     tool: &'static str,
+}
+
+impl Family {
+    /// Every key of the family, for the isolation: the endpoint, the
+    /// credentials, and the further host-bound keys.
+    pub(crate) fn members(&self) -> impl Iterator<Item = &'static str> + Clone {
+        std::iter::once(self.base_url_key)
+            .chain(self.credential_keys.iter().copied())
+            .chain(self.isolation_keys.iter().copied())
+    }
+
+    pub(crate) fn is_member(key: &str) -> bool {
+        FAMILIES
+            .iter()
+            .any(|family| family.members().any(|member| member == key))
+    }
 }
 
 pub(crate) const FAMILIES: &[Family] = &[
     Family {
         base_url_key: "ANTHROPIC_BASE_URL",
         credential_keys: &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        isolation_keys: &[
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "CLAUDE_CODE_CLIENT_CERT",
+            "CLAUDE_CODE_CLIENT_KEY",
+            "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        ],
         model_keys: &["ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"],
         tool: "claude",
     },
     Family {
         base_url_key: "OPENAI_BASE_URL",
         credential_keys: &["OPENAI_API_KEY"],
+        isolation_keys: &[],
         model_keys: &[],
         tool: "codex",
     },
@@ -108,6 +139,9 @@ pub(crate) fn plan_checks(
         let Some(base_url) = base_url else {
             continue;
         };
+        // The family's own credential, else a credential that belongs to no
+        // family (a proxy token under its own name); a key of another family
+        // never stands in for it.
         let credential_key = family
             .credential_keys
             .iter()
@@ -148,13 +182,16 @@ pub(crate) fn plan_checks(
     checks
 }
 
-/// A profile can authenticate under any name (`PROXY_TOKEN`, `GATEWAY_KEY`).
-/// When no family key is set, the first credential-shaped key in the plan
-/// is the one the launched tool would receive, so the check sends it too.
+/// A profile for a tool outside the families can authenticate under any
+/// name (`PROXY_TOKEN`, `GATEWAY_KEY`): the first credential-shaped key in
+/// the plan is the one the launched tool would receive, so the check sends
+/// it too. A key that belongs to a family is never borrowed.
 fn fallback_credential_key(env: &[(OsString, OsString)]) -> Option<String> {
     env.iter()
         .map(|(key, value)| (key.to_string_lossy().into_owned(), value))
-        .find(|(key, value)| super::is_credential_env_key(key) && !value.is_empty())
+        .find(|(key, value)| {
+            super::is_credential_env_key(key) && !Family::is_member(key) && !value.is_empty()
+        })
         .map(|(key, _)| key)
 }
 

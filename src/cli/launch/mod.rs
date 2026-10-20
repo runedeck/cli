@@ -1057,6 +1057,7 @@ const CREDENTIAL_KEY_MARKERS: &[&str] = &[
     "CREDENTIAL",
     "AUTHORIZATION",
     "BEARER",
+    "HEADERS",
 ];
 /// A count of tokens (`MAX_CONTEXT_TOKENS`) is a limit, not a credential.
 const NON_CREDENTIAL_KEY_WORD: &str = "TOKENS";
