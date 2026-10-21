@@ -1271,12 +1271,13 @@ pub(crate) fn redact_credentials(text: &str, secrets: &[String]) -> String {
 /// and `NAME: value`, where the name is credential-named. The quotes may be
 /// escaped, as in a JSON string that holds JSON (`\"api_key\":\"x\"`), or
 /// single, as in a shell command line, and a `Bearer` or `Basic` scheme word
-/// may precede the value.
+/// may precede the value. A quote that never closes, as in a tail cut
+/// before the closing quote, still hides the value up to the next break.
 static STRUCTURAL_CREDENTIAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(concat!(
         r#"(?P<lead>(?:\\?")?)(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?P<trail>(?:\\?")?)"#,
         r#"(?P<sep>\s*[=:]\s*)(?P<scheme>(?i:bearer|basic)\s+)?"#,
-        r#"(?P<value>\\"[^"]*\\"|"[^"]*"|'[^']*'|[^\s,;&}\]'"]+)"#,
+        r#"(?P<value>\\"[^"]*\\"|"[^"]*"|'[^']*'|[^\s,;&}\]'"]+|["'][^\s,;&}\]'"]*)"#,
     ))
     .expect("structural credential pattern")
 });
@@ -1311,9 +1312,11 @@ pub(crate) fn redact_structural(text: &str) -> String {
 
 /// A failure tail or message as it may be shown: the known values of eight
 /// characters or more first, so a value with spaces is hidden whole, then
-/// the structural pass for the values the run does not know.
+/// the structural pass for the values the run does not know, then every
+/// URL's password and credential-named query parameters, which a harness
+/// echoes when it reports the endpoint it could not reach.
 pub(crate) fn redact_text(text: &str, secrets: &[String]) -> String {
-    redact_structural(&redact_credentials(text, secrets))
+    redact_urls(&redact_structural(&redact_credentials(text, secrets)))
 }
 
 /// Every URL in `text` with its userinfo password and its credential-named

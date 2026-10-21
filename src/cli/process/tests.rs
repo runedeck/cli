@@ -116,6 +116,51 @@ fn process_cleanup_kills_a_descendant_that_holds_the_pipe() {
     );
 }
 
+#[test]
+fn a_forwarded_signal_leaves_the_group_its_grace_before_the_kill() {
+    // The signal that stopped the leader is recorded already when the
+    // drain starts. A group member that finishes within the grace is
+    // read whole; before, the flag still set killed the group at once.
+    let request = shell_request("printf before; (sleep 0.2; printf after) & exit 0");
+    let mut command = spawn_command(&request);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().expect("leader spawns");
+    let capture = Arc::new(StreamCapture::default());
+    let handle = reader_thread(
+        "stdout",
+        child.stdout.take(),
+        request.output_limit,
+        Arc::clone(&capture),
+    );
+    let status = child.wait().expect("leader exits");
+    assert_eq!(status.code(), Some(0));
+    let forwarded = SignalFlags {
+        interrupt: Arc::new(AtomicBool::new(true)),
+        terminate: Arc::new(AtomicBool::new(false)),
+        registrations: Vec::new(),
+    };
+
+    let drain_signal = wait_for_readers(
+        &mut child,
+        &[&capture.finished],
+        &forwarded,
+        Duration::from_secs(2),
+    )
+    .expect("drain");
+
+    assert_eq!(
+        drain_signal, None,
+        "the forwarded signal is not counted anew"
+    );
+    let stdout = finish_reader("stdout", handle, &capture)
+        .expect("reader")
+        .into_string();
+    assert_eq!(stdout, "beforeafter");
+}
+
 /// A descendant in its own session that holds the inherited pipes for
 /// longer than any test waits, through whichever of `setsid`, python, or
 /// perl the host offers. A group kill cannot reach it.

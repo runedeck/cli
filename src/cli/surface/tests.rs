@@ -1602,6 +1602,36 @@ fn a_network_allowlist_block_names_the_blocked_host() {
 }
 
 #[test]
+fn a_failure_hides_the_endpoint_password_and_still_names_its_host() {
+    // The harness echoes the endpoint it could not reach, password and
+    // all. The redaction reads the kept errors, and the hint reads them
+    // redacted: `u:<redacted>@host` still yields the host.
+    let reported = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: "proxy: https://u:sk-fake-url-password@api.example.test/v1 refused".to_string(),
+        harness_errors: vec![
+            "API Error: 403 {\"error\":\"Connection blocked by network allowlist\",\"url\":\"https://u:sk-fake-url-password@api.example.test/v1/messages?api_key=sk-fake-query-secret\"}"
+                .to_string(),
+        ],
+    }
+    .redacted(&[]);
+    assert_eq!(
+        reported.harness_errors(),
+        [
+            "API Error: 403 {\"error\":\"Connection blocked by network allowlist\",\"url\":\"https://u:<redacted>@api.example.test/v1/messages?api_key=<redacted>\"}"
+        ]
+    );
+    assert!(!reported.to_string().contains("sk-fake-"), "{reported}");
+    let hint = reported.hint().expect("allowlist hint");
+    assert!(hint.contains("host api.example.test:"), "{hint}");
+    assert_eq!(
+        url_host("https://u:<redacted>@host:8443/v1?api_key=<redacted>"),
+        Some("host:8443".to_string())
+    );
+}
+
+#[test]
 fn launch_merges_several_settings_objects_into_the_last_one() {
     let args: Vec<OsString> = [
         "--settings",

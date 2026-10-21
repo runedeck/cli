@@ -1124,6 +1124,37 @@ fn the_structural_pass_reads_escaped_quotes_a_scheme_word_and_shell_quotes() {
 }
 
 #[test]
+fn the_structural_pass_hides_a_value_whose_quote_never_closes() {
+    // A tail cut before the closing quote still hides the value.
+    assert_eq!(
+        redact_structural("api_key: \"sk-fake-unclosed"),
+        "api_key: \"<redacted>\""
+    );
+    assert_eq!(
+        redact_structural("MY_TOKEN='sk-fake-unclosed then more"),
+        "MY_TOKEN='<redacted>' then more"
+    );
+    assert_eq!(
+        redact_structural("model: \"sk-fake-unclosed"),
+        "model: \"sk-fake-unclosed",
+        "a key that names no credential is left alone"
+    );
+}
+
+#[test]
+fn tails_hide_a_url_password_and_its_credential_query_values() {
+    // The endpoint is no credential-named key, so its value is not among
+    // the known secrets: only the URL pass hides what it carries.
+    assert_eq!(
+        redact_text(
+            "cannot reach https://u:sk-fake-url-password@gw/v1?api_key=sk-fake-query-secret&x=1 now",
+            &[]
+        ),
+        "cannot reach https://u:<redacted>@gw/v1?api_key=<redacted>&x=1 now"
+    );
+}
+
+#[test]
 fn tails_hide_the_known_values_first_then_beside_a_name() {
     // A known value with spaces is hidden whole: the structural pass alone
     // would hide its first word and leak the rest.

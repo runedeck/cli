@@ -1434,6 +1434,97 @@ sleep 10
     assert!(hint.contains("allowlist"), "{printed}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_signal_during_the_drain_reports_the_stop_instead_of_a_cut_answer() {
+    use std::time::{Duration, Instant};
+
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      boxed:\n        env:\n",
+            "          ANTHROPIC_BASE_URL: https://api.example.test\n",
+        ),
+    )
+    .expect("config");
+    // The leader exits 0 at once while a group member holds stdout and
+    // keeps writing. The member touches the marker after the leader is
+    // gone, so the signal reaches a run that is draining, not supervising.
+    let marker = home.path().join("leader-gone");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            r"#!/bin/sh
+printf 'partial answer sk-fake-drain-secret'
+(sleep 0.3; touch '{}'; sleep 10; printf 'the rest') &
+exit 0
+",
+            marker.display()
+        ),
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    let started = Instant::now();
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+        .env("HOME", home.path())
+        .env("CLIPROXY_API_KEY", "sk-fake-drain-secret")
+        .args([
+            "--json",
+            "run",
+            "boxed@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("rune spawns");
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the leader never exited"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let delivered = std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(delivered.success(), "kill failed");
+    let output = child.wait_with_output().expect("rune output");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "the member held the run for {elapsed:?}"
+    );
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "status {:?} after {elapsed:?}\nstdout: {printed}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_str(printed.trim()).expect("json result");
+    assert_eq!(json["kind"], "signal", "{printed}");
+    assert_eq!(json["details"]["signal"], 2, "{printed}");
+    let tail = json["details"]["stdout_tail"]
+        .as_str()
+        .expect("stdout tail");
+    assert!(tail.contains("partial answer"), "{printed}");
+    assert!(!tail.contains("the rest"), "{printed}");
+    assert!(!printed.contains("sk-fake-drain-secret"), "{printed}");
+}
+
 #[test]
 fn dry_run_prints_a_model_name_that_equals_a_credential_value() {
     let home = tempfile::tempdir().expect("home");

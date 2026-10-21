@@ -371,19 +371,27 @@ fn read_stream<R: Read>(
 /// pipes close. A survivor outside the group (a `setsid` descendant) is out
 /// of reach, so the wait after the kill is bounded by `grace` once more and
 /// ended early by a signal that arrives during it.
+///
+/// A signal that stopped the leader is the caller's record already; the
+/// flags are cleared first so the group gets its grace before the kill
+/// instead of a kill at once. The signal that arrives during this wait is
+/// returned, because it cut the drain: the caller reports it instead of a
+/// clean exit with a truncated answer.
 fn wait_for_readers(
     child: &mut Child,
     finished: &[&AtomicBool],
     signal_flags: &SignalFlags,
     grace: Duration,
-) -> Result<(), ProcessFailure> {
+) -> Result<Option<i32>, ProcessFailure> {
+    signal_flags.clear();
     let all_finished = || finished.iter().all(|flag| flag.load(Ordering::Relaxed));
     let mut deadline = Instant::now() + grace;
     while !all_finished() && Instant::now() < deadline && signal_flags.received().is_none() {
         std::thread::sleep(PROCESS_POLL_INTERVAL);
     }
+    let drain_signal = signal_flags.received();
     if all_finished() {
-        return Ok(());
+        return Ok(drain_signal);
     }
     kill_group(child)?;
     signal_flags.clear();
@@ -391,7 +399,7 @@ fn wait_for_readers(
     while !all_finished() && Instant::now() < deadline && signal_flags.received().is_none() {
         std::thread::sleep(PROCESS_POLL_INTERVAL);
     }
-    Ok(())
+    Ok(drain_signal.or_else(|| signal_flags.received()))
 }
 
 /// Kill the process group at once; a group that is gone already is fine.
@@ -752,12 +760,23 @@ pub(crate) fn run_process_request(
         Ok(outcome) => outcome,
         Err(failure) => return Err(with_streams(failure, &stdout, &stderr)),
     };
-    if let Err(failure) = readers_result {
-        return Err(with_streams(failure, &stdout, &stderr));
-    }
+    let drain_signal = match readers_result {
+        Ok(signal) => signal,
+        Err(failure) => return Err(with_streams(failure, &stdout, &stderr)),
+    };
     stdin_result?;
     if let Some(failure) = stop_failure {
         return Err(with_streams(failure, &stdout, &stderr));
+    }
+    // The leader exited on its own, then a signal cut the drain: the
+    // answer may be short of what a group member still wrote, so the run
+    // reports the stop, never a clean exit.
+    if let Some(signal) = drain_signal {
+        return Err(ProcessFailure::ForwardedSignal {
+            signal,
+            stdout,
+            stderr,
+        });
     }
     if stdout_exceeded_limit || stderr_exceeded_limit {
         return Err(ProcessFailure::OutputLimit {

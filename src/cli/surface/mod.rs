@@ -242,7 +242,9 @@ fn allowlist_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<String
 }
 
 /// The host (with its port) of the first `http://` or `https://` URL in
-/// `text`, without the user information before an `@`.
+/// `text`, without the user information before an `@`. The text is read
+/// redacted, so `<` and `>` end nothing: `u:<redacted>@host` still yields
+/// `host`.
 fn url_host(text: &str) -> Option<String> {
     let start = ["https://", "http://"]
         .iter()
@@ -250,7 +252,7 @@ fn url_host(text: &str) -> Option<String> {
         .min()?;
     let authority = &text[start..];
     let end = authority
-        .find(|character: char| character.is_whitespace() || "/?#\"',;)]}<>\\".contains(character))
+        .find(|character: char| character.is_whitespace() || "/?#\"',;)]}\\".contains(character))
         .unwrap_or(authority.len());
     let authority = &authority[..end];
     let host = authority
