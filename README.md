@@ -395,6 +395,12 @@ Name the harness session, where the harness takes a name (claude `--name`, openc
 rune run sol@claude --session-name claude/runedeck/mods/council "Review this repository"
 ```
 
+Get the files a run created. Agy leaves a generated file at the top level of `brain/<conversation_id>/` in its data directory, beside bookkeeping the runner skips (`*.metadata.json`, `.system_generated/`, `.user_uploaded/`, `scratch/`). The run prints one `artifact: <path>` line per file on stderr and names them as `artifacts` in the JSON result. `--artifacts-dir <DIR>` copies them into DIR. A name clash becomes `rune_icon-1.jpg`, so no file is overwritten. A clean run without the flag copies them under `$XDG_STATE_HOME/rune/artifacts/<conversation_id>/` (default `~/.local/state/rune/artifacts/`) before its temporary state goes. Other harnesses report an empty list.
+
+```sh
+rune run sol@agy --artifacts-dir out "Draw a 64 by 64 icon for this repository."
+```
+
 Run from inside another harness. The runner removes the parent session's variables (`CLAUDECODE`, the Claude Code session names, codex's sandbox variables) before the route's environment applies, so the child starts as it would from a terminal; owner controls such as `CLAUDE_CODE_USE_BEDROCK` stay. When a route sets any key of the Anthropic or OpenAI family (endpoint or credential), the inherited keys of that family the route does not set are withheld. `rune launch` does the same.
 
 See what would start, with the prompt as `<prompt>` and every credential value `<redacted>`, as text or as one JSON object:
@@ -404,7 +410,7 @@ rune run sol@claude --dry-run "Review this repository"
 rune --json run sol@claude --dry-run picker
 ```
 
-The JSON object carries `model_id`, `tool`, `model`, `argv`, `base_url`, `env`, `env_removed`, `repository`, `mode`, `timeout` (milliseconds, or null), and `session_name`. Under `--json`, every outcome is one JSON object on stdout, a configuration error and a usage error included. A run that fails reports the last lines of both streams, in the text error and as `details.stdout_tail` and `details.stderr_tail`, the harness's own error messages as `details.harness_errors`, and a `hint` when stderr shows that an outer sandbox blocked the harness. No credential value is ever printed.
+The JSON object carries `model_id`, `tool`, `model`, `argv`, `base_url`, `env`, `env_removed`, `repository`, `mode`, `timeout` (milliseconds, or null), `session_name`, and `artifacts_dir`. Under `--json`, every outcome is one JSON object on stdout, a configuration error and a usage error included. A run that fails reports the last lines of both streams, in the text error and as `details.stdout_tail` and `details.stderr_tail`, the harness's own error messages as `details.harness_errors`, and a `hint` when stderr shows that an outer sandbox blocked the harness. No credential value is ever printed.
 
 Let claude build its own work: workspace-write mode allows `Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit` and turns on Claude Code's own sandbox, which is the only way the shell runs.
 

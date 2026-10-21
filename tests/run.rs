@@ -1625,3 +1625,240 @@ fn launch_dry_run_json_is_the_runners_plan_object() {
         assert_eq!(plan[field], runner[field], "{field}");
     }
 }
+
+/// A fake agy that leaves an image and its bookkeeping in the data
+/// directory the runner names, then answers with the conversation id.
+#[cfg(unix)]
+const FAKE_AGY_WITH_ARTIFACTS: &str = r#"#!/bin/sh
+folder="$ANTIGRAVITY_EXECUTABLE_DATA_DIR/brain/conv-1"
+mkdir -p "$folder/scratch" "$folder/.system_generated" "$folder/.user_uploaded"
+printf 'jpeg' > "$folder/rune_icon.jpg"
+printf '{}' > "$folder/rune_icon.jpg.metadata.json"
+printf 'x' > "$folder/scratch/notes.txt"
+printf 'x' > "$folder/.system_generated/plan.md"
+printf 'x' > "$folder/.user_uploaded/in.png"
+printf '%s\n' '{"response":"drawn","conversation_id":"conv-1"}'
+"#;
+
+/// Run the fake agy against `data` as its data directory. The state
+/// directory is pinned to `state` so no test touches the real one.
+#[cfg(unix)]
+fn run_fake_agy(
+    home: &std::path::Path,
+    data: &std::path::Path,
+    state: &std::path::Path,
+    json: bool,
+    extra: &[&str],
+) -> std::process::Output {
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(home, "fake-agy", FAKE_AGY_WITH_ARTIFACTS);
+    let mut command = rune(home);
+    command
+        .env("ANTIGRAVITY_EXECUTABLE_DATA_DIR", data)
+        .env("XDG_STATE_HOME", state)
+        .env_remove("RUNE_STATE_DIR");
+    if json {
+        command.arg("--json");
+    }
+    command.args([
+        "run",
+        "agy",
+        "Draw an icon",
+        "--repo",
+        repository.path().to_str().expect("repository path"),
+        "--binary",
+        provider.to_str().expect("provider path"),
+    ]);
+    command.args(extra);
+    command.output().expect("run output")
+}
+
+#[cfg(unix)]
+fn artifacts_of(output: &std::process::Output) -> Vec<String> {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    result["artifacts"]
+        .as_array()
+        .expect("artifacts array")
+        .iter()
+        .map(|value| value.as_str().expect("artifact path").to_string())
+        .collect()
+}
+
+#[cfg(unix)]
+fn canonical(path: &std::path::Path) -> String {
+    std::fs::canonicalize(path)
+        .expect("canonical path")
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_run_reports_the_image_it_drew_and_skips_the_bookkeeping() {
+    let home = tempfile::tempdir().expect("home");
+    let data = tempfile::tempdir().expect("data");
+    let state = tempfile::tempdir().expect("state");
+
+    let output = run_fake_agy(home.path(), data.path(), state.path(), true, &[]);
+
+    let image = data.path().join("brain/conv-1/rune_icon.jpg");
+    assert_eq!(artifacts_of(&output), [canonical(&image)]);
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_run_prints_one_artifact_line_on_stderr_and_the_answer_on_stdout() {
+    let home = tempfile::tempdir().expect("home");
+    let data = tempfile::tempdir().expect("data");
+    let state = tempfile::tempdir().expect("state");
+
+    let output = run_fake_agy(home.path(), data.path(), state.path(), false, &[]);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "drawn\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("artifact: "))
+        .collect();
+    assert_eq!(lines.len(), 1, "{stderr}");
+    assert!(
+        lines[0].ends_with("/brain/conv-1/rune_icon.jpg"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("metadata.json"), "{stderr}");
+    assert!(!stderr.contains("scratch"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn artifacts_dir_copies_the_image_and_never_overwrites_a_clash() {
+    let home = tempfile::tempdir().expect("home");
+    let data = tempfile::tempdir().expect("data");
+    let state = tempfile::tempdir().expect("state");
+    let out = tempfile::tempdir().expect("out");
+    std::fs::write(out.path().join("rune_icon.jpg"), "first").expect("first file");
+
+    let output = run_fake_agy(
+        home.path(),
+        data.path(),
+        state.path(),
+        true,
+        &["--artifacts-dir", out.path().to_str().expect("out path")],
+    );
+
+    let copy = out.path().join("rune_icon-1.jpg");
+    assert_eq!(artifacts_of(&output), [canonical(&copy)]);
+    assert_eq!(std::fs::read_to_string(&copy).expect("copy"), "jpeg");
+    assert_eq!(
+        std::fs::read_to_string(out.path().join("rune_icon.jpg")).expect("first file"),
+        "first"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_agy_run_keeps_the_image_under_the_state_directory() {
+    let home = tempfile::tempdir().expect("home");
+    let data = tempfile::tempdir().expect("data");
+    let state = tempfile::tempdir().expect("state");
+    // The clean state bridges this fake token; nothing under the real home
+    // is read.
+    std::fs::write(data.path().join("antigravity-oauth-token"), "fake-token").expect("token");
+
+    let output = run_fake_agy(home.path(), data.path(), state.path(), true, &["--clean"]);
+
+    let kept = state.path().join("rune/artifacts/conv-1/rune_icon.jpg");
+    assert_eq!(artifacts_of(&output), [canonical(&kept)]);
+    assert_eq!(std::fs::read_to_string(&kept).expect("kept copy"), "jpeg");
+    // The fake wrote into the clean root, which is gone, not into the source.
+    assert!(!data.path().join("brain").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn grok_run_reports_no_artifacts() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let provider = executable_provider(
+        home.path(),
+        "fake-grok",
+        "#!/bin/sh\nprintf '%s\\n' '{\"text\":\"ok\"}'\n",
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "grok",
+            "Review this repository",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+
+    assert_eq!(artifacts_of(&output), Vec::<String>::new());
+}
+
+#[test]
+fn dry_run_names_the_artifacts_destination() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    let repo = repository.path().to_str().expect("repository path");
+
+    rune(home.path())
+        .args([
+            "run",
+            "agy",
+            "Draw an icon",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--artifacts-dir",
+            "out",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("artifacts_dir: out\n"));
+
+    rune(home.path())
+        .env("XDG_STATE_HOME", state.path())
+        .env_remove("RUNE_STATE_DIR")
+        .args([
+            "run",
+            "agy",
+            "Draw an icon",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "artifacts_dir: {}/rune/artifacts/<conversation-id>\n",
+            state.path().display()
+        )));
+
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Draw an icon",
+            "--repo",
+            repo,
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("artifacts_dir: none\n"));
+}

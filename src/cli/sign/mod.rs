@@ -10,6 +10,8 @@ mod queue;
 pub(crate) mod seal;
 mod verify;
 
+pub(crate) use queue::state_dir;
+
 use rune::error::ErrorKind;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

@@ -101,6 +101,9 @@ pub(crate) struct SurfaceReply {
     pub(crate) text: String,
     pub(crate) stderr: String,
     pub(crate) completion_tokens: Option<f64>,
+    /// The id agy gives the conversation, which names the folder its
+    /// generated files land in. `None` from every other surface.
+    pub(crate) conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1751,6 +1754,7 @@ fn invoke_claude(
         })?,
         stderr: output.stderr,
         completion_tokens: None,
+        conversation_id: None,
     })
 }
 
@@ -1923,6 +1927,7 @@ fn invoke_codex(
             text,
             stderr: output.stderr,
             completion_tokens,
+            conversation_id: None,
         })
     })();
     finish_scratch(result, &scratch)
@@ -2020,6 +2025,7 @@ fn invoke_grok(
                 .map_err(|failure| failure.with_output(&output, secrets))?,
             stderr: output.stderr,
             completion_tokens: None,
+            conversation_id: None,
         })
     })();
     finish_scratch(result, &scratch)
@@ -2074,6 +2080,7 @@ fn invoke_agy(
             .usage
             .and_then(|usage| usage.output_tokens)
             .filter(|tokens| *tokens > 0.0),
+        conversation_id: response.conversation_id.filter(|id| !id.trim().is_empty()),
     })
 }
 
@@ -2082,6 +2089,8 @@ struct AgyResponse {
     response: String,
     #[serde(default)]
     usage: Option<AgyUsage>,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2157,6 +2166,7 @@ fn invoke_opencode(
         text,
         stderr: output.stderr,
         completion_tokens: (completion_tokens > 0.0).then_some(completion_tokens),
+        conversation_id: None,
     })
 }
 

@@ -22,6 +22,7 @@ use std::process::Command;
 use std::rc::Rc;
 
 pub(crate) use open::{adopt, open, repo_slug};
+pub(crate) use store::state_dir;
 use store::{Claim, Kind, Receipt, Request, Status, Store};
 
 const SIGN_ATTEMPTS: usize = 3;

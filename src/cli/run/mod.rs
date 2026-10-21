@@ -9,9 +9,11 @@ use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 pub(crate) use crate::cli::surface::AccessMode;
+
+mod artifacts;
 
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
 /// The placeholder the dry run prints for the clean state directory a
@@ -31,6 +33,10 @@ pub(crate) struct RunOptions {
     pub(crate) timeout: Option<String>,
     /// A name for the harness session; `session_name_flag` says which harness takes it.
     pub(crate) session_name: Option<String>,
+    /// Where the files the run created are copied. Without it a clean run
+    /// copies them under the user state directory, and any other run leaves
+    /// them where the harness put them.
+    pub(crate) artifacts_dir: Option<PathBuf>,
     pub(crate) plan: RunPlan,
     pub(crate) json: bool,
 }
@@ -207,12 +213,27 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         ..invocation
     };
     let started = std::time::Instant::now();
+    // The wall clock beside the monotonic one: a file the run created is
+    // told from an older one by its modification time.
+    let started_at = SystemTime::now();
     match invoke_surface(&invocation) {
         Ok(reply) => {
             if !reply.stderr.is_empty() {
                 eprint!("{}", reply.stderr);
                 if !reply.stderr.ends_with('\n') {
                     eprintln!();
+                }
+            }
+            // Before `clean_state` drops: a clean run's files live inside it.
+            let artifacts = collect_artifacts(
+                options,
+                &invocation,
+                reply.conversation_id.as_deref(),
+                started_at,
+            )?;
+            if !options.json {
+                for artifact in &artifacts {
+                    eprintln!("artifact: {artifact}");
                 }
             }
             Ok(Outcome {
@@ -241,6 +262,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                     },
                     "completion_tokens": reply.completion_tokens,
                     "warnings": filtered.warnings,
+                    "artifacts": artifacts,
                 }),
                 text: Text::Stdout(reply.text),
             })
@@ -292,6 +314,8 @@ fn dry_run_outcome(
     );
     let base_url = resolved.endpoint(&effective, &launch::inherited_env(&isolation.removals()));
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
+    let artifacts_dir = planned_artifacts_dir(options, invocation.surface)?
+        .map(|dir| dir.to_string_lossy().into_owned());
     let parts = launch::DryRunParts {
         tool: &resolved.tool,
         argv: &argv,
@@ -303,7 +327,7 @@ fn dry_run_outcome(
         warnings: &warnings,
     };
     let text = format!(
-        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}",
+        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}",
         resolved.format_dry_run_with(&parts),
         stdin.unwrap_or("none"),
         invocation.repository.display(),
@@ -311,7 +335,8 @@ fn dry_run_outcome(
         duration_label(invocation.timeout),
         duration_label(invocation.native_timeout),
         options.session_name.as_deref().unwrap_or("none"),
-        session_name_flag(invocation.surface).unwrap_or("none")
+        session_name_flag(invocation.surface).unwrap_or("none"),
+        artifacts_dir.as_deref().unwrap_or("none")
     );
     // The launcher's plan object, plus the runner's own fields.
     let mut json = resolved.plan_json(&parts, &isolation);
@@ -340,6 +365,7 @@ fn dry_run_outcome(
                 json!(session_name_flag(invocation.surface)),
             ),
             ("clean", json!(options.clean)),
+            ("artifacts_dir", json!(artifacts_dir)),
         ] {
             object.insert(key.to_string(), value);
         }
@@ -349,6 +375,54 @@ fn dry_run_outcome(
         json,
         text: Text::Stdout(text),
     })
+}
+
+/// The files the run created, as absolute path strings for the result:
+/// the copies when they were copied (into `--artifacts-dir`, or under the
+/// user state directory on a clean run), else the originals. Empty for
+/// every surface but agy, for an agy reply without a conversation id, and
+/// for a conversation folder that holds nothing new.
+fn collect_artifacts(
+    options: &RunOptions,
+    invocation: &SurfaceInvocation,
+    conversation_id: Option<&str>,
+    since: SystemTime,
+) -> Result<Vec<String>, String> {
+    let (Some(data_dir), Some(conversation_id)) =
+        (artifacts::agy_data_dir(invocation), conversation_id)
+    else {
+        return Ok(Vec::new());
+    };
+    let folder = artifacts::conversation_dir(&data_dir, conversation_id);
+    let found = artifacts::find_artifacts(&folder, since);
+    let destination = match (&options.artifacts_dir, options.clean) {
+        (Some(dir), _) => Some(dir.clone()),
+        (None, true) => Some(artifacts::state_artifacts_dir(conversation_id)?),
+        (None, false) => None,
+    };
+    let files = match destination {
+        Some(dir) => artifacts::copy_artifacts(&found, &dir)?,
+        None => found,
+    };
+    Ok(files
+        .iter()
+        .map(|file| file.to_string_lossy().into_owned())
+        .collect())
+}
+
+/// Where the dry run says the files would go: the flag's directory, the
+/// state folder with a placeholder id for a clean agy run, else nowhere.
+fn planned_artifacts_dir(
+    options: &RunOptions,
+    surface: Surface,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(dir) = &options.artifacts_dir {
+        return Ok(Some(dir.clone()));
+    }
+    if options.clean && surface == Surface::Agy {
+        return artifacts::state_artifacts_dir(artifacts::CONVERSATION_PLACEHOLDER).map(Some);
+    }
+    Ok(None)
 }
 
 /// `--check`: verify the model ids the run would send against each base
