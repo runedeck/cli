@@ -1948,3 +1948,57 @@ fn a_wait_failure_carries_the_streams_read_before_it() {
     );
     assert!(text.contains("stdout tail:\n  read so far"), "{text}");
 }
+
+#[test]
+fn codex_config_flags_go_before_the_exec_subcommand_in_their_order() {
+    let mut invocation = invocation(
+        Surface::Codex,
+        &[
+            "--search",
+            "-c",
+            "model_reasoning_effort=\"low\"",
+            "--config=sandbox_workspace_write.network_access=true",
+            "-cfoo=\"bar\"",
+            "--full-auto",
+        ],
+    );
+    invocation.model = Some("gpt-6.1-sol".to_string());
+    let args = strings(&codex_args(
+        &invocation,
+        &PathBuf::from("<scratch>/last-message.txt"),
+    ));
+
+    let exec = args.iter().position(|arg| arg == "exec").expect("exec");
+    assert_eq!(
+        &args[..exec],
+        [
+            "-c",
+            "model_reasoning_effort=\"low\"",
+            "--config=sandbox_workspace_write.network_access=true",
+            "-cfoo=\"bar\"",
+        ],
+        "{args:?}"
+    );
+    let after: Vec<&str> = args[exec..].iter().map(String::as_str).collect();
+    assert!(
+        after.windows(2).any(|pair| pair == ["-m", "gpt-6.1-sol"]),
+        "{args:?}"
+    );
+    assert!(
+        after.contains(&"--search") && after.contains(&"--full-auto"),
+        "{args:?}"
+    );
+    assert!(
+        !after
+            .iter()
+            .any(|arg| arg.starts_with("-c") || arg.starts_with("--config")),
+        "{args:?}"
+    );
+    assert_eq!(after.last().copied(), Some("-"));
+
+    // The dry run renders from the same builder.
+    let planned = planned_request(&invocation).expect("codex plan");
+    let planned = strings(&planned.args);
+    assert_eq!(planned[0], "-c");
+    assert_eq!(planned.iter().position(|arg| arg == "exec"), Some(4));
+}

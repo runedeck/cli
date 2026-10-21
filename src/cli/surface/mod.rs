@@ -977,13 +977,12 @@ fn copy_optional_auth_file(
 /// The clean Codex configuration keeps the route: every `[model_providers.*]`
 /// table reduced to its transport fields and `auth`, and a top-level
 /// `model_provider` that names the one custom table when the file defines
-/// exactly one. The file-level name is never copied from the source. Codex
-/// drops a global `--config` (the form `codex-proxy` uses, before the
-/// subcommand) as soon as the subcommand carries its own `--config` flags,
-/// so a profile's `model_reasoning_effort` silently sent the clean run to
-/// the built-in `openai` route with no credential. With one custom table
-/// the file names it, and no flag order can undo that. With several, or
-/// none, the launch-time choice stands and the built-in default applies.
+/// exactly one. The file-level name is never copied from the source. The
+/// runner places every `--config` before `exec` (see [`codex_args`]), so
+/// the wrapper's global provider flag survives; the file names the one
+/// custom table as well, so a clean run keeps its route whatever the
+/// flag order. With several tables, or none, the launch-time choice
+/// stands and the built-in default applies.
 fn copy_codex_route_config(source: &Path, target: &Path) -> Result<(), SurfaceFailure> {
     const ROUTE_KEYS: [&str; 8] = [
         "name",
@@ -1580,8 +1579,39 @@ fn read_codex_final_message(
         })
 }
 
+/// Split the profile's kept codex arguments into the `-c`/`--config`
+/// flags (with their values, in their order) and the rest.
+fn codex_config_flags(extra_args: &[OsString]) -> (Vec<OsString>, Vec<OsString>) {
+    let mut config = Vec::new();
+    let mut rest = Vec::new();
+    let mut index = 0;
+    while index < extra_args.len() {
+        let text = extra_args[index].to_string_lossy();
+        if text == "-c" || text == "--config" {
+            config.push(extra_args[index].clone());
+            if let Some(value) = extra_args.get(index + 1) {
+                config.push(value.clone());
+                index += 1;
+            }
+        } else if text.starts_with("--config=") || (text.starts_with("-c") && text.len() > 2) {
+            config.push(extra_args[index].clone());
+        } else {
+            rest.push(extra_args[index].clone());
+        }
+        index += 1;
+    }
+    (config, rest)
+}
+
+/// Codex drops a global `--config` (the form `codex-proxy` uses to name
+/// its provider, before the subcommand) as soon as the subcommand carries
+/// its own `--config`, so a profile's `model_reasoning_effort` after
+/// `exec` sent the run to the built-in route. Every `--config` flag goes
+/// before `exec`, in its order, where it joins the wrapper's.
 fn codex_args(invocation: &SurfaceInvocation, final_message_path: &Path) -> Vec<OsString> {
-    let mut args = vec![
+    let (config, extra_args) = codex_config_flags(&invocation.extra_args);
+    let mut args = config;
+    args.extend([
         OsString::from("exec"),
         OsString::from("--json"),
         OsString::from("--ephemeral"),
@@ -1595,7 +1625,7 @@ fn codex_args(invocation: &SurfaceInvocation, final_message_path: &Path) -> Vec<
             AccessMode::ReadOnly | AccessMode::AnswerOnly => "read-only",
             AccessMode::WorkspaceWrite => "workspace-write",
         }),
-    ];
+    ]);
     if invocation.clean_state_root.is_some() {
         args.push(OsString::from("--ignore-rules"));
     }
@@ -1603,7 +1633,7 @@ fn codex_args(invocation: &SurfaceInvocation, final_message_path: &Path) -> Vec<
         args.push(OsString::from("-m"));
         args.push(OsString::from(model));
     }
-    args.extend(invocation.extra_args.clone());
+    args.extend(extra_args);
     args.push(OsString::from("-o"));
     args.push(final_message_path.as_os_str().to_os_string());
     args.push(OsString::from("-"));
