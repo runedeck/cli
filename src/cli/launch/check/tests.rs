@@ -498,9 +498,9 @@ fn fixture_root() -> std::ffi::OsString {
 
 #[test]
 fn an_extra_roots_file_joins_the_bundled_roots() {
-    let (roots, warning) =
+    let (roots, warnings) =
         root_certs_from(|variable| (variable == "NODE_EXTRA_CA_CERTS").then(fixture_root));
-    assert_eq!(warning, None);
+    assert_eq!(warnings, [] as [String; 0]);
     let ureq::tls::RootCerts::Specific(certificates) = roots else {
         panic!("the extra root makes the roots explicit: {roots:?}");
     };
@@ -510,9 +510,9 @@ fn an_extra_roots_file_joins_the_bundled_roots() {
         "the bundled web PKI roots plus the one certificate in the file"
     );
 
-    let (roots, warning) =
+    let (roots, warnings) =
         root_certs_from(|variable| (variable == "SSL_CERT_FILE").then(fixture_root));
-    assert_eq!(warning, None);
+    assert_eq!(warnings, [] as [String; 0]);
     assert!(
         matches!(roots, ureq::tls::RootCerts::Specific(_)),
         "SSL_CERT_FILE counts when NODE_EXTRA_CA_CERTS is unset: {roots:?}"
@@ -520,36 +520,41 @@ fn an_extra_roots_file_joins_the_bundled_roots() {
 }
 
 #[test]
-fn an_unusable_extra_roots_file_is_a_warning_and_the_platform_verifier() {
-    let (roots, warning) = root_certs_from(|_| None);
+fn an_unusable_extra_roots_file_is_skipped_with_a_warning() {
+    let (roots, warnings) = root_certs_from(|_| None);
     assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
-    assert_eq!(warning, None);
+    assert_eq!(warnings, [] as [String; 0]);
 
-    let (roots, warning) = root_certs_from(|variable| {
+    let (roots, warnings) = root_certs_from(|variable| {
         (variable == "NODE_EXTRA_CA_CERTS")
             .then(|| std::ffi::OsString::from("/nonexistent/rune-roots.pem"))
     });
     assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
-    let warning = warning.expect("an unreadable file warns");
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
     assert!(
-        warning.starts_with(
+        warnings[0].starts_with(
             "NODE_EXTRA_CA_CERTS names /nonexistent/rune-roots.pem, which cannot be read"
         ),
-        "{warning}"
+        "{warnings:?}"
     );
-    assert!(
-        warning.ends_with("the check uses the platform verifier"),
-        "{warning}"
-    );
+    assert_eq!(warnings[1], "the check uses the platform verifier");
 
+    // An unusable first file, a good second one: the second counts.
     let empty = tempfile::NamedTempFile::new().expect("empty file");
     let path = empty.path().as_os_str().to_os_string();
-    let (roots, warning) =
-        root_certs_from(|variable| (variable == "SSL_CERT_FILE").then(|| path.clone()));
-    assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier));
+    let (roots, warnings) = root_certs_from(|variable| match variable {
+        "NODE_EXTRA_CA_CERTS" => Some(path.clone()),
+        "SSL_CERT_FILE" => Some(fixture_root()),
+        _ => None,
+    });
     assert!(
-        warning.is_some_and(|warning| warning.contains("holds no certificate")),
-        "an empty file warns"
+        matches!(roots, ureq::tls::RootCerts::Specific(_)),
+        "{roots:?}"
+    );
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("holds no certificate; the check skips it"),
+        "{warnings:?}"
     );
 }
 
@@ -565,5 +570,51 @@ fn the_report_carries_the_roots_warning_in_text_and_json() {
     assert_eq!(
         report_json(&report)["warnings"][0],
         "NODE_EXTRA_CA_CERTS names /x, which holds no certificate; the check uses the platform verifier"
+    );
+}
+
+#[test]
+fn the_check_takes_the_credential_and_the_model_from_the_effective_view() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut resolved = super::super::tests::resolve_with_config_for_tests(
+        "claude",
+        &[
+            std::ffi::OsString::from("--settings"),
+            std::ffi::OsString::from(
+                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/settings","ANTHROPIC_AUTH_TOKEN":"fake-settings-secret","ANTHROPIC_MODEL":"settings-model"}}"#,
+            ),
+        ],
+        dir.path(),
+    );
+    resolved.display_env = vec![
+        (
+            std::ffi::OsString::from("ANTHROPIC_AUTH_TOKEN"),
+            std::ffi::OsString::from("fake-env-secret"),
+        ),
+        (
+            std::ffi::OsString::from("ANTHROPIC_MODEL"),
+            std::ffi::OsString::from("env-model"),
+        ),
+    ];
+
+    let checks = plan_checks(&resolved, None);
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(checks[0].base_url, "http://127.0.0.1:9/settings");
+    assert!(
+        checks[0].models.contains(&"settings-model".to_string()),
+        "{checks:?}"
+    );
+    assert!(
+        !checks[0].models.contains(&"env-model".to_string()),
+        "{checks:?}"
+    );
+    assert_eq!(
+        credential_value(&checks[0], &resolved.effective_env()).as_deref(),
+        Some("fake-settings-secret"),
+        "the settings host pairs with the settings credential, never the env one"
+    );
+    assert!(
+        super::super::credential_values(&resolved.effective_env())
+            .contains(&"fake-settings-secret".to_string())
     );
 }

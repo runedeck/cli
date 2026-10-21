@@ -121,55 +121,55 @@ pub(crate) struct CheckReport {
     pub(crate) warnings: Vec<String>,
 }
 
-/// The root certificates the check verifies an endpoint against. When
-/// `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` names a readable PEM file, the
-/// bundled web PKI roots plus every certificate in that file: a local
-/// proxy's root that only the platform keychain trusts, which a sandbox
-/// without trustd cannot reach. Otherwise the platform verifier. A file
-/// that cannot be read or holds no certificate is a warning, then the
-/// platform verifier.
+/// The root certificates the check verifies an endpoint against. The
+/// first readable PEM file among the ones `NODE_EXTRA_CA_CERTS` and
+/// `SSL_CERT_FILE` name gives the bundled web PKI roots plus every
+/// certificate in that file: a local proxy's root that only the platform
+/// keychain trusts, which a sandbox without trustd cannot reach. A named
+/// file that cannot be read or holds no certificate is a warning, and the
+/// next variable is tried; with none usable, the platform verifier.
 pub(crate) fn root_certs_from(
     lookup: impl Fn(&str) -> Option<OsString>,
-) -> (ureq::tls::RootCerts, Option<String>) {
-    let Some((variable, path)) = EXTRA_ROOTS_VARIABLES
-        .iter()
-        .find_map(|variable| lookup(variable).map(|path| (*variable, PathBuf::from(path))))
-    else {
-        return (ureq::tls::RootCerts::PlatformVerifier, None);
-    };
-    let pem = match std::fs::read(&path) {
-        Ok(pem) => pem,
-        Err(error) => {
-            return (
-                ureq::tls::RootCerts::PlatformVerifier,
-                Some(format!(
-                    "{variable} names {}, which cannot be read ({error}); the check uses the platform verifier",
+) -> (ureq::tls::RootCerts, Vec<String>) {
+    let mut warnings = Vec::new();
+    for variable in EXTRA_ROOTS_VARIABLES {
+        let Some(path) = lookup(variable).map(PathBuf::from) else {
+            continue;
+        };
+        let pem = match std::fs::read(&path) {
+            Ok(pem) => pem,
+            Err(error) => {
+                warnings.push(format!(
+                    "{variable} names {}, which cannot be read ({error}); the check skips it",
                     path.display()
-                )),
-            );
-        }
-    };
-    let extra: Vec<ureq::tls::Certificate<'static>> = ureq::tls::parse_pem(&pem)
-        .filter_map(|item| match item {
-            Ok(ureq::tls::PemItem::Certificate(certificate)) => Some(certificate),
-            _ => None,
-        })
-        .collect();
-    if extra.is_empty() {
-        return (
-            ureq::tls::RootCerts::PlatformVerifier,
-            Some(format!(
-                "{variable} names {}, which holds no certificate; the check uses the platform verifier",
+                ));
+                continue;
+            }
+        };
+        let extra: Vec<ureq::tls::Certificate<'static>> = ureq::tls::parse_pem(&pem)
+            .filter_map(|item| match item {
+                Ok(ureq::tls::PemItem::Certificate(certificate)) => Some(certificate),
+                _ => None,
+            })
+            .collect();
+        if extra.is_empty() {
+            warnings.push(format!(
+                "{variable} names {}, which holds no certificate; the check skips it",
                 path.display()
-            )),
-        );
+            ));
+            continue;
+        }
+        let roots: Vec<ureq::tls::Certificate<'static>> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .map(|der| ureq::tls::Certificate::from_der(der.as_ref()))
+            .chain(extra)
+            .collect();
+        return (ureq::tls::RootCerts::new_with_certs(&roots), warnings);
     }
-    let roots: Vec<ureq::tls::Certificate<'static>> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-        .iter()
-        .map(|der| ureq::tls::Certificate::from_der(der.as_ref()))
-        .chain(extra)
-        .collect();
-    (ureq::tls::RootCerts::new_with_certs(&roots), None)
+    if !warnings.is_empty() {
+        warnings.push("the check uses the platform verifier".to_string());
+    }
+    (ureq::tls::RootCerts::PlatformVerifier, warnings)
 }
 
 /// Collect the endpoints the plan talks to. `model_override` is the
@@ -261,6 +261,8 @@ fn family_models(
     family: &Family,
     model_override: Option<&str>,
 ) -> Vec<String> {
+    // The child's view: a settings env model wins over the process env.
+    let env = resolved.effective_env();
     let mut models = Vec::new();
     let mut push = |value: String| {
         if !value.is_empty() && !models.contains(&value) {
@@ -279,7 +281,7 @@ fn family_models(
         if owns_tool && model_override.is_some() && *key == "ANTHROPIC_MODEL" {
             continue;
         }
-        if let Some(value) = env_value(&resolved.display_env, key) {
+        if let Some(value) = env_value(&env, key) {
             push(value);
         }
     }
@@ -338,16 +340,24 @@ fn config_model(assignment: &str) -> Option<String> {
 }
 
 /// Run every endpoint check and fold the results into one report.
+/// The credential value the check sends for `check`: the key's value in
+/// the child's effective environment, so a settings host is never paired
+/// with the process env's credential.
+fn credential_value(check: &EndpointCheck, env: &[(OsString, OsString)]) -> Option<String> {
+    check
+        .credential_key
+        .as_deref()
+        .and_then(|key| env_value(env, key))
+}
+
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
-    let secrets = credential_values(&resolved.display_env);
-    let (roots, roots_warning) = root_certs_from(|variable| std::env::var_os(variable));
+    let effective = resolved.effective_env();
+    let secrets = credential_values(&effective);
+    let (roots, roots_warnings) = root_certs_from(|variable| std::env::var_os(variable));
     let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override)
         .into_iter()
         .map(|check| {
-            let credential = check
-                .credential_key
-                .as_deref()
-                .and_then(|key| env_value(&resolved.display_env, key));
+            let credential = credential_value(&check, &effective);
             let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
                     let (served, missing) = check
@@ -369,7 +379,7 @@ pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>
         tool: resolved.tool.clone(),
         endpoints,
         exit_code,
-        warnings: roots_warning.into_iter().collect(),
+        warnings: roots_warnings,
     }
 }
 
