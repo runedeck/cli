@@ -1249,6 +1249,192 @@ fn dry_run_endpoint_prefers_the_settings_env_over_the_process_env() {
 }
 
 #[test]
+fn dry_run_endpoint_prefers_the_settings_env_over_a_middleware_endpoint() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      piped:\n        with:\n          - pxpipe\n",
+            "        args:\n          - '--settings'\n",
+            "          - '{\"env\":{\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:9/settings\"}}'\n",
+        ),
+    )
+    .expect("config");
+    let repo = repository.path().to_str().expect("repository path");
+
+    // Claude applies the settings env inside its own process, over the
+    // middleware endpoint the process env carries.
+    rune(home.path())
+        .args(["run", "piped@claude", "x", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/settings",
+        ));
+    rune(home.path())
+        .args(["launch", "piped@claude", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "base_url: http://127.0.0.1:9/settings",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn failure_tails_hide_a_header_value_and_a_bearer_token_quoted_alone() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      headed:\n        env:\n",
+            "          ANTHROPIC_CUSTOM_HEADERS: 'Authorization: Bearer fake-bearer-token'\n",
+            "          ANTHROPIC_AUTH_TOKEN: 'fake token with spaces'\n",
+        ),
+    )
+    .expect("config");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r"#!/bin/sh
+printf 'token fake-bearer-token refused\n'
+printf 'auth=fake token with spaces refused\n' >&2
+exit 1
+",
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "headed@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(1));
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(!printed.contains("fake-bearer-token"), "{printed}");
+    assert!(!printed.contains("with spaces"), "{printed}");
+    assert!(printed.contains("token <redacted> refused"), "{printed}");
+    assert!(printed.contains("auth=<redacted> refused"), "{printed}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_forwarded_sigterm_ends_the_run_promptly_when_a_setsid_descendant_holds_the_pipes() {
+    use std::time::{Duration, Instant};
+
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    claude:\n      boxed:\n        env:\n",
+            "          ANTHROPIC_BASE_URL: https://api.example.test\n",
+        ),
+    )
+    .expect("config");
+    // The harness reports the proxy's block, then a descendant in its own
+    // session keeps every pipe open past the run, and the harness waits.
+    // The marker tells the test the harness is up, so the signal reaches
+    // a run that is supervising it.
+    let marker = home.path().join("harness-started");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            r#"#!/bin/sh
+printf 'API Error: 403 {{"error":"Connection blocked by network allowlist","url":"https://api.example.test/v1/messages"}}\n'
+if command -v setsid >/dev/null 2>&1; then setsid sleep 10 &
+elif command -v python3 >/dev/null 2>&1; then python3 -c 'import os, time; os.setsid(); time.sleep(10)' &
+else perl -e 'use POSIX; setsid(); sleep 10' & fi
+sleep 0.2
+touch '{}'
+sleep 10
+"#,
+            marker.display()
+        ),
+    );
+    let repo = repository.path().to_str().expect("repository path");
+    let binary = provider.to_str().expect("provider path");
+
+    let started = Instant::now();
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+        .env("HOME", home.path())
+        .env("CLIPROXY_API_KEY", "test-token")
+        .args([
+            "--json",
+            "run",
+            "boxed@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("rune spawns");
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the harness never started"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let delivered = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(delivered.success(), "kill failed");
+    let output = child.wait_with_output().expect("rune output");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "the survivor held the run for {elapsed:?}"
+    );
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(143),
+        "status {:?} after {elapsed:?}\nstdout: {printed}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_str(printed.trim()).expect("json result");
+    assert_eq!(json["kind"], "signal", "{printed}");
+    assert!(
+        json["details"]["harness_errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| {
+                error
+                    .as_str()
+                    .is_some_and(|error| error.contains("network allowlist"))
+            })),
+        "{printed}"
+    );
+    let hint = json["hint"].as_str().expect("hint");
+    assert!(hint.contains("api.example.test"), "{printed}");
+    assert!(hint.contains("allowlist"), "{printed}");
+}
+
+#[test]
 fn dry_run_prints_a_model_name_that_equals_a_credential_value() {
     let home = tempfile::tempdir().expect("home");
     let repository = tempfile::tempdir().expect("repository");

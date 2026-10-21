@@ -124,6 +124,11 @@ fn resolve_with_config(
     }
     let context = LaunchContext { cwd, root, config };
     let tool = resolve_tool(tool_name, &context.config.launch);
+    // Claude reads only its last `--settings`: the profile's object and the
+    // command line's merge into one, as `rune run` does.
+    if tool.name == "claude" {
+        options.args = surface::merge_settings_args(&options.args);
+    }
     let mut plan = compose_plan(&options.middleware, options.tmux.as_deref(), &context)?;
     let model = profile
         .as_ref()
@@ -139,6 +144,7 @@ fn resolve_with_config(
     let wrapped_removals =
         surface::tmux_removals(&route_keys_of(&tool.name, &display_env, &options.args));
     let argv = build_argv(&tool, &options.args, &plan, &wrapped_removals);
+    let display_argv = display_argv_of(&tool, &options.args, &plan, &wrapped_removals);
     let env = process_env(&tool, &plan);
     let base_url_env = tool
         .base_url_env
@@ -155,6 +161,7 @@ fn resolve_with_config(
         model,
         dry_run: options.dry_run,
         check: options.check,
+        display_argv,
         display_env,
         base_url: plan.base_url,
     })
@@ -223,6 +230,9 @@ pub(crate) struct ResolvedLaunch {
     wrap: Vec<Vec<OsString>>,
     pre: Vec<PreStep>,
     warnings: Vec<String>,
+    /// `argv` with the tmux command line hidden by name part by part, for
+    /// the dry run.
+    display_argv: Vec<OsString>,
     display_env: Vec<(OsString, OsString)>,
     base_url: Option<String>,
 }
@@ -239,7 +249,7 @@ impl ResolvedLaunch {
         let base_url = self.endpoint(&self.effective_env(), inherited);
         self.format_dry_run_with(&DryRunParts {
             tool: &self.tool,
-            argv: &self.argv,
+            argv: &self.display_argv,
             env: &self.display_env,
             env_removed: &isolation.lines(),
             base_url: base_url.as_deref(),
@@ -267,7 +277,7 @@ impl ResolvedLaunch {
         self.plan_json(
             &DryRunParts {
                 tool: &self.tool,
-                argv: &self.argv,
+                argv: &self.display_argv,
                 env: &self.display_env,
                 env_removed: &isolation.lines(),
                 base_url: base_url.as_deref(),
@@ -316,7 +326,7 @@ impl ResolvedLaunch {
             "model_context": model_context,
             "model_source": model_source,
             "argv": redact_argv(parts.argv),
-            "base_url": parts.base_url,
+            "base_url": parts.base_url.map(redact_urls),
             "env": env,
             "env_removed": isolation
                 .removals()
@@ -335,21 +345,24 @@ impl ResolvedLaunch {
     }
 
     /// The endpoint the child would reach, from its effective environment:
-    /// the plan's base URL, else the tool's base URL key in the route `env`,
-    /// else the same key in `inherited`, the parent environment minus the
-    /// keys the isolation removes.
+    /// the tool's base URL key in `env`, where a claude settings `env`
+    /// wins over the plan's base URL as it does in the child, else the
+    /// plan's base URL, else the same key in `inherited`, the parent
+    /// environment minus the keys the isolation removes.
     pub(crate) fn endpoint(
         &self,
         env: &[(OsString, OsString)],
         inherited: &[(OsString, OsString)],
     ) -> Option<String> {
         let nonempty = |value: String| (!value.is_empty()).then_some(value);
-        self.base_url.clone().and_then(nonempty).or_else(|| {
-            let key = self.base_url_env.as_deref()?;
-            env_value(env, key)
-                .and_then(nonempty)
-                .or_else(|| env_value(inherited, key).and_then(nonempty))
-        })
+        let key = self.base_url_env.as_deref();
+        key.and_then(|key| env_value(env, key))
+            .and_then(nonempty)
+            .or_else(|| self.base_url.clone().and_then(nonempty))
+            .or_else(|| {
+                key.and_then(|key| env_value(inherited, key))
+                    .and_then(nonempty)
+            })
     }
 
     /// The keys the route sets for the child: the final env, and for claude
@@ -972,27 +985,33 @@ fn set_env(plan: &mut LaunchPlan, middleware: &str, key: &str, value: &str) {
     plan.env.push((key_os, value_os));
 }
 
+/// The override warnings name each URL without its password or its
+/// credential-named query parameters.
 fn set_base_url(plan: &mut LaunchPlan, middleware: &str, value: String) {
     if let Some(existing) = &plan.base_url
         && existing != &value
     {
         plan.warnings.push(format!(
-            "middleware '{middleware}' overrides base_url from '{existing}' to '{value}'"
+            "middleware '{middleware}' overrides base_url from '{}' to '{}'",
+            redact_urls(existing),
+            redact_urls(&value)
         ));
     }
     plan.base_url = Some(value);
 }
 
 fn set_external_base_url(plan: &mut LaunchPlan, middleware: &str, value: String) {
+    let shown = redact_urls(&value);
     if let Some(existing) = &plan.base_url
         && existing != &value
     {
         plan.warnings.push(format!(
-            "external middleware '{middleware}' sets base_url to '{value}', overriding '{existing}'"
+            "external middleware '{middleware}' sets base_url to '{shown}', overriding '{}'",
+            redact_urls(existing)
         ));
     } else {
         plan.warnings.push(format!(
-            "external middleware '{middleware}' sets base_url to '{value}'; verify this API endpoint is trusted"
+            "external middleware '{middleware}' sets base_url to '{shown}'; verify this API endpoint is trusted"
         ));
     }
     plan.base_url = Some(value);
@@ -1249,30 +1268,39 @@ pub(crate) fn redact_credentials(text: &str, secrets: &[String]) -> String {
 }
 
 /// A credential beside its name in free text: `NAME=value`, `"NAME":"value"`
-/// and `NAME: value`, where the name is credential-named.
+/// and `NAME: value`, where the name is credential-named. The quotes may be
+/// escaped, as in a JSON string that holds JSON (`\"api_key\":\"x\"`), or
+/// single, as in a shell command line, and a `Bearer` or `Basic` scheme word
+/// may precede the value.
 static STRUCTURAL_CREDENTIAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(
-        r#"(?P<lead>"?)(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?P<trail>"?)(?P<sep>\s*[=:]\s*)(?P<value>"[^"]*"|[^\s,;&}\]]+)"#,
-    )
+    regex::Regex::new(concat!(
+        r#"(?P<lead>(?:\\?")?)(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?P<trail>(?:\\?")?)"#,
+        r#"(?P<sep>\s*[=:]\s*)(?P<scheme>(?i:bearer|basic)\s+)?"#,
+        r#"(?P<value>\\"[^"]*\\"|"[^"]*"|'[^']*'|[^\s,;&}\]'"]+)"#,
+    ))
     .expect("structural credential pattern")
 });
 
 /// Hide every credential that sits beside its name in `text`, whatever its
-/// length: the first pass over a failure tail, before the known values.
+/// length: the pass over a failure tail after the known values, which
+/// catches a value the run does not know.
 pub(crate) fn redact_structural(text: &str) -> String {
     STRUCTURAL_CREDENTIAL
         .replace_all(text, |captures: &regex::Captures<'_>| {
             let key = &captures["key"];
             let value = &captures["value"];
             if is_credential_env_key(key) {
-                let replacement = if value.starts_with('"') {
-                    format!("\"{REDACTED_VALUE}\"")
-                } else {
-                    REDACTED_VALUE.to_string()
-                };
+                let quote = ["\\\"", "\"", "'"]
+                    .into_iter()
+                    .find(|quote| value.starts_with(quote))
+                    .unwrap_or("");
+                let replacement = format!("{quote}{REDACTED_VALUE}{quote}");
                 format!(
-                    "{}{key}{}{}{replacement}",
-                    &captures["lead"], &captures["trail"], &captures["sep"]
+                    "{}{key}{}{}{}{replacement}",
+                    &captures["lead"],
+                    &captures["trail"],
+                    &captures["sep"],
+                    captures.name("scheme").map_or("", |scheme| scheme.as_str()),
                 )
             } else {
                 captures[0].to_string()
@@ -1281,10 +1309,11 @@ pub(crate) fn redact_structural(text: &str) -> String {
         .into_owned()
 }
 
-/// A failure tail or message as it may be shown: the structural pass, then
-/// the known values of eight characters or more.
+/// A failure tail or message as it may be shown: the known values of eight
+/// characters or more first, so a value with spaces is hidden whole, then
+/// the structural pass for the values the run does not know.
 pub(crate) fn redact_text(text: &str, secrets: &[String]) -> String {
-    redact_credentials(&redact_structural(text), secrets)
+    redact_structural(&redact_credentials(text, secrets))
 }
 
 /// Every URL in `text` with its userinfo password and its credential-named
@@ -1380,12 +1409,15 @@ pub(crate) fn redact_argument(part: &str) -> String {
 
 /// Whether a flag takes a credential as its separate value: `--api-key x`,
 /// `--password x`, `--token x`.
-fn is_credential_flag(part: &str) -> bool {
+pub(crate) fn is_credential_flag(part: &str) -> bool {
     part.starts_with("--")
         && !part.contains('=')
         && is_credential_env_key(part.trim_start_matches('-'))
 }
 
+/// A JSON value hidden by name: a credential-named key's value whole, and
+/// the password and credential-named query parameters of a URL in any
+/// string (a settings `env.ANTHROPIC_BASE_URL`).
 fn redact_json(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(object) => serde_json::Value::Object(
@@ -1403,6 +1435,7 @@ fn redact_json(value: serde_json::Value) -> serde_json::Value {
         serde_json::Value::Array(items) => {
             serde_json::Value::Array(items.into_iter().map(redact_json).collect())
         }
+        serde_json::Value::String(text) => serde_json::Value::String(redact_urls(&text)),
         other => other,
     }
 }
@@ -1446,11 +1479,34 @@ fn build_argv(
     plan: &LaunchPlan,
     removals: &[OsString],
 ) -> Vec<OsString> {
+    command_line(tool, child_args, plan, removals, false)
+}
+
+/// The command line as the dry run shows it: the same wrappers, with the
+/// tmux command line joined from parts hidden by name, so a credential
+/// value with spaces is hidden whole instead of leaking past its first
+/// word. The dry run hides the rest by name as it prints.
+fn display_argv_of(
+    tool: &ResolvedTool,
+    child_args: &[OsString],
+    plan: &LaunchPlan,
+    removals: &[OsString],
+) -> Vec<OsString> {
+    command_line(tool, child_args, plan, removals, true)
+}
+
+fn command_line(
+    tool: &ResolvedTool,
+    child_args: &[OsString],
+    plan: &LaunchPlan,
+    removals: &[OsString],
+    hide: bool,
+) -> Vec<OsString> {
     let mut command_line = vec![tool.binary.clone()];
     command_line.extend(child_args.iter().cloned());
     let env = final_env(tool, plan);
     for wrap in &plan.wrap {
-        command_line = apply_wrap(wrap, &command_line, &env, removals);
+        command_line = apply_wrap(wrap, &command_line, &env, removals, hide);
     }
     command_line
 }
@@ -1460,12 +1516,18 @@ fn apply_wrap(
     inner: &[OsString],
     env: &[(OsString, OsString)],
     removals: &[OsString],
+    hide: bool,
 ) -> Vec<OsString> {
     let mut argv = wrap.to_vec();
     if wrap.first().is_some_and(|command| command == "tmux") {
-        argv.push(OsString::from(shell_join(&env_command(
-            inner, env, removals,
-        ))));
+        let mut wrapped = env_command(inner, env, removals);
+        if hide {
+            wrapped = redact_argv(&wrapped)
+                .into_iter()
+                .map(OsString::from)
+                .collect();
+        }
+        argv.push(OsString::from(shell_join(&wrapped)));
     } else if wrap.first().is_some_and(|command| command == "docker") {
         argv = docker_argv(wrap, inner, env);
     } else {
@@ -1720,7 +1782,10 @@ fn format_dry_run_parts(
     );
     lines.push("env_removed:".to_string());
     lines.extend(parts.env_removed.iter().map(|key| format!("  {key}")));
-    lines.push(format!("base_url: {}", parts.base_url.unwrap_or("<none>")));
+    lines.push(format!(
+        "base_url: {}",
+        parts.base_url.map_or("<none>".to_string(), redact_urls)
+    ));
     lines.push("wrap:".to_string());
     lines.extend(wrap.iter().map(|wrap| format!("  {}", display_argv(wrap))));
     lines.push("pre:".to_string());

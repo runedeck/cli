@@ -3,7 +3,7 @@
 //! there, and report every model id the plan sends as served or missing.
 //! The check never spawns the tool and never prints a credential value.
 
-use super::{ResolvedLaunch, credential_values, env_value, redact_credentials};
+use super::{ResolvedLaunch, credential_values, env_value, redact_credentials, redact_urls};
 use serde::Serialize;
 use serde_json::Value;
 use std::ffi::OsString;
@@ -109,6 +109,26 @@ pub(crate) struct EndpointReport {
     pub(crate) check: EndpointCheck,
     #[serde(flatten)]
     pub(crate) result: EndpointResult,
+}
+
+impl EndpointReport {
+    /// The report as it may be shown: the endpoint, in the check and in a
+    /// failure reason, without its password and credential-named query
+    /// parameters.
+    fn redacted(&self) -> Self {
+        Self {
+            check: EndpointCheck {
+                base_url: redact_urls(&self.check.base_url),
+                ..self.check.clone()
+            },
+            result: match &self.result {
+                EndpointResult::Failed { reason } => EndpointResult::Failed {
+                    reason: redact_urls(reason),
+                },
+                listed @ EndpointResult::Listed { .. } => listed.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -465,7 +485,11 @@ pub(crate) fn report_json(report: &CheckReport) -> Value {
         "ok": report.exit_code == EXIT_SERVED,
         "kind": "check",
         "tool": report.tool,
-        "endpoints": report.endpoints,
+        "endpoints": report
+            .endpoints
+            .iter()
+            .map(EndpointReport::redacted)
+            .collect::<Vec<_>>(),
         "exit_code": report.exit_code,
         "warnings": report.warnings,
     })
@@ -489,7 +513,7 @@ pub(crate) fn format_report(report: &CheckReport) -> String {
         lines.push(format!("exit: {}", report.exit_code));
         return lines.join("\n");
     }
-    for endpoint in &report.endpoints {
+    for endpoint in report.endpoints.iter().map(EndpointReport::redacted) {
         lines.push(format!(
             "endpoint: {}{MODELS_PATH}",
             endpoint.check.base_url

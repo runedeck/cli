@@ -59,6 +59,7 @@ fn resolved(
         wrap: Vec::new(),
         pre: Vec::new(),
         warnings: Vec::new(),
+        display_argv: vec![OsString::from(tool)],
         display_env,
         base_url: None,
     }
@@ -399,6 +400,60 @@ fn report_serializes_with_the_endpoint_state() {
     assert_eq!(json["endpoints"][0]["state"], "listed");
     assert_eq!(json["endpoints"][0]["served"][0], "kimi-k3");
     assert_eq!(json["endpoints"][0]["base_url"], "http://proxy.test");
+}
+
+#[test]
+fn the_report_shows_an_endpoint_without_its_password_or_credential_query() {
+    let report = CheckReport {
+        tool: "claude".to_string(),
+        endpoints: vec![EndpointReport {
+            check: EndpointCheck {
+                base_url: "https://u:fake-url-secret@proxy.test/v1?api_key=fake-query-secret"
+                    .to_string(),
+                credential_key: None,
+                models: vec!["kimi-k3".to_string()],
+            },
+            result: EndpointResult::Failed {
+                reason: "https://u:fake-url-secret@proxy.test/v1/models: HTTP 502".to_string(),
+            },
+        }],
+        exit_code: EXIT_ENDPOINT,
+        warnings: Vec::new(),
+    };
+    let text = format_report(&report);
+    assert!(
+        text.contains("endpoint: https://u:<redacted>@proxy.test/v1?api_key=<redacted>/v1/models"),
+        "{text}"
+    );
+    let json = report_json(&report);
+    assert_eq!(
+        json["endpoints"][0]["base_url"],
+        "https://u:<redacted>@proxy.test/v1?api_key=<redacted>"
+    );
+    assert!(!json.to_string().contains("fake-"), "{json}");
+}
+
+#[test]
+fn a_failure_reason_names_the_endpoint_without_its_password() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    drop(listener);
+    let launch = resolved(
+        "claude",
+        env(&[
+            (
+                "ANTHROPIC_BASE_URL",
+                &format!("http://u:fake-url-secret@{address}"),
+            ),
+            ("ANTHROPIC_MODEL", "kimi-k3"),
+        ]),
+        Some("kimi-k3"),
+    );
+    let report = run_checks(&launch, None);
+    assert_eq!(report.exit_code, EXIT_ENDPOINT);
+    let text = format_report(&report);
+    assert!(text.contains("u:<redacted>@"), "{text}");
+    assert!(!text.contains("fake-url-secret"), "{text}");
 }
 
 #[test]

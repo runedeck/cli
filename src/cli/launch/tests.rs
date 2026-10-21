@@ -944,9 +944,197 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
     )
     .expect("resolved launch");
     assert_eq!(
-        proxied.endpoint(&names(&[("ANTHROPIC_BASE_URL", "http://elsewhere")]), &[]),
+        proxied.endpoint(&proxied.effective_env(), &[]),
         Some("http://127.0.0.1:47821".to_string()),
-        "the plan's base URL wins over the env"
+        "the plan's base URL sits in the effective env"
+    );
+    assert_eq!(
+        proxied.endpoint(&[], &names(&[("ANTHROPIC_BASE_URL", "http://elsewhere")])),
+        Some("http://127.0.0.1:47821".to_string()),
+        "the plan's base URL wins over the inherited one"
+    );
+}
+
+#[test]
+fn a_settings_endpoint_wins_over_the_middleware_endpoint_as_in_the_child() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = resolve_with_config_for_tests(
+        "claude",
+        &[
+            OsString::from("--pxpipe"),
+            OsString::from("--settings"),
+            OsString::from(r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/settings"}}"#),
+        ],
+        dir.path(),
+    );
+    let isolation = surface::parent_session_isolation(&resolved.route_keys());
+
+    assert_eq!(
+        resolved.endpoint(&resolved.effective_env(), &[]),
+        Some("http://127.0.0.1:9/settings".to_string()),
+        "claude applies the settings env over the process env"
+    );
+    assert!(
+        resolved
+            .format_dry_run(&isolation, &[])
+            .contains("base_url: http://127.0.0.1:9/settings")
+    );
+    assert_eq!(
+        resolved.plan_json_for_launch(&isolation, &[])["base_url"],
+        "http://127.0.0.1:9/settings"
+    );
+}
+
+#[test]
+fn every_shown_endpoint_loses_its_password_and_credential_query() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gateway = "https://u:fake-url-secret@127.0.0.1:9/v1?api_key=fake-query-secret";
+    let shown = "https://u:<redacted>@127.0.0.1:9/v1?api_key=<redacted>";
+    let resolved = resolve_with_config_for_tests(
+        "claude",
+        &[
+            OsString::from("--settings"),
+            OsString::from(format!(r#"{{"env":{{"ANTHROPIC_BASE_URL":"{gateway}"}}}}"#)),
+        ],
+        dir.path(),
+    );
+    let isolation = surface::parent_session_isolation(&resolved.route_keys());
+
+    // The dry run's endpoint line and JSON field, and the URL inside the
+    // settings object in the argv.
+    let text = resolved.format_dry_run(&isolation, &[]);
+    assert!(text.contains(&format!("base_url: {shown}")), "{text}");
+    assert!(!text.contains("fake-"), "{text}");
+    let json = resolved.plan_json_for_launch(&isolation, &[]);
+    assert_eq!(json["base_url"], shown);
+    assert!(!json.to_string().contains("fake-"), "{json}");
+    assert_eq!(
+        redact_argument(&format!(
+            r#"{{"env":{{"ANTHROPIC_BASE_URL":"{gateway}"}}}}"#
+        )),
+        format!(r#"{{"env":{{"ANTHROPIC_BASE_URL":"{shown}"}}}}"#)
+    );
+
+    // The base URL override warnings.
+    let mut plan = LaunchPlan {
+        base_url: Some(gateway.to_string()),
+        ..LaunchPlan::default()
+    };
+    set_base_url(&mut plan, "pxpipe", "http://127.0.0.1:47821".to_string());
+    set_external_base_url(&mut plan, "external", gateway.to_string());
+    assert_eq!(plan.warnings.len(), 2, "{:?}", plan.warnings);
+    assert!(
+        plan.warnings[0].contains(&format!("from '{shown}'")),
+        "{}",
+        plan.warnings[0]
+    );
+    assert!(
+        plan.warnings[1].contains(&format!("sets base_url to '{shown}'")),
+        "{}",
+        plan.warnings[1]
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .all(|warning| !warning.contains("fake-")),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn a_tmux_command_line_hides_a_credential_value_with_spaces_whole() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plan = compose_plan(
+        &[],
+        Some("work"),
+        &context(dir.path(), Launch::default(), Vec::new()),
+    )
+    .expect("compose");
+    let mut plan = LaunchPlan {
+        env: names(&[
+            ("ANTHROPIC_AUTH_TOKEN", "fake token with spaces"),
+            ("ANTHROPIC_MODEL", "sol model"),
+        ]),
+        ..plan
+    };
+    plan.base_url = Some("https://u:fake-url-secret@127.0.0.1:9/v1".to_string());
+    let tool = resolve_tool("claude", &Launch::default());
+    let args = [
+        OsString::from("--api-key"),
+        OsString::from("fake flag secret"),
+    ];
+
+    let real = build_argv(&tool, &args, &plan, &[]);
+    let inner = real.last().expect("tmux shell command").to_string_lossy();
+    assert!(
+        inner.contains("'ANTHROPIC_AUTH_TOKEN=fake token with spaces'"),
+        "{inner}"
+    );
+
+    let shown = display_argv_of(&tool, &args, &plan, &[]);
+    let inner = shown.last().expect("tmux shell command").to_string_lossy();
+    assert!(
+        inner.contains("'ANTHROPIC_AUTH_TOKEN=<redacted>'"),
+        "{inner}"
+    );
+    assert!(inner.contains("'ANTHROPIC_MODEL=sol model'"), "{inner}");
+    assert!(
+        inner.contains("ANTHROPIC_BASE_URL=https://u:<redacted>@127.0.0.1:9/v1"),
+        "{inner}"
+    );
+    assert!(inner.ends_with("claude --api-key '<redacted>'"), "{inner}");
+    assert!(!inner.contains("fake"), "{inner}");
+
+    // The dry run hides the shown argv by name once more without harm.
+    let printed = redact_argv(&shown).join(" ");
+    assert!(
+        printed.contains("'ANTHROPIC_AUTH_TOKEN=<redacted>' "),
+        "{printed}"
+    );
+    assert!(
+        printed.ends_with("claude --api-key '<redacted>'"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn the_structural_pass_reads_escaped_quotes_a_scheme_word_and_shell_quotes() {
+    assert_eq!(
+        redact_structural(r#"{"message":"{\"api_key\":\"fake-nested-secret\"}"}"#),
+        r#"{"message":"{\"api_key\":\"<redacted>\"}"}"#
+    );
+    assert_eq!(
+        redact_structural("Authorization: Bearer fake-bearer-secret rejected"),
+        "Authorization: Bearer <redacted> rejected"
+    );
+    assert_eq!(
+        redact_structural(r#""Authorization":"Basic fake-basic-secret""#),
+        r#""Authorization":"<redacted>""#
+    );
+    assert_eq!(
+        redact_structural("MY_TOKEN='fake token with spaces' claude"),
+        "MY_TOKEN='<redacted>' claude"
+    );
+    assert_eq!(
+        redact_structural("'MY_TOKEN=<redacted>' claude"),
+        "'MY_TOKEN=<redacted>' claude",
+        "a shell quote never joins an unquoted value"
+    );
+}
+
+#[test]
+fn tails_hide_the_known_values_first_then_beside_a_name() {
+    // A known value with spaces is hidden whole: the structural pass alone
+    // would hide its first word and leak the rest.
+    let secrets = vec!["fake token with spaces".to_string()];
+    assert_eq!(
+        redact_text("MY_TOKEN=fake token with spaces rejected", &secrets),
+        "MY_TOKEN=<redacted> rejected"
+    );
+    assert_eq!(
+        redact_text("unknown_token=fake-unknown-value ok", &[]),
+        "unknown_token=<redacted> ok"
     );
 }
 
@@ -1141,7 +1329,7 @@ fn urls_lose_their_password_and_credential_query_parameters() {
 }
 
 #[test]
-fn tails_redact_beside_a_name_first_then_known_values_of_eight_or_more() {
+fn tails_redact_known_values_of_eight_or_more_and_any_value_beside_a_name() {
     let secrets = vec!["fake-long-secret-value".to_string(), "ab12".to_string()];
     let text = concat!(
         "ANTHROPIC_AUTH_TOKEN=ab12 \"api_key\":\"zz\" token: short",
@@ -1269,6 +1457,47 @@ pub(super) fn resolve_with_config_for_tests(
         },
     )
     .expect("resolved launch")
+}
+
+#[test]
+fn a_claude_launch_sends_one_settings_object_merged_from_all_of_them() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rest: Vec<OsString> = [
+        "--settings",
+        r#"{"env":{"A":"1"},"model":"x"}"#,
+        "--verbose",
+        "--settings",
+        r#"{"env":{"B":"2"}}"#,
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    let resolved = resolve_with_config_for_tests("claude", &rest, dir.path());
+    let argv: Vec<String> = resolved
+        .argv
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let settings: Vec<&String> = argv.iter().filter(|arg| *arg == "--settings").collect();
+    assert_eq!(settings.len(), 1, "{argv:?}");
+    let at = argv
+        .iter()
+        .position(|arg| arg == "--settings")
+        .expect("flag");
+    let parsed: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("settings json");
+    assert_eq!(parsed, serde_json::json!({"env":{"B":"2"},"model":"x"}));
+    let verbose = argv
+        .iter()
+        .position(|arg| arg == "--verbose")
+        .expect("verbose");
+    assert!(verbose < at, "{argv:?}");
+
+    let single: Vec<OsString> = ["--settings", r#"{"env":{"A":"1"}}"#]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    let resolved = resolve_with_config_for_tests("claude", &single, dir.path());
+    assert!(resolved.argv.ends_with(&single), "{:?}", resolved.argv);
 }
 
 #[test]

@@ -352,7 +352,7 @@ fn codex_failure_reports_its_own_error_events() {
 
 #[test]
 fn signal_and_output_limit_failures_carry_both_tails() {
-    let signal = SurfaceFailure::Process(ProcessFailure::ForwardedSignal {
+    let signal = SurfaceFailure::from(ProcessFailure::ForwardedSignal {
         signal: 15,
         stdout: "half an answer".to_string(),
         stderr: "still working".to_string(),
@@ -366,7 +366,7 @@ fn signal_and_output_limit_failures_carry_both_tails() {
     assert!(text.contains("stdout tail:\n  half an answer"), "{text}");
     assert!(text.contains("stderr tail:\n  still working"), "{text}");
 
-    let limit = SurfaceFailure::Process(ProcessFailure::OutputLimit {
+    let limit = SurfaceFailure::from(ProcessFailure::OutputLimit {
         stream: "stdout",
         limit: 64,
         stdout: "x".repeat(64),
@@ -1115,6 +1115,68 @@ fn child_secrets_include_credentials_inside_retained_structured_arguments() {
 }
 
 #[test]
+fn child_secrets_hold_the_parts_a_harness_quotes_alone() {
+    // Each header value of a `*_HEADERS` variable, and the token after the
+    // scheme word, from the process env and from the settings env alike.
+    let mut claude = invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Proxy-Key: fake-settings-header\nX-Plain: fake-plain-header"}}"#,
+            "--api-key",
+            "fake-flag-secret",
+            "--token=fake-attached-secret",
+        ],
+    );
+    claude.env = env(&[(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "Authorization: Bearer fake-env-bearer\nX-Other: fake-env-other",
+    )]);
+    let secrets = child_secrets(&claude);
+    for expected in [
+        "Authorization: Bearer fake-env-bearer\nX-Other: fake-env-other",
+        "Bearer fake-env-bearer",
+        "fake-env-bearer",
+        "fake-env-other",
+        "fake-settings-header",
+        "fake-plain-header",
+        "fake-flag-secret",
+        "fake-attached-secret",
+    ] {
+        assert!(
+            secrets.contains(&expected.to_string()),
+            "{expected}: {secrets:?}"
+        );
+    }
+    assert!(!secrets.contains(&"--api-key".to_string()), "{secrets:?}");
+
+    // A credential nested anywhere inside a retained codex table value.
+    let codex = invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            r#"model_providers.proxy={ base_url = "http://127.0.0.1:9", http_headers = { Authorization = "Basic fake-nested-basic" } }"#,
+            "-c",
+            "model_providers.proxy.wire_api=\"chat\"",
+        ],
+    );
+    let secrets = child_secrets(&codex);
+    assert!(
+        secrets.contains(&"Basic fake-nested-basic".to_string()),
+        "{secrets:?}"
+    );
+    assert!(
+        secrets.contains(&"fake-nested-basic".to_string()),
+        "{secrets:?}"
+    );
+    assert!(!secrets.contains(&"chat".to_string()), "{secrets:?}");
+    assert!(
+        !secrets.contains(&"http://127.0.0.1:9".to_string()),
+        "{secrets:?}"
+    );
+}
+
+#[test]
 fn a_settings_file_path_warning_says_the_run_uses_the_inherited_endpoint() {
     let filtered = filter_surface_args(&invocation(
         Surface::Claude,
@@ -1279,7 +1341,7 @@ fn output_tail_keeps_the_last_lines_or_characters_whichever_is_shorter() {
 
 #[test]
 fn timeout_failure_carries_the_partial_output() {
-    let failure = SurfaceFailure::Process(ProcessFailure::Timeout {
+    let failure = SurfaceFailure::from(ProcessFailure::Timeout {
         timeout: Duration::from_secs(30),
         stdout: "thinking...\n".to_string(),
         stderr: String::new(),
@@ -1379,7 +1441,7 @@ fn sandbox_signature_on_stderr_or_in_a_harness_error_adds_a_hint() {
     };
     assert!(keyring.hint().is_some_and(|hint| hint.contains("keyring")));
 
-    let spawn = SurfaceFailure::Process(ProcessFailure::Spawn(
+    let spawn = SurfaceFailure::from(ProcessFailure::Spawn(
         "claude not runnable: Operation not permitted (os error 1)".to_string(),
     ));
     assert!(spawn.hint().is_some_and(|hint| hint.contains("sandbox")));
@@ -1419,6 +1481,162 @@ fn model_text_on_stdout_never_earns_a_sandbox_hint() {
         harness_errors: Vec::new(),
     };
     assert_eq!(plain.hint(), None);
+}
+
+#[test]
+fn a_forced_stop_keeps_the_harness_errors_reported_before_it() {
+    let timeout = stopped_with_errors(
+        ProcessFailure::Timeout {
+            timeout: Duration::from_secs(30),
+            stdout: "Thinking.\nAPI Error: 403 OSStatus -26276\n".to_string(),
+            stderr: String::new(),
+        },
+        claude_error_messages,
+    );
+    assert_eq!(timeout.harness_errors(), ["API Error: 403 OSStatus -26276"]);
+    assert!(
+        timeout
+            .hint()
+            .is_some_and(|hint| hint.contains("certificate")),
+        "{timeout}"
+    );
+    assert!(
+        timeout
+            .to_string()
+            .contains("harness errors:\n  API Error: 403 OSStatus -26276"),
+        "{timeout}"
+    );
+
+    let signal = stopped_with_errors(
+        ProcessFailure::ForwardedSignal {
+            signal: 15,
+            stdout: "{\"type\":\"error\",\"message\":\"TLS: UNABLE_TO_VERIFY_LEAF_SIGNATURE\"}\n"
+                .to_string(),
+            stderr: String::new(),
+        },
+        |stdout| codex_error_messages(&parse_jsonl(stdout)),
+    );
+    assert_eq!(
+        signal.harness_errors(),
+        ["TLS: UNABLE_TO_VERIFY_LEAF_SIGNATURE"]
+    );
+    assert!(
+        signal
+            .hint()
+            .is_some_and(|hint| hint.contains("filtering proxy")),
+        "{signal}"
+    );
+
+    // A failure without captured output has no errors to parse.
+    let spawn = stopped_with_errors(
+        ProcessFailure::Spawn("claude not runnable".to_string()),
+        claude_error_messages,
+    );
+    assert_eq!(spawn.harness_errors(), [] as [String; 0]);
+
+    // The redaction reads the kept errors too.
+    let secrets = vec!["sk-fake-stop-secret".to_string()];
+    let hidden = stopped_with_errors(
+        ProcessFailure::Timeout {
+            timeout: Duration::from_secs(1),
+            stdout: "API Error: 401 bad key sk-fake-stop-secret\n".to_string(),
+            stderr: String::new(),
+        },
+        claude_error_messages,
+    )
+    .redacted(&secrets);
+    assert_eq!(
+        hidden.harness_errors(),
+        ["API Error: 401 bad key <redacted>"]
+    );
+    assert!(
+        !hidden.to_string().contains("sk-fake-stop-secret"),
+        "{hidden}"
+    );
+}
+
+#[test]
+fn a_network_allowlist_block_names_the_blocked_host() {
+    let reported = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        harness_errors: vec![
+            "API Error: 403 {\"error\":\"Connection blocked by network allowlist\",\"url\":\"https://api.example.test/v1/messages\"}"
+                .to_string(),
+        ],
+    };
+    let hint = reported.hint().expect("allowlist hint");
+    assert!(hint.contains("api.example.test"), "{hint}");
+    assert!(hint.contains("allowlist"), "{hint}");
+    assert!(!hint.contains("/v1/messages"), "{hint}");
+
+    let on_stderr = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: "proxy: blocked-by-allowlist".to_string(),
+        harness_errors: Vec::new(),
+    };
+    let hint = on_stderr.hint().expect("allowlist hint");
+    assert!(hint.contains("blocked the endpoint's host:"), "{hint}");
+
+    // Model text on stdout never counts.
+    let quoted = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "The proxy said: Connection blocked by network allowlist".to_string(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    };
+    assert_eq!(quoted.hint(), None);
+
+    assert_eq!(
+        url_host("see https://user:sk-fake@api.example.test:8443/v1?x=1 now"),
+        Some("api.example.test:8443".to_string())
+    );
+    assert_eq!(
+        url_host("{\"url\":\"http://127.0.0.1:8080\"}"),
+        Some("127.0.0.1:8080".to_string())
+    );
+    assert_eq!(url_host("no url here"), None);
+    assert_eq!(url_host("https://"), None);
+}
+
+#[test]
+fn launch_merges_several_settings_objects_into_the_last_one() {
+    let args: Vec<OsString> = [
+        "--settings",
+        r#"{"env":{"A":"1"},"model":"x"}"#,
+        "--verbose",
+        r#"--settings={"env":{"B":"2"}}"#,
+        "--debug",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    let merged = strings(&merge_settings_args(&args));
+    assert_eq!(merged.len(), 4, "{merged:?}");
+    assert_eq!(merged[0], "--verbose");
+    assert_eq!(merged[1], "--settings");
+    let settings: serde_json::Value = serde_json::from_str(&merged[2]).expect("settings json");
+    assert_eq!(settings, serde_json::json!({"env":{"B":"2"},"model":"x"}));
+    assert_eq!(merged[3], "--debug");
+
+    // One object, or a file path beside it, stays as it is.
+    let single: Vec<OsString> = ["--settings", r#"{"env":{"A":"1"}}"#, "--verbose"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    assert_eq!(merge_settings_args(&single), single);
+    let with_path: Vec<OsString> = [
+        "--settings",
+        "/home/me/settings.json",
+        "--settings",
+        r#"{"env":{"A":"1"}}"#,
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    assert_eq!(merge_settings_args(&with_path), with_path);
 }
 
 #[test]
@@ -1810,7 +2028,7 @@ fn failure_tails_hide_the_credential_before_the_tail_is_cut() {
         "{silent}"
     );
 
-    let timeout = SurfaceFailure::Process(ProcessFailure::Timeout {
+    let timeout = SurfaceFailure::from(ProcessFailure::Timeout {
         timeout: Duration::from_secs(1),
         stdout: "partial fake-route-secret".to_string(),
         stderr: String::new(),
@@ -1935,7 +2153,7 @@ fn a_scratch_cleanup_failure_keeps_the_run_failure_and_its_tails() {
 
 #[test]
 fn a_wait_failure_carries_the_streams_read_before_it() {
-    let failure = SurfaceFailure::Process(ProcessFailure::Wait {
+    let failure = SurfaceFailure::from(ProcessFailure::Wait {
         message: "cannot signal process group 7: gone".to_string(),
         stdout: "read so far".to_string(),
         stderr: "still going".to_string(),

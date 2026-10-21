@@ -4,14 +4,16 @@
 //! always reap the child. Cleanup is best-effort within the direct child's
 //! process group; descendants that open their own group or session are
 //! outside the guarantee, and non-Unix builds signal only the direct child.
+//! A pipe such a descendant holds is abandoned after a bounded wait, with
+//! what it yielded so far, so the run ends.
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
@@ -178,6 +180,7 @@ impl ProcessRequest {
     }
 }
 
+#[derive(Default)]
 struct CapturedStream {
     tail: VecDeque<u8>,
     exceeded_limit: bool,
@@ -186,6 +189,24 @@ struct CapturedStream {
 impl CapturedStream {
     fn into_string(self) -> String {
         String::from_utf8_lossy(&self.tail.into_iter().collect::<Vec<_>>()).into_owned()
+    }
+}
+
+/// One stream's capture, shared between its reader thread and the
+/// supervisor: the tail so far, so a reader that a survivor outside the
+/// process group holds open still yields what it read, and the flags the
+/// supervisor polls.
+#[derive(Default)]
+struct StreamCapture {
+    tail: Mutex<CapturedStream>,
+    exceeded_limit: AtomicBool,
+    finished: AtomicBool,
+}
+
+impl StreamCapture {
+    /// What the reader drained so far, taken out of the shared tail.
+    fn take(&self) -> CapturedStream {
+        std::mem::take(&mut *self.tail.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
@@ -244,6 +265,13 @@ impl SignalFlags {
         }
         None
     }
+
+    /// Forget the signal received so far, so one that arrives later counts
+    /// anew.
+    fn clear(&self) {
+        self.interrupt.store(false, Ordering::Relaxed);
+        self.terminate.store(false, Ordering::Relaxed);
+    }
 }
 
 impl Drop for SignalFlags {
@@ -272,19 +300,19 @@ fn spawn_command(request: &ProcessRequest) -> Command {
     command
 }
 
-/// Drain one stream to its tail. `finished` is set when the pipe closes or
-/// the read fails, so the supervisor can tell a reader that is held open by
-/// a descendant of the process from one that is done.
+/// Drain one stream into `capture`, chunk by chunk. Its `finished` flag is
+/// set when the pipe closes or the read fails, so the supervisor can tell a
+/// reader that is held open by a descendant of the process from one that
+/// is done.
 fn reader_thread<R: Read + Send + 'static>(
     stream_name: &'static str,
     source: Option<R>,
     limit: usize,
-    exceeded_limit: Arc<AtomicBool>,
-    finished: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<Result<CapturedStream, ProcessFailure>> {
+    capture: Arc<StreamCapture>,
+) -> std::thread::JoinHandle<Result<(), ProcessFailure>> {
     std::thread::spawn(move || {
-        let result = read_stream(stream_name, source, limit, &exceeded_limit);
-        finished.store(true, Ordering::Relaxed);
+        let result = read_stream(stream_name, source, limit, &capture);
+        capture.finished.store(true, Ordering::Relaxed);
         result
     })
 }
@@ -293,106 +321,131 @@ fn read_stream<R: Read>(
     stream_name: &'static str,
     source: Option<R>,
     limit: usize,
-    exceeded_limit: &AtomicBool,
-) -> Result<CapturedStream, ProcessFailure> {
-    {
-        let mut source = source.ok_or_else(|| {
-            let message = format!("cannot capture process {stream_name}: pipe is unavailable");
+    capture: &StreamCapture,
+) -> Result<(), ProcessFailure> {
+    let mut source = source.ok_or_else(|| {
+        let message = format!("cannot capture process {stream_name}: pipe is unavailable");
+        if stream_name == "stdout" {
+            ProcessFailure::Stdout(message)
+        } else {
+            ProcessFailure::Stderr(message)
+        }
+    })?;
+    let mut total = 0usize;
+    let mut chunk = [0u8; 8192];
+    loop {
+        let bytes_read = source.read(&mut chunk).map_err(|error| {
+            let message = format!("cannot read process {stream_name}: {error}");
             if stream_name == "stdout" {
                 ProcessFailure::Stdout(message)
             } else {
                 ProcessFailure::Stderr(message)
             }
         })?;
-        let mut tail = VecDeque::with_capacity(limit.min(64 * 1024));
-        let mut total = 0usize;
-        let mut chunk = [0u8; 8192];
-        loop {
-            let bytes_read = source.read(&mut chunk).map_err(|error| {
-                let message = format!("cannot read process {stream_name}: {error}");
-                if stream_name == "stdout" {
-                    ProcessFailure::Stdout(message)
-                } else {
-                    ProcessFailure::Stderr(message)
-                }
-            })?;
-            if bytes_read == 0 {
-                break;
+        if bytes_read == 0 {
+            break;
+        }
+        total = total.saturating_add(bytes_read);
+        if total > limit {
+            capture.exceeded_limit.store(true, Ordering::Relaxed);
+        }
+        let mut captured = capture.tail.lock().unwrap_or_else(PoisonError::into_inner);
+        for byte in &chunk[..bytes_read] {
+            if captured.tail.len() == limit {
+                captured.tail.pop_front();
             }
-            total = total.saturating_add(bytes_read);
-            if total > limit {
-                exceeded_limit.store(true, Ordering::Relaxed);
-            }
-            for byte in &chunk[..bytes_read] {
-                if tail.len() == limit {
-                    tail.pop_front();
-                }
-                if limit > 0 {
-                    tail.push_back(*byte);
-                }
+            if limit > 0 {
+                captured.tail.push_back(*byte);
             }
         }
-        Ok(CapturedStream {
-            tail,
-            exceeded_limit: total > limit,
-        })
+        captured.exceeded_limit = total > limit;
     }
+    Ok(())
 }
 
-/// Wait for every reader to finish, up to `grace` after the process
-/// leader is gone. A descendant that inherited a pipe and outlived the
-/// leader would hold a reader open forever, so on the deadline the whole
-/// process group is killed; the readers then see the pipes close.
+/// Wait for every reader and the writer to finish, up to `grace` after the
+/// process leader is gone, or until a signal arrives. A descendant that
+/// inherited a pipe and outlived the leader would hold a reader open
+/// forever, so at the deadline or on the signal the whole process group is
+/// killed, even while the writer still runs; the readers then see the
+/// pipes close. A survivor outside the group (a `setsid` descendant) is out
+/// of reach, so the wait after the kill is bounded by `grace` once more and
+/// ended early by a signal that arrives during it.
 fn wait_for_readers(
     child: &mut Child,
     finished: &[&AtomicBool],
+    signal_flags: &SignalFlags,
     grace: Duration,
 ) -> Result<(), ProcessFailure> {
-    let deadline = Instant::now() + grace;
-    while !finished.iter().all(|flag| flag.load(Ordering::Relaxed)) {
-        if Instant::now() >= deadline {
-            #[cfg(unix)]
-            {
-                use signal_hook::consts::signal::SIGKILL;
-                return send_process_group_signal(child, SIGKILL);
-            }
-            #[cfg(not(unix))]
-            {
-                return child
-                    .kill()
-                    .or_else(|error| {
-                        if error.kind() == std::io::ErrorKind::InvalidInput {
-                            Ok(())
-                        } else {
-                            Err(error)
-                        }
-                    })
-                    .map_err(|error| wait_failure(format!("cannot kill process: {error}")));
-            }
-        }
+    let all_finished = || finished.iter().all(|flag| flag.load(Ordering::Relaxed));
+    let mut deadline = Instant::now() + grace;
+    while !all_finished() && Instant::now() < deadline && signal_flags.received().is_none() {
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+    if all_finished() {
+        return Ok(());
+    }
+    kill_group(child)?;
+    signal_flags.clear();
+    deadline = Instant::now() + grace;
+    while !all_finished() && Instant::now() < deadline && signal_flags.received().is_none() {
         std::thread::sleep(PROCESS_POLL_INTERVAL);
     }
     Ok(())
 }
 
+/// Kill the process group at once; a group that is gone already is fine.
+fn kill_group(child: &mut Child) -> Result<(), ProcessFailure> {
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::signal::SIGKILL;
+        send_process_group_signal(child, SIGKILL)
+    }
+    #[cfg(not(unix))]
+    {
+        child
+            .kill()
+            .or_else(|error| {
+                if error.kind() == std::io::ErrorKind::InvalidInput {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|error| wait_failure(format!("cannot kill process: {error}")))
+    }
+}
+
+/// Feed stdin. `finished` is set when the content is written, the process
+/// closed the pipe, or the write failed.
 fn writer_thread(
     stdin: Option<std::process::ChildStdin>,
     content: Vec<u8>,
+    finished: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<Result<(), ProcessFailure>> {
     std::thread::spawn(move || {
-        use std::io::Write;
-
-        let mut stdin = stdin.ok_or_else(|| {
-            ProcessFailure::Stdin("cannot write process stdin: pipe is unavailable".to_string())
-        })?;
-        match stdin.write_all(&content) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-            Err(error) => Err(ProcessFailure::Stdin(format!(
-                "cannot write process stdin: {error}"
-            ))),
-        }
+        let result = write_stdin(stdin, &content);
+        finished.store(true, Ordering::Relaxed);
+        result
     })
+}
+
+fn write_stdin(
+    stdin: Option<std::process::ChildStdin>,
+    content: &[u8],
+) -> Result<(), ProcessFailure> {
+    use std::io::Write;
+
+    let mut stdin = stdin.ok_or_else(|| {
+        ProcessFailure::Stdin("cannot write process stdin: pipe is unavailable".to_string())
+    })?;
+    match stdin.write_all(content) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(ProcessFailure::Stdin(format!(
+            "cannot write process stdin: {error}"
+        ))),
+    }
 }
 
 #[cfg(unix)]
@@ -497,29 +550,43 @@ fn termination_from_status(status: ExitStatus) -> ProcessTermination {
     ProcessTermination::Signaled(0)
 }
 
-fn join_writer(
+/// The writer's result once it finished. A writer that a survivor holds
+/// open, the pipe's read end inherited and never read, is left behind as
+/// done: the process that mattered is gone.
+fn finish_writer(
     handle: Option<std::thread::JoinHandle<Result<(), ProcessFailure>>>,
+    finished: &AtomicBool,
 ) -> Result<(), ProcessFailure> {
     let Some(handle) = handle else {
         return Ok(());
     };
+    if !finished.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     handle
         .join()
         .map_err(|_| ProcessFailure::Stdin("process stdin writer panicked".to_string()))?
 }
 
-fn join_reader(
+/// What the reader drained, with its result once it finished. A reader
+/// that a survivor holds open is left behind with the tail it yielded so
+/// far.
+fn finish_reader(
     stream_name: &'static str,
-    handle: std::thread::JoinHandle<Result<CapturedStream, ProcessFailure>>,
+    handle: std::thread::JoinHandle<Result<(), ProcessFailure>>,
+    capture: &StreamCapture,
 ) -> Result<CapturedStream, ProcessFailure> {
-    handle.join().map_err(|_| {
-        let message = format!("process {stream_name} reader panicked");
-        if stream_name == "stdout" {
-            ProcessFailure::Stdout(message)
-        } else {
-            ProcessFailure::Stderr(message)
-        }
-    })?
+    if capture.finished.load(Ordering::Relaxed) {
+        handle.join().map_err(|_| {
+            let message = format!("process {stream_name} reader panicked");
+            if stream_name == "stdout" {
+                ProcessFailure::Stdout(message)
+            } else {
+                ProcessFailure::Stderr(message)
+            }
+        })??;
+    }
+    Ok(capture.take())
 }
 
 fn requested_stop(
@@ -630,47 +697,51 @@ pub(crate) fn run_process_request(
     let mut child = command
         .spawn()
         .map_err(|error| ProcessFailure::Spawn(format!("{binary} not runnable: {error}")))?;
-    let stdout_exceeded = Arc::new(AtomicBool::new(false));
-    let stderr_exceeded = Arc::new(AtomicBool::new(false));
-    let stdout_finished = Arc::new(AtomicBool::new(false));
-    let stderr_finished = Arc::new(AtomicBool::new(false));
+    let stdout_capture = Arc::new(StreamCapture::default());
+    let stderr_capture = Arc::new(StreamCapture::default());
+    let stdin_finished = Arc::new(AtomicBool::new(request.stdin.is_none()));
     let stdout_handle = reader_thread(
         "stdout",
         child.stdout.take(),
         request.output_limit,
-        Arc::clone(&stdout_exceeded),
-        Arc::clone(&stdout_finished),
+        Arc::clone(&stdout_capture),
     );
     let stderr_handle = reader_thread(
         "stderr",
         child.stderr.take(),
         request.output_limit,
-        Arc::clone(&stderr_exceeded),
-        Arc::clone(&stderr_finished),
+        Arc::clone(&stderr_capture),
     );
     let stdin_handle = request
         .stdin
         .clone()
-        .map(|content| writer_thread(child.stdin.take(), content));
+        .map(|content| writer_thread(child.stdin.take(), content, Arc::clone(&stdin_finished)));
     let wait_result = wait_for_process(
         &mut child,
         request,
         &signal_flags,
-        &stdout_exceeded,
-        &stderr_exceeded,
+        &stdout_capture.exceeded_limit,
+        &stderr_capture.exceeded_limit,
         &binary,
     );
-    let stdin_result = join_writer(stdin_handle);
     // The leader is gone or stopping. The group is cleaned until the
-    // readers see their pipes close, so what was read is never lost to a
-    // survivor, and a wait failure carries it too.
+    // readers and the writer see their pipes close, so what was read is
+    // never lost to a survivor, and a wait failure carries it too. A pipe
+    // that a survivor out of reach still holds is abandoned in bounded
+    // time, with what it yielded.
     let readers_result = wait_for_readers(
         &mut child,
-        &[&stdout_finished, &stderr_finished],
+        &[
+            &stdout_capture.finished,
+            &stderr_capture.finished,
+            &stdin_finished,
+        ],
+        &signal_flags,
         request.termination_grace,
     );
-    let stdout_result = join_reader("stdout", stdout_handle);
-    let stderr_result = join_reader("stderr", stderr_handle);
+    let stdin_result = finish_writer(stdin_handle, &stdin_finished);
+    let stdout_result = finish_reader("stdout", stdout_handle, &stdout_capture);
+    let stderr_result = finish_reader("stderr", stderr_handle, &stderr_capture);
     let stdout_capture = stdout_result?;
     let stderr_capture = stderr_result?;
     let stdout_exceeded_limit = stdout_capture.exceeded_limit;

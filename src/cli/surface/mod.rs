@@ -105,7 +105,14 @@ pub(crate) struct SurfaceReply {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SurfaceFailure {
-    Process(ProcessFailure),
+    /// The supervisor's failure. A stop it forced (deadline, forwarded
+    /// signal, output limit) carries the errors the harness reported on
+    /// the stdout it captured before the stop, so a denial reported before
+    /// the stop still names the sandbox.
+    Process {
+        failure: ProcessFailure,
+        harness_errors: Vec<String>,
+    },
     /// A nonzero exit or a signal, with the last lines of both streams:
     /// `claude --print` and `opencode run` write their errors on stdout.
     /// `harness_errors` are the messages a harness reports in its own
@@ -190,7 +197,15 @@ const SANDBOX_HINTS: &[(&str, HintSource, &str)] = &[
     ),
 ];
 
-fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<&'static str> {
+/// What the Claude Code sandbox's filtering proxy answers for a host that
+/// is not on its network allowlist: a 403 whose body names the block. The
+/// harness reports it as an `API Error:` line or on stderr.
+const ALLOWLIST_SIGNATURES: &[&str] = &[
+    "blocked-by-allowlist",
+    "Connection blocked by network allowlist",
+];
+
+fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<String> {
     SANDBOX_HINTS
         .iter()
         .find(|(signature, source, _)| {
@@ -198,7 +213,50 @@ fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<&'static s
                 || (*source == HintSource::StderrOrHarnessError
                     && harness_errors.iter().any(|text| text.contains(signature)))
         })
-        .map(|(_, _, hint)| *hint)
+        .map(|(_, _, hint)| (*hint).to_string())
+        .or_else(|| {
+            allowlist_hint(
+                stderr
+                    .iter()
+                    .copied()
+                    .chain(harness_errors.iter().map(String::as_str)),
+            )
+        })
+}
+
+/// The sentence for a network allowlist block, naming the blocked host when
+/// the text that reports the block holds the URL.
+fn allowlist_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let text = texts.into_iter().find(|text| {
+        ALLOWLIST_SIGNATURES
+            .iter()
+            .any(|signature| text.contains(signature))
+    })?;
+    let host = url_host(text).map_or_else(
+        || "the endpoint's host".to_string(),
+        |host| format!("the endpoint's host {host}"),
+    );
+    Some(format!(
+        "an outer sandbox's network allowlist blocked {host}: add it to the allowlist, or run rune outside the sandbox"
+    ))
+}
+
+/// The host (with its port) of the first `http://` or `https://` URL in
+/// `text`, without the user information before an `@`.
+fn url_host(text: &str) -> Option<String> {
+    let start = ["https://", "http://"]
+        .iter()
+        .filter_map(|scheme| text.find(scheme).map(|at| at + scheme.len()))
+        .min()?;
+    let authority = &text[start..];
+    let end = authority
+        .find(|character: char| character.is_whitespace() || "/?#\"',;)]}<>\\".contains(character))
+        .unwrap_or(authority.len());
+    let authority = &authority[..end];
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    (!host.is_empty()).then(|| host.to_string())
 }
 
 /// The keys the route sets for the child: its environment, and for claude
@@ -268,7 +326,9 @@ fn merged_settings(
 }
 
 /// Every credential-named key's value inside `value`, at any depth, as
-/// text: the values a settings object or a config table could leak.
+/// text: the values a settings object or a config table could leak. A
+/// table under a credential-named key (`http_headers`) counts whole and
+/// through each string inside it, since a harness echoes one header.
 fn structured_credential_values(value: &serde_json::Value) -> Vec<String> {
     match value {
         serde_json::Value::Object(object) => object
@@ -278,7 +338,11 @@ fn structured_credential_values(value: &serde_json::Value) -> Vec<String> {
                     match value {
                         serde_json::Value::String(text) => vec![text.clone()],
                         serde_json::Value::Null => Vec::new(),
-                        other => vec![other.to_string()],
+                        other => {
+                            let mut values = vec![other.to_string()];
+                            values.extend(string_leaves(other));
+                            values
+                        }
                     }
                 } else {
                     structured_credential_values(value)
@@ -293,9 +357,21 @@ fn structured_credential_values(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
+/// Every string inside `value`, at any depth.
+fn string_leaves(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Object(object) => object.values().flat_map(string_leaves).collect(),
+        serde_json::Value::Array(items) => items.iter().flat_map(string_leaves).collect(),
+        serde_json::Value::String(text) => vec![text.clone()],
+        _ => Vec::new(),
+    }
+}
+
 /// The values of codex `-c key=value` assignments in `args` whose key path
 /// holds a credential-named segment, as the TOML string when the value is
-/// one, else as written.
+/// one, else as written; and every credential-named key's value nested
+/// anywhere inside a TOML table value (`model_providers.x={ http_headers =
+/// { Authorization = "..." } }`).
 fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
     let mut values = Vec::new();
     let mut index = 0;
@@ -313,19 +389,112 @@ fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
         };
         if let Some(assignment) = assignment
             && let Some((key, value)) = assignment.split_once('=')
-            && key
+        {
+            if key
                 .split('.')
                 .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()))
-        {
-            values.push(codex_config_string(value));
+            {
+                values.push(codex_config_string(value));
+            }
+            if let Ok(parsed) = toml::from_str::<toml::Value>(&format!("v = {}", value.trim()))
+                && let Ok(json) = serde_json::to_value(parsed)
+            {
+                values.extend(structured_credential_values(&json));
+            }
         }
         index += 1;
     }
     values
 }
 
+/// The separate or attached value of every credential-named flag in
+/// `args`: `--api-key x` and `--api-key=x`.
+fn flag_credential_values(args: &[OsString]) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut previous_is_credential_flag = false;
+    for part in args {
+        let part = part.to_string_lossy();
+        if previous_is_credential_flag && !part.starts_with('-') {
+            values.push(part.to_string());
+        }
+        previous_is_credential_flag = crate::cli::launch::is_credential_flag(&part);
+        if let Some((flag, value)) = part.split_once('=')
+            && crate::cli::launch::is_credential_flag(flag)
+        {
+            values.push(value.to_string());
+        }
+    }
+    values
+}
+
+/// Each header value inside a `*_HEADERS` value of `env`: claude's
+/// `ANTHROPIC_CUSTOM_HEADERS` carries `Name: value` lines, and a harness
+/// echoes one header, not the whole variable.
+fn header_values(env: &[(OsString, OsString)]) -> Vec<String> {
+    env.iter()
+        .filter(|(key, _)| {
+            key.to_string_lossy()
+                .to_ascii_uppercase()
+                .contains("HEADERS")
+        })
+        .flat_map(|(_, value)| {
+            value
+                .to_string_lossy()
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The token after a `Bearer` or `Basic` scheme word in `value`, which an
+/// error message quotes without the scheme.
+fn scheme_token(value: &str) -> Option<String> {
+    let (scheme, token) = value.trim().split_once(char::is_whitespace)?;
+    (scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("basic"))
+        .then(|| token.trim().to_string())
+}
+
+/// One argument of a claude argument list as the settings merge sees it:
+/// an inline `--settings` object, or any other argument. A `--settings`
+/// value that is not a JSON object (a file path) is an other argument,
+/// kept with its flag.
+enum SettingsArg {
+    Object(serde_json::Map<String, serde_json::Value>),
+    Other(OsString),
+}
+
+fn settings_args(args: &[OsString]) -> Vec<SettingsArg> {
+    let mut parsed = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let text = args[index].to_string_lossy();
+        let (value, width) = if text == "--settings" {
+            (
+                args.get(index + 1)
+                    .map(|value| value.to_string_lossy().into_owned()),
+                2,
+            )
+        } else if let Some(value) = text.strip_prefix("--settings=") {
+            (Some(value.to_string()), 1)
+        } else {
+            parsed.push(SettingsArg::Other(args[index].clone()));
+            index += 1;
+            continue;
+        };
+        let end = (index + width).min(args.len());
+        match value.and_then(|value| serde_json::from_str(&value).ok()) {
+            Some(serde_json::Value::Object(settings)) => parsed.push(SettingsArg::Object(settings)),
+            _ => parsed.extend(args[index..end].iter().cloned().map(SettingsArg::Other)),
+        }
+        index = end;
+    }
+    parsed
+}
+
 /// Every inline `--settings` object in `args`, and the arguments that are
-/// not one. A value that is not a JSON object is skipped.
+/// not one.
 fn settings_objects(
     args: &[OsString],
 ) -> (
@@ -334,40 +503,65 @@ fn settings_objects(
 ) {
     let mut objects = Vec::new();
     let mut remaining = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let text = args[index].to_string_lossy();
-        let value = if text == "--settings" {
-            index += 1;
-            args.get(index)
-                .map(|value| value.to_string_lossy().into_owned())
-        } else if let Some(value) = text.strip_prefix("--settings=") {
-            Some(value.to_string())
-        } else {
-            remaining.push(args[index].clone());
-            index += 1;
-            continue;
-        };
-        if let Some(serde_json::Value::Object(settings)) =
-            value.and_then(|value| serde_json::from_str(&value).ok())
-        {
-            objects.push(settings);
+    for arg in settings_args(args) {
+        match arg {
+            SettingsArg::Object(settings) => objects.push(settings),
+            SettingsArg::Other(arg) => remaining.push(arg),
         }
-        index += 1;
     }
     (objects, remaining)
 }
 
+/// `args` with every inline `--settings` object merged into one, in the
+/// place of the last, a later object replacing a key whole. Claude reads
+/// only its last `--settings`, so a profile's object and the command
+/// line's would otherwise lose one of them. Fewer than two objects leave
+/// `args` as they are.
+pub(crate) fn merge_settings_args(args: &[OsString]) -> Vec<OsString> {
+    let parsed = settings_args(args);
+    let objects = parsed
+        .iter()
+        .filter(|arg| matches!(arg, SettingsArg::Object(_)))
+        .count();
+    if objects < 2 {
+        return args.to_vec();
+    }
+    let mut merged = serde_json::Map::new();
+    let mut seen = 0;
+    let mut result = Vec::with_capacity(args.len());
+    for arg in parsed {
+        match arg {
+            SettingsArg::Object(settings) => {
+                merged.extend(settings);
+                seen += 1;
+                if seen == objects {
+                    result.push(OsString::from("--settings"));
+                    result.push(OsString::from(
+                        serde_json::Value::Object(std::mem::take(&mut merged)).to_string(),
+                    ));
+                }
+            }
+            SettingsArg::Other(arg) => result.push(arg),
+        }
+    }
+    result
+}
+
 /// Every credential value the child could echo, longest first so a value
 /// that contains another is replaced whole: the effective environment's,
-/// the inherited ones the isolation leaves in place, and the ones inside
-/// the retained structured arguments (the claude settings object, codex
-/// `-c` assignments).
+/// the inherited ones the isolation leaves in place, the ones inside the
+/// retained structured arguments (the claude settings object, codex `-c`
+/// assignments), the value of a credential-named flag, and the parts a
+/// harness quotes alone: each header of a `*_HEADERS` value and the token
+/// after a `Bearer` or `Basic` scheme word.
 pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
     let removals = parent_session_isolation(&route_keys(invocation)).removals();
     let inherited = inherited_env(&removals);
-    let mut secrets = credential_values(&effective_env(invocation));
+    let effective = effective_env(invocation);
+    let mut secrets = credential_values(&effective);
     secrets.extend(credential_values(&inherited));
+    secrets.extend(header_values(&effective));
+    secrets.extend(header_values(&inherited));
     match invocation.surface {
         Surface::Claude => {
             if let (Some(settings), _) = merged_settings(&invocation.extra_args) {
@@ -379,6 +573,12 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
         Surface::Codex => secrets.extend(assignment_credential_values(&invocation.extra_args)),
         Surface::Agy | Surface::Grok | Surface::Opencode => {}
     }
+    secrets.extend(flag_credential_values(&invocation.extra_args));
+    let tokens: Vec<String> = secrets
+        .iter()
+        .filter_map(|secret| scheme_token(secret))
+        .collect();
+    secrets.extend(tokens);
     secrets.retain(|secret| !secret.is_empty());
     secrets.sort_unstable_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));
     secrets.dedup();
@@ -392,50 +592,56 @@ impl SurfaceFailure {
     fn redacted(self, secrets: &[String]) -> Self {
         let hide = |text: String| redact_text(&text, secrets);
         match self {
-            Self::Process(failure) => Self::Process(match failure {
-                ProcessFailure::Timeout {
-                    timeout,
-                    stdout,
-                    stderr,
-                } => ProcessFailure::Timeout {
-                    timeout,
-                    stdout: hide(stdout),
-                    stderr: hide(stderr),
+            Self::Process {
+                failure,
+                harness_errors,
+            } => Self::Process {
+                harness_errors: harness_errors.into_iter().map(hide).collect(),
+                failure: match failure {
+                    ProcessFailure::Timeout {
+                        timeout,
+                        stdout,
+                        stderr,
+                    } => ProcessFailure::Timeout {
+                        timeout,
+                        stdout: hide(stdout),
+                        stderr: hide(stderr),
+                    },
+                    ProcessFailure::OutputLimit {
+                        stream,
+                        limit,
+                        stdout,
+                        stderr,
+                    } => ProcessFailure::OutputLimit {
+                        stream,
+                        limit,
+                        stdout: hide(stdout),
+                        stderr: hide(stderr),
+                    },
+                    ProcessFailure::ForwardedSignal {
+                        signal,
+                        stdout,
+                        stderr,
+                    } => ProcessFailure::ForwardedSignal {
+                        signal,
+                        stdout: hide(stdout),
+                        stderr: hide(stderr),
+                    },
+                    ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
+                    ProcessFailure::Wait {
+                        message,
+                        stdout,
+                        stderr,
+                    } => ProcessFailure::Wait {
+                        message: hide(message),
+                        stdout: hide(stdout),
+                        stderr: hide(stderr),
+                    },
+                    ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
+                    ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
+                    ProcessFailure::Stderr(message) => ProcessFailure::Stderr(hide(message)),
                 },
-                ProcessFailure::OutputLimit {
-                    stream,
-                    limit,
-                    stdout,
-                    stderr,
-                } => ProcessFailure::OutputLimit {
-                    stream,
-                    limit,
-                    stdout: hide(stdout),
-                    stderr: hide(stderr),
-                },
-                ProcessFailure::ForwardedSignal {
-                    signal,
-                    stdout,
-                    stderr,
-                } => ProcessFailure::ForwardedSignal {
-                    signal,
-                    stdout: hide(stdout),
-                    stderr: hide(stderr),
-                },
-                ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
-                ProcessFailure::Wait {
-                    message,
-                    stdout,
-                    stderr,
-                } => ProcessFailure::Wait {
-                    message: hide(message),
-                    stdout: hide(stdout),
-                    stderr: hide(stderr),
-                },
-                ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
-                ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
-                ProcessFailure::Stderr(message) => ProcessFailure::Stderr(hide(message)),
-            }),
+            },
             Self::Exit {
                 termination,
                 stdout_tail,
@@ -490,12 +696,14 @@ impl SurfaceFailure {
     /// supervisor forced (deadline, forwarded signal, output limit).
     pub(crate) fn tails(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Process(
-                ProcessFailure::Timeout { stdout, stderr, .. }
-                | ProcessFailure::ForwardedSignal { stdout, stderr, .. }
-                | ProcessFailure::OutputLimit { stdout, stderr, .. }
-                | ProcessFailure::Wait { stdout, stderr, .. },
-            ) => Some((stdout, stderr)),
+            Self::Process {
+                failure:
+                    ProcessFailure::Timeout { stdout, stderr, .. }
+                    | ProcessFailure::ForwardedSignal { stdout, stderr, .. }
+                    | ProcessFailure::OutputLimit { stdout, stderr, .. }
+                    | ProcessFailure::Wait { stdout, stderr, .. },
+                ..
+            } => Some((stdout, stderr)),
             Self::Noted { inner, .. } => inner.tails(),
             Self::Exit {
                 stdout_tail,
@@ -507,18 +715,18 @@ impl SurfaceFailure {
                 stderr_tail,
                 ..
             } => Some((stdout_tail, stderr_tail)),
-            Self::Process(_) | Self::Reported(_) | Self::Io(_) | Self::Arguments(_) => None,
+            Self::Process { .. } | Self::Reported(_) | Self::Io(_) | Self::Arguments(_) => None,
         }
     }
 
     /// The messages the harness reported in its own event stream.
     pub(crate) fn harness_errors(&self) -> &[String] {
         match self {
-            Self::Exit { harness_errors, .. } | Self::NoAnswer { harness_errors, .. } => {
-                harness_errors
-            }
+            Self::Process { harness_errors, .. }
+            | Self::Exit { harness_errors, .. }
+            | Self::NoAnswer { harness_errors, .. } => harness_errors,
             Self::Noted { inner, .. } => inner.harness_errors(),
-            _ => &[],
+            Self::Reported(_) | Self::Io(_) | Self::Arguments(_) => &[],
         }
     }
 
@@ -526,6 +734,10 @@ impl SurfaceFailure {
     /// where the failure can carry them.
     fn with_harness_errors(self, errors: Vec<String>) -> Self {
         match self {
+            Self::Process { failure, .. } => Self::Process {
+                failure,
+                harness_errors: errors,
+            },
             Self::Exit {
                 termination,
                 stdout_tail,
@@ -553,11 +765,12 @@ impl SurfaceFailure {
     }
 
     /// The sandbox sentence when the harness's stderr, the supervisor's own
-    /// message, or a harness-reported error carries a known denial. Stdout
-    /// is never read: it holds the model's text.
-    pub(crate) fn hint(&self) -> Option<&'static str> {
+    /// message, or a harness-reported error carries a known denial or a
+    /// network allowlist block. Stdout is never read: it holds the model's
+    /// text.
+    pub(crate) fn hint(&self) -> Option<String> {
         let message = match self.unwrapped() {
-            Self::Process(failure) => Some(failure.to_string()),
+            Self::Process { failure, .. } => Some(failure.to_string()),
             _ => None,
         };
         let (_, stderr_tail) = self.tails().unwrap_or_default();
@@ -617,7 +830,7 @@ fn write_tails_and_hint(
 impl fmt::Display for SurfaceFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Process(failure) => failure.fmt(formatter)?,
+            Self::Process { failure, .. } => failure.fmt(formatter)?,
             Self::Exit { termination, .. } => write!(formatter, "process {termination:?}")?,
             Self::NoAnswer { message, .. }
             | Self::Reported(message)
@@ -634,8 +847,26 @@ impl fmt::Display for SurfaceFailure {
 
 impl From<ProcessFailure> for SurfaceFailure {
     fn from(failure: ProcessFailure) -> Self {
-        Self::Process(failure)
+        Self::Process {
+            failure,
+            harness_errors: Vec::new(),
+        }
     }
+}
+
+/// A supervisor failure with the harness's own errors parsed from the
+/// stdout it captured, where the failure carries that stdout: a stop the
+/// supervisor forced still names a denial the harness reported before it.
+fn stopped_with_errors(
+    failure: ProcessFailure,
+    parse: impl Fn(&str) -> Vec<String>,
+) -> SurfaceFailure {
+    let failure = SurfaceFailure::from(failure);
+    let errors = failure
+        .tails()
+        .map(|(stdout, _)| parse(stdout))
+        .unwrap_or_default();
+    failure.with_harness_errors(errors)
 }
 
 fn is_short_option(option: &str) -> bool {
@@ -1498,13 +1729,15 @@ fn invoke_claude(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
+    // `claude --print` reports its own failures as `API Error:` lines on
+    // stdout, beside the model's text; they are harness errors, not text,
+    // and a forced stop keeps the ones reported before it.
     let output = run_process_request(&process_request(
         invocation,
         claude_args(invocation),
         Some(format!("{}\n", invocation.prompt).into_bytes()),
-    ))?;
-    // `claude --print` reports its own failures as `API Error:` lines on
-    // stdout, beside the model's text; they are harness errors, not text.
+    ))
+    .map_err(|failure| stopped_with_errors(failure, claude_error_messages))?;
     let reported_errors = claude_error_messages(&output.stdout);
     let output = require_success(output, secrets)
         .map_err(|failure| failure.with_harness_errors(reported_errors.clone()))?;
@@ -1652,7 +1885,10 @@ fn invoke_codex(
             invocation,
             codex_args(invocation, &final_message_path),
             Some(format!("{}\n", combined_prompt(invocation)).into_bytes()),
-        ))?;
+        ))
+        .map_err(|failure| {
+            stopped_with_errors(failure, |stdout| codex_error_messages(&parse_jsonl(stdout)))
+        })?;
         let events: Vec<CodexEvent> = parse_jsonl(&output.stdout);
         let reported_errors = codex_error_messages(&events);
         // The harness's own messages stay apart from the raw stream tails.

@@ -116,6 +116,59 @@ fn process_cleanup_kills_a_descendant_that_holds_the_pipe() {
     );
 }
 
+/// A descendant in its own session that holds the inherited pipes for
+/// longer than any test waits, through whichever of `setsid`, python, or
+/// perl the host offers. A group kill cannot reach it.
+const DETACHED_SLEEP: &str = "if command -v setsid >/dev/null 2>&1; then setsid sleep 10 & \
+    elif command -v python3 >/dev/null 2>&1; then \
+    python3 -c 'import os, time; os.setsid(); time.sleep(10)' & \
+    else perl -e 'use POSIX; setsid(); sleep 10' & fi;";
+
+#[test]
+fn process_timeout_ends_promptly_when_a_setsid_descendant_holds_the_pipes() {
+    // The leader ignores the deadline's SIGTERM and a survivor outside the
+    // group holds every pipe. The group kill ends the leader, the bounded
+    // wait gives up on the survivor, and the timeout carries what was read.
+    let mut request = shell_request(&format!(
+        "printf partial; {DETACHED_SLEEP} trap '' TERM; sleep 5"
+    ));
+    request.stdin = Some(vec![b'x'; DEFAULT_OUTPUT_LIMIT_BYTES * 2]);
+    request.timeout = Some(Duration::from_millis(50));
+    request.termination_grace = Duration::from_millis(100);
+    let started = Instant::now();
+    let failure = run_process_request(&request).expect_err("timeout");
+
+    assert!(
+        matches!(&failure, ProcessFailure::Timeout { stdout, .. } if stdout == "partial"),
+        "unexpected failure {failure:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the survivor held the run for {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn process_exit_ends_promptly_when_a_setsid_descendant_holds_stdin() {
+    // The leader exits before it reads a stdin larger than the pipe, and a
+    // survivor outside the group keeps the read end open, so the writer
+    // never finishes. The run still ends with the leader's exit.
+    let mut request = shell_request(&format!("printf before; {DETACHED_SLEEP} exit 0"));
+    request.stdin = Some(vec![b'x'; DEFAULT_OUTPUT_LIMIT_BYTES * 2]);
+    request.termination_grace = Duration::from_millis(100);
+    let started = Instant::now();
+    let output = run_process_request(&request).expect("process output");
+
+    assert_eq!(output.termination, ProcessTermination::Exited(0));
+    assert_eq!(output.stdout, "before");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the survivor held the run for {:?}",
+        started.elapsed()
+    );
+}
+
 #[test]
 fn process_request_removes_inherited_automation_mode() {
     let mut request = shell_request("printf %s \"${HARNESS_AUTOMATED-unset}\"");

@@ -470,20 +470,32 @@ fn duration_label(timeout: Option<Duration>) -> String {
 
 fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
-        SurfaceFailure::Process(ProcessFailure::Timeout { .. }) => 124,
-        SurfaceFailure::Process(ProcessFailure::ForwardedSignal { signal, .. })
+        SurfaceFailure::Process {
+            failure: ProcessFailure::Timeout { .. },
+            ..
+        } => 124,
+        SurfaceFailure::Process {
+            failure: ProcessFailure::ForwardedSignal { signal, .. },
+            ..
+        }
         | SurfaceFailure::Exit {
             termination: ProcessTermination::Signaled(signal),
             ..
         } => 128 + signal,
-        SurfaceFailure::Process(ProcessFailure::Spawn(_)) => 127,
-        SurfaceFailure::Process(ProcessFailure::OutputLimit { .. }) => 70,
+        SurfaceFailure::Process {
+            failure: ProcessFailure::Spawn(_),
+            ..
+        } => 127,
+        SurfaceFailure::Process {
+            failure: ProcessFailure::OutputLimit { .. },
+            ..
+        } => 70,
         SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
             ..
         } => *code,
         SurfaceFailure::Noted { inner, .. } => failure_exit_code(inner),
-        SurfaceFailure::Process(_)
+        SurfaceFailure::Process { .. }
         | SurfaceFailure::NoAnswer { .. }
         | SurfaceFailure::Reported(_)
         | SurfaceFailure::Io(_)
@@ -504,18 +516,28 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
         return json;
     }
     let (kind, mut details) = match failure {
-        SurfaceFailure::Process(ProcessFailure::Timeout { timeout, .. }) => {
-            ("timeout", json!({ "timeout_ms": timeout.as_millis() }))
+        SurfaceFailure::Process {
+            failure: ProcessFailure::Timeout { timeout, .. },
+            ..
+        } => ("timeout", json!({ "timeout_ms": timeout.as_millis() })),
+        SurfaceFailure::Process {
+            failure: ProcessFailure::ForwardedSignal { signal, .. },
+            ..
         }
-        SurfaceFailure::Process(ProcessFailure::ForwardedSignal { signal, .. }) => {
-            ("signal", json!({ "signal": signal }))
-        }
-        SurfaceFailure::Process(ProcessFailure::OutputLimit {
-            stream,
-            limit,
-            stdout,
-            stderr,
-        }) => (
+        | SurfaceFailure::Exit {
+            termination: ProcessTermination::Signaled(signal),
+            ..
+        } => ("signal", json!({ "signal": signal })),
+        SurfaceFailure::Process {
+            failure:
+                ProcessFailure::OutputLimit {
+                    stream,
+                    limit,
+                    stdout,
+                    stderr,
+                },
+            ..
+        } => (
             "output_limit",
             json!({
                 "stream": stream,
@@ -523,17 +545,13 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
                 "tail": output_tail(if *stream == "stdout" { stdout } else { stderr }),
             }),
         ),
-        SurfaceFailure::Process(failure) => {
+        SurfaceFailure::Process { failure, .. } => {
             ("process_failure", json!({ "message": failure.to_string() }))
         }
         SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
             ..
         } => ("exit", json!({ "exit_code": code })),
-        SurfaceFailure::Exit {
-            termination: ProcessTermination::Signaled(signal),
-            ..
-        } => ("signal", json!({ "signal": signal })),
         SurfaceFailure::NoAnswer { message, .. } | SurfaceFailure::Reported(message) => {
             ("surface_error", json!({ "message": message }))
         }
@@ -553,13 +571,9 @@ fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
             Value::String(output_tail(stderr_tail)),
         );
     }
-    if let (true, Some(details)) = (
-        matches!(
-            failure,
-            SurfaceFailure::Exit { .. } | SurfaceFailure::NoAnswer { .. }
-        ),
-        details.as_object_mut(),
-    ) {
+    // Every failure that carries the harness's output carries its reported
+    // errors too, a forced stop included.
+    if let (Some(_), Some(details)) = (failure.tails(), details.as_object_mut()) {
         details.insert(
             "harness_errors".to_string(),
             json!(failure.harness_errors()),
@@ -637,7 +651,7 @@ mod tests {
             "{json}"
         );
 
-        let timeout = SurfaceFailure::Process(ProcessFailure::Timeout {
+        let timeout = SurfaceFailure::from(ProcessFailure::Timeout {
             timeout: Duration::from_secs(5),
             stdout: "partial".to_string(),
             stderr: String::new(),
@@ -647,8 +661,30 @@ mod tests {
         assert_eq!(json["details"]["timeout_ms"], 5000);
         assert_eq!(json["details"]["stdout_tail"], "partial");
         assert_eq!(json["details"]["stderr_tail"], "");
+        assert_eq!(json["details"]["harness_errors"], json!([]));
         assert!(json["hint"].is_null(), "{json}");
         assert_eq!(failure_exit_code(&timeout), 124);
+
+        let stopped = SurfaceFailure::Process {
+            failure: ProcessFailure::ForwardedSignal {
+                signal: 15,
+                stdout: "API Error: 403 OSStatus -26276\n".to_string(),
+                stderr: String::new(),
+            },
+            harness_errors: vec!["API Error: 403 OSStatus -26276".to_string()],
+        };
+        let json = failure_json("claude", &stopped);
+        assert_eq!(json["kind"], "signal");
+        assert_eq!(
+            json["details"]["harness_errors"],
+            json!(["API Error: 403 OSStatus -26276"])
+        );
+        assert!(
+            json["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("certificate")),
+            "{json}"
+        );
 
         let silent = SurfaceFailure::NoAnswer {
             message: "claude print produced no final response".to_string(),
@@ -688,7 +724,7 @@ mod tests {
         );
         assert_eq!(failure_exit_code(&noted), 3);
 
-        let wait = SurfaceFailure::Process(ProcessFailure::Wait {
+        let wait = SurfaceFailure::from(ProcessFailure::Wait {
             message: "cannot signal process group 7: gone".to_string(),
             stdout: "read so far".to_string(),
             stderr: String::new(),
@@ -700,7 +736,7 @@ mod tests {
 
     #[test]
     fn typed_json_distinguishes_output_limit() {
-        let failure = SurfaceFailure::Process(ProcessFailure::OutputLimit {
+        let failure = SurfaceFailure::from(ProcessFailure::OutputLimit {
             stream: "stdout",
             limit: 64,
             stdout: "last bytes".to_string(),
@@ -718,11 +754,12 @@ mod tests {
                     "tail": "last bytes",
                     "stdout_tail": "last bytes",
                     "stderr_tail": "a warning",
+                    "harness_errors": [],
                 },
                 "hint": null,
             })
         );
-        let signal = SurfaceFailure::Process(ProcessFailure::ForwardedSignal {
+        let signal = SurfaceFailure::from(ProcessFailure::ForwardedSignal {
             signal: 15,
             stdout: "half".to_string(),
             stderr: String::new(),
