@@ -11,4 +11,4 @@
 
 - [x] 2.1 Unit tests for keep or drop, and integration tests in `tests/run.rs` with a temporary jj repository and a fake harness, two runs at once included
 - [x] 2.2 `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --bin rune`, `cargo test --test run`, `rune spec validate run-isolates-write-runs`
-- [ ] 2.3 Live: a workspace-write claude run that edits one file leaves one named change, and one that edits nothing leaves no trace
+- [x] 2.3 Live: a workspace-write claude run that edits one file leaves one named change, and one that edits nothing leaves no trace

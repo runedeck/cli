@@ -11,4 +11,4 @@
 
 - [x] 2.1 Unit and integration tests for every scenario
 - [x] 2.2 `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --bin rune`, `cargo test --test run`, `rune spec validate run-writes-results-and-agy-reads`
-- [ ] 2.3 Live: a sol@codex seat writes its result with `--output`, a gemini@agy read-only run is refused, and a clean grok run answers
+- [x] 2.3 Live: a sol@codex seat writes its result with `--output`, a gemini@agy read-only run is refused, and a clean grok run answers
