@@ -20,7 +20,7 @@
   that moves between queue and sign, a moved protected branch, a range already signed, a bookmark named after a
   commit id, a `commit_id` alias, and a signed request whose head moved
 - [x] 2.3 `cargo test --all-features`, clippy with `-D warnings`, `cargo fmt --check`
-- [ ] 2.4 Behavior proof under `docs/proofs/queue-signs-whole-ranges/` on the shared `signing-fixture.sh`
+- [x] 2.4 Behavior proof under `docs/proofs/queue-signs-whole-ranges/` on the shared `signing-fixture.sh`
 
 ## 3. Record
 

@@ -1,9 +1,9 @@
 ---
 type: proof
 change: queue-signs-whole-ranges
-head: 3b649c36ea0fbdf1d5b741f24e04102222abb87a
+head: c47a522055284a13d93a345c7cd97a29290f6a1a
 recorded: 2026-10-22
-transcript: 53f28d595c7da1e9879684368dd3eca9333259e55da317552b8b29025c5ede99
+transcript: a11bdca44a2340980e1cb56dc7caae2bb7e1bdeb74bbdde47e88b8ba895be8c4
 scenes:
 - scenario: queue-signs-whole-ranges#a-session-queues-a-range-for-one-signing-run/stack-of-model-commits-queued-as-one-range
   kind: check
