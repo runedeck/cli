@@ -2,29 +2,35 @@
 
 ### Requirement: A workspace-write run works in its own jj workspace
 
-The runner MUST start every workspace-write run in a new jj workspace outside the caller's checkout. The workspace's
-working-copy change MUST be a child of the caller's current change, so the harness sees the caller's latest edits. The
-caller's checkout MUST never be the working directory of a workspace-write harness. Read-only and answer-only runs stay
-in the caller's checkout. When jj is missing or the workspace cannot be created, the runner MUST refuse with a
-configuration error and exit 2 before the harness starts.
+The runner MUST start every workspace-write run in a new jj workspace whose folder lies outside the caller's checkout.
+The workspace MUST start from a copy of the caller's current change, so the harness sees the caller's latest edits, and
+a snapshot of the caller's checkout cannot make the workspace stale. The harness MUST start at the workspace path that
+matches `--repo`. Read-only and answer-only runs stay in the caller's checkout. When jj is missing, or the workspace
+cannot be created outside the checkout, the runner MUST refuse with exit 2 before the harness starts.
 
 #### Scenario: Workspace-write seat edits a file
 
 - **WHEN** a workspace-write run changes a tracked file
 - **THEN** the file in the caller's checkout is unchanged, and the edit is in the run's own change
 
+#### Scenario: Caller keeps working during the run
+
+- **WHEN** the caller edits a file in the checkout and starts a second run while the first run is still working
+- **THEN** both runs finish, and each result names its own change with the harness's edits
+
 #### Scenario: Dry run of a workspace-write route
 
 - **WHEN** a caller runs a workspace-write route with `--dry-run`
-- **THEN** the plan names the workspace it would create and the parent change, and no workspace exists afterwards
+- **THEN** the plan names the workspace it would create, and the harness arguments name the workspace path, and no workspace exists afterwards
 
-### Requirement: The runner keeps a changed workspace as one change and drops an empty one
+### Requirement: The runner keeps the run's work as one change and drops an empty run
 
-After every outcome, success, failure, timeout, and signal included, the runner MUST record the workspace's files in
-jj, stop tracking the workspace, and remove its directory. When the run changed nothing, the runner MUST also abandon the
-empty change, so the repository holds no trace of the run. When the run changed files, the runner MUST keep them as one
-change whose description names the route and the session, and the result MUST name that change. Under `--json`, the
-result carries a `workspace` object with `change_id` and `kept`.
+After every outcome, signal and panic included, the runner MUST record the workspace's files in jj, stop tracking the
+workspace, and remove its folder. It MUST judge the run by every revision the run made, the harness's own commits
+included. When the run changed nothing, the runner MUST abandon those revisions and the copy it started from. When the
+run changed files, it MUST fold them into one change on top of the caller's current change, describe it with the route
+and the session, and name it in the result. Under `--json`, the `workspace` object carries `change_id`, `kept`, and
+`conflicted`.
 
 #### Scenario: Run that changes nothing
 
@@ -34,12 +40,34 @@ result carries a `workspace` object with `change_id` and `kept`.
 #### Scenario: Run that edits files
 
 - **WHEN** a workspace-write run ends after it changed two files
-- **THEN** one change holds both edits, its description names the session, and the result names its change id
+- **THEN** one change on top of the caller's current change holds both edits, its description names the session, and the result names its change id
+
+#### Scenario: Harness commits its own work
+
+- **WHEN** the harness edits a file and then commits it with jj or git
+- **THEN** the result names one change that holds the edit, and no empty or orphan change from the run remains
 
 #### Scenario: Timed-out run with partial edits
 
 - **WHEN** a workspace-write run edits a file and then reaches its deadline
 - **THEN** the exit code is 124, the edit is kept in the run's change, and the timeout object names that change
+
+### Requirement: The runner never deletes a file that jj did not record
+
+The runner MUST record every new file that the repository does not ignore, whatever its size. When a file in the
+workspace is still unrecorded, the runner MUST keep the folder, report its path and the unrecorded files in the
+`workspace` object, and still name the change. Files that the repository ignores, such as build output, are removed with
+the folder. When any step of the finish fails after the change is known, the result MUST still name that change.
+
+#### Scenario: Harness writes a large new file
+
+- **WHEN** the harness creates a new file larger than jj's default limit for new files
+- **THEN** the file is in the run's change, and the result says `kept` is true
+
+#### Scenario: Harness writes build output
+
+- **WHEN** the harness creates files only under a folder that the repository ignores
+- **THEN** the folder is removed, and the result says `kept` is false
 
 ### Requirement: A plain git repository gets jj before an isolated run
 

@@ -2049,6 +2049,7 @@ fn workspace_write_run_edits_its_own_change_and_leaves_the_checkout_alone() {
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
     assert_eq!(result["text"], "done");
     assert_eq!(result["workspace"]["kept"], true, "{result}");
+    assert_eq!(result["workspace"]["conflicted"], false, "{result}");
     assert_eq!(result["workspace"]["colocated"], false, "{result}");
     let change_id = result["workspace"]["change_id"]
         .as_str()
@@ -2056,6 +2057,10 @@ fn workspace_write_run_edits_its_own_change_and_leaves_the_checkout_alone() {
         .to_string();
     let name = result["workspace"]["name"].as_str().expect("name");
     assert!(name.starts_with("run-"), "{result}");
+    // The run's change is the one addition: the copy it started from is gone.
+    let after = change_ids(home.path(), repo);
+    assert_eq!(after.len(), parent.len() + 1, "{after:?}");
+    assert!(after.contains(&change_id), "{after:?}");
 
     // The caller's checkout is untouched.
     assert_eq!(
@@ -2435,6 +2440,42 @@ fn folder_without_version_control_refuses_a_workspace_write_run() {
     assert!(!marker.exists(), "the harness started");
 }
 
+/// Start one seat of a council in the background, with the state
+/// directory pinned under `state`.
+#[cfg(unix)]
+fn spawn_seat(
+    home: &std::path::Path,
+    state: &std::path::Path,
+    repo: &str,
+    binary: &str,
+    seat: &str,
+) -> std::process::Child {
+    std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+        .env("HOME", home)
+        .env("CLIPROXY_API_KEY", "test-token")
+        .env("XDG_STATE_HOME", state)
+        .env_remove("RUNE_STATE_DIR")
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .env("SEAT", seat)
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Write your seat file",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+            "--mode",
+            "workspace-write",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("rune spawns")
+}
+
 #[cfg(unix)]
 #[test]
 fn two_isolated_runs_at_once_each_keep_their_own_change() {
@@ -2447,36 +2488,12 @@ fn two_isolated_runs_at_once_each_keep_their_own_change() {
         "fake-claude",
         "#!/bin/sh\nsleep 1\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\nprintf 'seat %s\\n' \"$SEAT\"\n",
     );
+    let binary = provider.to_str().expect("provider path");
     let parent = change_ids(home.path(), repo);
 
     let children: Vec<std::process::Child> = ["a", "b"]
         .iter()
-        .map(|seat| {
-            std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
-                .env("HOME", home.path())
-                .env("CLIPROXY_API_KEY", "test-token")
-                .env("XDG_STATE_HOME", state.path())
-                .env_remove("RUNE_STATE_DIR")
-                .env("JJ_USER", "Test Runner")
-                .env("JJ_EMAIL", "runner@example.test")
-                .env("SEAT", seat)
-                .args([
-                    "--json",
-                    "run",
-                    "sol@claude",
-                    "Write your seat file",
-                    "--repo",
-                    repo,
-                    "--binary",
-                    provider.to_str().expect("provider path"),
-                    "--mode",
-                    "workspace-write",
-                ])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect("rune spawns")
-        })
+        .map(|seat| spawn_seat(home.path(), state.path(), repo, binary, seat))
         .collect();
     let mut ids = Vec::new();
     for child in children {
@@ -2516,6 +2533,178 @@ fn two_isolated_runs_at_once_each_keep_their_own_change() {
     assert_eq!(workspace_names(home.path(), repo), ["default"]);
     assert!(!repository.path().join("seat-a.md").exists());
     assert!(!repository.path().join("seat-b.md").exists());
+    // Two run changes and nothing else: no copy survives a run.
+    assert_eq!(change_ids(home.path(), repo).len(), parent.len() + 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn caller_keeps_working_while_a_seat_runs_and_a_second_seat_starts() {
+    use std::time::Duration;
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    // Seat a works for a while; seat b is quick. The caller writes its brief
+    // and snapshots the checkout between their starts, which rewrites the
+    // caller's working-copy change under seat a.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\n[ \"$SEAT\" = a ] && sleep 3\nprintf 'seat %s\\n' \"$SEAT\"\n",
+    );
+    let binary = provider.to_str().expect("provider path");
+    let before = change_ids(home.path(), repo);
+
+    let seat_a = spawn_seat(home.path(), state.path(), repo, binary, "a");
+    std::thread::sleep(Duration::from_secs(1));
+    std::fs::write(
+        repository.path().join("brief.md"),
+        "the caller writes its brief\n",
+    )
+    .expect("brief");
+    jj(home.path(), &["-R", repo, "status"]);
+    let seat_b = spawn_seat(home.path(), state.path(), repo, binary, "b");
+
+    let mut ids = Vec::new();
+    for (seat, child) in [("a", seat_a), ("b", seat_b)] {
+        let output = child.wait_with_output().expect("rune output");
+        assert!(
+            output.status.success(),
+            "seat {seat}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+        assert_eq!(result["workspace"]["kept"], true, "seat {seat}: {result}");
+        assert_eq!(
+            result["workspace"]["conflicted"], false,
+            "seat {seat}: {result}"
+        );
+        let id = result["workspace"]["change_id"]
+            .as_str()
+            .expect("change id")
+            .to_string();
+        assert_eq!(
+            changed_files(home.path(), repo, &id),
+            [format!("A seat-{seat}.md")]
+        );
+        ids.push(id);
+    }
+    assert_ne!(ids[0], ids[1]);
+    // Both land on the caller's current change, the one with the brief.
+    let current = change_ids(home.path(), repo);
+    let caller = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "@",
+            "--no-graph",
+            "-T",
+            "change_id",
+        ],
+    );
+    for id in &ids {
+        let parents = jj(
+            home.path(),
+            &[
+                "-R",
+                repo,
+                "log",
+                "-r",
+                &format!("{id}-"),
+                "--no-graph",
+                "-T",
+                "change_id ++ \"\\n\"",
+            ],
+        );
+        assert_eq!(parents.trim(), caller.trim(), "{parents}");
+    }
+    assert_eq!(current.len(), before.len() + 2, "{current:?}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("brief.md")).expect("brief"),
+        "the caller writes its brief\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn harness_that_commits_its_own_work_still_leaves_one_change() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let fakes = [
+        (
+            "fake-jj-committer",
+            "#!/bin/sh\nprintf 'harness\\n' > h.txt\njj commit -m 'harness work' >/dev/null 2>&1\nprintf 'done\\n'\n",
+        ),
+        (
+            "fake-git-committer",
+            "#!/bin/sh\nprintf 'harness\\n' > h.txt\ngit add h.txt\ngit -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false commit -qm 'harness git work'\nprintf 'done\\n'\n",
+        ),
+    ];
+    for (name, script) in fakes {
+        let before = change_ids(home.path(), repo);
+        let provider = executable_provider(home.path(), name, script);
+        let output = rune_isolated(home.path(), state.path())
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "Commit your work",
+                "--repo",
+                repo,
+                "--binary",
+                provider.to_str().expect("provider path"),
+                "--mode",
+                "workspace-write",
+            ])
+            .output()
+            .expect("run output");
+        assert!(
+            output.status.success(),
+            "{name}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+        assert_eq!(result["workspace"]["kept"], true, "{name}: {result}");
+        let change_id = result["workspace"]["change_id"]
+            .as_str()
+            .expect("change id")
+            .to_string();
+        assert_eq!(
+            changed_files(home.path(), repo, &change_id),
+            ["A h.txt"],
+            "{name}"
+        );
+        // One change more, and nothing empty or orphaned from the run.
+        let after = change_ids(home.path(), repo);
+        assert_eq!(after.len(), before.len() + 1, "{name}: {after:?}");
+        let empties = jj(
+            home.path(),
+            &[
+                "-R",
+                repo,
+                "log",
+                "-r",
+                "mutable() & empty() & ~@",
+                "--no-graph",
+                "-T",
+                "change_id ++ \"\\n\"",
+            ],
+        );
+        assert_eq!(empties.trim(), "", "{name}: empty changes remain");
+        assert_eq!(workspace_names(home.path(), repo), ["default"]);
+        assert!(!repository.path().join("h.txt").exists());
+    }
 }
 
 #[cfg(unix)]

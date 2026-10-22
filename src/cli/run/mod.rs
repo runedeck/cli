@@ -423,6 +423,7 @@ fn workspace_json(
             "name": workspace.name,
             "change_id": outcome.change_id,
             "kept": outcome.kept,
+            "conflicted": outcome.conflicted,
             "colocated": workspace.colocated,
         }),
         Err(error) => json!({
@@ -430,6 +431,7 @@ fn workspace_json(
             "path": workspace.path.display().to_string(),
             "change_id": Value::Null,
             "kept": Value::Null,
+            "conflicted": Value::Null,
             "colocated": workspace.colocated,
             "error": error,
         }),
@@ -452,8 +454,14 @@ fn workspace_lines(
     }
     match outcome {
         Ok(outcome) if outcome.kept => lines.push(format!(
-            "workspace: kept change {} ({}); review it with jj, then squash or abandon it",
-            outcome.change_id, workspace.name
+            "workspace: kept change {} ({}){}; review it with jj, then squash or abandon it",
+            outcome.change_id,
+            workspace.name,
+            if outcome.conflicted {
+                ", with a conflict against your current change"
+            } else {
+                ""
+            }
         )),
         Ok(_) => lines.push("workspace: no file changed, nothing kept".to_string()),
         Err(error) => lines.push(format!(

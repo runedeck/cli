@@ -1,7 +1,7 @@
 ## 1. Implementation
 
-- [x] 1.1 `src/cli/run/workspace.rs`: `prepare` creates the jj workspace in the rune state directory, colocated when the repository is
-- [x] 1.2 `finish` on every outcome: record the files, abandon an empty change, keep a changed one under the description set at creation, forget the workspace, remove the folder
+- [x] 1.1 `src/cli/run/workspace.rs`: `prepare` copies the caller's change and creates the jj workspace on the copy in the rune state directory, colocated when the repository is
+- [x] 1.2 `finish` on every outcome: record the files, forget the workspace, fold every revision the run made into one change on the caller's current change (or abandon them), abandon the copy, remove the folder, and report a rebase conflict as `conflicted`
 - [x] 1.3 Workspace-write runs use the workspace as the harness repository, and `--output` and `--prompt-file` stay relative to the caller
 - [x] 1.4 Colocate jj in a plain git repository, and refuse a folder without version control and a missing jj with exit 2
 - [x] 1.5 The `workspace` object in the JSON result, the one text line, and the workspace plan in the dry run
