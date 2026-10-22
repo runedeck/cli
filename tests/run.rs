@@ -3438,6 +3438,57 @@ fn usage_error_with_an_output_file_writes_nothing() {
 
 #[cfg(unix)]
 #[test]
+fn a_folder_swapped_for_a_symlink_during_the_run_moves_no_write() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let out = repository.path().join("out");
+    std::fs::create_dir_all(&out).expect("out");
+    let claude = home.path().join(".claude");
+    std::fs::create_dir_all(&claude).expect(".claude");
+    // The harness removes the accepted folder and puts a symlink to the
+    // protected folder in its place.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            "#!/bin/sh\nrm -rf '{out}'\nln -s '{claude}' '{out}'\nprintf 'payload\\n'\n",
+            out = out.display(),
+            claude = claude.display()
+        ),
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--output",
+        ])
+        .arg(out.join("settings.json"))
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "success", "{result}");
+    assert_eq!(result["text"], "payload", "{result}");
+    assert!(
+        !claude.join("settings.json").exists(),
+        "the write followed the symlink"
+    );
+    assert_eq!(
+        std::fs::read_dir(&claude).expect("claude").count(),
+        0,
+        "the protected folder gained a file"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn result_file_that_cannot_be_written_prints_the_full_result_and_exits_74() {
     use std::os::unix::fs::PermissionsExt;
 

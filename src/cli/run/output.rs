@@ -9,18 +9,110 @@
 //! temporary file in the target's directory, synced and renamed over the
 //! target, so a reader sees the old result or the new one.
 
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// A checked result file: absolute, inside a permitted root, not a symlink.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A checked result file: absolute, inside a permitted root, not a
+/// symlink, with its parent folder held open from the check to the write.
+#[derive(Debug)]
 pub(crate) struct Destination {
     target: PathBuf,
+    file_name: OsString,
+    parent: Folder,
 }
 
 impl Destination {
     pub(crate) fn path(&self) -> &Path {
         &self.target
+    }
+}
+
+/// The parent folder of the result file. On unix it is an open directory
+/// handle, and every create, rename and remove is relative to it, so a
+/// folder swapped for a symlink while the harness runs cannot move the
+/// write: the handle still names the folder the check accepted, or a
+/// folder that no longer exists, and never the symlink's target.
+#[derive(Debug)]
+struct Folder {
+    #[cfg(unix)]
+    handle: std::os::fd::OwnedFd,
+    #[cfg(not(unix))]
+    path: PathBuf,
+}
+
+impl Folder {
+    fn open(path: &Path) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use nix::fcntl::OFlag;
+            let handle = nix::fcntl::open(
+                path,
+                OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+                nix::sys::stat::Mode::empty(),
+            )?;
+            Ok(Self { handle })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                path: path.to_path_buf(),
+            })
+        }
+    }
+
+    /// Create `name` in the folder exclusively, readable and writable by
+    /// the owner only.
+    fn create_private(&self, name: &OsStr) -> std::io::Result<std::fs::File> {
+        #[cfg(unix)]
+        {
+            use nix::fcntl::OFlag;
+            use nix::sys::stat::Mode;
+            let fd = nix::fcntl::openat(
+                &self.handle,
+                Path::new(name),
+                OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_CLOEXEC,
+                Mode::S_IRUSR | Mode::S_IWUSR,
+            )?;
+            Ok(std::fs::File::from(fd))
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(self.path.join(name))
+        }
+    }
+
+    /// Rename `from` to `to`, both inside the folder, in one step.
+    fn rename(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            nix::fcntl::renameat(&self.handle, Path::new(from), &self.handle, Path::new(to))
+                .map_err(std::io::Error::from)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::rename(self.path.join(from), self.path.join(to))
+        }
+    }
+
+    /// Remove the file `name` inside the folder.
+    fn remove(&self, name: &OsStr) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            nix::unistd::unlinkat(
+                &self.handle,
+                Path::new(name),
+                nix::unistd::UnlinkatFlags::NoRemoveDir,
+            )
+            .map_err(std::io::Error::from)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::remove_file(self.path.join(name))
+        }
     }
 }
 
@@ -135,61 +227,60 @@ pub(crate) fn accept(path: &Path, repository: Option<&Path>) -> Result<Destinati
             ));
         }
     }
-    let probe = temporary_name(&parent, file_name, "probe");
-    create_private(&probe).map_err(|error| {
+    // The folder is held from here on: the probe and the final write go
+    // through the same handle.
+    let folder = Folder::open(&parent).map_err(|error| {
+        format!(
+            "cannot open the parent folder of output file {}: {error}",
+            target.display()
+        )
+    })?;
+    let probe = temporary_name(file_name, "probe");
+    folder.create_private(&probe).map_err(|error| {
         format!(
             "the parent folder of output file {} cannot take a new file: {error}",
             target.display()
         )
     })?;
-    let _ = std::fs::remove_file(&probe);
-    Ok(Destination { target })
+    let _ = folder.remove(&probe);
+    Ok(Destination {
+        target,
+        file_name: file_name.to_os_string(),
+        parent: folder,
+    })
 }
 
 /// A name beside the target that no other process takes: hidden, with
 /// the process id and the time in it.
-fn temporary_name(parent: &Path, file_name: &std::ffi::OsStr, kind: &str) -> PathBuf {
+fn temporary_name(file_name: &OsStr, kind: &str) -> OsString {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
-    let mut name = std::ffi::OsString::from(".");
+    let mut name = OsString::from(".");
     name.push(file_name);
     name.push(format!(".{}.{nanos}.{kind}", std::process::id()));
-    parent.join(name)
-}
-
-/// Create `path` exclusively, readable and writable by the owner only.
-fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
+    name
 }
 
 /// Write `text` to the checked file in one step: an exclusive 0600
-/// temporary file beside the target, written, synced, and renamed over it.
-/// A failure leaves the old file as it was and no temporary file behind.
+/// temporary file in the held folder, written, synced, and renamed over
+/// the target relative to that folder. A failure leaves the old file as it
+/// was and no temporary file behind.
 pub(crate) fn write(destination: &Destination, text: &str) -> Result<(), String> {
-    let target = &destination.target;
-    let parent = target.parent().unwrap_or(Path::new("/"));
-    let file_name = target.file_name().unwrap_or_default();
-    let temporary = temporary_name(parent, file_name, "tmp");
+    let folder = &destination.parent;
+    let temporary = temporary_name(&destination.file_name, "tmp");
     let written = (|| -> std::io::Result<()> {
-        let mut file = create_private(&temporary)?;
+        let mut file = folder.create_private(&temporary)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, target)
+        folder.rename(&temporary, &destination.file_name)
     })();
     if let Err(error) = written {
-        let _ = std::fs::remove_file(&temporary);
+        let _ = folder.remove(&temporary);
         return Err(format!(
             "cannot write result file {}: {error}",
-            target.display()
+            destination.target.display()
         ));
     }
     Ok(())
@@ -333,6 +424,42 @@ mod tests {
             })
             .collect();
         assert_eq!(names, ["seat.json"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_after_the_check_cannot_move_the_write() {
+        let repository = repository();
+        let out = repository.path().join("out");
+        std::fs::create_dir_all(&out).expect("out");
+        let destination =
+            accept(&out.join("seat.json"), Some(repository.path())).expect("accepted");
+
+        // The accepted folder moves aside and a symlink takes its path: the
+        // write follows the folder, and the symlink's target gets nothing.
+        let moved = repository.path().join("out-moved");
+        std::fs::rename(&out, &moved).expect("move");
+        let elsewhere = repository.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::os::unix::fs::symlink(&elsewhere, &out).expect("symlink");
+        write(&destination, "result").expect("written");
+        assert_eq!(
+            std::fs::read_to_string(moved.join("seat.json")).expect("moved"),
+            "result"
+        );
+        assert!(!elsewhere.join("seat.json").exists());
+
+        // The accepted folder is removed and a symlink takes its path: the
+        // write fails, and the symlink's target gets nothing.
+        let gone = repository.path().join("gone");
+        std::fs::create_dir_all(&gone).expect("gone");
+        let destination =
+            accept(&gone.join("seat.json"), Some(repository.path())).expect("accepted");
+        std::fs::remove_dir_all(&gone).expect("remove");
+        std::os::unix::fs::symlink(&elsewhere, &gone).expect("symlink");
+        let error = write(&destination, "result").expect_err("write fails");
+        assert!(error.contains("cannot write result file"), "{error}");
+        assert!(!elsewhere.join("seat.json").exists());
     }
 
     #[cfg(unix)]
