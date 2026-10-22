@@ -10,8 +10,20 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
-const MODELS_PATH: &str = "/v1/models";
 const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The model list of an OpenAI-compatible endpoint: `<base>/v1/models`,
+/// or `<base>/models` when the base URL already ends in `/v1`, as grok's
+/// `GROK_MODELS_BASE_URL` does (`http://127.0.0.1:8317/v1` asked
+/// `/v1/v1/models` and got a 404).
+pub(crate) fn models_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/models")
+    } else {
+        format!("{base}/v1/models")
+    }
+}
 /// The variables that name a PEM file of extra root certificates, in the
 /// order the check reads them: node's, then OpenSSL's.
 const EXTRA_ROOTS_VARIABLES: &[&str] = &["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
@@ -192,11 +204,23 @@ pub(crate) fn root_certs_from(
     (ureq::tls::RootCerts::PlatformVerifier, warnings)
 }
 
+/// The environment the child inherits beside the plan's own: this
+/// process's, minus what the isolation removes for the route.
+fn inherited_environment(resolved: &ResolvedLaunch) -> Vec<(OsString, OsString)> {
+    let isolation = crate::cli::surface::parent_session_isolation(&resolved.route_keys());
+    super::inherited_env(&isolation.removals())
+}
+
 /// Collect the endpoints the plan talks to. `model_override` is the
 /// `rune run --model` value, which replaces the route id the plan carries.
+/// `inherited` is the environment the child inherits beside the plan's
+/// own: a tool outside the families reads its endpoint and credential
+/// there too, as the dry run's `base_url` does, so a grok route whose
+/// `GROK_MODELS_BASE_URL` is set in the shell is checked and not skipped.
 pub(crate) fn plan_checks(
     resolved: &ResolvedLaunch,
     model_override: Option<&str>,
+    inherited: &[(OsString, OsString)],
 ) -> Vec<EndpointCheck> {
     // The child's view: a claude settings object's `env` wins over the
     // process env, so the check reads the same endpoint and credential.
@@ -235,15 +259,11 @@ pub(crate) fn plan_checks(
     }
     // A tool outside both families (opencode, grok, agy, ollama) still has
     // an endpoint when the plan carries a base URL: the tool's configured
-    // base URL key, or the middleware base URL. Its route model, or the
-    // `--model` override, is what that endpoint must serve.
+    // base URL key, in the plan or inherited, or the middleware base URL.
+    // Its route model, or the `--model` override, is what that endpoint
+    // must serve.
     if !FAMILIES.iter().any(|family| family.tool == resolved.tool) {
-        let base_url = resolved
-            .base_url_env
-            .as_deref()
-            .and_then(|key| env_value(env, key))
-            .filter(|value| !value.is_empty())
-            .or_else(|| resolved.base_url.clone().filter(|value| !value.is_empty()));
+        let base_url = resolved.endpoint(env, inherited);
         if let Some(base_url) = base_url {
             let models = model_override
                 .map(str::to_string)
@@ -252,12 +272,28 @@ pub(crate) fn plan_checks(
                 .collect();
             checks.push(EndpointCheck {
                 base_url,
-                credential_key: fallback_credential_key(env),
+                credential_key: fallback_credential_key(env)
+                    .or_else(|| tool_credential_key(&resolved.tool, inherited)),
                 models,
             });
         }
     }
     checks
+}
+
+/// The inherited credential a tool outside the families reads: a
+/// credential-shaped key that starts with the tool's own name
+/// (`GROK_CODE_XAI_API_KEY` for grok), else the first credential-shaped
+/// key of no family, as [`fallback_credential_key`] takes from the plan.
+fn tool_credential_key(tool: &str, env: &[(OsString, OsString)]) -> Option<String> {
+    let prefix = format!("{}_", tool.to_ascii_uppercase());
+    env.iter()
+        .map(|(key, value)| (key.to_string_lossy().into_owned(), value))
+        .find(|(key, value)| {
+            key.starts_with(&prefix) && super::is_credential_env_key(key) && !value.is_empty()
+        })
+        .map(|(key, _)| key)
+        .or_else(|| fallback_credential_key(env))
 }
 
 /// A profile for a tool outside the families can authenticate under any
@@ -372,12 +408,17 @@ fn credential_value(check: &EndpointCheck, env: &[(OsString, OsString)]) -> Opti
 
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
     let effective = resolved.effective_env();
-    let secrets = credential_values(&effective);
+    // An inherited endpoint comes with an inherited credential: the check
+    // sends it, and the report hides it like the plan's own.
+    let inherited = inherited_environment(resolved);
+    let mut secrets = credential_values(&effective);
+    secrets.extend(credential_values(&inherited));
     let (roots, roots_warnings) = root_certs_from(|variable| std::env::var_os(variable));
-    let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override)
+    let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override, &inherited)
         .into_iter()
         .map(|check| {
-            let credential = credential_value(&check, &effective);
+            let credential = credential_value(&check, &effective)
+                .or_else(|| credential_value(&check, &inherited));
             let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
                     let (served, missing) = check
@@ -424,7 +465,7 @@ pub(crate) fn fetch_model_ids(
     credential: Option<&str>,
     roots: &ureq::tls::RootCerts,
 ) -> Result<Vec<String>, String> {
-    let url = format!("{}{MODELS_PATH}", base_url.trim_end_matches('/'));
+    let url = models_url(base_url);
     // A launch endpoint is often a local proxy behind a private CA that the
     // operating system trusts and the bundled Mozilla roots do not: the
     // platform verifier reads the same store curl and the harness use, or
@@ -515,8 +556,8 @@ pub(crate) fn format_report(report: &CheckReport) -> String {
     }
     for endpoint in report.endpoints.iter().map(EndpointReport::redacted) {
         lines.push(format!(
-            "endpoint: {}{MODELS_PATH}",
-            endpoint.check.base_url
+            "endpoint: {}",
+            models_url(&endpoint.check.base_url)
         ));
         lines.push(format!(
             "credential: {}",

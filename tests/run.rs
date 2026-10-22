@@ -3622,6 +3622,43 @@ printf '%s\n' '{"response":""}'
     );
 }
 
+#[test]
+fn grok_check_covers_an_inherited_endpoint_and_asks_for_models_once() {
+    let home = tempfile::tempdir().expect("home");
+    // The endpoint is set in the shell, ends in /v1, and answers nothing.
+    let output = rune(home.path())
+        .env("GROK_MODELS_BASE_URL", "http://127.0.0.1:9/v1")
+        .env("GROK_CODE_XAI_API_KEY", "fake-inherited-key")
+        .args(["--json", "run", "grok", "x", "--check"])
+        .output()
+        .expect("check output");
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("check JSON");
+    let endpoints = result["endpoints"].as_array().expect("endpoints");
+    assert_eq!(endpoints.len(), 1, "{result}");
+    assert_eq!(
+        endpoints[0]["base_url"], "http://127.0.0.1:9/v1",
+        "{result}"
+    );
+    assert_eq!(
+        endpoints[0]["credential_key"], "GROK_CODE_XAI_API_KEY",
+        "{result}"
+    );
+    let reason = endpoints[0]["reason"].as_str().expect("reason");
+    assert!(reason.contains("http://127.0.0.1:9/v1/models"), "{reason}");
+    assert!(!reason.contains("/v1/v1/"), "{reason}");
+    assert!(!reason.contains("fake-inherited-key"), "{reason}");
+
+    rune(home.path())
+        .env("GROK_MODELS_BASE_URL", "http://127.0.0.1:9/v1")
+        .args(["run", "grok", "x", "--check"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "endpoint: http://127.0.0.1:9/v1/models\n",
+        ));
+}
+
 #[cfg(unix)]
 #[test]
 fn grok_echoing_the_value_of_its_key_variable_leaves_no_trace_in_any_output() {
