@@ -44,13 +44,15 @@ never reverts it.
 
 ## Structure
 
-- `src/cli/run/workspace.rs` (new): `begin` copies the caller's files and records the operation and the caller's
-  commits, and `add` creates the workspace on the copy. The caller hands the result of `begin` to its cleanup guard before
-  `add`, so a failure or a signal from the moment the copy exists abandons it. `finish` records the files, forgets the
+- `src/cli/run/workspace.rs` (new): `begin` records the operation and the caller's commits, then makes the copy with
+  one `jj new` as its last step, so nothing before the copy needs cleanup and nothing after it can fail. The caller
+  hands the result to its cleanup guard the moment `begin` returns. `prepare` then finds the copy by its marker line and
+  gives it the caller's working-copy tree, and `add` creates the workspace on it, both under the guard, so a failure
+  or a signal from the moment the copy exists abandons it. `finish` records the files, forgets the
   workspace, builds the run's change from the final tree, rebases it onto the caller's current change or drops it,
   abandons the copy and every leftover revision by commit id, and removes the folder. It runs on every outcome, from
   the same place that already cleans clean state.
-- `src/cli/run/mod.rs`: workspace-write runs call `begin` and `add` before the spawn and pass the workspace path as the
+- `src/cli/run/mod.rs`: workspace-write runs call `begin`, `prepare`, and `add` before the spawn and pass the workspace path as the
   invocation's repository, at the subfolder that matches `--repo` when `--repo` lies below the root. The result gains
   the `workspace` object, and the text mode prints one line with the change id, and one warning when commits outside
   the run changed.
@@ -71,8 +73,9 @@ group does not reach a jj command in the middle of the finish.
 | The runner colocates jj in a git repository | `jj git init --colocate <repo>` |
 | The runner reads the caller's change | `jj -R <repo> --ignore-working-copy log -r @ --no-graph -T change_id` |
 | The runner finds the immutable base | `jj -R <repo> --ignore-working-copy log -r 'heads(::@ & immutable())' -T commit_id`, else `root()` |
-| The runner copies the caller's files | `jj -R <repo> new <base> --no-edit -m <desc>` (this snapshots the caller's checkout), then `jj -R <repo> --ignore-working-copy restore --from @ --to <copy>` |
-| The runner records the operation and the caller's commits | `jj -R <repo> --ignore-working-copy op log -n 1 --no-graph -T id`, then `log -r '::@- & mutable()' -T commit_id`, then `log -r @ -T 'change_id ++ "\n" ++ parents.map(\|p\| p.commit_id()).join(" ") ++ "\n" ++ description'` |
+| The runner records the operation and the caller's commits, before the copy | `jj -R <repo> --ignore-working-copy op log -n 1 --no-graph -T id`, then `log -r '::@- & mutable()' -T commit_id`, then `log -r @ -T 'change_id ++ "\n" ++ parents.map(\|p\| p.commit_id()).join(" ") ++ "\n" ++ description'` |
+| The runner makes the copy, the last step of `begin` | `jj -R <repo> new <base> --no-edit -m <desc>` (this snapshots the caller's checkout) |
+| The runner gives the copy the caller's files, under the guard | `jj -R <repo> --ignore-working-copy log -r 'children(<base>) & description(substring:"base copy for run-<id>")' -T change_id`, then `jj -R <repo> restore --from @ --to <copy>` |
 | The runner tests the caller's working-copy change | `jj -R <repo> --ignore-working-copy log -r 'change_id(<id>) & ::visible_heads()' -T commit_id` (exactly one), then the record template on that commit, compared with the record |
 | The runner creates the workspace | `jj -R <repo> workspace add --name run-<id> --revision <copy commit> --message <desc> <state>/workspaces/<repo-id>/run-<id>` |
 | The runner records the harness's files | `jj -R <workspace> --config 'snapshot.auto-track="all()"' --config 'snapshot.max-new-file-size="1TiB"' util snapshot` |

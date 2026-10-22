@@ -102,6 +102,15 @@ struct RecordedHead {
 const HEAD_TEMPLATE: &str =
     "change_id ++ \"\\n\" ++ parents.map(|p| p.commit_id()).join(\" \") ++ \"\\n\" ++ description";
 
+/// The copy of the caller's files the workspace starts from: its change
+/// id while it is visible, and its commit id, which resolves whatever the
+/// harness does to the change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CopyIds {
+    change_id: String,
+    commit_id: String,
+}
+
 /// A run's copy and workspace, from the moment the copy exists. `finish`
 /// takes it down, whether or not the workspace was added yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,11 +127,13 @@ pub(crate) struct Workspace {
     /// Whether the repository has a git checkout beside jj, so the
     /// workspace is a git worktree too.
     has_git: bool,
-    /// The copy of the caller's files the workspace starts from: its change
-    /// id while it is visible, and its commit id, which resolves whatever
-    /// the harness does to the change.
-    copy_change: String,
-    copy_commit: String,
+    /// The commit the copy was made on, and the marker line that finds the
+    /// copy again before its ids are known.
+    copy_base: String,
+    copy_marker: String,
+    /// The copy's ids once `prepare` found it: `None` between the `jj new`
+    /// that made it and that lookup, when the guard already owns it.
+    copy: Option<CopyIds>,
     /// The operation the run started from, for `jj op log`.
     operation_id: String,
     /// The caller's mutable commits below its working copy at the start,
@@ -501,32 +512,36 @@ fn immutable_base(root: &Path) -> Result<String, String> {
     }
 }
 
-/// Create the copy of the caller's files: a new commit on the immutable
-/// base, found again by its marker line, given the caller's working-copy
-/// tree. `jj new` and `jj restore` snapshot the caller's checkout, so the
-/// copy holds the caller's latest edits.
-fn copy_caller_files(
-    root: &Path,
-    description: &str,
-    name: &str,
-) -> Result<(String, String), String> {
-    let base = immutable_base(root)?;
-    let marker = copy_marker(name);
-    jj_in(
+impl Workspace {
+    /// The revset of the copy and everything on top of it: by its ids once
+    /// they are known (the commit id resolves hidden or rewritten), else by
+    /// the marker line under the base.
+    fn lineage(&self) -> String {
+        match &self.copy {
+            Some(copy) => format!(
+                "(change_id({}) | present({}))::",
+                copy.change_id, copy.commit_id
+            ),
+            None => format!(
+                "(children({}) & description(substring:\"{}\"))::",
+                self.copy_base, self.copy_marker
+            ),
+        }
+    }
+}
+
+/// Find the copy `begin` made and give it the caller's working-copy tree.
+/// `jj restore` snapshots the caller's checkout, so the copy holds the
+/// caller's latest edits. Runs under the guard: a failure here leaves the
+/// copy to `finish`.
+pub(crate) fn prepare(workspace: &mut Workspace) -> Result<(), String> {
+    let root = &workspace.root;
+    let (change_id, _) = ids_of(
         root,
-        &[
-            OsStr::new("-R"),
-            root.as_os_str(),
-            OsStr::new("new"),
-            OsStr::new(&base),
-            OsStr::new("--no-edit"),
-            OsStr::new("-m"),
-            OsStr::new(&bookkeeping_description(description, &marker)),
-        ],
-    )?;
-    let (copy_change, _) = ids_of(
-        root,
-        &format!("children({base}) & description(substring:\"{marker}\")"),
+        &format!(
+            "children({}) & description(substring:\"{}\")",
+            workspace.copy_base, workspace.copy_marker
+        ),
     )?;
     jj_in(
         root,
@@ -537,11 +552,15 @@ fn copy_caller_files(
             OsStr::new("--from"),
             OsStr::new("@"),
             OsStr::new("--to"),
-            OsStr::new(&copy_change),
+            OsStr::new(&change_id),
         ],
     )?;
-    let (_, copy_commit) = ids_of(root, &copy_change)?;
-    Ok((copy_change, copy_commit))
+    let (_, commit_id) = ids_of(root, &change_id)?;
+    workspace.copy = Some(CopyIds {
+        change_id,
+        commit_id,
+    });
+    Ok(())
 }
 
 /// The caller's mutable commits below its working copy, by commit id: a
@@ -612,10 +631,12 @@ fn operation_id(root: &Path) -> Result<String, String> {
 }
 
 /// Start the run's isolation: colocate jj first when the repository has
-/// only git, copy the caller's files, and record the operation and the
-/// caller's mutable commits. The workspace is not added yet: the caller
-/// hands the result to its cleanup guard first, then calls `add`, so a
-/// failure or a signal anywhere after this point abandons the copy.
+/// only git, record the operation and the caller's mutable commits, and
+/// make the copy as the last step. Nothing before the copy needs cleanup,
+/// and nothing after it can fail: the caller hands the result to its
+/// cleanup guard the moment this returns, then calls `prepare` and `add`
+/// under the guard, so a failure or a signal anywhere after the copy
+/// exists abandons it.
 pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
     let root = plan.vcs.root().to_path_buf();
     if let Some(parent) = plan.path.parent() {
@@ -642,8 +663,27 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
             )?;
         }
     }
-    let (copy_change, copy_commit) = copy_caller_files(&root, &plan.description, &plan.name)?;
-    let mut workspace = Workspace {
+    // Recorded before the copy: the operation the run started from (so the
+    // copy's change id is new to it), and the caller's commits, which no
+    // snapshot rewrites in what is recorded.
+    let operation_id = operation_id(&root)?;
+    let caller_commits = caller_commits(&root)?;
+    let caller_head = head_record(&root, "@")?;
+    let copy_base = immutable_base(&root)?;
+    let copy_marker = copy_marker(&plan.name);
+    jj_in(
+        &root,
+        &[
+            OsStr::new("-R"),
+            root.as_os_str(),
+            OsStr::new("new"),
+            OsStr::new(&copy_base),
+            OsStr::new("--no-edit"),
+            OsStr::new("-m"),
+            OsStr::new(&bookkeeping_description(&plan.description, &copy_marker)),
+        ],
+    )?;
+    Ok(Workspace {
         root,
         name: plan.name.clone(),
         path: plan.path.clone(),
@@ -651,18 +691,15 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
         description: plan.description.clone(),
         colocated: plan.vcs.colocate(),
         has_git: plan.vcs.has_git(),
-        copy_change,
-        copy_commit,
-        operation_id: String::new(),
-        caller_commits: Vec::new(),
-        caller_head: None,
+        copy_base,
+        copy_marker,
+        copy: None,
+        operation_id,
+        caller_commits,
+        caller_head,
         added: false,
         lock_path: plan.lock_path.clone(),
-    };
-    workspace.operation_id = operation_id(&workspace.root)?;
-    workspace.caller_commits = caller_commits(&workspace.root)?;
-    workspace.caller_head = head_record(&workspace.root, "@")?;
-    Ok(workspace)
+    })
 }
 
 /// Add the workspace on the copy. `workspace add` refuses
@@ -671,6 +708,9 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
 /// to the cleanup guard.
 pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
     let root = &workspace.root;
+    let Some(copy) = &workspace.copy else {
+        return Err("the copy was not prepared before the workspace add".to_string());
+    };
     let _lock = lock_repository(&workspace.lock_path)?;
     let message = bookkeeping_description(
         &workspace.description,
@@ -684,7 +724,7 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
         OsStr::new("--name"),
         OsStr::new(&workspace.name),
         OsStr::new("--revision"),
-        OsStr::new(&workspace.copy_commit),
+        OsStr::new(&copy.commit_id),
         OsStr::new("--message"),
         OsStr::new(&message),
     ];
@@ -892,7 +932,7 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
     if !workspace.added {
         // The copy exists and nothing else: it goes, and a half-made folder
         // with it.
-        abandon_visible(root, &workspace.copy_change)?;
+        abandon_visible(root, &format!("{} ~ ::@", workspace.lineage()))?;
         if workspace.path.exists() {
             std::fs::remove_dir_all(&workspace.path).map_err(|error| {
                 format!(
@@ -903,6 +943,9 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
         }
         return Ok(());
     }
+    let Some(copy) = &workspace.copy else {
+        return Err("the workspace was added without a prepared copy".to_string());
+    };
     outcome.unrecorded = record_files(workspace)?;
     let final_commit = final_commit(workspace)?;
     {
@@ -925,7 +968,7 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
         root,
         &[
             OsStr::new("new"),
-            OsStr::new(&workspace.copy_commit),
+            OsStr::new(&copy.commit_id),
             OsStr::new("--no-edit"),
             OsStr::new("-m"),
             OsStr::new(&workspace.description),
@@ -935,7 +978,7 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
         root,
         &format!(
             "children({}) & description(substring:\"{marker}\")",
-            workspace.copy_commit
+            copy.commit_id
         ),
     )?;
     outcome.change_id = Some(result.clone());
@@ -985,8 +1028,8 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
     abandon_visible(
         root,
         &format!(
-            "(change_id({}) | present({}) | present({final_commit})):: ~ ::@{kept_result}",
-            workspace.copy_change, workspace.copy_commit
+            "({} | present({final_commit})::) ~ ::@{kept_result}",
+            workspace.lineage()
         ),
     )?;
     std::fs::remove_dir_all(&workspace.path).map_err(|error| {

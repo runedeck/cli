@@ -321,9 +321,11 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     let mut isolated = Isolated { workspace: None };
     if let Some(plan) = &isolation {
         // The guard holds the copy from the moment it exists: a failure or
-        // a signal while the workspace is added still abandons it.
+        // a signal while the copy is prepared or the workspace is added
+        // still abandons it.
         isolated.workspace = Some(workspace::begin(plan)?);
         if let Some(workspace) = isolated.workspace.as_mut() {
+            workspace::prepare(workspace)?;
             workspace::add(workspace)?;
         }
     }
