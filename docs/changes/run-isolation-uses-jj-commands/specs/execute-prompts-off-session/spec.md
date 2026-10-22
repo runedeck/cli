@@ -25,8 +25,9 @@ goes. When the configuration cannot be written, the run MUST go on without the g
 
 The runner MUST record the repository operation before it makes the copy and the operation after the workspace is down,
 and name both in the `workspace` object as `start_operation` and `end_operation`. The text line MUST name
-`jj op diff --from <start> --to <end>`. The runner MUST read every id again after a rewrite, and a commit it finds by its
-marker MUST be the one commit made since the start operation that carries it, else the runner MUST stop.
+`jj op diff --from <start> --to <end>`. The runner MUST read every id again after a rewrite, MUST find a commit of its
+own by its whole description among the commits made after the start operation, exactly one, else stop, and MUST read
+`conflicted` after the workspace is removed.
 
 #### Scenario: Run that edits files names its operations
 
@@ -36,25 +37,50 @@ marker MUST be the one commit made since the start operation that carries it, el
 
 ### Requirement: A harness that leaves the copy keeps its work as a separate change
 
-When the workspace's change no longer descends from the copy at the end of the run, the runner MUST build no result from
-its files, MUST name that change in `left_copy`, MUST abandon the copy and the run's empty leftovers, and MUST remove the
-folder. It is no error.
+Before any snapshot, the runner MUST test where the workspace stands. When its change no longer descends from the copy,
+or is another workspace's working copy, the runner MUST NOT snapshot, MUST build no result, MUST forget the workspace,
+MUST keep the folder with the files, MUST name the change in `left_copy`, and MUST set `outside_changes`.
 
 #### Scenario: Harness starts its change from trunk
 
 - **WHEN** the harness runs `jj new main` in its workspace and writes a file there
-- **THEN** `kept` is false, `change_id` is null, `left_copy` names a change on trunk that holds the file, the caller's
-  unpushed work is intact, and no folder stays
+- **THEN** `kept` is false, `change_id` is null, `left_copy` names the change on trunk, the file stays in the folder
+  named by `path`, the caller's unpushed work is intact, and `outside_changes` is true
+
+#### Scenario: Harness edits the caller's working copy past the guard
+
+- **WHEN** the guard could not be set, and the harness runs `jj edit default@` and writes a file
+- **THEN** nothing is recorded into the caller's change, `left_copy` names the caller's change, and the file stays in
+  the folder
+
+### Requirement: The runner never loses a revision
+
+After the run, the runner MUST abandon a revision on the copy only when it is empty or when its changes are in the
+result already (it is an ancestor of the workspace's final commit). It MUST abandon the copy itself only when nothing
+stands on it. Every other revision on the copy MUST stay, whoever made it, be listed in `kept_revisions`, and set
+`outside_changes`.
+
+#### Scenario: Harness commits, then leaves the copy
+
+- **WHEN** the harness commits `A.md` on the copy, runs `jj new main`, and writes `B.md`
+- **THEN** the commit that holds `A.md` stays and is listed in `kept_revisions`, the copy stays under it, and `B.md`
+  stays in the folder
+
+#### Scenario: Caller makes a branch during the run that the harness rebases
+
+- **WHEN** the caller makes a side branch while the run works and the harness rebases it onto its own work
+- **THEN** the branch stays with its file, is listed in `kept_revisions`, and `outside_changes` is true
 
 ### Requirement: A git setting that runs commands counts as an outside change
 
 The runner MUST record the git settings that make git run a command or load a file (a hook path, a driver, a helper, an
-alias, an editor, a proxy, a transport command, an include) before the copy, compare them at the end, and set
-`outside_changes` when any changed.
+alias, an editor, a proxy, a transport command, an include) and the names and digests of the shared hook files before
+the copy, compare them at the end, and set `outside_changes` when any changed.
 
 #### Scenario: Harness sets a hook path
 
-- **WHEN** the harness runs `git config core.hooksPath <dir>` in its worktree
+- **WHEN** the harness runs `git config core.hooksPath <dir>` in its worktree, or writes a file into the shared hooks
+  folder
 - **THEN** `outside_changes` is true, and the setting stands for the owner to judge
 
 ### Requirement: A process that outlives the run keeps the folder
@@ -72,8 +98,8 @@ result from the files as recorded, forget the workspace without deleting its fil
 ### Requirement: A run state file names the run for the cleanup
 
 The runner MUST write a state file beside the workspace folder with the run's name, roots, phase, operations, copy ids,
-and configuration folder, update it at each phase, remove it when the folder is gone, and keep it with the phase
-`stayed` when the folder stays.
+and configuration folder, update it at each phase through a temporary file renamed over the record, remove it when the
+folder is gone, and keep it with the phase `stayed` when the folder stays.
 
 #### Scenario: Folder removal fails after the change is known
 

@@ -560,6 +560,7 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         "guard_error": workspace.guard_error,
         "outside_changes": outcome.outside_changes,
         "left_copy": outcome.left_copy,
+        "kept_revisions": outcome.kept_revisions,
         "start_operation": outcome.start_operation,
         "end_operation": outcome.end_operation,
     });
@@ -609,7 +610,13 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
     }
     if let Some(change_id) = &outcome.left_copy {
         lines.push(format!(
-            "workspace: the harness moved its workspace off the copy; its change {change_id} stays as a separate change, and no result was built from its files"
+            "workspace: the harness moved its workspace to change {change_id}, off the run's copy; its files were not recorded, and no result was built"
+        ));
+    }
+    if !outcome.kept_revisions.is_empty() {
+        lines.push(format!(
+            "workspace: kept {} (neither empty nor part of the result); review them with jj, then squash or abandon them",
+            outcome.kept_revisions.join(", ")
         ));
     }
     let operations = match (&outcome.start_operation, &outcome.end_operation) {

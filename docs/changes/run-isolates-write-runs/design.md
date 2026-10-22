@@ -27,22 +27,24 @@ sees the unpushed stack as one commit, so `jj log` in the workspace shows the ca
 The run's change is built from trees. At finish the runner first asks whether the workspace's change still stands on
 the copy, by the copy's change id or its recorded commit id (`(change_id("<copy>") | commit_id("<copy commit>"))::`). A
 harness that moved its workspace elsewhere (`jj new main`) left the run's lineage: a change built from its files would
-revert the caller's unpushed work (reviewer repro `trunk.sh`). The runner then builds no change, names the harness's
-change in `left_copy`, abandons the run's empty leftovers and the copy once nothing stands on it, and removes the
-folder (`run-isolation-uses-jj-commands`). `jj edit default@` and `jj abandon @-` on the copy fail in the workspace,
-because jj's immutability guard there protects the copy and every other working copy with its stack. When the change
+revert the caller's unpushed work (reviewer repro `trunk.sh`). The runner asks before any snapshot, records nothing,
+builds no change, names the harness's change in `left_copy`, forgets the workspace, keeps the folder, abandons the
+run's empty leftovers and the copy once nothing stands on it, and sets `outside_changes`
+(`run-isolation-uses-jj-commands`). `jj edit default@` and `jj abandon @-` on the copy fail in the workspace, because
+jj's immutability guard there protects the copy and every other working copy with its stack. When the change
 stands on the copy, the runner makes a new commit on the recorded copy commit (a commit id resolves even when the
 harness rewrote the copy), restores the workspace's final tree into it, and rebases it onto the caller's current `@`,
 reading the result's ids again after each rewrite. Its diff is what the harness changed, whatever the harness did to
 the revisions in between: a squash into the copy, an absorb. An empty result is dropped. A rebase conflict is kept and
-reported as `conflicted`. The copy carries the run's description with a `base copy for` line, and a commit found by
-such a marker must be the one commit made since the start operation that carries it.
+reported as `conflicted`, read after the workspace removal. The copy carries the run's description with a `base copy
+for` line, and a commit found by its whole description must be the one commit made after the start operation that
+carries it.
 
-The runner abandons only the run's own revisions. The candidates are the copy's descendants, minus the caller's line
-and a kept result. A candidate is the run's own when its change id did not exist at the operation the run started
-from, which one query at that operation answers for every candidate (`jj --at-op <start> log -r 'present(<id>) |
-present(<id>) ...' -T change_id`). A candidate that existed then belongs to someone else, a caller's branch the harness
-rebased onto its work: it stays, and `outside_changes` is set.
+The runner never loses a revision. The candidates are the copy's descendants, minus the caller's line and a kept
+result. A candidate goes when it is empty, or when its changes are in the result already (it is an ancestor of the
+workspace's final commit). The copy goes only when nothing stands on it. Every other candidate stays, whoever made it
+(a caller's branch the harness rebased onto its work, a branch the caller made during the run), is listed in
+`kept_revisions`, and sets `outside_changes`.
 
 The harness can still rewrite a caller commit by naming it (`jj describe -r <id>`): the store is shared. When it makes
 the copy, the runner records the repository's latest operation id, the caller's mutable commits below the working copy

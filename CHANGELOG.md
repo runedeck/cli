@@ -29,13 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fold a workspace-write run's files into one change on the caller's current change, named `rune run <route>: <session>` and reported as the `workspace` object, or leave no trace.
 - Set `outside_changes` when a caller commit or a git setting that runs commands changed during a workspace-write run, by the harness or by the caller's own commands, never by edits alone.
 - Name the operations a workspace-write run spans as `start_operation` and `end_operation`, and point at `jj op diff --from <start> --to <end>` on stderr.
-- Build no change from a workspace-write run whose harness moved its workspace off the copy (`jj new main`): its change stays, `left_copy` names it, and no folder stays.
+- Record nothing from a workspace-write run whose harness moved its workspace off the copy or onto another working copy: `left_copy` names the change, the folder stays, and `outside_changes` is set.
+- Abandon a revision a workspace-write run left on the copy only when it is empty or already in the result, keep every other one, and list them in `kept_revisions`.
+- Compare the shared git hook files, by name and digest, before and after a workspace-write run, and read `conflicted` after the workspace is removed.
 - Set jj's immutability guard in the run's workspace, so a harness commits, describes, and squashes only its own revisions there, and remove the guard's configuration folder with the workspace.
 - Go on without the guard when its configuration cannot be written, with `guard: false` and the reason in the `workspace` object and one warning on stderr.
 - Find the caller's root with `jj workspace root`, remove the workspace with `jj workspace remove`, and snapshot with jj's own `snapshot.max-new-file-size=0` and `snapshot.auto-track="all()"`.
 - Keep the workspace folder when a process of the harness outlives the run, and say so in the result.
 - Write a run state file beside the workspace folder that names the run, its phase, its operations, and its configuration folder for the cleanup after a kill.
-- Abandon only revisions a workspace-write run made, so a caller's branch the harness rebased onto its work stays.
 - Colocate jj in a git repository before a workspace-write run, refuse a folder under neither with exit 125, and print `workspace:`, `workspace_parent:`, and `workspace_colocate:` in the dry run.
 - Serialize the workspace registration of concurrent runs in one repository, so seats do not collide on git's config lock.
 - Add `rune run --output <FILE>`, which writes the result there for every outcome and, under `--json`, prints one object with `ok`, `kind`, `exit_code`, and `output` on stdout.

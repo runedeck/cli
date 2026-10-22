@@ -140,8 +140,10 @@ pub(crate) struct Workspace {
     /// Whether the repository has a git checkout beside jj, so the
     /// workspace is a git worktree too.
     has_git: bool,
-    /// The marker line that finds the copy before its ids are known.
-    copy_marker: String,
+    /// The copy's whole description, which finds it before its ids are
+    /// known: an exact match, so a name that is a prefix of another run's
+    /// name never finds the other run's copy.
+    copy_description: String,
     /// The copy's ids once `prepare` gave it the caller's files.
     copy: Option<CopyIds>,
     /// The operation the run started from.
@@ -201,9 +203,14 @@ pub(crate) struct Outcome {
     /// Whether any of the caller's commits or the git settings recorded at
     /// the start changed by the end of the run, once compared.
     pub(crate) outside_changes: Option<bool>,
-    /// The change the harness moved its workspace to, off the copy. It
-    /// stays as a separate change, and no result is built from its files.
+    /// The change the harness moved its workspace to, off the copy or onto
+    /// another workspace's working copy. Its files are not recorded, no
+    /// result is built, and the folder stays.
     pub(crate) left_copy: Option<String>,
+    /// The revisions the run left on the copy that are neither empty nor
+    /// part of the result (a branch the harness or the caller made and the
+    /// final tree does not hold): kept, never abandoned, by change id.
+    pub(crate) kept_revisions: Vec<String>,
     /// The operation the run started from.
     pub(crate) start_operation: Option<String>,
     /// The operation the run ended with, once the workspace is down.
@@ -389,9 +396,30 @@ fn commit_revset(commit_id: &str) -> String {
     format!("commit_id(\"{commit_id}\")")
 }
 
-/// The revset of the visible revisions whose description holds `marker`.
-fn marker_revset(marker: &str) -> String {
-    format!("description(substring:\"{marker}\")")
+/// `text` as a jj string literal: quotes, backslashes, and newlines
+/// escaped, so a description with any of them is matched whole.
+fn jj_string(text: &str) -> String {
+    let mut literal = String::with_capacity(text.len() + 2);
+    literal.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\n' => literal.push_str("\\n"),
+            '\t' => literal.push_str("\\t"),
+            '\r' => literal.push_str("\\r"),
+            other => literal.push(other),
+        }
+    }
+    literal.push('"');
+    literal
+}
+
+/// The revset of the visible revisions whose whole description is
+/// `description`: the marker line is matched with its run name entire, so
+/// `run-1-82` never finds `run-1-820`.
+fn description_revset(description: &str) -> String {
+    format!("description(exact:{})", jj_string(description))
 }
 
 /// jj's immutability guard for the run's workspace: its built-in immutable
@@ -455,8 +483,41 @@ fn runs_a_command(key: &str) -> bool {
     }
 }
 
+/// The hook files of the repository's shared git directory, as sorted
+/// `hook:<name>=<digest>` lines: a colocated worktree shares them, and a
+/// hook a harness drops there runs on the caller's next git command.
+fn git_hooks(root: &Path) -> Vec<String> {
+    let Some(common) = git_query(root, &["rev-parse", "--git-common-dir"]) else {
+        return Vec::new();
+    };
+    let hooks = root.join(common).join("hooks");
+    let Ok(entries) = std::fs::read_dir(&hooks) else {
+        return Vec::new();
+    };
+    let mut lines: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let content = std::fs::read(entry.path()).ok()?;
+            let digest = Sha256::digest(&content);
+            let hex = digest.iter().fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
+            Some(format!(
+                "hook:{}={hex}",
+                entry.file_name().to_string_lossy()
+            ))
+        })
+        .collect();
+    lines.sort();
+    lines
+}
+
 /// The git settings that run commands, as sorted `key=value` lines from
-/// every scope git reads at `root`. Empty without git.
+/// every scope git reads at `root`, and the shared hook files with their
+/// digests. Empty without git.
 fn git_settings(root: &Path, has_git: bool) -> Vec<String> {
     if !has_git {
         return Vec::new();
@@ -479,6 +540,7 @@ fn git_settings(root: &Path, has_git: bool) -> Vec<String> {
         })
         .map(str::to_string)
         .collect();
+    lines.extend(git_hooks(root));
     lines.sort();
     lines
 }
@@ -643,12 +705,13 @@ fn changes_at(root: &Path, operation: &str, changes: &[String]) -> Result<HashSe
     .collect())
 }
 
-/// The one commit this run made that carries `marker`: a description is a
-/// label and no identity, so the candidates that existed at the start
-/// operation are left out, and anything other than exactly one new
-/// candidate is refused instead of picked from.
-fn find_marked(root: &Path, marker: &str, start_operation: &str) -> Result<CopyIds, String> {
-    let candidates = id_pairs(root, &marker_revset(marker))?;
+/// The one commit this run made whose whole description is `description`:
+/// a description is a label and no identity, so the candidates that
+/// existed at the start operation are left out, and anything other than
+/// exactly one new candidate is refused instead of picked from.
+fn find_marked(root: &Path, description: &str, start_operation: &str) -> Result<CopyIds, String> {
+    let marker = description.lines().nth(2).unwrap_or(description);
+    let candidates = id_pairs(root, &description_revset(description))?;
     let changes: Vec<String> = candidates
         .iter()
         .map(|(change, _)| change.clone())
@@ -802,12 +865,14 @@ impl Workspace {
                 copy.change_id,
                 commit_revset(&copy.commit_id)
             ),
-            None => format!("({})::", marker_revset(&self.copy_marker)),
+            None => format!("({})::", description_revset(&self.copy_description)),
         }
     }
 
-    /// Write the run state file for `phase`. A failure to write it loses
-    /// a recovery aid and nothing of the run, so it is not an error.
+    /// Write the run state file for `phase`: to a temporary file beside it,
+    /// then renamed over the old one, so a kill in the middle of the write
+    /// leaves the previous record whole. A failure to write it loses a
+    /// recovery aid and nothing of the run, so it is not an error.
     fn write_state(&self, phase: &str, end_operation: Option<&str>) {
         let state = RunState {
             name: &self.name,
@@ -823,8 +888,12 @@ impl Workspace {
                 .as_ref()
                 .map(|dir| dir.display().to_string()),
         };
-        if let Ok(text) = serde_json::to_string_pretty(&state) {
-            let _ = std::fs::write(&self.state_path, text);
+        let Ok(text) = serde_json::to_string_pretty(&state) else {
+            return;
+        };
+        let temporary = self.state_path.with_extension("json.tmp");
+        if std::fs::write(&temporary, text).is_ok() {
+            let _ = std::fs::rename(&temporary, &self.state_path);
         }
     }
 }
@@ -869,7 +938,7 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
     let caller_commits = caller_commits(&root)?;
     let caller_head = head_record(&root, "@")?;
     let git_settings = git_settings(&root, plan.vcs.has_git());
-    let copy_marker = copy_marker(&plan.name);
+    let copy_description = bookkeeping_description(&plan.description, &copy_marker(&plan.name));
     // The copy is made on the nearest immutable ancestor of the caller's
     // working copy, the root commit in a repository with no bookmark yet.
     // This snapshots the caller's checkout, as any jj command does.
@@ -882,7 +951,7 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
             OsStr::new("heads(::@ & immutable())"),
             OsStr::new("--no-edit"),
             OsStr::new("-m"),
-            OsStr::new(&bookkeeping_description(&plan.description, &copy_marker)),
+            OsStr::new(&copy_description),
         ],
     )?;
     let workspace = Workspace {
@@ -893,7 +962,7 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
         description: plan.description.clone(),
         colocated: plan.vcs.colocate(),
         has_git: plan.vcs.has_git(),
-        copy_marker,
+        copy_description,
         copy: None,
         start_operation,
         caller_commits,
@@ -916,7 +985,11 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
 /// to `finish`.
 pub(crate) fn prepare(workspace: &mut Workspace) -> Result<(), String> {
     let root = &workspace.root;
-    let before = find_marked(root, &workspace.copy_marker, &workspace.start_operation)?;
+    let before = find_marked(
+        root,
+        &workspace.copy_description,
+        &workspace.start_operation,
+    )?;
     jj_in(
         root,
         &[
@@ -931,7 +1004,7 @@ pub(crate) fn prepare(workspace: &mut Workspace) -> Result<(), String> {
     )?;
     workspace.copy = Some(find_marked(
         root,
-        &workspace.copy_marker,
+        &workspace.copy_description,
         &workspace.start_operation,
     )?);
     workspace.write_state("prepared", None);
@@ -1081,17 +1154,98 @@ fn final_commit(workspace: &Workspace) -> Result<String, String> {
         .ok_or_else(|| "jj log printed no commit id for the workspace".to_string())
 }
 
-/// The change the workspace stands on when it no longer descends from the
-/// copy: the harness moved elsewhere (`jj new main`), and a change built
-/// from its files would revert the caller's unpushed work, so that work
-/// stays its own change. `None` while the workspace is on the copy's
-/// lineage.
-fn left_copy(workspace: &Workspace, lineage: &str) -> Result<Option<String>, String> {
+/// The change the workspace stands on when it is not the run's own: off
+/// the copy's lineage (the harness ran `jj new main`), or another
+/// workspace's working copy (`jj edit default@` past the guard). A
+/// snapshot there would record the harness's files into somebody else's
+/// change, and a result built from its files would revert the caller's
+/// unpushed work, so the runner asks before it snapshots anything. `None`
+/// while the workspace is on the copy's lineage and on its own change.
+fn foreign_head(workspace: &Workspace, lineage: &str) -> Result<Option<String>, String> {
+    let own = format!("\"{}\"@", workspace.name);
     log_first(
         &workspace.root,
-        &format!("\"{}\"@ ~ {lineage}", workspace.name),
+        &format!("{own} ~ ({lineage} ~ (working_copies() ~ {own}))"),
         "change_id",
     )
+}
+
+/// Abandon `commits`, by commit id, in one command. Nothing to abandon is
+/// fine.
+fn abandon_commits(root: &Path, commits: &[String]) -> Result<(), String> {
+    if commits.is_empty() {
+        return Ok(());
+    }
+    let revsets: Vec<String> = commits.iter().map(|commit| commit_revset(commit)).collect();
+    let mut args = vec![OsStr::new("abandon")];
+    args.extend(revsets.iter().map(|revset| OsStr::new(revset.as_str())));
+    jj_root_command(root, &args).map(|_| ())
+}
+
+/// Take the run's leftovers on the copy down without losing content. The
+/// candidates are the copy's descendants minus the caller's line and the
+/// kept result. A candidate goes when it is empty, or when its changes are
+/// in the result already (it is an ancestor of the workspace's final
+/// commit, whose tree the result holds). Every other candidate stays,
+/// whoever made it: a branch the harness or the caller made during the run
+/// and the final tree does not hold. The copy itself goes last, and only
+/// when nothing stands on it. What stays is listed in `kept_revisions`,
+/// and `outside_changes` says so.
+fn clean_up(
+    workspace: &Workspace,
+    outcome: &mut Outcome,
+    lineage: &str,
+    final_commit: Option<&str>,
+) -> Result<(), String> {
+    let root = &workspace.root;
+    let kept_result = match (&outcome.change_id, outcome.kept) {
+        (Some(change_id), Some(true)) => format!(" ~ change_id(\"{change_id}\")"),
+        _ => String::new(),
+    };
+    let candidates = format!("({lineage} ~ ::@{kept_result}) & ::visible_heads()");
+    let contained = match final_commit {
+        Some(commit) => format!("({candidates}) & (::{} | empty())", commit_revset(commit)),
+        None => format!("({candidates}) & empty()"),
+    };
+    // What stays is read before the abandon: an abandoned parent moves
+    // the survivors off the copy's lineage, and their change ids hold.
+    let all = id_pairs(root, &candidates)?;
+    let gone: HashSet<String> = id_pairs(root, &contained)?
+        .into_iter()
+        .map(|(_, commit)| commit)
+        .collect();
+    let copy_commit = workspace.copy.as_ref().map(|copy| copy.commit_id.as_str());
+    let mut remaining: Vec<String> = all
+        .iter()
+        .filter(|(_, commit)| !gone.contains(commit) && Some(commit.as_str()) != copy_commit)
+        .map(|(change, _)| change.clone())
+        .collect();
+    abandon_commits(root, &gone.iter().cloned().collect::<Vec<_>>())?;
+    if let Some(copy) = &workspace.copy
+        && !gone.contains(&copy.commit_id)
+    {
+        let copy_revset = commit_revset(&copy.commit_id);
+        let visible = log_first(
+            root,
+            &format!("{copy_revset} & ::visible_heads()"),
+            "commit_id",
+        )?;
+        let children = log_lines(
+            root,
+            &format!("({copy_revset}+) & ::visible_heads()"),
+            "commit_id",
+        )?;
+        match (visible, children.is_empty()) {
+            (Some(commit), true) => abandon_commits(root, &[commit])?,
+            (Some(_), false) => remaining.push(copy.change_id.clone()),
+            (None, _) => {}
+        }
+    }
+    if !remaining.is_empty() {
+        outcome.outside_changes = Some(true);
+    }
+    outcome.kept_revisions = remaining;
+    Ok(())
 }
 
 /// The folder that holds the workspace's own configuration (the guard),
@@ -1202,53 +1356,14 @@ fn caller_commits_changed(workspace: &Workspace) -> Result<bool, String> {
     Ok(false)
 }
 
-/// Abandon the run's own revisions among the visible ones `revset` names.
-/// A revision is the run's own when its change id did not exist at the
-/// operation the run started from: one query at that operation answers
-/// for every candidate. A candidate that existed then belongs to someone
-/// else (a harness rebased a caller's branch onto its work): it stays, and
-/// `outside_changes` says so. The abandon goes by commit id, so a change
-/// that jj lists twice (a copy the harness squashed into, next to the
-/// recorded copy commit) goes without a divergence error.
-fn abandon_run_owned(
-    workspace: &Workspace,
-    outcome: &mut Outcome,
-    revset: &str,
-) -> Result<(), String> {
-    let root = &workspace.root;
-    let candidates = id_pairs(root, &format!("({revset}) & ::visible_heads()"))?;
-    if candidates.is_empty() {
-        return Ok(());
-    }
-    let changes: Vec<String> = candidates
-        .iter()
-        .map(|(change, _)| change.clone())
-        .collect();
-    let existed = changes_at(root, &workspace.start_operation, &changes)?;
-    let (foreign, owned): (Vec<_>, Vec<_>) = candidates
-        .iter()
-        .partition(|(change, _)| existed.contains(change));
-    if !foreign.is_empty() {
-        outcome.outside_changes = Some(true);
-    }
-    if owned.is_empty() {
-        return Ok(());
-    }
-    let mut args = vec![OsStr::new("abandon")];
-    let revsets: Vec<String> = owned
-        .iter()
-        .map(|(_, commit)| commit_revset(commit))
-        .collect();
-    args.extend(revsets.iter().map(|revset| OsStr::new(revset.as_str())));
-    jj_root_command(root, &args).map(|_| ())
-}
-
 /// Build the run's change from the workspace's final tree: a new commit on
 /// the recorded copy takes that tree, so its diff is what the harness
 /// changed, whatever the harness did to the revisions in between. A kept
 /// result is moved onto the caller's current change. Every id is read
 /// again after each rewrite, and the result is found as the one commit of
-/// this run with its marker.
+/// this run with its description. The conflict flag is read later, after
+/// the workspace removal, which can snapshot the caller and move the
+/// result once more.
 fn build_result(
     workspace: &Workspace,
     outcome: &mut Outcome,
@@ -1258,7 +1373,7 @@ fn build_result(
     let Some(copy) = &workspace.copy else {
         return Err("the workspace was added without a prepared copy".to_string());
     };
-    let marker = result_marker(&workspace.name);
+    let marker = workspace.description.as_str();
     jj_root_command(
         root,
         &[
@@ -1269,7 +1384,7 @@ fn build_result(
             OsStr::new(&workspace.description),
         ],
     )?;
-    let result = find_marked(root, &marker, &workspace.start_operation)?;
+    let result = find_marked(root, marker, &workspace.start_operation)?;
     outcome.change_id = Some(result.change_id.clone());
     jj_root_command(
         root,
@@ -1281,7 +1396,7 @@ fn build_result(
             OsStr::new(&commit_revset(&result.commit_id)),
         ],
     )?;
-    let result = find_marked(root, &marker, &workspace.start_operation)?;
+    let result = find_marked(root, marker, &workspace.start_operation)?;
     let kept = !flag(root, &commit_revset(&result.commit_id), "empty")?;
     outcome.kept = Some(kept);
     outcome.conflicted = Some(false);
@@ -1296,9 +1411,28 @@ fn build_result(
                 OsStr::new("@"),
             ],
         )?;
-        let result = find_marked(root, &marker, &workspace.start_operation)?;
-        outcome.conflicted = Some(flag(root, &commit_revset(&result.commit_id), "conflict")?);
     }
+    Ok(())
+}
+
+/// The conflict flag of the kept result, read once the workspace is gone
+/// and the leftovers are cleaned: `jj workspace remove` snapshots the
+/// caller's checkout, which can move the result onto a rewritten working
+/// copy and leave a conflict the earlier rebase did not have.
+fn read_conflict(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), String> {
+    if outcome.kept != Some(true) {
+        return Ok(());
+    }
+    let result = find_marked(
+        &workspace.root,
+        &workspace.description,
+        &workspace.start_operation,
+    )?;
+    outcome.conflicted = Some(flag(
+        &workspace.root,
+        &commit_revset(&result.commit_id),
+        "conflict",
+    )?);
     Ok(())
 }
 
@@ -1313,7 +1447,7 @@ fn finish_steps(
     if !workspace.added {
         // The copy exists and nothing else: it goes, and a half-made folder
         // with it.
-        abandon_run_owned(workspace, outcome, &format!("{lineage} ~ ::@"))?;
+        clean_up(workspace, outcome, &lineage, None)?;
         if workspace.path.exists() {
             std::fs::remove_dir_all(&workspace.path).map_err(|error| {
                 format!(
@@ -1325,16 +1459,28 @@ fn finish_steps(
         outcome.end_operation = Some(latest_operation(root)?);
         return Ok(());
     }
-    record_files(workspace)?;
-    let final_commit = final_commit(workspace)?;
-    outcome.left_copy = left_copy(workspace, &lineage)?;
-    let on_copy = outcome.left_copy.is_none();
-    if on_copy {
-        build_result(workspace, outcome, &final_commit)?;
-    } else {
+    // Before any snapshot: a workspace that stands off the copy's lineage
+    // or on another workspace's working copy is not the run's to record.
+    // Its files stay in the folder, the workspace is forgotten, the copy's
+    // leftovers are cleaned, and the result names the change.
+    if let Some(change) = foreign_head(workspace, &lineage)? {
+        outcome.left_copy = Some(change.clone());
         outcome.kept = Some(false);
         outcome.conflicted = Some(false);
+        outcome.outside_changes = Some(true);
+        forget_workspace(workspace)?;
+        if let Some(dir) = &workspace.config_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        clean_up(workspace, outcome, &lineage, None)?;
+        outcome.end_operation = Some(latest_operation(root)?);
+        return Err(format!(
+            "the harness moved its workspace to change {change}, off the run's copy: its files were not recorded, no result was built, the workspace is forgotten, and the folder stays with the files"
+        ));
     }
+    record_files(workspace)?;
+    let final_commit = final_commit(workspace)?;
+    build_result(workspace, outcome, &final_commit)?;
     outcome.outside_changes = Some(
         caller_commits_changed(workspace)?
             || git_settings(root, workspace.has_git) != workspace.git_settings,
@@ -1354,41 +1500,8 @@ fn finish_steps(
     if let Some(dir) = &workspace.config_dir {
         let _ = std::fs::remove_dir_all(dir);
     }
-    // The run's own leftovers: the copy under every commit it had, the
-    // workspace's own change, and whatever the run made on top of either.
-    // The caller's line stays, and so do a kept result and a revision that
-    // existed before the run. A harness that left the copy keeps its
-    // non-empty work on the copy as further separate changes: only the
-    // empty leftovers go first, then the copy when nothing stands on it.
-    if on_copy {
-        let kept_result = match (&outcome.change_id, outcome.kept) {
-            (Some(change_id), Some(true)) => format!(" ~ change_id(\"{change_id}\")"),
-            _ => String::new(),
-        };
-        abandon_run_owned(workspace, outcome, &format!("{lineage} ~ ::@{kept_result}"))?;
-    } else {
-        abandon_run_owned(workspace, outcome, &format!("({lineage} ~ ::@) & empty()"))?;
-        let copy_alone = format!("heads({lineage} ~ ::@)");
-        if log_lines(
-            root,
-            &format!("({copy_alone}) & ::visible_heads()"),
-            "commit_id",
-        )?
-        .len()
-            == 1
-            && log_first(
-                root,
-                &format!(
-                    "({lineage} ~ ::@) & ::visible_heads() & description(substring:\"{}\")",
-                    workspace.copy_marker
-                ),
-                "commit_id",
-            )?
-            .is_some()
-        {
-            abandon_run_owned(workspace, outcome, &copy_alone)?;
-        }
-    }
+    clean_up(workspace, outcome, &lineage, Some(&final_commit))?;
+    read_conflict(workspace, outcome)?;
     outcome.end_operation = Some(latest_operation(root)?);
     removal?;
     if workspace.path.exists() {
@@ -1425,9 +1538,15 @@ mod tests {
             "rune run sol@claude: council/sol\n\nbase copy for run-1-2\n"
         );
         assert!(!copy.contains(&result_marker("run-1-2")));
+        // The lookup matches the whole description, so a run name that is
+        // a prefix of another's never finds the other's commit.
         assert_eq!(
-            marker_revset(&copy_marker("run-1-2")),
-            "description(substring:\"base copy for run-1-2\")"
+            description_revset(&copy),
+            "description(exact:\"rune run sol@claude: council/sol\\n\\nbase copy for run-1-2\\n\")"
+        );
+        assert_eq!(
+            jj_string("say \"hi\" \\ twice\n"),
+            "\"say \\\"hi\\\" \\\\ twice\\n\""
         );
     }
 
