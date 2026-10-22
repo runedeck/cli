@@ -254,7 +254,7 @@ kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
 $ sh -c 'jq ".hooks.PreToolUse[0].hooks[0].timeout = 99" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json && cp -f home/.claude/settings.json before.json && cp -f home/.codex/hooks.json before-codex.json'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: /private/tmp/claude-501/rune-proof-37402-harness-hook-dispatch-install-owns-its-entries-and-nothing-else-owned-entry-edited-by-hand-181f3778-68-0/home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
+  fatal: /private/tmp/claude-501/rune-proof-33022-one-dispatcher-runs-every-hook-install-owns-its-entries-and-nothing-else-owned-entry-edited-by-hand-2fc35f08-68-0/home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
 # both tables are byte for byte what they were before the refused install
 $ sh -c 'cmp home/.claude/settings.json before.json && cmp home/.codex/hooks.json before-codex.json && echo unchanged'
   unchanged
@@ -271,7 +271,7 @@ $ jq -c '.harnesses.claude.adopted[] | select(.by == "git-ai") | .event' state/h
 ## one-dispatcher-runs-every-hook#install-adopts-predecessors-and-migrates-legacy-entries/legacy-dispatcher-in-the-codex-config
 kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^legacy\|^trust"'
-  legacy: /private/tmp/claude-501/rune-proof-37402-harness-hook-dispatch-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-1db7a2b0-79-0/home/.codex/config.toml:7: `sh /Users/x/.sd/hook PreToolUse` is now the legacy sd hook handler; remove it from config.toml by hand, rune does not rewrite that file
+  legacy: /private/tmp/claude-501/rune-proof-33022-one-dispatcher-runs-every-hook-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-33f2dfb8-79-0/home/.codex/config.toml:7: `sh /Users/x/.sd/hook PreToolUse` is now the legacy sd hook handler; remove it from config.toml by hand, rune does not rewrite that file
   trust: codex binds trust to each hook's hash: run `/hooks` in codex and accept the rune entries, or they stay inactive
 $ jq -r '.hooks.PreToolUse[0].hooks[0].command' home/.codex/hooks.json
   /Users/N4M3Z/Developer/runedeck/cli/.workspaces/hooks-060/target-hooks/debug/rune hook run --harness codex --native-event PreToolUse

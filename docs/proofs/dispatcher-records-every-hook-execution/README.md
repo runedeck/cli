@@ -1,9 +1,9 @@
 ---
 type: proof
 change: dispatcher-records-every-hook-execution
-head: 328a51d72b9581ea381993af14156dc6f7ebfe82
-recorded: 2026-10-22
-transcript: bbcdd43aec84fa660001f8a9ea63e5a2b0fc205ec3a28b6997f8fc949c51974c
+head: b973dea83fe0861071f86f907492f2e50713699f
+recorded: 2026-10-24
+transcript: 0cf39ed9fc74cb9117a47985f602390c659e2a48511663cf51796401042a1523
 scenes:
 - scenario: dispatcher-records-every-hook-execution#the-hook-dispatcher-records-every-hook-execution/two-hooks-run-on-one-event
   kind: check
