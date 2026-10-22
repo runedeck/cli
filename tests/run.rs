@@ -2881,6 +2881,69 @@ fn artifact_copy_failure_after_the_run_keeps_the_workspace_object() {
 
 #[cfg(unix)]
 #[test]
+fn a_sigterm_during_an_isolated_run_still_finishes_the_workspace() {
+    use std::time::{Duration, Instant};
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let marker = home.path().join("harness-started");
+    // The harness edits a file, says it is up, then waits to be stopped.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            "#!/bin/sh\nprintf 'partial\\n' > partial.md\ntouch '{}'\nsleep 10\n",
+            marker.display()
+        ),
+    );
+
+    let started = Instant::now();
+    let child = spawn_seat(
+        home.path(),
+        state.path(),
+        repo,
+        provider.to_str().expect("provider path"),
+        "stopped",
+    );
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the harness never started"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let delivered = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(delivered.success(), "kill failed");
+    let output = child.wait_with_output().expect("rune output");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(143),
+        "stdout: {printed}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_str(printed.trim()).expect("run JSON");
+    assert_eq!(result["kind"], "signal", "{printed}");
+    assert_eq!(result["workspace"]["kept"], true, "{printed}");
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id");
+    assert_eq!(
+        changed_files(home.path(), repo, change_id),
+        ["A partial.md"]
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    assert!(!repository.path().join("partial.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");

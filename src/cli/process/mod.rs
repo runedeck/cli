@@ -282,6 +282,31 @@ impl Drop for SignalFlags {
     }
 }
 
+/// A watch on SIGINT and SIGTERM outside a supervised child: while it
+/// lives, a signal sets a flag instead of ending the process, so a caller
+/// that holds state to take down (a run's jj workspace) finishes first and
+/// ends with the signal's code after. Dropping it removes the watch.
+pub(crate) struct SignalWatch(SignalFlags);
+
+impl SignalWatch {
+    pub(crate) fn install() -> Result<Self, String> {
+        SignalFlags::register()
+            .map(Self)
+            .map_err(|failure| failure.to_string())
+    }
+
+    /// The signal received so far, SIGINT first.
+    pub(crate) fn received(&self) -> Option<i32> {
+        self.0.received()
+    }
+
+    /// Forget the signal received so far, so one that arrives later counts
+    /// anew.
+    pub(crate) fn clear(&self) {
+        self.0.clear();
+    }
+}
+
 fn spawn_command(request: &ProcessRequest) -> Command {
     let mut command = Command::new(&request.binary);
     command.args(&request.args);

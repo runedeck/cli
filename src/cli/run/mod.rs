@@ -1,5 +1,5 @@
 use crate::cli::launch;
-use crate::cli::process::{ProcessFailure, ProcessTermination};
+use crate::cli::process::{ProcessFailure, ProcessTermination, SignalWatch};
 use crate::cli::surface::{
     PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, clean_config_keys,
     effective_env, filter_surface_args, invoke_surface, output_tail, parent_session_isolation,
@@ -308,9 +308,17 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             .map_err(|error| error.to_string())?;
     }
     // The workspace is the harness's repository; the caller's checkout
-    // stays out of the run.
-    let workspace = isolation.as_ref().map(workspace::prepare).transpose()?;
-    let repository = workspace.as_ref().map_or_else(
+    // stays out of the run. From here to the finish a signal only sets a
+    // flag, and a panic or an early return drops the guard, which takes
+    // the workspace down: nothing the harness wrote is left behind.
+    let watch = isolation
+        .as_ref()
+        .map(|_| SignalWatch::install())
+        .transpose()?;
+    let mut isolated = Isolated {
+        workspace: isolation.as_ref().map(workspace::prepare).transpose()?,
+    };
+    let repository = isolated.workspace.as_ref().map_or_else(
         || invocation.repository.clone(),
         |workspace| workspace.path.clone(),
     );
@@ -323,22 +331,31 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     // The wall clock beside the monotonic one: a file the run created is
     // told from an older one by its modification time.
     let started_at = SystemTime::now();
-    let result = invoke_surface(&invocation);
+    // A signal that arrived while the workspace was made stops the run
+    // before the harness starts: the workspace is finished, the signal is
+    // reported, and the exit code is the signal's.
+    let result = match watch.as_ref().and_then(SignalWatch::received) {
+        Some(signal) => Err(stopped_before_start(signal)),
+        None => invoke_surface(&invocation),
+    };
+    // A signal during the harness run went to the harness and is in the
+    // result. One during the finish is read after it.
+    if let Some(watch) = &watch {
+        watch.clear();
+    }
     // On every outcome, a forced stop included: the files are recorded, the
     // workspace is forgotten, and an empty change leaves no trace.
-    let isolated = workspace
-        .as_ref()
-        .map(|workspace| (workspace, workspace::finish(workspace)));
-    let workspace_json = isolated
+    let finished = isolated.finish();
+    let workspace_json = finished
         .as_ref()
         .map_or(Value::Null, |(workspace, outcome)| {
             workspace_json(workspace, outcome)
         });
-    let workspace_lines = isolated
+    let workspace_lines = finished
         .as_ref()
         .map(|(workspace, outcome)| workspace_lines(workspace, outcome))
         .unwrap_or_default();
-    match result {
+    let mut outcome = match result {
         Ok(reply) => {
             if !reply.stderr.is_empty() {
                 eprint!("{}", reply.stderr);
@@ -349,13 +366,12 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             // Before `clean_state` drops: a clean run's files live inside it.
             // A copy that fails keeps the workspace object: the change the
             // run left is named whatever happens after it.
-            let artifacts = match collect_artifacts(
+            match collect_artifacts(
                 options,
                 &invocation,
                 reply.conversation_id.as_deref(),
                 started_at,
             ) {
-                Ok(artifacts) => artifacts,
                 Err(message) => {
                     let mut outcome = configuration_outcome(options, message.into());
                     if let Some(object) = outcome.json.as_object_mut() {
@@ -367,48 +383,50 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                             text.push_str(line);
                         }
                     }
-                    return Ok(outcome);
+                    outcome
                 }
-            };
-            if !options.json {
-                for artifact in &artifacts {
-                    eprintln!("artifact: {artifact}");
-                }
-                for line in &workspace_lines {
-                    eprintln!("{line}");
+                Ok(artifacts) => {
+                    if !options.json {
+                        for artifact in &artifacts {
+                            eprintln!("artifact: {artifact}");
+                        }
+                        for line in &workspace_lines {
+                            eprintln!("{line}");
+                        }
+                    }
+                    Outcome {
+                        exit_code: 0,
+                        json: json!({
+                            "ok": true,
+                            "kind": "success",
+                            "tool": resolved.tool,
+                            "requested_route": options.tool,
+                            "requested_provider": options.tool,
+                            "resolved_route": resolved.tool,
+                            "resolved_model": invocation.model,
+                            "resolved_binary": invocation.binary.to_string_lossy(),
+                            "model": invocation.model,
+                            "text": reply.text,
+                            "duration_ms": started.elapsed().as_millis(),
+                            "clean": options.clean,
+                            "session_name": options.session_name.as_deref(),
+                            "session_name_flag": session_name_flag(invocation.surface),
+                            "usage": {
+                                "input_tokens": Value::Null,
+                                "cache_creation_input_tokens": Value::Null,
+                                "cache_read_input_tokens": Value::Null,
+                                "output_tokens": reply.completion_tokens,
+                                "total_tokens": Value::Null,
+                            },
+                            "completion_tokens": reply.completion_tokens,
+                            "warnings": filtered.warnings,
+                            "artifacts": artifacts,
+                            "workspace": workspace_json,
+                        }),
+                        text: Text::Stdout(reply.text),
+                    }
                 }
             }
-            Ok(Outcome {
-                exit_code: 0,
-                json: json!({
-                    "ok": true,
-                    "kind": "success",
-                    "tool": resolved.tool,
-                    "requested_route": options.tool,
-                    "requested_provider": options.tool,
-                    "resolved_route": resolved.tool,
-                    "resolved_model": invocation.model,
-                    "resolved_binary": invocation.binary.to_string_lossy(),
-                    "model": invocation.model,
-                    "text": reply.text,
-                    "duration_ms": started.elapsed().as_millis(),
-                    "clean": options.clean,
-                    "session_name": options.session_name.as_deref(),
-                    "session_name_flag": session_name_flag(invocation.surface),
-                    "usage": {
-                        "input_tokens": Value::Null,
-                        "cache_creation_input_tokens": Value::Null,
-                        "cache_read_input_tokens": Value::Null,
-                        "output_tokens": reply.completion_tokens,
-                        "total_tokens": Value::Null,
-                    },
-                    "completion_tokens": reply.completion_tokens,
-                    "warnings": filtered.warnings,
-                    "artifacts": artifacts,
-                    "workspace": workspace_json,
-                }),
-                text: Text::Stdout(reply.text),
-            })
         }
         Err(failure) => {
             let mut json = failure_json(&resolved.tool, &failure);
@@ -420,11 +438,64 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                 text.push('\n');
                 text.push_str(line);
             }
-            Ok(Outcome {
+            Outcome {
                 exit_code: failure_exit_code(&failure),
                 json,
                 text: Text::Stderr(text),
-            })
+            }
+        }
+    };
+    // A signal that arrived during the finish was deferred until the
+    // workspace was down: the result is whole, and the process ends with
+    // the signal's code.
+    if let Some(signal) = watch.as_ref().and_then(SignalWatch::received) {
+        outcome.exit_code = 128 + signal;
+        if let Some(object) = outcome.json.as_object_mut() {
+            object.insert("stopped_by_signal".to_string(), json!(signal));
+        }
+        eprintln!("stopped by signal {signal} after the run; the workspace was finished first");
+    }
+    Ok(outcome)
+}
+
+/// The failure for a signal that arrived before the harness started: the
+/// signal's kind and exit code, with a note that nothing ran.
+fn stopped_before_start(signal: i32) -> SurfaceFailure {
+    SurfaceFailure::Noted {
+        inner: Box::new(SurfaceFailure::from(ProcessFailure::ForwardedSignal {
+            signal,
+            stdout: String::new(),
+            stderr: String::new(),
+        })),
+        note: format!(
+            "signal {signal} arrived while the workspace was made; the harness never started, and the workspace was finished"
+        ),
+    }
+}
+
+/// The run's workspace, taken down whatever happens after `prepare`. The
+/// normal path calls `finish` and reports what it learned. A panic or an
+/// early return drops the guard, which finishes the workspace and prints
+/// the report on stderr, so no harness file is lost and no workspace
+/// stays tracked.
+struct Isolated {
+    workspace: Option<workspace::Workspace>,
+}
+
+impl Isolated {
+    fn finish(&mut self) -> Option<(workspace::Workspace, workspace::Outcome)> {
+        let workspace = self.workspace.take()?;
+        let outcome = workspace::finish(&workspace);
+        Some((workspace, outcome))
+    }
+}
+
+impl Drop for Isolated {
+    fn drop(&mut self) {
+        if let Some((workspace, outcome)) = self.finish() {
+            for line in workspace_lines(&workspace, &outcome) {
+                eprintln!("{line}");
+            }
         }
     }
 }
