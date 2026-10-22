@@ -61,20 +61,30 @@ impl AccessMode {
     }
 }
 
-/// The refusal of a harness that cannot run without tools under answer-only
-/// mode: codex, grok and agy have no switch for it. Claude and `OpenCode` pass.
-fn refuse_answer_only(invocation: &SurfaceInvocation) -> Result<(), SurfaceFailure> {
-    let cannot = matches!(
-        invocation.surface,
-        Surface::Codex | Surface::Grok | Surface::Agy
-    );
-    if invocation.mode == AccessMode::AnswerOnly && cannot {
-        return Err(SurfaceFailure::Arguments(format!(
+/// Why `surface` cannot take `mode`, else `None`. Codex, grok and agy have
+/// no switch for answer-only. agy cannot enforce read-only access: it wrote
+/// files in `--mode plan`, and with a settings file that denied every write
+/// (experiments of 2026-10-22), so it runs in workspace-write mode only,
+/// where its own jj workspace takes the edits.
+pub(crate) fn unsupported_mode(surface: Surface, mode: AccessMode) -> Option<String> {
+    match (surface, mode) {
+        (Surface::Codex | Surface::Grok | Surface::Agy, AccessMode::AnswerOnly) => Some(format!(
             "answer-only mode needs a harness that runs without tools (claude or opencode); {} cannot switch its tools off",
-            surface_name(invocation.surface)
-        )));
+            surface_name(surface)
+        )),
+        (Surface::Agy, AccessMode::ReadOnly) => Some(
+            "agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace"
+                .to_string(),
+        ),
+        _ => None,
     }
-    Ok(())
+}
+
+/// The refusal of a mode the harness cannot take, at the surface, so no
+/// argument builder runs for it.
+fn refuse_unsupported_mode(invocation: &SurfaceInvocation) -> Result<(), SurfaceFailure> {
+    unsupported_mode(invocation.surface, invocation.mode)
+        .map_or(Ok(()), |message| Err(SurfaceFailure::Arguments(message)))
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +218,16 @@ const ALLOWLIST_SIGNATURES: &[&str] = &[
     "Connection blocked by network allowlist",
 ];
 
+/// The hint for a failure: a known sandbox denial, a network allowlist
+/// block, or agy's headless soft-deny, read from stderr and the harness's
+/// own errors.
 fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<String> {
+    let texts = || {
+        stderr
+            .iter()
+            .copied()
+            .chain(harness_errors.iter().map(String::as_str))
+    };
     SANDBOX_HINTS
         .iter()
         .find(|(signature, source, _)| {
@@ -217,14 +236,46 @@ fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<String> {
                     && harness_errors.iter().any(|text| text.contains(signature)))
         })
         .map(|(_, _, hint)| (*hint).to_string())
-        .or_else(|| {
-            allowlist_hint(
-                stderr
-                    .iter()
-                    .copied()
-                    .chain(harness_errors.iter().map(String::as_str)),
-            )
+        .or_else(|| allowlist_hint(texts()))
+        .or_else(|| soft_deny_hint(texts()))
+}
+
+/// The line headless agy writes to its log when it denies a tool call it
+/// cannot confirm, after the glog prefix:
+/// `Print mode: soft-denying tool confirmation "RunCommand" at step 5`.
+const AGY_SOFT_DENY: &str = "soft-denying tool confirmation";
+
+/// The soft-deny lines of agy's log, each without its glog prefix.
+fn agy_soft_denials(log: &str) -> Vec<String> {
+    log.lines()
+        .filter(|line| line.contains(AGY_SOFT_DENY))
+        .map(|line| {
+            line.find("Print mode:")
+                .map_or(line.trim(), |at| line[at..].trim())
+                .to_string()
         })
+        .collect()
+}
+
+/// The sentence for agy's headless soft-deny, naming the denied tool: a
+/// shell command for `RunCommand`, the tool's own name otherwise.
+fn soft_deny_hint<'a>(texts: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let text = texts
+        .into_iter()
+        .find(|text| text.contains(AGY_SOFT_DENY))?;
+    let tool = text
+        .split_once(AGY_SOFT_DENY)
+        .and_then(|(_, rest)| rest.trim_start().strip_prefix('"'))
+        .and_then(|rest| rest.split_once('"'))
+        .map(|(tool, _)| tool);
+    let call = match tool {
+        Some("RunCommand") => "a shell command (RunCommand)".to_string(),
+        Some(tool) => format!("its {tool} call"),
+        None => "a tool call".to_string(),
+    };
+    Some(format!(
+        "agy denied {call} in headless mode, which cannot ask for a tool confirmation: tell the model to read with its file tools, or run the prompt in an interactive agy session"
+    ))
 }
 
 /// The sentence for a network allowlist block, naming the blocked host when
@@ -1343,6 +1394,122 @@ fn copy_opencode_route_config(
     })
 }
 
+/// The owner's grok configuration, when there is one.
+fn read_grok_config(source: &Path) -> Result<Option<toml::Value>, SurfaceFailure> {
+    let text = match std::fs::read_to_string(source) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(SurfaceFailure::Io(format!(
+                "cannot read Grok configuration {}: {error}",
+                source.display()
+            )));
+        }
+    };
+    toml::from_str(&text).map(Some).map_err(|error| {
+        SurfaceFailure::Arguments(format!(
+            "cannot parse Grok configuration {}: {error}",
+            source.display()
+        ))
+    })
+}
+
+/// The `env_key` entries of a grok `model` table, and nothing else: the
+/// name of the environment variable that holds each model's API key. A
+/// model id with a dot that was written unquoted nests one table deeper,
+/// so the walk recurses. Every other table of the owner's file (`cli`,
+/// `marketplace`, `ui`, `sandbox`, `shell_environment_policy`, `tools`,
+/// `session`, `telemetry`, `permission`) stays with the owner.
+fn grok_env_keys_only(table: &toml::map::Map<String, toml::Value>) -> Option<toml::Value> {
+    let mut kept = toml::map::Map::new();
+    if let Some(env_key) = table.get("env_key").filter(|value| value.is_str()) {
+        kept.insert("env_key".to_string(), env_key.clone());
+    }
+    for (key, value) in table {
+        if let Some(inner) = value.as_table()
+            && let Some(inner_kept) = grok_env_keys_only(inner)
+        {
+            kept.insert(key.clone(), inner_kept);
+        }
+    }
+    (!kept.is_empty()).then_some(toml::Value::Table(kept))
+}
+
+/// The dotted names of the keys a clean grok run keeps, `model.<id>.env_key`.
+fn grok_kept_key_names(prefix: &str, value: &toml::Value) -> Vec<String> {
+    let Some(table) = value.as_table() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for (key, inner) in table {
+        let path = format!("{prefix}.{key}");
+        if key == "env_key" && inner.is_str() {
+            names.push(path);
+        } else {
+            names.extend(grok_kept_key_names(&path, inner));
+        }
+    }
+    names
+}
+
+/// The clean grok `model` table from the owner's configuration, with the
+/// names of the kept keys. Empty without a configuration or a key map.
+fn grok_clean_model_table(
+    source: &Path,
+) -> Result<Option<(toml::Value, Vec<String>)>, SurfaceFailure> {
+    let Some(config) = read_grok_config(source)? else {
+        return Ok(None);
+    };
+    let kept = config
+        .get("model")
+        .and_then(toml::Value::as_table)
+        .and_then(grok_env_keys_only);
+    Ok(kept.map(|models| {
+        let names = grok_kept_key_names("model", &models);
+        (models, names)
+    }))
+}
+
+/// Write the clean grok configuration: the `model.<id>.env_key` entries
+/// alone. Nothing is written without a key map, and the kept key names
+/// come back for the result.
+fn copy_grok_model_keys(source: &Path, target: &Path) -> Result<Vec<String>, SurfaceFailure> {
+    let Some((models, names)) = grok_clean_model_table(source)? else {
+        return Ok(Vec::new());
+    };
+    let mut clean = toml::map::Map::new();
+    clean.insert("model".to_string(), models);
+    let rendered = toml::to_string(&toml::Value::Table(clean)).map_err(|error| {
+        SurfaceFailure::Arguments(format!("cannot render Grok clean configuration: {error}"))
+    })?;
+    std::fs::write(target, rendered).map_err(|error| {
+        SurfaceFailure::Io(format!(
+            "cannot write Grok clean configuration {}: {error}",
+            target.display()
+        ))
+    })?;
+    Ok(names)
+}
+
+/// The owner's grok configuration file.
+fn grok_config_source() -> Result<PathBuf, SurfaceFailure> {
+    dirs::home_dir()
+        .map(|home| home.join(".grok/config.toml"))
+        .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))
+}
+
+/// The names of the configuration keys a clean run of `surface` keeps
+/// from the owner's files, for the dry run: grok's `model.<id>.env_key`
+/// entries. The other surfaces keep no configuration keys this way.
+pub(crate) fn clean_config_keys(surface: Surface) -> Result<Vec<String>, SurfaceFailure> {
+    if surface != Surface::Grok {
+        return Ok(Vec::new());
+    }
+    Ok(grok_clean_model_table(&grok_config_source()?)?
+        .map(|(_, names)| names)
+        .unwrap_or_default())
+}
+
 pub(crate) fn prepare_clean_state(
     surface: Surface,
     root: &Path,
@@ -1368,7 +1535,11 @@ pub(crate) fn prepare_clean_state(
                     target_root.display()
                 ))
             })?;
-            copy_optional_auth_file(&source, &target_root.join("auth.json"), "Grok")
+            copy_optional_auth_file(&source, &target_root.join("auth.json"), "Grok")?;
+            // The model key map alone: without it a clean run is "Not
+            // signed in", and the rest of the owner's file stays home.
+            copy_grok_model_keys(&grok_config_source()?, &target_root.join("config.toml"))?;
+            Ok(())
         }
         Surface::Opencode => {
             let source_config_root = std::env::var_os("XDG_CONFIG_HOME")
@@ -1532,7 +1703,7 @@ const SCRATCH_PLACEHOLDER: &str = "<scratch>";
 pub(crate) fn planned_request(
     invocation: &SurfaceInvocation,
 ) -> Result<ProcessRequest, SurfaceFailure> {
-    refuse_answer_only(invocation)?;
+    refuse_unsupported_mode(invocation)?;
     let planned = SurfaceInvocation {
         prompt: PROMPT_PLACEHOLDER.to_string(),
         system_prompt: if invocation.system_prompt.trim().is_empty() {
@@ -1553,7 +1724,7 @@ pub(crate) fn planned_request(
             Some(format!("{}\n", combined_prompt(&planned)).into_bytes()),
         ),
         Surface::Grok => (grok_args(&planned, &scratch.join("prompt.txt")), None),
-        Surface::Agy => (agy_args(&planned), None),
+        Surface::Agy => (agy_args(&planned, &scratch.join("agy.log")), None),
         Surface::Opencode => (opencode_args(&planned), None),
     };
     Ok(process_request(&planned, args, stdin))
@@ -1883,7 +2054,7 @@ fn invoke_codex(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    refuse_answer_only(invocation)?;
+    refuse_unsupported_mode(invocation)?;
     let scratch = create_scratch_directory("codex")?;
     let result = (|| {
         let final_message_path = scratch.join("last-message.txt");
@@ -2002,7 +2173,7 @@ fn invoke_grok(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    refuse_answer_only(invocation)?;
+    refuse_unsupported_mode(invocation)?;
     let scratch = create_scratch_directory("grok")?;
     let result = (|| {
         let prompt_path = scratch.join("prompt.txt");
@@ -2031,7 +2202,15 @@ fn invoke_grok(
     finish_scratch(result, &scratch)
 }
 
-fn agy_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
+/// What every agy run is told before the prompt. Headless agy denies a
+/// shell command it cannot confirm, and the file tools need no
+/// confirmation. Advice to a model, not a guard: the jj workspace is the
+/// guard.
+const AGY_READ_INSTRUCTION: &str = "Read files with your file tools (read, list, search), never with a shell command: this run is headless, and a shell command that needs a confirmation is denied.";
+
+/// The agy argument list. `log_path` receives agy's own log, where a
+/// headless soft-deny is written and nowhere else.
+fn agy_args(invocation: &SurfaceInvocation, log_path: &Path) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("--sandbox"),
         OsString::from("--mode"),
@@ -2039,8 +2218,13 @@ fn agy_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
             AccessMode::ReadOnly | AccessMode::AnswerOnly => "plan",
             AccessMode::WorkspaceWrite => "accept-edits",
         }),
+        OsString::from("--log-file"),
+        log_path.as_os_str().to_os_string(),
         OsString::from("--print"),
-        OsString::from(combined_prompt(invocation)),
+        OsString::from(format!(
+            "{AGY_READ_INSTRUCTION}\n\n{}",
+            combined_prompt(invocation)
+        )),
         OsString::from("--output-format"),
         OsString::from("json"),
     ];
@@ -2063,25 +2247,45 @@ fn invoke_agy(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    refuse_answer_only(invocation)?;
-    let output = require_success(
-        run_process_request(&process_request(invocation, agy_args(invocation), None))?,
-        secrets,
-    )?;
-    let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
-        SurfaceFailure::Reported(format!("agy returned invalid JSON output: {error}"))
-            .with_output(&output, secrets)
-    })?;
-    Ok(SurfaceReply {
-        text: nonempty_text(&response.response, "agy print")
-            .map_err(|failure| failure.with_output(&output, secrets))?,
-        stderr: output.stderr,
-        completion_tokens: response
-            .usage
-            .and_then(|usage| usage.output_tokens)
-            .filter(|tokens| *tokens > 0.0),
-        conversation_id: response.conversation_id.filter(|id| !id.trim().is_empty()),
-    })
+    refuse_unsupported_mode(invocation)?;
+    let scratch = create_scratch_directory("agy")?;
+    let result = (|| {
+        let log_path = scratch.join("agy.log");
+        let run = run_process_request(&process_request(
+            invocation,
+            agy_args(invocation, &log_path),
+            None,
+        ));
+        // The log is read before anything is removed: a headless soft-deny
+        // is agy's own report of why there is no answer, and it goes with
+        // every failure as a harness error.
+        let denials = agy_soft_denials(&std::fs::read_to_string(&log_path).unwrap_or_default());
+        let output = run.map_err(|failure| {
+            SurfaceFailure::from(failure).with_harness_errors(denials.clone())
+        })?;
+        let output = require_success(output, secrets)
+            .map_err(|failure| failure.with_harness_errors(denials.clone()))?;
+        let with_output = |failure: SurfaceFailure| {
+            failure
+                .with_output(&output, secrets)
+                .with_harness_errors(denials.clone())
+        };
+        let response: AgyResponse = serde_json::from_str(&output.stdout).map_err(|error| {
+            with_output(SurfaceFailure::Reported(format!(
+                "agy returned invalid JSON output: {error}"
+            )))
+        })?;
+        Ok(SurfaceReply {
+            text: nonempty_text(&response.response, "agy print").map_err(with_output)?,
+            stderr: output.stderr,
+            completion_tokens: response
+                .usage
+                .and_then(|usage| usage.output_tokens)
+                .filter(|tokens| *tokens > 0.0),
+            conversation_id: response.conversation_id.filter(|id| !id.trim().is_empty()),
+        })
+    })();
+    finish_scratch(result, &scratch)
 }
 
 #[derive(Deserialize)]
@@ -2250,6 +2454,7 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
             "--dangerously-skip-permissions",
             "--disable-slash-commands",
             "--add-dir",
+            "--log-file",
         ],
         Surface::Opencode => &[
             "--dir",

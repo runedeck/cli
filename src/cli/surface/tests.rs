@@ -878,7 +878,7 @@ fn harnesses_that_cannot_drop_their_tools_refuse_answer_only() {
     for surface in [Surface::Codex, Surface::Grok, Surface::Agy] {
         let mut invocation = invocation(surface, &[]);
         invocation.mode = AccessMode::AnswerOnly;
-        let refused = refuse_answer_only(&invocation).expect_err("must refuse");
+        let refused = refuse_unsupported_mode(&invocation).expect_err("must refuse");
         assert!(
             refused
                 .to_string()
@@ -888,7 +888,7 @@ fn harnesses_that_cannot_drop_their_tools_refuse_answer_only() {
     }
     let mut claude = invocation(Surface::Claude, &[]);
     claude.mode = AccessMode::AnswerOnly;
-    assert!(refuse_answer_only(&claude).is_ok());
+    assert!(refuse_unsupported_mode(&claude).is_ok());
 }
 
 fn keys(names: &[&str]) -> Vec<OsString> {
@@ -1712,13 +1712,22 @@ fn planned_request_uses_the_spawn_builders_with_placeholders() {
     );
     assert_eq!(grok.stdin, None);
 
-    let agy = planned_request(&invocation(Surface::Agy, &[])).expect("agy plan");
+    let mut agy_invocation = invocation(Surface::Agy, &[]);
+    agy_invocation.mode = AccessMode::WorkspaceWrite;
+    let agy = planned_request(&agy_invocation).expect("agy plan");
+    let agy_args = strings(&agy.args);
+    let printed = agy_args
+        .windows(2)
+        .find(|pair| pair[0] == "--print")
+        .map(|pair| pair[1].as_str())
+        .expect("a --print value");
+    assert!(printed.starts_with(AGY_READ_INSTRUCTION), "{agy_args:?}");
+    assert!(printed.ends_with("\n\n<prompt>"), "{agy_args:?}");
     assert!(
-        strings(&agy.args)
+        agy_args
             .windows(2)
-            .any(|pair| pair == ["--print", "<prompt>"]),
-        "{:?}",
-        agy.args
+            .any(|pair| pair == ["--log-file", "<scratch>/agy.log"]),
+        "{agy_args:?}"
     );
 
     let codex = planned_request(&invocation(Surface::Codex, &[])).expect("codex plan");
@@ -1753,6 +1762,183 @@ fn planned_request_refuses_what_the_run_refuses() {
             .contains("answer-only mode needs a harness"),
         "{refused}"
     );
+    let read_only_agy = invocation(Surface::Agy, &[]);
+    let refused = planned_request(&read_only_agy).expect_err("read-only agy");
+    assert!(
+        refused
+            .to_string()
+            .contains("agy cannot enforce read-only access"),
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("--mode workspace-write"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn agy_takes_workspace_write_alone_and_is_told_to_read_with_its_file_tools() {
+    assert!(unsupported_mode(Surface::Agy, AccessMode::WorkspaceWrite).is_none());
+    let refusal = unsupported_mode(Surface::Agy, AccessMode::ReadOnly).expect("refused");
+    assert!(
+        refusal.contains("cannot enforce read-only access"),
+        "{refusal}"
+    );
+    assert!(refusal.contains("workspace-write"), "{refusal}");
+    assert!(refusal.contains("jj workspace"), "{refusal}");
+    for surface in [
+        Surface::Claude,
+        Surface::Codex,
+        Surface::Grok,
+        Surface::Opencode,
+    ] {
+        assert_eq!(unsupported_mode(surface, AccessMode::ReadOnly), None);
+    }
+
+    let mut invocation = invocation(Surface::Agy, &[]);
+    invocation.mode = AccessMode::WorkspaceWrite;
+    invocation.system_prompt = "Be brief.".to_string();
+    let args = strings(&agy_args(&invocation, &PathBuf::from("/scratch/agy.log")));
+    assert_eq!(
+        &args[..5],
+        [
+            "--sandbox",
+            "--mode",
+            "accept-edits",
+            "--log-file",
+            "/scratch/agy.log"
+        ]
+    );
+    assert_eq!(args[5], "--print");
+    assert_eq!(
+        args[6],
+        format!("{AGY_READ_INSTRUCTION}\n\nBe brief.\n\nInspect only")
+    );
+    assert_eq!(&args[7..9], ["--output-format", "json"]);
+    // A profile cannot point the log elsewhere.
+    let filtered = filter_surface_args(&super::tests::invocation(
+        Surface::Agy,
+        &["--log-file", "/elsewhere.log", "--verbose"],
+    ));
+    assert_eq!(strings(&filtered.kept), ["--verbose"]);
+}
+
+#[test]
+fn agy_soft_deny_in_its_log_names_the_denied_tool_in_the_hint() {
+    let log = concat!(
+        "I1022 12:32:09.920100    1293 main.go:40] starting\n",
+        "I1022 12:32:09.920149    1293 tool_confirmation_manager.go:212] ",
+        "Print mode: soft-denying tool confirmation \"RunCommand\" at step 5\n",
+        "I1022 12:32:10.000000    1293 main.go:80] done\n",
+    );
+    assert_eq!(
+        agy_soft_denials(log),
+        ["Print mode: soft-denying tool confirmation \"RunCommand\" at step 5"]
+    );
+    assert_eq!(agy_soft_denials("nothing denied\n"), Vec::<String>::new());
+
+    let silent = SurfaceFailure::NoAnswer {
+        message: "agy print produced no final response".to_string(),
+        stdout_tail: "{\"response\":\"\"}".to_string(),
+        stderr_tail: String::new(),
+        harness_errors: agy_soft_denials(log),
+    };
+    let hint = silent.hint().expect("a hint");
+    assert!(hint.contains("shell command"), "{hint}");
+    assert!(hint.contains("RunCommand"), "{hint}");
+    assert!(hint.contains("headless"), "{hint}");
+
+    let other = SurfaceFailure::NoAnswer {
+        message: "agy print produced no final response".to_string(),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        harness_errors: vec![
+            "Print mode: soft-denying tool confirmation \"WriteFile\" at step 2".to_string(),
+        ],
+    };
+    let hint = other.hint().expect("a hint");
+    assert!(hint.contains("its WriteFile call"), "{hint}");
+
+    // The line counts on stderr too, and a run with no denial earns none.
+    let on_stderr = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: "Print mode: soft-denying tool confirmation \"RunCommand\" at step 1"
+            .to_string(),
+        harness_errors: Vec::new(),
+    };
+    assert!(on_stderr.hint().is_some());
+    let plain = SurfaceFailure::NoAnswer {
+        message: "agy print produced no final response".to_string(),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    };
+    assert_eq!(plain.hint(), None);
+}
+
+#[test]
+fn clean_grok_configuration_keeps_only_the_model_key_map() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("config.toml");
+    let target = temporary.path().join("clean.toml");
+    std::fs::write(
+        &source,
+        concat!(
+            "[cli]\nauto_update = true\n\n",
+            "[marketplace]\nurl = \"https://example.test\"\n\n",
+            "[model.\"grok-4.5\"]\nenv_key = \"FAKE_GROK_KEY\"\nbase_url = \"https://api.example.test\"\n\n",
+            "[model.\"grok-4.6\"]\nenv_key = \"FAKE_GROK_KEY_TWO\"\n\n",
+            "[model.local]\nbase_url = \"http://127.0.0.1:1\"\n\n",
+            "[permission]\nallow = [\"Bash\"]\n\n",
+            "[sandbox]\nmode = \"workspace\"\n\n",
+            "[session]\npersist = true\n\n",
+            "[shell_environment_policy]\ninherit = \"all\"\n\n",
+            "[telemetry]\nenabled = true\n\n",
+            "[tools]\nweb = true\n\n",
+            "[ui]\ntheme = \"dark\"\n",
+        ),
+    )
+    .expect("source configuration");
+
+    let kept = copy_grok_model_keys(&source, &target).expect("clean configuration");
+    assert_eq!(kept, ["model.grok-4.5.env_key", "model.grok-4.6.env_key"]);
+    let clean: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&target).expect("target")).expect("valid TOML");
+    let table = clean.as_table().expect("a table");
+    assert_eq!(table.keys().collect::<Vec<_>>(), ["model"]);
+    assert_eq!(
+        clean["model"]["grok-4.5"]["env_key"].as_str(),
+        Some("FAKE_GROK_KEY")
+    );
+    assert_eq!(
+        clean["model"]["grok-4.6"]["env_key"].as_str(),
+        Some("FAKE_GROK_KEY_TWO")
+    );
+    assert!(clean["model"]["grok-4.5"].get("base_url").is_none());
+    assert!(clean["model"].get("local").is_none());
+    for dropped in [
+        "cli",
+        "marketplace",
+        "permission",
+        "sandbox",
+        "session",
+        "shell_environment_policy",
+        "telemetry",
+        "tools",
+        "ui",
+    ] {
+        assert!(clean.get(dropped).is_none(), "{dropped} was kept");
+    }
+
+    // No configuration, no file, no keys.
+    let missing = temporary.path().join("absent.toml");
+    let untouched = temporary.path().join("untouched.toml");
+    assert_eq!(
+        copy_grok_model_keys(&missing, &untouched).expect("no source"),
+        Vec::<String>::new()
+    );
+    assert!(!untouched.exists());
 }
 
 #[test]

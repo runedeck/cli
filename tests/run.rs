@@ -201,7 +201,8 @@ fn a_model_answer_that_quotes_a_sandbox_denial_earns_no_hint_but_stderr_does() {
 #[test]
 fn json_keeps_total_usage_unknown_when_input_usage_is_unknown() {
     let home = tempfile::tempdir().expect("home");
-    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
     let provider = executable_provider(
         home.path(),
         "fake-agy",
@@ -210,7 +211,7 @@ printf '%s\n' '{"response":"provider reply","usage":{"output_tokens":17}}'
 "#,
     );
 
-    let output = rune(home.path())
+    let output = rune_isolated(home.path(), state.path())
         .args([
             "--json",
             "run",
@@ -220,6 +221,8 @@ printf '%s\n' '{"response":"provider reply","usage":{"output_tokens":17}}'
             repository.path().to_str().expect("repository path"),
             "--binary",
             provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
         ])
         .output()
         .expect("run output");
@@ -286,13 +289,15 @@ fn dry_run_without_a_session_name_says_none() {
         .stdout(predicate::str::contains("session_name_flag: --name"));
 }
 
+#[cfg(unix)]
 #[test]
 fn dry_run_reports_a_session_name_the_harness_cannot_take() {
     // agy has no flag for a session name: the plan says so, and nothing is sent.
     let home = tempfile::tempdir().expect("home");
-    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
 
-    rune(home.path())
+    rune_isolated(home.path(), state.path())
         .args([
             "run",
             "agy",
@@ -300,6 +305,8 @@ fn dry_run_reports_a_session_name_the_harness_cannot_take() {
             "--repo",
             repository.path().to_str().expect("repository path"),
             "--dry-run",
+            "--mode",
+            "workspace-write",
             "--session-name",
             "agy/runedeck/mods/council",
         ])
@@ -827,12 +834,14 @@ fn help_keeps_its_own_output_under_json() {
         .stdout(predicate::str::contains("configuration_error").not());
 }
 
+#[cfg(unix)]
 #[test]
 fn dry_run_of_a_prompt_in_argv_prints_the_placeholder() {
     let home = tempfile::tempdir().expect("home");
-    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
 
-    rune(home.path())
+    rune_isolated(home.path(), state.path())
         .args([
             "run",
             "agy",
@@ -840,12 +849,17 @@ fn dry_run_of_a_prompt_in_argv_prints_the_placeholder() {
             "--repo",
             repository.path().to_str().expect("repository path"),
             "--dry-run",
+            "--mode",
+            "workspace-write",
         ])
         .assert()
         .success()
+        // The read instruction comes first, then the prompt placeholder.
         .stdout(predicate::str::contains(
-            "--print <prompt> --output-format json",
+            "--print Read files with your file tools",
         ))
+        .stdout(predicate::str::contains("<prompt> --output-format json"))
+        .stdout(predicate::str::contains("--log-file <scratch>/agy.log"))
         .stdout(predicate::str::contains("stdin: none"))
         .stdout(predicate::str::contains("Review this repository").not());
 }
@@ -1641,7 +1655,8 @@ printf 'x' > "$folder/.user_uploaded/in.png"
 printf '%s\n' '{"response":"drawn","conversation_id":"conv-1"}'
 "#;
 
-/// Run the fake agy against `data` as its data directory. The state
+/// Run the fake agy against `data` as its data directory, in
+/// workspace-write mode (the one agy takes) on a jj repository. The state
 /// directory is pinned to `state` so no test touches the real one.
 #[cfg(unix)]
 fn run_fake_agy(
@@ -1651,13 +1666,10 @@ fn run_fake_agy(
     json: bool,
     extra: &[&str],
 ) -> std::process::Output {
-    let repository = tempfile::tempdir().expect("repository");
+    let repository = jj_repository(home);
     let provider = executable_provider(home, "fake-agy", FAKE_AGY_WITH_ARTIFACTS);
-    let mut command = rune(home);
-    command
-        .env("ANTIGRAVITY_EXECUTABLE_DATA_DIR", data)
-        .env("XDG_STATE_HOME", state)
-        .env_remove("RUNE_STATE_DIR");
+    let mut command = rune_isolated(home, state);
+    command.env("ANTIGRAVITY_EXECUTABLE_DATA_DIR", data);
     if json {
         command.arg("--json");
     }
@@ -1669,6 +1681,8 @@ fn run_fake_agy(
         repository.path().to_str().expect("repository path"),
         "--binary",
         provider.to_str().expect("provider path"),
+        "--mode",
+        "workspace-write",
     ]);
     command.args(extra);
     command.output().expect("run output")
@@ -1809,14 +1823,15 @@ fn grok_run_reports_no_artifacts() {
     assert_eq!(artifacts_of(&output), Vec::<String>::new());
 }
 
+#[cfg(unix)]
 #[test]
 fn dry_run_names_the_artifacts_destination() {
     let home = tempfile::tempdir().expect("home");
-    let repository = tempfile::tempdir().expect("repository");
+    let repository = jj_repository(home.path());
     let state = tempfile::tempdir().expect("state");
     let repo = repository.path().to_str().expect("repository path");
 
-    rune(home.path())
+    rune_isolated(home.path(), state.path())
         .args([
             "run",
             "agy",
@@ -1824,6 +1839,8 @@ fn dry_run_names_the_artifacts_destination() {
             "--repo",
             repo,
             "--dry-run",
+            "--mode",
+            "workspace-write",
             "--artifacts-dir",
             "out",
         ])
@@ -1831,9 +1848,7 @@ fn dry_run_names_the_artifacts_destination() {
         .success()
         .stdout(predicate::str::contains("artifacts_dir: out\n"));
 
-    rune(home.path())
-        .env("XDG_STATE_HOME", state.path())
-        .env_remove("RUNE_STATE_DIR")
+    rune_isolated(home.path(), state.path())
         .args([
             "run",
             "agy",
@@ -1841,6 +1856,8 @@ fn dry_run_names_the_artifacts_destination() {
             "--repo",
             repo,
             "--dry-run",
+            "--mode",
+            "workspace-write",
             "--clean",
         ])
         .assert()
@@ -2528,4 +2545,495 @@ fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
         .assert()
         .success()
         .stdout(predicate::str::contains("The brief text."));
+}
+
+/// A fake harness that leaves a marker beside itself when it starts, so a
+/// refusal "before anything starts" is checked, not assumed.
+#[cfg(unix)]
+fn marking_provider(home: &std::path::Path, name: &str, reply: &str) -> std::path::PathBuf {
+    executable_provider(
+        home,
+        name,
+        &format!(
+            "#!/bin/sh\ntouch \"$(dirname \"$0\")/harness-started\"\nprintf '%s\\n' '{reply}'\n"
+        ),
+    )
+}
+
+#[cfg(unix)]
+fn confirmation_of(output: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout is not one JSON object ({error}): {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+/// A repository folder whose own name is not hidden: the output check
+/// judges hidden folders from the closest permitted root.
+#[cfg(unix)]
+fn plain_repository() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("rune-run-repo-")
+        .tempdir()
+        .expect("repository")
+}
+
+#[cfg(unix)]
+#[test]
+fn output_file_holds_the_result_and_stdout_confirms_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf 'provider reply\\n'\n",
+    );
+    let binary = provider.to_str().expect("provider path");
+    let seat = repository.path().join("council/seat.json");
+    std::fs::create_dir_all(seat.parent().expect("parent")).expect("council");
+    std::fs::write(&seat, "stale").expect("stale file");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let confirmation = confirmation_of(&output);
+    assert_eq!(confirmation["ok"], true, "{confirmation}");
+    assert_eq!(confirmation["kind"], "success", "{confirmation}");
+    assert_eq!(confirmation["exit_code"], 0, "{confirmation}");
+    assert_eq!(confirmation["output"], canonical(&seat), "{confirmation}");
+    assert_eq!(confirmation.as_object().expect("object").len(), 4);
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&seat).expect("seat file"))
+            .expect("one JSON object in the file");
+    assert_eq!(written["kind"], "success", "{written}");
+    assert_eq!(written["text"], "provider reply", "{written}");
+    let mode = std::fs::metadata(&seat)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+    let left: Vec<String> = std::fs::read_dir(seat.parent().expect("parent"))
+        .expect("council")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(left, ["seat.json"], "a temporary file stays behind");
+
+    // Without --json the file holds the answer text, stdout stays empty,
+    // and stderr names the file.
+    let text = repository.path().join("seat.txt");
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+            "--output",
+        ])
+        .arg(&text)
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicate::str::contains(format!(
+            "output: {}\n",
+            canonical(&text)
+        )));
+    assert_eq!(
+        std::fs::read_to_string(&text).expect("text file"),
+        "provider reply\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn timed_out_run_with_an_output_file_writes_the_timeout_object() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf 'partial answer'\nprintf 'still going\\n' >&2\nsleep 5\n",
+    );
+    let seat = repository.path().join("seat.json");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--timeout",
+            "1s",
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(124));
+    let confirmation = confirmation_of(&output);
+    assert_eq!(confirmation["ok"], false, "{confirmation}");
+    assert_eq!(confirmation["kind"], "timeout", "{confirmation}");
+    assert_eq!(confirmation["exit_code"], 124, "{confirmation}");
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&seat).expect("seat file"))
+            .expect("one JSON object in the file");
+    assert_eq!(written["kind"], "timeout", "{written}");
+    assert_eq!(
+        written["details"]["stdout_tail"], "partial answer",
+        "{written}"
+    );
+    assert_eq!(
+        written["details"]["stderr_tail"], "still going",
+        "{written}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+
+    std::fs::create_dir_all(home.path().join(".claude")).expect(".claude");
+    std::fs::create_dir_all(repository.path().join(".git")).expect(".git");
+    let real = repository.path().join("real.json");
+    std::fs::write(&real, "{}").expect("real");
+    let link = repository.path().join("link.json");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    let protected = [
+        home.path().join(".claude/settings.json"),
+        repository.path().join(".git/hooks.json"),
+        link.clone(),
+    ];
+
+    for path in &protected {
+        let output = rune(home.path())
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+                "--output",
+            ])
+            .arg(path)
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(2), "{}", path.display());
+        let result = confirmation_of(&output);
+        assert_eq!(result["kind"], "configuration_error", "{result}");
+        assert!(
+            !marker.exists(),
+            "the harness started for {}",
+            path.display()
+        );
+
+        rune(home.path())
+            .args([
+                "run",
+                "sol@claude",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+                "--output",
+            ])
+            .arg(path)
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr(predicate::str::contains("fatal:"));
+        assert!(
+            !marker.exists(),
+            "the harness started for {}",
+            path.display()
+        );
+    }
+    assert!(!home.path().join(".claude/settings.json").exists());
+    assert!(!repository.path().join(".git/hooks.json").exists());
+    assert_eq!(std::fs::read_to_string(&real).expect("real"), "{}");
+}
+
+#[cfg(unix)]
+#[test]
+fn usage_error_with_an_output_file_writes_nothing() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let seat = repository.path().join("seat.json");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--mode",
+            "bogus",
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(2));
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "configuration_error", "{result}");
+    assert!(!seat.exists(), "a usage error wrote the file");
+}
+
+#[cfg(unix)]
+#[test]
+fn result_file_that_cannot_be_written_prints_the_full_result_and_exits_74() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let folder = repository.path().join("out");
+    std::fs::create_dir_all(&folder).expect("out");
+    // The harness makes the output folder read-only while it runs, so the
+    // path passed the check and the final write fails.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nchmod 555 \"$RUNE_TEST_OUT\"\nprintf 'provider reply\\n'\n",
+    );
+    let seat = folder.join("seat.json");
+
+    let output = rune(home.path())
+        .env("RUNE_TEST_OUT", &folder)
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "success", "{result}");
+    assert_eq!(result["text"], "provider reply", "{result}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot write result file"),
+        "{output:?}"
+    );
+    assert!(!seat.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_agy_run_is_refused_and_names_workspace_write() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = marking_provider(home.path(), "fake-agy", "{\"response\":\"ran\"}");
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+
+    // Read-only is the default mode and the explicit one: both refuse.
+    for mode in [&[][..], &["--mode", "read-only"][..]] {
+        let output = rune(home.path())
+            .args([
+                "--json", "run", "agy", "Review", "--repo", repo, "--binary", binary,
+            ])
+            .args(mode)
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(2), "{mode:?}");
+        let result = confirmation_of(&output);
+        assert_eq!(result["kind"], "configuration_error", "{result}");
+        let message = result["details"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("agy cannot enforce read-only access"),
+            "{message}"
+        );
+        assert!(message.contains("--mode workspace-write"), "{message}");
+        assert!(!marker.exists(), "the harness started");
+    }
+    rune(home.path())
+        .args(["run", "agy", "Review", "--repo", repo, "--binary", binary])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot enforce read-only access"))
+        .stderr(predicate::str::contains("--mode workspace-write"));
+    assert!(!marker.exists(), "the harness started");
+}
+
+#[cfg(unix)]
+#[test]
+fn agy_soft_denial_in_its_log_names_the_denied_tool_in_the_hint() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    // The fake writes agy's own soft-deny line, glog prefix included, to the
+    // log file the runner named, and answers with no response.
+    let provider = executable_provider(
+        home.path(),
+        "fake-agy",
+        r#"#!/bin/sh
+log=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--log-file" ]; then log="$2"; shift; fi
+  shift
+done
+printf '%s\n' 'I1022 12:32:09.920149    1293 tool_confirmation_manager.go:212] Print mode: soft-denying tool confirmation "RunCommand" at step 5' > "$log"
+printf '%s\n' '{"response":""}'
+"#,
+    );
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "agy",
+            "List the files",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(1));
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    let hint = result["hint"].as_str().expect("hint");
+    assert!(hint.contains("shell command"), "{hint}");
+    assert!(hint.contains("headless"), "{hint}");
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["Print mode: soft-denying tool confirmation \"RunCommand\" at step 5"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_grok_run_keeps_only_the_model_key_map() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
+    std::fs::write(
+        home.path().join(".grok/config.toml"),
+        concat!(
+            "[cli]\nauto_update = true\n\n",
+            "[model.\"grok-4.5\"]\nenv_key = \"FAKE_GROK_KEY\"\n\n",
+            "[permission]\nallow = [\"Bash\"]\n\n",
+            "[sandbox]\nmode = \"workspace\"\n\n",
+            "[shell_environment_policy]\ninherit = \"all\"\n\n",
+            "[telemetry]\nenabled = true\n\n",
+            "[ui]\ntheme = \"dark\"\n",
+        ),
+    )
+    .expect("grok configuration");
+    // The fake grok copies the configuration it sees under its HOME beside
+    // itself and answers.
+    let provider = executable_provider(
+        home.path(),
+        "fake-grok",
+        r#"#!/bin/sh
+cp "$HOME/.grok/config.toml" "$(dirname "$0")/seen.toml"
+printf '%s\n' '{"text":"answered"}'
+"#,
+    );
+    let binary = provider.to_str().expect("provider path");
+
+    rune(home.path())
+        .args([
+            "run", "grok", "Review", "--repo", repo, "--binary", binary, "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout("answered\n");
+    let seen = std::fs::read_to_string(home.path().join("seen.toml")).expect("seen config");
+    let seen: toml::Value = toml::from_str(&seen).expect("valid TOML");
+    assert_eq!(
+        seen["model"]["grok-4.5"]["env_key"].as_str(),
+        Some("FAKE_GROK_KEY")
+    );
+    for dropped in [
+        "cli",
+        "permission",
+        "sandbox",
+        "shell_environment_policy",
+        "telemetry",
+        "ui",
+    ] {
+        assert!(
+            seen.get(dropped).is_none(),
+            "{dropped} reached the clean run"
+        );
+    }
+
+    rune(home.path())
+        .args([
+            "run",
+            "grok",
+            "Review",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "clean_config_keys: model.grok-4.5.env_key\n",
+        ))
+        .stdout(predicate::str::contains("FAKE_GROK_KEY").not());
+    rune(home.path())
+        .args(["run", "grok", "Review", "--repo", repo, "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clean_config_keys: none\n"));
 }

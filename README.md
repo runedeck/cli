@@ -389,6 +389,18 @@ Run with no tool at all, for a model that may read the prompt and nothing else (
 rune run kimi@claude --mode answer-only --clean "Which shell idiom cleans a temp file on exit?"
 ```
 
+A clean grok run keeps one thing from `~/.grok/config.toml`: the `model.<id>.env_key` entries, which name the environment variable that holds each model's API key. Without them a clean run is "Not signed in". Every other table (`cli`, `marketplace`, `ui`, `sandbox`, `shell_environment_policy`, `tools`, `session`, `telemetry`, `permission`) stays with you. The dry run lists the kept key names as `clean_config_keys:` and prints no value.
+
+Write the result to a file, so a caller inside a sandbox that treats a redirect as part of the command needs none:
+
+```sh
+rune --json run sol@codex --output council/sol.json --prompt-file brief.md
+```
+
+The file receives the result for every outcome: under `--json` the one JSON object (success, failure, timeout, configuration error, dry run, or check), otherwise the answer text or the text diagnostic with both stream tails and the hint. Under `--json`, stdout carries one confirmation object, `{"ok":…,"kind":…,"exit_code":…,"output":"<absolute path>"}`. Without `--json`, stderr prints `output: <absolute path>`. The path is checked before the harness starts: it must sit inside the repository, the system temporary directory, or the rune state directory, with no hidden folder (`.git`, `.claude`) between that root and the file, and the target must not be a symlink. A refused path is a configuration error with exit 2, and nothing starts. The runner writes an exclusive temporary file (mode 0600) beside the target and renames it over the target, so a reader sees the old result or the new one. When that final write fails, the full result goes to stdout and the exit code is 74.
+
+agy runs in workspace-write mode only. It wrote files in its plan mode and with a settings file that denied every write, so the runner cannot make it read-only: a read-only agy run is refused before anything starts, and the refusal names `--mode workspace-write`, where agy's own jj workspace takes the edits. Every agy prompt starts with an instruction to read with the file tools, because headless agy denies a shell command it cannot confirm. When that happens, agy's log of the run (`--log-file`, in the run's scratch directory) names the denied tool, and the failure's hint says so: `agy denied a shell command (RunCommand) in headless mode`.
+
 Name the harness session, where the harness takes a name (claude `--name`, opencode `run --title`). Codex, agy, and grok take none, and the plan says so:
 
 ```sh

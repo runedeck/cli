@@ -767,7 +767,7 @@ enum Command {
 
     /// Run a coding tool noninteractively with supervised output
     #[command(
-        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default.\n\nSESSION NAMES:\n  --session-name <NAME> goes to claude as --name and to opencode as --title.\n  Codex, agy and grok take no session name; the plan reports it as not sent.\n\nARTIFACTS:\n  An agy run reports the files it left in brain/<conversation_id>/ as\n  artifact: lines on stderr and as `artifacts` in the JSON result.\n  --artifacts-dir <DIR> copies them there; a clean run without it copies\n  them under $XDG_STATE_HOME/rune/artifacts/<conversation_id>/.\n\nPROFILE ARGUMENTS:\n  The run sets the print, output, permission, tool, model, and directory\n  flags itself. A profile value for one of them is dropped with a warning,\n  never passed through. Codex --config and claude --settings are filtered\n  per key: model and access keys are dropped, everything else stays."
+        after_help = "PROMPT SOURCES:\n  rune run sol@claude \"Review this repository\"\n  rune run codex --prompt-file brief.md\n  command cat brief.md | rune run lumo@opencode\n  rune run kimi@claude --check\n\nNo timeout is applied unless --timeout is set. Read-only mode is the default.\nagy takes workspace-write alone: it cannot enforce read-only access.\n\nRESULT FILE:\n  --output <FILE> writes the result there for every outcome, and under\n  --json stdout carries one object with ok, kind, exit_code, and output.\n  FILE must sit inside the repository, the temporary directory, or the\n  rune state directory, under no hidden folder, and not be a symlink.\n\nSESSION NAMES:\n  --session-name <NAME> goes to claude as --name and to opencode as --title.\n  Codex, agy and grok take no session name; the plan reports it as not sent.\n\nARTIFACTS:\n  An agy run reports the files it left in brain/<conversation_id>/ as\n  artifact: lines on stderr and as `artifacts` in the JSON result.\n  --artifacts-dir <DIR> copies them there; a clean run without it copies\n  them under $XDG_STATE_HOME/rune/artifacts/<conversation_id>/.\n\nPROFILE ARGUMENTS:\n  The run sets the print, output, permission, tool, model, and directory\n  flags itself. A profile value for one of them is dropped with a warning,\n  never passed through. Codex --config and claude --settings are filtered\n  per key: model and access keys are dropped, everything else stays."
     )]
     Run {
         /// Coding tool to run, such as `codex` or `sol@claude`.
@@ -833,6 +833,15 @@ enum Command {
         /// them under `$XDG_STATE_HOME/rune/artifacts/<conversation_id>/`.
         #[arg(long, value_name = "DIR")]
         artifacts_dir: Option<std::path::PathBuf>,
+
+        /// Write the result to FILE for every outcome, instead of stdout:
+        /// the JSON object under --json, else the answer or the text error.
+        /// FILE must sit inside the repository, the temporary directory, or
+        /// the rune state directory, under no hidden folder. Under --json,
+        /// stdout then carries one object with `ok`, `kind`, `exit_code`,
+        /// and `output`.
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -2073,6 +2082,7 @@ pub fn run() -> i32 {
             check,
             session_name,
             artifacts_dir,
+            output,
         } => {
             return exit_code(
                 run::execute(&run::RunOptions {
@@ -2088,6 +2098,7 @@ pub fn run() -> i32 {
                     timeout,
                     session_name,
                     artifacts_dir,
+                    output,
                     plan: run::RunPlan::from_flags(dry_run, check),
                     json: args.json,
                 }),

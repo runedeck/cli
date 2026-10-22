@@ -1,9 +1,9 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination};
 use crate::cli::surface::{
-    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, effective_env,
-    filter_surface_args, invoke_surface, output_tail, parent_session_isolation, planned_request,
-    prepare_clean_state, route_keys, session_name_flag,
+    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, clean_config_keys,
+    effective_env, filter_surface_args, invoke_surface, output_tail, parent_session_isolation,
+    planned_request, prepare_clean_state, route_keys, session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -14,7 +14,12 @@ use std::time::{Duration, SystemTime};
 pub(crate) use crate::cli::surface::AccessMode;
 
 mod artifacts;
+mod output;
 mod workspace;
+
+/// `EX_IOERR`: the result could not be written to the file the caller
+/// named, and went to stdout instead.
+const EXIT_OUTPUT_UNWRITABLE: i32 = 74;
 
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
 /// The placeholder the dry run prints for the clean state directory a
@@ -38,6 +43,9 @@ pub(crate) struct RunOptions {
     /// copies them under the user state directory, and any other run leaves
     /// them where the harness put them.
     pub(crate) artifacts_dir: Option<PathBuf>,
+    /// The file the result goes to, for every outcome, instead of stdout.
+    /// Checked before the harness starts (see [`output`]).
+    pub(crate) output: Option<PathBuf>,
     pub(crate) plan: RunPlan,
     pub(crate) json: bool,
 }
@@ -74,44 +82,122 @@ struct Outcome {
 }
 
 /// Where the text form of an outcome goes: a plan or an answer on stdout,
-/// an error on stderr.
+/// an error on stderr, and a configuration error through the CLI's own
+/// `fatal:` printer.
 enum Text {
     Stdout(String),
     Stderr(String),
+    Fatal(String),
+}
+
+impl Text {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Stdout(text) | Self::Stderr(text) | Self::Fatal(text) => text,
+        }
+    }
 }
 
 /// The one printer: every outcome, a configuration error included, is one
-/// JSON object on stdout under `--json`, and text otherwise.
+/// JSON object on stdout under `--json`, and text otherwise. With
+/// `--output`, the same object or text goes to the file, and stdout
+/// carries one confirmation object under `--json`.
 pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
-    match execute_inner(options) {
-        Ok(outcome) => {
+    // The output path is accepted before anything else, so no later
+    // outcome is lost to a bad path, and a bad path starts nothing.
+    let destination = match options
+        .output
+        .as_deref()
+        .map(|path| output::accept(path, &options.repository))
+        .transpose()
+    {
+        Ok(destination) => destination,
+        Err(message) => {
+            return deliver(
+                options,
+                None,
+                configuration_outcome(options, message.into()),
+            );
+        }
+    };
+    let outcome = match execute_inner(options) {
+        Ok(outcome) => outcome,
+        Err(error) => configuration_outcome(options, error),
+    };
+    deliver(options, destination.as_ref(), outcome)
+}
+
+/// A configuration error as an outcome: exit 2, the `configuration_error`
+/// object, and the message for the CLI's fatal printer.
+fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> Outcome {
+    let mut details = json!({ "message": error.message });
+    if let (Some(profiles), Some(details)) = (error.profiles, details.as_object_mut()) {
+        details.insert("profiles".to_string(), json!(profiles));
+    }
+    Outcome {
+        exit_code: 2,
+        json: json!({
+            "ok": false,
+            "kind": "configuration_error",
+            "tool": options.tool,
+            "details": details,
+        }),
+        text: Text::Fatal(error.message),
+    }
+}
+
+/// Print the outcome, or write it to the result file. A file that cannot
+/// be written at the end never loses the result: it goes to stdout whole,
+/// and the exit code is 74.
+fn deliver(
+    options: &RunOptions,
+    destination: Option<&output::Destination>,
+    outcome: Outcome,
+) -> Result<i32, String> {
+    let Some(destination) = destination else {
+        if options.json {
+            println!("{}", outcome.json);
+            return Ok(outcome.exit_code);
+        }
+        return match outcome.text {
+            Text::Stdout(text) => {
+                println!("{text}");
+                Ok(outcome.exit_code)
+            }
+            Text::Stderr(text) => {
+                eprintln!("{text}");
+                Ok(outcome.exit_code)
+            }
+            Text::Fatal(message) => Err(message),
+        };
+    };
+    let body = if options.json {
+        format!("{}\n", outcome.json)
+    } else {
+        format!("{}\n", outcome.text.as_str())
+    };
+    match output::write(destination, &body) {
+        Ok(()) => {
             if options.json {
-                println!("{}", outcome.json);
+                println!(
+                    "{}",
+                    json!({
+                        "ok": outcome.json["ok"],
+                        "kind": outcome.json["kind"],
+                        "exit_code": outcome.exit_code,
+                        "output": destination.path().display().to_string(),
+                    })
+                );
             } else {
-                match outcome.text {
-                    Text::Stdout(text) => println!("{text}"),
-                    Text::Stderr(text) => eprintln!("{text}"),
-                }
+                eprintln!("output: {}", destination.path().display());
             }
             Ok(outcome.exit_code)
         }
-        Err(error) if options.json => {
-            let mut details = json!({ "message": error.message });
-            if let (Some(profiles), Some(details)) = (error.profiles, details.as_object_mut()) {
-                details.insert("profiles".to_string(), json!(profiles));
-            }
-            println!(
-                "{}",
-                json!({
-                    "ok": false,
-                    "kind": "configuration_error",
-                    "tool": options.tool,
-                    "details": details,
-                })
-            );
-            Ok(2)
+        Err(error) => {
+            eprintln!("error: {error}");
+            print!("{body}");
+            Ok(EXIT_OUTPUT_UNWRITABLE)
         }
-        Err(error) => Err(error.message),
     }
 }
 
@@ -138,6 +224,11 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             resolved.tool
         )
     })?;
+    // A mode the harness cannot take is refused here, before a profile's
+    // pre-steps and before any state is prepared: nothing starts.
+    if let Some(message) = crate::cli::surface::unsupported_mode(surface, options.mode) {
+        return Err(message.into());
+    }
     let unsupported = resolved.unsupported_wrappers();
     if !unsupported.is_empty() {
         return Err(format!(
@@ -447,6 +538,13 @@ fn dry_run_outcome(
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
     let artifacts_dir = planned_artifacts_dir(options, invocation.surface)?
         .map(|dir| dir.to_string_lossy().into_owned());
+    // The configuration keys a clean run keeps from the owner's files, by
+    // name: a grok key map names environment variables, never their values.
+    let clean_config_keys = if options.clean {
+        clean_config_keys(invocation.surface).map_err(|failure| failure.to_string())?
+    } else {
+        Vec::new()
+    };
     let parts = launch::DryRunParts {
         tool: &resolved.tool,
         argv: &argv,
@@ -458,7 +556,7 @@ fn dry_run_outcome(
         warnings: &warnings,
     };
     let text = format!(
-        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}\n{}",
+        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}\nclean_config_keys: {}\n{}",
         resolved.format_dry_run_with(&parts),
         stdin.unwrap_or("none"),
         invocation.repository.display(),
@@ -468,6 +566,11 @@ fn dry_run_outcome(
         options.session_name.as_deref().unwrap_or("none"),
         session_name_flag(invocation.surface).unwrap_or("none"),
         artifacts_dir.as_deref().unwrap_or("none"),
+        if clean_config_keys.is_empty() {
+            "none".to_string()
+        } else {
+            clean_config_keys.join(", ")
+        },
         planned_workspace_text(workspace_plan)
     );
     // The launcher's plan object, plus the runner's own fields.
@@ -498,6 +601,7 @@ fn dry_run_outcome(
             ),
             ("clean", json!(options.clean)),
             ("artifacts_dir", json!(artifacts_dir)),
+            ("clean_config_keys", json!(clean_config_keys)),
             ("workspace", planned_workspace_json(workspace_plan)),
         ] {
             object.insert(key.to_string(), value);
