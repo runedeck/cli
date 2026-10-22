@@ -318,9 +318,15 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .as_ref()
         .map(|_| SignalWatch::install())
         .transpose()?;
-    let mut isolated = Isolated {
-        workspace: isolation.as_ref().map(workspace::prepare).transpose()?,
-    };
+    let mut isolated = Isolated { workspace: None };
+    if let Some(plan) = &isolation {
+        // The guard holds the copy from the moment it exists: a failure or
+        // a signal while the workspace is added still abandons it.
+        isolated.workspace = Some(workspace::begin(plan)?);
+        if let Some(workspace) = isolated.workspace.as_mut() {
+            workspace::add(workspace)?;
+        }
+    }
     let repository = isolated.workspace.as_ref().map_or_else(
         || invocation.repository.clone(),
         |workspace| workspace.harness_dir.clone(),
@@ -514,6 +520,8 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         "conflicted": outcome.conflicted,
         "colocated": workspace.colocated,
         "unrecorded": outcome.unrecorded,
+        "outside_changes": outcome.outside_changes,
+        "operation_id": outcome.operation_id,
     });
     if let Some(fields) = object.as_object_mut() {
         if let Some(error) = &outcome.error {
@@ -552,6 +560,12 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
             lines.push("workspace: no file changed, nothing kept".to_string());
         }
         _ => {}
+    }
+    if outcome.outside_changes == Some(true) {
+        lines.push(format!(
+            "warning: commits outside the run changed while it ran (a harness's jj absorb, or your own work); review them with jj op log from operation {}",
+            outcome.operation_id.as_deref().unwrap_or("<unknown>")
+        ));
     }
     let folder = outcome.path.as_deref().unwrap_or(&workspace.path);
     if !outcome.unrecorded.is_empty() {

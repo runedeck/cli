@@ -2604,13 +2604,22 @@ fn caller_keeps_working_while_a_seat_runs_and_a_second_seat_starts() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\n[ \"$SEAT\" = a ] && sleep 3\nprintf 'seat %s\\n' \"$SEAT\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\n[ \"$SEAT\" = a ] && touch \"$HOME/seat-a-started\" && sleep 3\nprintf 'seat %s\\n' \"$SEAT\"\n",
     );
     let binary = provider.to_str().expect("provider path");
     let before = change_ids(home.path(), repo);
 
     let seat_a = spawn_seat(home.path(), state.path(), repo, binary, "a");
-    std::thread::sleep(Duration::from_secs(1));
+    // Seat a's harness marks its start, so the caller's edit comes after
+    // seat a recorded the caller's commits.
+    let started = std::time::Instant::now();
+    while !home.path().join("seat-a-started").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "seat a never started"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
     std::fs::write(
         repository.path().join("brief.md"),
         "the caller writes its brief\n",
@@ -2632,6 +2641,13 @@ fn caller_keeps_working_while_a_seat_runs_and_a_second_seat_starts() {
         assert_eq!(result["workspace"]["kept"], true, "seat {seat}: {result}");
         assert_eq!(
             result["workspace"]["conflicted"], false,
+            "seat {seat}: {result}"
+        );
+        // The caller's snapshot rewrote its working-copy change under seat
+        // a; nothing outside seat b changed while it ran.
+        assert_eq!(
+            result["workspace"]["outside_changes"],
+            seat == "a",
             "seat {seat}: {result}"
         );
         let id = result["workspace"]["change_id"]
@@ -3091,6 +3107,373 @@ fn a_subfolder_repo_starts_the_harness_in_the_matching_subfolder_of_the_workspac
     assert!(summary.contains("crates/core/NEW.md"), "{summary}");
     assert!(summary.contains("crates/core/README.md"), "{summary}");
     assert!(!subfolder.join("NEW.md").exists());
+}
+
+/// One harness that rewrites history inside the workspace, run on a fresh
+/// repository: the result and the repository afterwards.
+#[cfg(unix)]
+fn run_rewriting_harness(
+    home: &std::path::Path,
+    state: &std::path::Path,
+    repository: &std::path::Path,
+    name: &str,
+    script: &str,
+) -> serde_json::Value {
+    let provider = executable_provider(home, name, script);
+    let output = rune_isolated(home, state)
+        .env("CALLER", repository)
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repository.to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{name}: stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("run JSON")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_harness_that_squashes_into_its_base_still_leaves_its_work_in_one_change() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::write(repository.path().join("README.md"), "line one\nline two\n").expect("README");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    let before = change_ids(home.path(), repo);
+
+    for (name, script, expected) in [
+        (
+            "fake-squash-u",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash --use-destination-message >/dev/null 2>&1\nprintf 'done\\n'\n",
+            vec!["A NEW.md"],
+        ),
+        (
+            "fake-squash-m",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash -m 'harness work' >/dev/null 2>&1\nprintf 'done\\n'\n",
+            vec!["A NEW.md"],
+        ),
+        // Abandoning the copy drops the caller's unpushed edits from the
+        // workspace's files: the result shows that as the deletion it is,
+        // for the owner to see in review.
+        (
+            "fake-abandon-parent",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj abandon @- >/dev/null 2>&1\nprintf 'done\\n'\n",
+            vec!["A NEW.md", "D README.md"],
+        ),
+        // absorb moves the edited line into the copy, the only mutable
+        // ancestor the workspace has: the caller's commits are out of its
+        // reach, and the fold still keeps the line.
+        (
+            "fake-absorb",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two HARNESS\\n' > README.md\njj absorb >/dev/null 2>&1\nprintf 'done\\n'\n",
+            vec!["A NEW.md", "M README.md"],
+        ),
+    ] {
+        let result =
+            run_rewriting_harness(home.path(), state.path(), repository.path(), name, script);
+        let workspace = &result["workspace"];
+        assert_eq!(workspace["kept"], true, "{name}: {result}");
+        assert_eq!(workspace["outside_changes"], false, "{name}: {result}");
+        assert!(workspace["error"].is_null(), "{name}: {result}");
+        let change_id = workspace["change_id"].as_str().expect("change id");
+        assert_eq!(
+            changed_files(home.path(), repo, change_id),
+            expected,
+            "{name}"
+        );
+        // The caller's own commits are untouched, and only the run's change
+        // was added.
+        let base = jj(
+            home.path(),
+            &[
+                "-R",
+                repo,
+                "file",
+                "show",
+                "-r",
+                "description(exact:\"base\\n\")",
+                "root:\"README.md\"",
+            ],
+        );
+        assert_eq!(base, "line one\nline two\n", "{name}");
+        assert_eq!(workspace_names(home.path(), repo), ["default"]);
+        assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+        jj(home.path(), &["-R", repo, "abandon", change_id]);
+        assert_eq!(change_ids(home.path(), repo), before, "{name}");
+    }
+}
+
+/// A harness that rewrites one of the caller's commits by id. The shared
+/// store lets it: the workspace's ancestors stop at the copy, so absorb
+/// and squash cannot reach the caller's line, but an explicit revision can.
+#[cfg(unix)]
+const FAKE_REWRITER: &str = "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj describe -r 'description(exact:\"base\\n\")' -m 'rewritten by the harness' >/dev/null 2>&1\nprintf 'done\\n'\n";
+
+#[cfg(unix)]
+#[test]
+fn a_harness_that_rewrites_a_caller_commit_is_reported_with_the_operation() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-rewriter",
+        FAKE_REWRITER,
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    let operation = workspace["operation_id"].as_str().expect("operation id");
+    assert!(operation.len() > 8, "{result}");
+    // The run's change still carries the edit, and the rewrite stands for
+    // the owner to judge: the runner reports, it does not revert.
+    assert_eq!(workspace["kept"], true, "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A NEW.md"]);
+    let rewritten = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "@-",
+            "--no-graph",
+            "-T",
+            "description",
+        ],
+    );
+    assert_eq!(rewritten.trim(), "rewritten by the harness");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    let op_log = jj(
+        home.path(),
+        &["-R", repo, "op", "log", "--no-graph", "-T", "id ++ \"\\n\""],
+    );
+    assert!(
+        op_log.lines().any(|line| line.trim() == operation),
+        "{op_log}"
+    );
+
+    // The text report, on a repository whose base commit is still there to
+    // rewrite.
+    let second = jj_repository(home.path());
+    let second_repo = second.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", second_repo, "commit", "-m", "base"]);
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            second_repo,
+            "--binary",
+            home.path()
+                .join("fake-rewriter")
+                .to_str()
+                .expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("commits outside the run changed"))
+        .stderr(predicate::str::contains("jj op log from operation"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_that_squashes_during_the_run_does_not_stall_the_workspace() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::write(repository.path().join("README.md"), "line one\nline two\n").expect("README");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // The caller edits and squashes into its parent while the harness
+    // works: the copy sits on the immutable base, so nothing rewrites it.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-caller-squash",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two CALLER\\n' > \"$CALLER/README.md\"\njj -R \"$CALLER\" squash >/dev/null 2>&1\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A NEW.md"]);
+    let parents = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            &format!("{change_id}-"),
+            "--no-graph",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    );
+    let caller = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "@",
+            "--no-graph",
+            "-T",
+            "change_id",
+        ],
+    );
+    assert_eq!(parents.trim(), caller.trim(), "{parents}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_colored_jj_configuration_does_not_break_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let config = home.path().join("jj.toml");
+    std::fs::write(
+        &config,
+        "ui.color = \"always\"\ntemplates.commit_summary = '\"<custom summary>\"'\n",
+    )
+    .expect("jj config");
+    let provider = executable_provider(home.path(), "fake-claude", FAKE_EDITOR);
+    let before = change_ids(home.path(), repo);
+
+    let output = rune_isolated(home.path(), state.path())
+        .env("JJ_CONFIG", &config)
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id");
+    assert!(
+        change_id.chars().all(|c| c.is_ascii_lowercase()),
+        "{result}"
+    );
+    assert_eq!(change_ids(home.path(), repo).len(), before.len() + 1);
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sigint_to_the_process_group_during_the_finish_lets_the_finish_complete() {
+    use std::os::unix::process::CommandExt;
+    use std::time::{Duration, Instant};
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let marker = home.path().join("harness-done");
+    // Many files make the finish snapshot take a while: Ctrl-C arrives in
+    // the middle of it.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            "#!/bin/sh\nmkdir many\ni=0\nwhile [ $i -lt 20000 ]; do echo $i > many/f$i.txt; i=$((i+1)); done\ntouch '{}'\nprintf 'done\\n'\n",
+            marker.display()
+        ),
+    );
+
+    let started = Instant::now();
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+        .env("HOME", home.path())
+        .env("CLIPROXY_API_KEY", "test-token")
+        .env("XDG_STATE_HOME", state.path())
+        .env_remove("RUNE_STATE_DIR")
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .expect("rune spawns");
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the harness never finished"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let delivered = std::process::Command::new("kill")
+        .args(["-INT", "--", &format!("-{}", child.id())])
+        .status()
+        .expect("kill runs");
+    assert!(delivered.success(), "kill failed");
+    let output = child.wait_with_output().expect("rune output");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "stdout: {printed}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_str(printed.trim()).expect("run JSON");
+    assert_eq!(result["kind"], "success", "{printed}");
+    assert_eq!(result["stopped_by_signal"], 2, "{printed}");
+    assert_eq!(result["workspace"]["kept"], true, "{printed}");
+    assert!(result["workspace"]["error"].is_null(), "{printed}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
 }
 
 #[cfg(unix)]

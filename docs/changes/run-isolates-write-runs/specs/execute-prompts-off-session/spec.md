@@ -52,11 +52,28 @@ and the session, and name it in the result. Under `--json`, the `workspace` obje
 - **WHEN** a workspace-write run edits a file and then reaches its deadline
 - **THEN** the exit code is 124, the edit is kept in the run's change, and the timeout object names that change
 
+### Requirement: The runner reports repository changes outside the run
+
+The runner MUST build the run's change from the workspace's final files against the copy it started from, so a harness
+that squashes, absorbs, or abandons revisions cannot lose its work. The runner MUST record the repository operation and
+the caller's mutable commits when it creates the workspace. When any of those commits changed by the end of the run, the
+result MUST say so and name the recorded operation, so the owner can find and revert the change in jj's operation log.
+
+#### Scenario: Harness squashes its work into the copy
+
+- **WHEN** the harness edits a file and squashes it into the revision it started from
+- **THEN** the run's change holds the edit, and the result says `kept` is true
+
+#### Scenario: Harness moves a line into a caller commit
+
+- **WHEN** the harness runs `jj absorb`, and a line moves into one of the caller's commits
+- **THEN** the result says that commits outside the run changed, and it names the operation the run started from
+
 ### Requirement: The runner never deletes a file that jj did not record
 
 The runner MUST record every new file that the repository does not ignore, whatever its size. When a file in the
 workspace is still unrecorded, the runner MUST keep the folder, report its path and the unrecorded files in the
-`workspace` object, and still name the change. Files that the repository ignores, such as build output, are removed with
+`workspace` object, and name a change that still exists. Files that the repository ignores, such as build output, are removed with
 the folder. When any step of the finish fails after the change is known, the result MUST still name that change.
 
 #### Scenario: Harness writes a large new file
