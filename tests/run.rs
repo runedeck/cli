@@ -3624,6 +3624,60 @@ printf '%s\n' '{"response":""}'
 
 #[cfg(unix)]
 #[test]
+fn grok_echoing_the_value_of_its_key_variable_leaves_no_trace_in_any_output() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
+    // The key map names a variable whose name looks like no credential.
+    std::fs::write(
+        home.path().join(".grok/config.toml"),
+        "[model.\"grok-4.5\"]\nenv_key = \"GROK_SEAT_HANDLE\"\n",
+    )
+    .expect("grok configuration");
+    let value = "plain-handle-value-7788-with-no-secret-look";
+    // The fake grok echoes the value in its answer and on stderr.
+    let provider = executable_provider(
+        home.path(),
+        "fake-grok",
+        "#!/bin/sh\nprintf '%s\\n' \"{\\\"text\\\":\\\"the handle is $GROK_SEAT_HANDLE\\\"}\"\nprintf 'stderr sees %s\\n' \"$GROK_SEAT_HANDLE\" >&2\n",
+    );
+    let binary = provider.to_str().expect("provider path");
+    let seat = repository.path().join("seat.json");
+
+    let output = rune(home.path())
+        .env("GROK_SEAT_HANDLE", value)
+        .args([
+            "--json", "run", "grok", "Review", "--repo", repo, "--binary", binary, "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!printed.contains(value), "{printed}");
+    assert!(printed.contains("stderr sees <redacted>"), "{printed}");
+    let written = std::fs::read_to_string(&seat).expect("seat file");
+    assert!(!written.contains(value), "{written}");
+    let result: serde_json::Value = serde_json::from_str(&written).expect("one JSON object");
+    assert_eq!(result["text"], "the handle is <redacted>", "{written}");
+
+    rune(home.path())
+        .env("GROK_SEAT_HANDLE", value)
+        .args(["run", "grok", "Review", "--repo", repo, "--binary", binary])
+        .assert()
+        .success()
+        .stdout("the handle is <redacted>\n")
+        .stdout(predicate::str::contains(value).not())
+        .stderr(predicate::str::contains(value).not());
+}
+
+#[cfg(unix)]
+#[test]
 fn clean_grok_run_keeps_only_the_model_key_map() {
     let home = tempfile::tempdir().expect("home");
     let repository = tempfile::tempdir().expect("repository");

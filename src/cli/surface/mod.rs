@@ -627,7 +627,18 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
             }
         }
         Surface::Codex => secrets.extend(assignment_credential_values(&invocation.extra_args)),
-        Surface::Agy | Surface::Grok | Surface::Opencode => {}
+        // The owner's key map names the variable that holds each model's
+        // key, whatever that variable is called: its value is a credential.
+        Surface::Grok => {
+            let names = grok_config_source()
+                .map(|source| grok_key_variable_names(&source))
+                .unwrap_or_default();
+            secrets.extend(names.iter().filter_map(|name| {
+                crate::cli::launch::env_value(&effective, name)
+                    .or_else(|| crate::cli::launch::env_value(&inherited, name))
+            }));
+        }
+        Surface::Agy | Surface::Opencode => {}
     }
     secrets.extend(flag_credential_values(&invocation.extra_args));
     let tokens: Vec<String> = secrets
@@ -1506,6 +1517,27 @@ fn copy_grok_model_keys(source: &Path, target: &Path) -> Result<Vec<String>, Sur
         ))
     })?;
     Ok(names)
+}
+
+/// The names of the environment variables the owner's grok key map points
+/// at: every `env_key` value under `model`. Empty without a readable key
+/// map, since this feeds redaction and never fails a run.
+fn grok_key_variable_names(source: &Path) -> Vec<String> {
+    fn collect(value: &toml::Value, names: &mut Vec<String>) {
+        if let Some(table) = value.as_table() {
+            for (key, inner) in table {
+                match inner.as_str() {
+                    Some(name) if key == "env_key" => names.push(name.to_string()),
+                    _ => collect(inner, names),
+                }
+            }
+        }
+    }
+    let mut names = Vec::new();
+    if let Ok(Some((models, _))) = grok_clean_model_table(source) {
+        collect(&models, &mut names);
+    }
+    names
 }
 
 /// The owner's grok configuration file.
@@ -2517,8 +2549,10 @@ pub(crate) fn invoke_surface(
         Surface::Grok => invoke_grok(invocation, &secrets),
         Surface::Opencode => invoke_opencode(invocation, &secrets),
     };
+    // The answer passes too: a model that echoes a key is still a leak.
     match result {
         Ok(reply) => Ok(SurfaceReply {
+            text: redact_text(&reply.text, &secrets),
             stderr: redact_text(&reply.stderr, &secrets),
             ..reply
         }),

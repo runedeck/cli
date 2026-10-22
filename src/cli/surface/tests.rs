@@ -1942,6 +1942,28 @@ fn clean_grok_configuration_keeps_only_the_model_key_map() {
 }
 
 #[test]
+fn the_grok_key_map_names_the_variables_whose_values_are_credentials() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("config.toml");
+    std::fs::write(
+        &source,
+        concat!(
+            "[model.\"grok-4.5\"]\nenv_key = \"GROK_SEAT_HANDLE\"\n\n",
+            "[model.\"grok-4.6\"]\nenv_key = \"XAI_SECOND_HANDLE\"\nbase_url = \"https://api.example.test\"\n\n",
+            "[model.local]\nbase_url = \"http://127.0.0.1:1\"\n",
+        ),
+    )
+    .expect("source configuration");
+    let mut names = grok_key_variable_names(&source);
+    names.sort();
+    assert_eq!(names, ["GROK_SEAT_HANDLE", "XAI_SECOND_HANDLE"]);
+    assert_eq!(
+        grok_key_variable_names(&temporary.path().join("absent.toml")),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn a_malformed_grok_configuration_names_the_place_and_quotes_nothing() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let source = temporary.path().join("config.toml");
