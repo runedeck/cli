@@ -292,8 +292,11 @@ fn temporary_name(file_name: &OsStr, kind: &str) -> OsString {
 
 /// Write `text` to the checked file in one step: an exclusive 0600
 /// temporary file in the held folder, written, synced, and renamed over
-/// the target relative to that folder. A failure leaves the old file as it
-/// was and no temporary file behind.
+/// the target relative to that folder. The file at the reported path must
+/// then be the file just written: a folder moved aside during the run,
+/// with a new folder and a planted file at the old path, fails here, and
+/// the caller prints the full result instead of a confirmation. A failure
+/// leaves the old file as it was and no temporary file behind.
 pub(crate) fn write(destination: &Destination, text: &str) -> Result<(), String> {
     let folder = &destination.parent;
     let temporary = temporary_name(&destination.file_name, "tmp");
@@ -301,8 +304,14 @@ pub(crate) fn write(destination: &Destination, text: &str) -> Result<(), String>
         let mut file = folder.create_private(&temporary)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
-        drop(file);
-        folder.rename(&temporary, &destination.file_name)
+        folder.rename(&temporary, &destination.file_name)?;
+        let reported = std::fs::symlink_metadata(&destination.target)?;
+        if !same_file(&file.metadata()?, &reported) {
+            return Err(std::io::Error::other(
+                "the file at that path is not the file the runner wrote (the folder moved during the run)",
+            ));
+        }
+        Ok(())
     })();
     if let Err(error) = written {
         let _ = folder.remove(&temporary);
@@ -476,18 +485,43 @@ mod tests {
             accept(&out.join("seat.json"), Some(repository.path())).expect("accepted");
 
         // The accepted folder moves aside and a symlink takes its path: the
-        // write follows the folder, and the symlink's target gets nothing.
+        // write follows the folder, the symlink's target gets nothing, and
+        // the write is reported as failed, because the file at the reported
+        // path is not the one written.
         let moved = repository.path().join("out-moved");
         std::fs::rename(&out, &moved).expect("move");
         let elsewhere = repository.path().join("elsewhere");
         std::fs::create_dir_all(&elsewhere).expect("elsewhere");
         std::os::unix::fs::symlink(&elsewhere, &out).expect("symlink");
-        write(&destination, "result").expect("written");
+        let error = write(&destination, "result").expect_err("write fails");
+        assert!(error.contains("cannot write result file"), "{error}");
         assert_eq!(
             std::fs::read_to_string(moved.join("seat.json")).expect("moved"),
             "result"
         );
         assert!(!elsewhere.join("seat.json").exists());
+
+        // The accepted folder moves aside and a new folder with a planted
+        // file takes its path: the write lands in the moved folder, and the
+        // planted file is reported as not the runner's.
+        let planted = repository.path().join("planted");
+        std::fs::create_dir_all(&planted).expect("planted");
+        let destination =
+            accept(&planted.join("seat.json"), Some(repository.path())).expect("accepted");
+        let aside = repository.path().join("planted-aside");
+        std::fs::rename(&planted, &aside).expect("move");
+        std::fs::create_dir_all(&planted).expect("new folder");
+        std::fs::write(planted.join("seat.json"), "planted").expect("plant");
+        let error = write(&destination, "result").expect_err("write fails");
+        assert!(error.contains("not the file the runner wrote"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(planted.join("seat.json")).expect("planted"),
+            "planted"
+        );
+        assert_eq!(
+            std::fs::read_to_string(aside.join("seat.json")).expect("aside"),
+            "result"
+        );
 
         // The accepted folder is removed and a symlink takes its path: the
         // write fails, and the symlink's target gets nothing.

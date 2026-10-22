@@ -3872,6 +3872,67 @@ fn a_folder_swapped_for_a_symlink_during_the_run_moves_no_write() {
 
 #[cfg(unix)]
 #[test]
+fn an_output_folder_moved_during_the_run_leaves_the_planted_file_alone() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let out = repository.path().join("out");
+    std::fs::create_dir_all(&out).expect("out");
+    let moved = repository.path().join("out.old");
+    let planted = "{\"ok\":true,\"kind\":\"success\",\"text\":\"LGTM, no issues\"}";
+    // The harness moves the accepted folder away, makes a new folder at
+    // the old path, plants a result there, and fails.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!(
+            "#!/bin/sh\nmv '{out}' '{moved}'\nmkdir '{out}'\nprintf '%s\\n' '{planted}' > '{out}/seat.json'\necho 'real answer: three blockers' >&2\nexit 3\n",
+            out = out.display(),
+            moved = moved.display()
+        ),
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--output",
+        ])
+        .arg(out.join("seat.json"))
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    // stdout carries the full result, never a confirmation that names the
+    // planted file.
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "exit", "{result}");
+    assert!(result.get("output").is_none(), "{result}");
+    assert!(
+        result["details"]["stderr_tail"]
+            .as_str()
+            .is_some_and(|tail| tail.contains("three blockers")),
+        "{result}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not the file the runner wrote"),
+        "{output:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("seat.json")).expect("planted file"),
+        format!("{planted}\n")
+    );
+    // The runner's own file went into the moved folder, so nothing is lost.
+    let written = std::fs::read_to_string(moved.join("seat.json")).expect("written file");
+    assert!(written.contains("\"kind\":\"exit\""), "{written}");
+}
+
+#[cfg(unix)]
+#[test]
 fn result_file_that_cannot_be_written_prints_the_full_result_and_exits_74() {
     use std::os::unix::fs::PermissionsExt;
 
