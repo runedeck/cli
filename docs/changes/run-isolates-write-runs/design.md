@@ -33,7 +33,9 @@ is rebased onto the caller's current `@`, and the copy is abandoned. A rebase co
 - `src/cli/run/mod.rs`: workspace-write runs call `prepare` before the spawn and pass the workspace path as the
   invocation's repository, at the subfolder that matches `--repo` when `--repo` lies below the root. The result gains
   the `workspace` object, and the text mode prints one line with the change id.
-- The argv builders for each harness stay unchanged. They already take the repository from the invocation.
+- The argv builders for each harness stay unchanged. They already take the repository from the invocation. The dry run
+  builds its argv with the planned workspace path (at the `--repo` subfolder), so a harness that takes its folder as a
+  flag (`codex -C`, `grok --cwd`, `opencode --dir`) shows the workspace path.
 - `--output` and `--prompt-file` paths resolve against the caller's working directory.
 
 ## Commands

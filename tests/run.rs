@@ -2243,6 +2243,11 @@ fn dry_run_of_a_workspace_write_route_names_the_workspace_and_the_parent() {
             "workspace: {}/rune/workspaces/",
             state.path().display()
         )))
+        // The harness would start in the workspace, so the plan says so.
+        .stdout(predicate::str::contains(format!(
+            "repository: {}/rune/workspaces/",
+            state.path().display()
+        )))
         .stdout(predicate::str::contains(format!(
             "workspace_parent: {}\n",
             parent[0]
@@ -2293,6 +2298,53 @@ fn dry_run_of_a_workspace_write_route_names_the_workspace_and_the_parent() {
         .assert()
         .success()
         .stdout(predicate::str::contains("workspace: none\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn dry_run_of_a_subfolder_route_names_the_workspace_in_the_harness_argv() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    // A harness that takes its folder as an argument gets the workspace
+    // path there, at the subfolder that matches --repo.
+    let subfolder = repository.path().join("crates");
+    std::fs::create_dir_all(&subfolder).expect("subfolder");
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "codex",
+            "Edit the crate",
+            "--repo",
+            subfolder.to_str().expect("subfolder path"),
+            "--dry-run",
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    let argv: Vec<&str> = result["argv"]
+        .as_array()
+        .expect("argv array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let cwd = argv
+        .windows(2)
+        .find(|pair| pair[0] == "-C")
+        .map(|pair| pair[1])
+        .expect("a -C value");
+    assert!(
+        cwd.contains("/rune/workspaces/") && cwd.ends_with("/crates"),
+        "{argv:?}"
+    );
+    assert!(!cwd.starts_with(repo), "{argv:?}");
+    assert_eq!(result["repository"], cwd, "{result}");
+    assert!(!state.path().join("rune/workspaces").exists());
 }
 
 #[cfg(unix)]

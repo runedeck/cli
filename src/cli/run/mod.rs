@@ -612,10 +612,16 @@ fn dry_run_outcome(
     filter_warnings: &[String],
     workspace_plan: Option<&workspace::Plan>,
 ) -> Result<Outcome, String> {
+    // The harness would start in the run's workspace, so the plan's argv
+    // names that path, never the caller's checkout.
     let planned_invocation = SurfaceInvocation {
         clean_state_root: options
             .clean
             .then(|| PathBuf::from(CLEAN_STATE_PLACEHOLDER)),
+        repository: workspace_plan.map_or_else(
+            || invocation.repository.clone(),
+            workspace::Plan::harness_path,
+        ),
         ..invocation.clone()
     };
     let planned = planned_request(&planned_invocation).map_err(|failure| failure.to_string())?;
@@ -642,13 +648,7 @@ fn dry_run_outcome(
     let stdin = planned.stdin.as_ref().map(|_| PROMPT_PLACEHOLDER);
     let artifacts_dir = planned_artifacts_dir(options, invocation.surface)?
         .map(|dir| dir.to_string_lossy().into_owned());
-    // The configuration keys a clean run keeps from the owner's files, by
-    // name: a grok key map names environment variables, never their values.
-    let clean_config_keys = if options.clean {
-        clean_config_keys(invocation.surface).map_err(|failure| failure.to_string())?
-    } else {
-        Vec::new()
-    };
+    let clean_config_keys = planned_clean_config_keys(options, invocation.surface)?;
     let parts = launch::DryRunParts {
         tool: &resolved.tool,
         argv: &argv,
@@ -663,7 +663,7 @@ fn dry_run_outcome(
         "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}\nclean_config_keys: {}\n{}",
         resolved.format_dry_run_with(&parts),
         stdin.unwrap_or("none"),
-        invocation.repository.display(),
+        planned_invocation.repository.display(),
         options.mode.label(),
         duration_label(invocation.timeout),
         duration_label(invocation.native_timeout),
@@ -687,7 +687,7 @@ fn dry_run_outcome(
             ("stdin", json!(stdin)),
             (
                 "repository",
-                json!(invocation.repository.display().to_string()),
+                json!(planned_invocation.repository.display().to_string()),
             ),
             ("mode", json!(options.mode.label())),
             (
@@ -716,6 +716,19 @@ fn dry_run_outcome(
         json,
         text: Text::Stdout(text),
     })
+}
+
+/// The configuration keys a clean run keeps from the owner's files, by
+/// name: a grok key map names environment variables, never their values.
+/// Empty for a run that is not clean.
+fn planned_clean_config_keys(
+    options: &RunOptions,
+    surface: Surface,
+) -> Result<Vec<String>, String> {
+    if !options.clean {
+        return Ok(Vec::new());
+    }
+    clean_config_keys(surface).map_err(|failure| failure.to_string())
 }
 
 /// The files the run created, as absolute path strings for the result:
