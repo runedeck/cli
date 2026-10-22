@@ -21,14 +21,14 @@ on failure. Under `--json`, stdout MUST carry one JSON object with `ok`, `kind`,
 
 The runner MUST check the output path before it starts the harness. The permitted repository root is the
 version-control root of the caller's working directory, never a folder that `--repo` names. The runner MUST refuse with
-exit 2 when the path is outside that root, the system temporary directory, and the rune state directory. It MUST also
+exit 125 when the path is outside that root, the system temporary directory, and the rune state directory. It MUST also
 refuse when the file name or a directory between the root and the file is hidden, when the parent cannot take a new
 file, or when the target exists and is a symlink or not a regular file.
 
 #### Scenario: Output path in a protected place is refused
 
 - **WHEN** the output path is `~/.claude/settings.json`, a path inside `.git`, or a symlink
-- **THEN** the runner refuses before the harness starts, prints a configuration error, and exits 2
+- **THEN** the runner refuses before the harness starts, prints a configuration error, and exits 125
 
 #### Scenario: Caller names a protected folder as the repository
 
@@ -46,12 +46,12 @@ The runner MUST create the result file readable by the owner only. It MUST hold 
 result to a temporary file that it creates exclusively in that folder, and replace the target in one rename relative to
 that folder, so a folder swapped for a symlink during the run cannot move the write. When the final write fails, or the
 file at the output path is not the file the runner wrote, the runner MUST print the full result on stdout and exit with
-code 74.
+code 125.
 
 #### Scenario: Output folder moved during the run
 
 - **WHEN** the harness renames the output folder and plants a file at the output path
-- **THEN** stdout carries the full result, the exit code is 74, and the confirmation names no planted file
+- **THEN** stdout carries the full result, the exit code is 125, and the confirmation names no planted file
 
 #### Scenario: Output file already exists
 
@@ -61,7 +61,7 @@ code 74.
 #### Scenario: Result file cannot be written
 
 - **WHEN** the output directory becomes read-only during the run
-- **THEN** stdout carries the full result object, and the exit code is 74
+- **THEN** stdout carries the full result object, and the exit code is 125
 
 ### Requirement: A read-only agy run is refused
 

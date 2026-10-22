@@ -16,6 +16,21 @@ with `--json` on stdout and diagnostics on stderr.
       names the cause
 - `2`: usage errors (clap: unknown flags, missing arguments).
 
+`rune run` supervises a child, so its exit status follows the POSIX `timeout`
+utility instead:
+
+- the harness's own exit status, `0` on success
+- `124`: the time limit passed
+- `125`: an error of the runner itself: a usage error, a configuration error,
+  a result file it could not write, an output limit it enforced
+- `126`: the harness binary exists but cannot run
+- `127`: the harness binary is not found
+- `128` plus the signal number: a signal ended the harness or the runner
+
+Every `rune run --json` result carries that number as `exit_code`, the result
+file included. `rune run --check` reports a result and supervises nothing:
+`0` served, `1` missing, `2` endpoint failed.
+
 Mutating commands hold a per-target lock (`.rune.lock` in the deploy target)
 for the duration of the write: a second `rune install`, `deploy`, or
 `repair` against the same target fails fast with exit 1 instead of

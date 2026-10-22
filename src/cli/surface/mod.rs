@@ -697,6 +697,7 @@ impl SurfaceFailure {
                         stderr: hide(stderr),
                     },
                     ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
+                    ProcessFailure::NotFound(message) => ProcessFailure::NotFound(hide(message)),
                     ProcessFailure::Wait {
                         message,
                         stdout,

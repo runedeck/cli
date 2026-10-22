@@ -1578,19 +1578,31 @@ pub fn run() -> i32 {
 
     let args = match Cli::try_parse() {
         Ok(args) => args,
-        // A usage error under --json is one JSON object on stdout, with
-        // clap's own exit code; help and version keep their own output.
-        Err(error) if error.use_stderr() && json_requested(std::env::args_os().skip(1)) => {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "ok": false,
-                    "kind": "configuration_error",
-                    "tool": serde_json::Value::Null,
-                    "details": { "message": error.to_string().trim_end() },
-                })
-            );
-            return error.exit_code();
+        // A usage error under --json is one JSON object on stdout; help and
+        // version keep their own output. `rune run` answers 125 for a usage
+        // error, as the POSIX timeout utility does for its own errors, and
+        // every other command keeps clap's exit code.
+        Err(error) if error.use_stderr() => {
+            let code = if run_requested(std::env::args_os().skip(1)) {
+                run::EXIT_RUNNER_ERROR
+            } else {
+                error.exit_code()
+            };
+            if json_requested(std::env::args_os().skip(1)) {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": false,
+                        "kind": "configuration_error",
+                        "tool": serde_json::Value::Null,
+                        "details": { "message": error.to_string().trim_end() },
+                        "exit_code": code,
+                    })
+                );
+            } else {
+                let _ = error.print();
+            }
+            return code;
         }
         Err(error) => error.exit(),
     };
@@ -2085,26 +2097,23 @@ pub fn run() -> i32 {
             artifacts_dir,
             output,
         } => {
-            return exit_code(
-                run::execute(&run::RunOptions {
-                    tool,
-                    prompt,
-                    prompt_file,
-                    system_prompt_file,
-                    binary,
-                    model,
-                    clean,
-                    repository: repo,
-                    mode,
-                    timeout,
-                    session_name,
-                    artifacts_dir,
-                    output,
-                    plan: run::RunPlan::from_flags(dry_run, check),
-                    json: args.json,
-                }),
-                args.json,
-            );
+            return run::execute(&run::RunOptions {
+                tool,
+                prompt,
+                prompt_file,
+                system_prompt_file,
+                binary,
+                model,
+                clean,
+                repository: repo,
+                mode,
+                timeout,
+                session_name,
+                artifacts_dir,
+                output,
+                plan: run::RunPlan::from_flags(dry_run, check),
+                json: args.json,
+            });
         }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
@@ -2329,6 +2338,15 @@ fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {
 fn json_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .any(|argument| argument == "--json")
+}
+
+/// Whether the command line names the `run` subcommand: the first
+/// argument before `--` that is not a flag. The global flags take no
+/// value, so no flag swallows the word after it.
+fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
+    args.take_while(|argument| argument != "--")
+        .find(|argument| !argument.to_string_lossy().starts_with('-'))
+        .is_some_and(|argument| argument == "run")
 }
 
 #[cfg(test)]

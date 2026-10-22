@@ -17,9 +17,18 @@ mod artifacts;
 mod output;
 mod workspace;
 
-/// `EX_IOERR`: the result could not be written to the file the caller
-/// named, and went to stdout instead.
-const EXIT_OUTPUT_UNWRITABLE: i32 = 74;
+/// The runner's exit statuses follow the POSIX `timeout` utility, which
+/// supervises a child as `rune run` does: the harness's own status passes
+/// through, and the codes from 124 up are the runner's. 124 is the time
+/// limit. 125 is an error of the runner itself: a usage or configuration
+/// error, a result file it could not write, an output limit it enforced.
+/// 126 is a harness binary found but not runnable, 127 one not found, and
+/// 128 plus the signal number a signal that ended the harness or the
+/// runner.
+const EXIT_TIMEOUT: i32 = 124;
+pub(crate) const EXIT_RUNNER_ERROR: i32 = 125;
+const EXIT_CANNOT_RUN: i32 = 126;
+const EXIT_NOT_FOUND: i32 = 127;
 
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
 /// The placeholder the dry run prints for the clean state directory a
@@ -101,8 +110,9 @@ impl Text {
 /// The one printer: every outcome, a configuration error included, is one
 /// JSON object on stdout under `--json`, and text otherwise. With
 /// `--output`, the same object or text goes to the file, and stdout
-/// carries one confirmation object under `--json`.
-pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
+/// carries one confirmation object under `--json`. The value is the
+/// process's exit status.
+pub(crate) fn execute(options: &RunOptions) -> i32 {
     // The output path is accepted before anything else, so no later
     // outcome is lost to a bad path, and a bad path starts nothing.
     // The permitted repository is the one the caller works in, read from
@@ -130,7 +140,7 @@ pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
     deliver(options, destination.as_ref(), outcome)
 }
 
-/// A configuration error as an outcome: exit 2, the `configuration_error`
+/// A configuration error as an outcome: exit 125, the `configuration_error`
 /// object, and the message for the CLI's fatal printer.
 fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> Outcome {
     let mut details = json!({ "message": error.message });
@@ -138,7 +148,7 @@ fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> O
         details.insert("profiles".to_string(), json!(profiles));
     }
     Outcome {
-        exit_code: 2,
+        exit_code: EXIT_RUNNER_ERROR,
         json: json!({
             "ok": false,
             "kind": "configuration_error",
@@ -149,35 +159,38 @@ fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> O
     }
 }
 
-/// Print the outcome, or write it to the result file. A file that cannot
-/// be written at the end never loses the result: it goes to stdout whole,
-/// and the exit code is 74.
+/// Print the outcome, or write it to the result file. Every JSON outcome
+/// carries its exit code, so the file and the confirmation on stdout say
+/// the same number. A file that cannot be written at the end never loses
+/// the result: it goes to stdout whole, with the runner's own exit code
+/// (125) in it, and the process exits 125.
 fn deliver(
     options: &RunOptions,
     destination: Option<&output::Destination>,
     outcome: Outcome,
-) -> Result<i32, String> {
+) -> i32 {
+    let Outcome {
+        exit_code,
+        json,
+        text,
+    } = outcome;
+    let json = with_exit_code(json, exit_code);
     let Some(destination) = destination else {
         if options.json {
-            println!("{}", outcome.json);
-            return Ok(outcome.exit_code);
+            println!("{json}");
+            return exit_code;
         }
-        return match outcome.text {
-            Text::Stdout(text) => {
-                println!("{text}");
-                Ok(outcome.exit_code)
-            }
-            Text::Stderr(text) => {
-                eprintln!("{text}");
-                Ok(outcome.exit_code)
-            }
-            Text::Fatal(message) => Err(message),
-        };
+        match text {
+            Text::Stdout(text) => println!("{text}"),
+            Text::Stderr(text) => eprintln!("{text}"),
+            Text::Fatal(message) => crate::cli::print_fatal(&message),
+        }
+        return exit_code;
     };
     let body = if options.json {
-        format!("{}\n", outcome.json)
+        format!("{json}\n")
     } else {
-        format!("{}\n", outcome.text.as_str())
+        format!("{}\n", text.as_str())
     };
     match output::write(destination, &body) {
         Ok(()) => {
@@ -185,23 +198,35 @@ fn deliver(
                 println!(
                     "{}",
                     json!({
-                        "ok": outcome.json["ok"],
-                        "kind": outcome.json["kind"],
-                        "exit_code": outcome.exit_code,
+                        "ok": json["ok"],
+                        "kind": json["kind"],
+                        "exit_code": exit_code,
                         "output": destination.path().display().to_string(),
                     })
                 );
             } else {
                 eprintln!("output: {}", destination.path().display());
             }
-            Ok(outcome.exit_code)
+            exit_code
         }
         Err(error) => {
             eprintln!("error: {error}");
-            print!("{body}");
-            Ok(EXIT_OUTPUT_UNWRITABLE)
+            if options.json {
+                println!("{}", with_exit_code(json, EXIT_RUNNER_ERROR));
+            } else {
+                print!("{body}");
+            }
+            EXIT_RUNNER_ERROR
         }
     }
+}
+
+/// The outcome object with its exit code in it, under `exit_code`.
+fn with_exit_code(mut json: Value, exit_code: i32) -> Value {
+    if let Some(object) = json.as_object_mut() {
+        object.insert("exit_code".to_string(), json!(exit_code));
+    }
+    json
 }
 
 #[allow(clippy::too_many_lines)]
@@ -922,12 +947,16 @@ fn duration_label(timeout: Option<Duration>) -> String {
     )
 }
 
+/// The exit status of a failed run, by the POSIX `timeout` table: the
+/// harness's own status passes through, and the runner's own codes start
+/// at 124. A harness that exited 0 without an answer keeps 1, because no
+/// row of the table names it.
 fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
         SurfaceFailure::Process {
             failure: ProcessFailure::Timeout { .. },
             ..
-        } => 124,
+        } => EXIT_TIMEOUT,
         SurfaceFailure::Process {
             failure: ProcessFailure::ForwardedSignal { signal, .. },
             ..
@@ -937,13 +966,17 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
             ..
         } => 128 + signal,
         SurfaceFailure::Process {
+            failure: ProcessFailure::NotFound(_),
+            ..
+        } => EXIT_NOT_FOUND,
+        SurfaceFailure::Process {
             failure: ProcessFailure::Spawn(_),
             ..
-        } => 127,
+        } => EXIT_CANNOT_RUN,
         SurfaceFailure::Process {
             failure: ProcessFailure::OutputLimit { .. },
             ..
-        } => 70,
+        } => EXIT_RUNNER_ERROR,
         SurfaceFailure::Exit {
             termination: ProcessTermination::Exited(code),
             ..
@@ -1222,5 +1255,30 @@ mod tests {
         assert_eq!(json["kind"], "signal");
         assert_eq!(json["details"]["stdout_tail"], "half");
         assert_eq!(failure_exit_code(&signal), 143);
+    }
+
+    /// The POSIX timeout table: 125 for the runner's own limit, 126 for a
+    /// binary that is there but cannot start, 127 for one that is not.
+    #[test]
+    fn the_runners_own_codes_follow_the_posix_timeout_table() {
+        let limit = SurfaceFailure::from(ProcessFailure::OutputLimit {
+            stream: "stdout",
+            limit: 64,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        assert_eq!(failure_exit_code(&limit), 125);
+        let cannot_run = SurfaceFailure::from(ProcessFailure::Spawn(
+            "claude not runnable: Permission denied".to_string(),
+        ));
+        assert_eq!(failure_exit_code(&cannot_run), 126);
+        let not_found = SurfaceFailure::from(ProcessFailure::NotFound(
+            "claude not found: No such file or directory".to_string(),
+        ));
+        assert_eq!(failure_exit_code(&not_found), 127);
+        assert_eq!(
+            with_exit_code(json!({"ok": true, "kind": "success"}), 0),
+            json!({"ok": true, "kind": "success", "exit_code": 0})
+        );
     }
 }

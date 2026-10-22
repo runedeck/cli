@@ -6,7 +6,7 @@ The runner MUST start every workspace-write run in a new jj workspace whose fold
 The workspace MUST start from a copy of the caller's current change, so the harness sees the caller's latest edits, and
 a snapshot of the caller's checkout cannot make the workspace stale. The harness MUST start at the workspace path that
 matches `--repo`. Read-only and answer-only runs stay in the caller's checkout. When jj is missing, or the workspace
-cannot be created outside the checkout, the runner MUST refuse with exit 2 before the harness starts.
+cannot be created outside the checkout, the runner MUST refuse with exit 125 before the harness starts.
 
 #### Scenario: Workspace-write seat edits a file
 

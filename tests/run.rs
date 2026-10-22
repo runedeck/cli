@@ -768,11 +768,12 @@ fn unknown_profile_with_json_is_one_object_that_lists_the_known_profiles() {
         ])
         .output()
         .expect("run output");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(125));
     let result: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("one JSON object");
     assert_eq!(result["ok"], false);
     assert_eq!(result["kind"], "configuration_error");
+    assert_eq!(result["exit_code"], 125);
     assert!(
         result["details"]["message"]
             .as_str()
@@ -786,7 +787,7 @@ fn unknown_profile_with_json_is_one_object_that_lists_the_known_profiles() {
 }
 
 #[test]
-fn a_usage_error_under_json_is_one_object_with_claps_exit_code() {
+fn a_usage_error_under_json_is_one_object_with_the_runners_exit_code() {
     let home = tempfile::tempdir().expect("home");
     for (label, args) in [
         (
@@ -804,7 +805,7 @@ fn a_usage_error_under_json_is_one_object_with_claps_exit_code() {
         ),
     ] {
         let output = rune(home.path()).args(&args).output().expect("run output");
-        assert_eq!(output.status.code(), Some(2), "{label}");
+        assert_eq!(output.status.code(), Some(125), "{label}");
         let result: serde_json::Value =
             serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
                 panic!(
@@ -2466,7 +2467,7 @@ fn folder_without_version_control_refuses_a_workspace_write_run() {
             "workspace-write",
         ])
         .assert()
-        .code(2)
+        .code(125)
         .stderr(predicate::str::contains("--mode read-only"))
         .stderr(predicate::str::contains("jj git init --colocate"));
     assert!(!marker.exists(), "the harness started");
@@ -2486,7 +2487,7 @@ fn folder_without_version_control_refuses_a_workspace_write_run() {
         ])
         .output()
         .expect("run output");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(125));
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
     assert_eq!(result["kind"], "configuration_error");
     assert!(!marker.exists(), "the harness started");
@@ -2933,7 +2934,7 @@ fn artifact_copy_failure_after_the_run_keeps_the_workspace_object() {
         true,
         &["--artifacts-dir", out.to_str().expect("out path")],
     );
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
     assert_eq!(result["kind"], "configuration_error", "{result}");
     assert!(
@@ -3042,7 +3043,7 @@ fn a_state_directory_inside_the_checkout_refuses_the_isolated_run() {
             ])
             .output()
             .expect("run output");
-        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert_eq!(output.status.code(), Some(125), "{output:?}");
         let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
         assert_eq!(result["kind"], "configuration_error", "{result}");
         assert!(
@@ -4031,7 +4032,7 @@ fn a_protected_folder_named_as_the_repository_opens_no_file_there() {
             .arg(output)
             .output()
             .expect("run output");
-        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        assert_eq!(result.status.code(), Some(125), "{result:?}");
         let json = confirmation_of(&result);
         assert_eq!(json["kind"], "configuration_error", "{json}");
         assert!(
@@ -4085,7 +4086,7 @@ fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
             .arg(path)
             .output()
             .expect("run output");
-        assert_eq!(output.status.code(), Some(2), "{}", path.display());
+        assert_eq!(output.status.code(), Some(125), "{}", path.display());
         let result = confirmation_of(&output);
         assert_eq!(result["kind"], "configuration_error", "{result}");
         assert!(
@@ -4107,7 +4108,7 @@ fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
             ])
             .arg(path)
             .assert()
-            .code(2)
+            .code(125)
             .stdout("")
             .stderr(predicate::str::contains("fatal:"));
         assert!(
@@ -4119,6 +4120,118 @@ fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
     assert!(!home.path().join(".claude/settings.json").exists());
     assert!(!repository.path().join(".git/hooks.json").exists());
     assert_eq!(std::fs::read_to_string(&real).expect("real"), "{}");
+}
+
+/// The exit statuses of the POSIX timeout utility: 127 for a harness that
+/// is not there, 126 for one that is there but cannot start.
+#[cfg(unix)]
+#[test]
+fn a_missing_binary_exits_127_and_one_that_cannot_run_exits_126() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let missing = home.path().join("no-such-claude");
+    let plain = home.path().join("plain-claude");
+    std::fs::write(&plain, "not a program\n").expect("plain file");
+
+    for (binary, code) in [(&missing, 127), (&plain, 126)] {
+        let output = rune(home.path())
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "x",
+                "--repo",
+                repo,
+                "--binary",
+            ])
+            .arg(binary)
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+        assert_eq!(result["kind"], "process_failure", "{result}");
+        assert_eq!(result["exit_code"], code, "{result}");
+        rune(home.path())
+            .args(["run", "sol@claude", "x", "--repo", repo, "--binary"])
+            .arg(binary)
+            .assert()
+            .code(code);
+    }
+}
+
+/// Every JSON outcome carries its exit code, and the result file says the
+/// same number as the confirmation on stdout.
+#[cfg(unix)]
+#[test]
+fn every_json_outcome_carries_the_exit_code_the_process_ends_with() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let answers = executable_provider(home.path(), "fake-ok", "#!/bin/sh\nprintf 'fine\\n'\n");
+    let fails = executable_provider(home.path(), "fake-three", "#!/bin/sh\nexit 3\n");
+    for (binary, code, kind) in [(&answers, 0, "success"), (&fails, 3, "exit")] {
+        let seat = repository.path().join(format!("seat-{code}.json"));
+        let output = rune(home.path())
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "x",
+                "--repo",
+                repo,
+                "--binary",
+            ])
+            .arg(binary)
+            .arg("--output")
+            .arg(&seat)
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        let confirmation = confirmation_of(&output);
+        assert_eq!(confirmation["exit_code"], code, "{confirmation}");
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&seat).expect("seat file"))
+                .expect("one JSON object");
+        assert_eq!(written["kind"], kind, "{written}");
+        assert_eq!(written["exit_code"], code, "{written}");
+
+        let output = rune(home.path())
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "x",
+                "--repo",
+                repo,
+                "--binary",
+            ])
+            .arg(binary)
+            .output()
+            .expect("run output");
+        let printed = confirmation_of(&output);
+        assert_eq!(printed["exit_code"], code, "{printed}");
+    }
+    // The dry run and a usage error carry theirs too.
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "x",
+            "--repo",
+            repo,
+            "--dry-run",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(confirmation_of(&output)["exit_code"], 0);
+    let output = rune(home.path())
+        .args(["--json", "run", "sol@claude", "x", "--mode", "bogus"])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
+    assert_eq!(confirmation_of(&output)["exit_code"], 125);
 }
 
 #[cfg(unix)]
@@ -4143,9 +4256,10 @@ fn usage_error_with_an_output_file_writes_nothing() {
         .arg(&seat)
         .output()
         .expect("run output");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(125));
     let result = confirmation_of(&output);
     assert_eq!(result["kind"], "configuration_error", "{result}");
+    assert_eq!(result["exit_code"], 125, "{result}");
     assert!(!seat.exists(), "a usage error wrote the file");
 }
 
@@ -4185,7 +4299,7 @@ fn a_folder_swapped_for_a_symlink_during_the_run_moves_no_write() {
         .arg(out.join("settings.json"))
         .output()
         .expect("run output");
-    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
     let result = confirmation_of(&output);
     assert_eq!(result["kind"], "success", "{result}");
     assert_eq!(result["text"], "payload", "{result}");
@@ -4236,7 +4350,7 @@ fn an_output_folder_moved_during_the_run_leaves_the_planted_file_alone() {
         .arg(out.join("seat.json"))
         .output()
         .expect("run output");
-    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
     // stdout carries the full result, never a confirmation that names the
     // planted file.
     let result = confirmation_of(&output);
@@ -4296,7 +4410,7 @@ fn result_file_that_cannot_be_written_prints_the_full_result_and_exits_74() {
         .output()
         .expect("run output");
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    assert_eq!(output.status.code(), Some(74), "{output:?}");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
     let result = confirmation_of(&output);
     assert_eq!(result["kind"], "success", "{result}");
     assert_eq!(result["text"], "provider reply", "{result}");
@@ -4326,7 +4440,7 @@ fn read_only_agy_run_is_refused_and_names_workspace_write() {
             .args(mode)
             .output()
             .expect("run output");
-        assert_eq!(output.status.code(), Some(2), "{mode:?}");
+        assert_eq!(output.status.code(), Some(125), "{mode:?}");
         let result = confirmation_of(&output);
         assert_eq!(result["kind"], "configuration_error", "{result}");
         let message = result["details"]["message"].as_str().expect("message");
@@ -4340,7 +4454,7 @@ fn read_only_agy_run_is_refused_and_names_workspace_write() {
     rune(home.path())
         .args(["run", "agy", "Review", "--repo", repo, "--binary", binary])
         .assert()
-        .code(2)
+        .code(125)
         .stderr(predicate::str::contains("cannot enforce read-only access"))
         .stderr(predicate::str::contains("--mode workspace-write"));
     assert!(!marker.exists(), "the harness started");

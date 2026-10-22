@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Print `rune run --dry-run --json` as one JSON object: model, tool, argv, base URL, environment (credentials `<redacted>`), removed and withheld keys, repository, mode, timeout, session name.
 - List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld inherited key names the route key of its family that displaced it.
-- Print one `configuration_error` JSON object for a usage error under `--json`, with clap's exit code, and add `details.profiles` for an unknown profile.
+- Print one `configuration_error` JSON object for a usage error under `--json`, with exit 125, and add `details.profiles` for an unknown profile.
 - Carry the error messages a harness reports in its own event stream (codex's JSONL, claude's `API Error:` lines) as `details.harness_errors` and a `harness errors:` section.
 - Add a `hint` to a failed `rune run`, in text and JSON, for a known sandbox denial: `Operation not permitted`, OSStatus `-26276`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, or a blocked keyring read.
 - Trust the roots in the PEM file `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` names in `rune run --check` and `rune launch --check`, beside the bundled roots, and warn on an unusable file.
@@ -30,16 +30,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Set `outside_changes` and `operation_id` when a caller commit was rewritten during a workspace-write run, by the harness or by the caller's own jj commands, never by edits alone.
 - Build no change from a workspace-write run whose harness moved its workspace off the copy (`jj new main`, `jj edit`), keep the folder, and set `outside_changes`.
 - Abandon only revisions a workspace-write run made, so a caller's branch the harness rebased onto its work stays.
-- Colocate jj in a git repository before a workspace-write run, refuse a folder under neither with exit 2, and print `workspace:`, `workspace_parent:`, and `workspace_colocate:` in the dry run.
+- Colocate jj in a git repository before a workspace-write run, refuse a folder under neither with exit 125, and print `workspace:`, `workspace_parent:`, and `workspace_colocate:` in the dry run.
 - Serialize the workspace registration of concurrent runs in one repository, so seats do not collide on git's config lock.
 - Add `rune run --output <FILE>`, which writes the result there for every outcome and, under `--json`, prints one object with `ok`, `kind`, `exit_code`, and `output` on stdout.
 - Refuse an `--output` path outside the caller's own repository, the temporary directory, and the rune state directory, under a hidden folder or name, or at a symlink, before the harness starts.
 - Read the repository root for the `--output` check from the working directory, so `--repo` cannot widen it.
 - Write the result file as an exclusive 0600 temporary file renamed over the target in a folder held open from the check, opened by a symlink-free walk and checked by inode.
-- Print the full result on stdout with exit 74 when the final write of the result file fails or leaves a file at the path that is not the one written.
-- Refuse a read-only agy run before anything starts, with exit 2 and a hint naming `--mode workspace-write`: agy wrote files in its plan mode and under a settings file that denied every write.
+- Print the full result on stdout with exit 125 when the final write of the result file fails or leaves a file at the path that is not the one written.
+- Refuse a read-only agy run before anything starts, with exit 125 and a hint naming `--mode workspace-write`: agy wrote files in its plan mode and under a settings file that denied every write.
 - Start every agy prompt with an instruction to read with the file tools.
-- Refuse a mode a harness cannot take (answer-only for codex, grok, and agy too) as a configuration error with exit 2, before a profile's pre-steps run.
+- Refuse a mode a harness cannot take (answer-only for codex, grok, and agy too) as a configuration error with exit 125, before a profile's pre-steps run.
 - Pass `--log-file` to agy in the run's scratch directory and read it before the scratch goes, so a headless soft-deny line travels as a harness error with a hint that names the denied tool.
 - Show a dropped profile value in the `owns` warning only for a fixed-choice option (`--sandbox`, `--permission-mode`, `--output-format`) and only when it is a known value, else hide it whole.
 - Check a grok endpoint set in the shell (`GROK_MODELS_BASE_URL`), and ask `<base>/models` when the base URL already ends in `/v1`.
@@ -184,6 +184,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Breaking:** Exit `rune run` by the POSIX `timeout` table: the harness's own status, 124 on the time limit, 126 for a binary that cannot run, 127 for one not found, and 128 plus the signal number.
+- **Breaking:** Exit `rune run` 125 for a usage or configuration error, an unwritable result file, or an output limit, which were 2, 74, and 70.
+- Carry `exit_code` in every `rune run --json` result object, the result file included, so the file and the confirmation on stdout say the same number.
 - **Breaking:** Replace the JSON failure field `details.stderr` with `details.stdout_tail` and `details.stderr_tail`, the last 40 lines of each stream, and add `hint` and `details.harness_errors`.
 - Redact every credential value the child could echo in the stream tails, drop warnings, and the dry-run argv, inside a `--settings` object or a `-c key=value` assignment included.
 - Render the `rune run` dry run from the surface's own argument builder: the argv shows the flags the run adds, the prompt as `<prompt>`, and `base_url` from the profile or the environment.

@@ -44,7 +44,11 @@ impl ProcessOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProcessFailure {
+    /// The binary exists but cannot start (no execute bit, a wrong
+    /// format): exit 126, as the POSIX `timeout` utility reports it.
     Spawn(String),
+    /// The binary is not at its path or on the `PATH`: exit 127.
+    NotFound(String),
     /// The supervisor could not wait for, signal, or reap the process; the
     /// streams read before that travel with it.
     Wait {
@@ -82,6 +86,7 @@ impl fmt::Display for ProcessFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Spawn(message)
+            | Self::NotFound(message)
             | Self::Wait { message, .. }
             | Self::Stdin(message)
             | Self::Stdout(message)
@@ -135,6 +140,7 @@ fn with_streams(mut failure: ProcessFailure, stdout: &str, stderr: &str) -> Proc
             *partial_stderr = stderr.to_string();
         }
         ProcessFailure::Spawn(_)
+        | ProcessFailure::NotFound(_)
         | ProcessFailure::Stdin(_)
         | ProcessFailure::Stdout(_)
         | ProcessFailure::Stderr(_) => {}
@@ -743,9 +749,13 @@ pub(crate) fn run_process_request(
         .stderr(Stdio::piped());
 
     let signal_flags = SignalFlags::register()?;
-    let mut child = command
-        .spawn()
-        .map_err(|error| ProcessFailure::Spawn(format!("{binary} not runnable: {error}")))?;
+    let mut child = command.spawn().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ProcessFailure::NotFound(format!("{binary} not found: {error}"))
+        } else {
+            ProcessFailure::Spawn(format!("{binary} not runnable: {error}"))
+        }
+    })?;
     let stdout_capture = Arc::new(StreamCapture::default());
     let stderr_capture = Arc::new(StreamCapture::default());
     let stdin_finished = Arc::new(AtomicBool::new(request.stdin.is_none()));
