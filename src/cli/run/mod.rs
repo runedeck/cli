@@ -528,7 +528,8 @@ struct Isolated {
 impl Isolated {
     fn finish(&mut self) -> Option<(workspace::Workspace, workspace::Outcome)> {
         let workspace = self.workspace.take()?;
-        let outcome = workspace::finish(&workspace);
+        let outcome =
+            workspace::finish(&workspace, crate::cli::process::last_run_left_a_survivor());
         Some((workspace, outcome))
     }
 }
@@ -544,7 +545,9 @@ impl Drop for Isolated {
 }
 
 /// The `workspace` object of a result: the change the run left, whether it
-/// was kept, and, when a step failed, the error and the folder that stays.
+/// was kept, whether anything outside the run changed, the change the
+/// harness moved to when it left the copy, the operations the run spans,
+/// and, when a step failed or the folder stays, the error and the folder.
 /// A field the finish did not reach is null.
 fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Value {
     let mut object = json!({
@@ -553,9 +556,10 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         "kept": outcome.kept,
         "conflicted": outcome.conflicted,
         "colocated": workspace.colocated,
-        "unrecorded": outcome.unrecorded,
         "outside_changes": outcome.outside_changes,
-        "operation_id": outcome.operation_id,
+        "left_copy": outcome.left_copy,
+        "start_operation": outcome.start_operation,
+        "end_operation": outcome.end_operation,
     });
     if let Some(fields) = object.as_object_mut() {
         if let Some(error) = &outcome.error {
@@ -569,8 +573,9 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
 }
 
 /// The text lines for the workspace: one names the change kept or says
-/// nothing was, one more when this run colocated jj, and a warning when
-/// the workspace could not be taken down.
+/// nothing was, one more when this run colocated jj, one when the harness
+/// left the copy, one that names the operations the run spans, and a
+/// warning when the workspace could not be taken down.
 fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Vec<String> {
     let mut lines = Vec::new();
     if workspace.colocated {
@@ -595,21 +600,26 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
         }
         _ => {}
     }
+    if let Some(change_id) = &outcome.left_copy {
+        lines.push(format!(
+            "workspace: the harness moved its workspace off the copy; its change {change_id} stays as a separate change, and no result was built from its files"
+        ));
+    }
+    let operations = match (&outcome.start_operation, &outcome.end_operation) {
+        (Some(start), Some(end)) => format!("jj op diff --from {start} --to {end}"),
+        (Some(start), None) => format!("jj op log from operation {start}"),
+        _ => "jj op log".to_string(),
+    };
     if outcome.outside_changes == Some(true) {
         lines.push(format!(
-            "warning: commits outside the run changed while it ran (a harness rewrote one, or your own squash, rebase, or describe did); review them with jj op log from operation {}",
-            outcome.operation_id.as_deref().unwrap_or("<unknown>")
+            "warning: commits or git settings outside the run changed while it ran (a harness rewrote one, or your own squash, rebase, or describe did); review them with {operations}"
+        ));
+    } else if outcome.end_operation.is_some() {
+        lines.push(format!(
+            "workspace: review what the run did to the repository with {operations}"
         ));
     }
     let folder = outcome.path.as_deref().unwrap_or(&workspace.path);
-    if !outcome.unrecorded.is_empty() {
-        lines.push(format!(
-            "warning: workspace {} stays at {}: jj did not record {}",
-            workspace.name,
-            folder.display(),
-            outcome.unrecorded.join(", ")
-        ));
-    }
     if let Some(error) = &outcome.error {
         lines.push(format!(
             "warning: workspace {} stays at {}: {error}",

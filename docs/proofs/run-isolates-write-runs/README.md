@@ -123,7 +123,7 @@ Initialized repo in "repo"
 $ sh -c 'printf "# Scratch\n" > repo/README.md'
 $ rune --json run sol@claude --clean --mode workspace-write --repo repo --session-name proof-two-files "Append the line 'edited by the seat' to README.md with the Edit tool, create NOTES.md holding the single line 'notes by the seat' with the Write tool, then reply with the single word done."
 ...
-{[..]"session_name":"proof-two-files",[..]"text":"done",[..]"workspace":{"change_id":"[..]","colocated":false,"conflicted":false,"kept":true,[..]}}
+{[..]"session_name":"proof-two-files",[..]"text":"done",[..]"workspace":{"change_id":"[..]","colocated":false,"conflicted":false,[..]"kept":true,[..]"outside_changes":false,[..]}}
 $ jj -R repo diff -r 'description(substring:"proof-two-files")' --summary
 A repo/NOTES.md
 M repo/README.md

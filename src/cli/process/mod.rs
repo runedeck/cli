@@ -20,6 +20,18 @@ const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+/// Whether the last supervised run left a process behind that the
+/// supervisor could not reach: a descendant in its own session still held
+/// a pipe after the group was killed and the grace passed. One process
+/// supervises one harness at a time, so one flag serves the run.
+static SURVIVOR: AtomicBool = AtomicBool::new(false);
+
+/// Whether a process of the last supervised harness outlived the run, so
+/// a folder it may still write to is not deleted under it.
+pub(crate) fn last_run_left_a_survivor() -> bool {
+    SURVIVOR.load(Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProcessTermination {
     Exited(i32),
@@ -446,6 +458,9 @@ fn wait_for_readers(
     while !all_finished() && Instant::now() < deadline && signal_flags.received().is_none() {
         std::thread::sleep(PROCESS_POLL_INTERVAL);
     }
+    // A pipe still held after the group kill and the grace belongs to a
+    // process the supervisor cannot reach: it outlives the run.
+    SURVIVOR.store(!all_finished(), Ordering::Relaxed);
     Ok(drain_signal.or_else(|| signal_flags.received()))
 }
 
@@ -734,6 +749,16 @@ fn wait_for_process(
     }
 }
 
+/// The failure for a binary that did not start: not found (exit 127) or
+/// found but not runnable (exit 126).
+fn spawn_failure(binary: &str, error: &std::io::Error) -> ProcessFailure {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        ProcessFailure::NotFound(format!("{binary} not found: {error}"))
+    } else {
+        ProcessFailure::Spawn(format!("{binary} not runnable: {error}"))
+    }
+}
+
 pub(crate) fn run_process_request(
     request: &ProcessRequest,
 ) -> Result<ProcessOutput, ProcessFailure> {
@@ -749,13 +774,10 @@ pub(crate) fn run_process_request(
         .stderr(Stdio::piped());
 
     let signal_flags = SignalFlags::register()?;
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            ProcessFailure::NotFound(format!("{binary} not found: {error}"))
-        } else {
-            ProcessFailure::Spawn(format!("{binary} not runnable: {error}"))
-        }
-    })?;
+    SURVIVOR.store(false, Ordering::Relaxed);
+    let mut child = command
+        .spawn()
+        .map_err(|error| spawn_failure(&binary, &error))?;
     let stdout_capture = Arc::new(StreamCapture::default());
     let stderr_capture = Arc::new(StreamCapture::default());
     let stdin_finished = Arc::new(AtomicBool::new(request.stdin.is_none()));

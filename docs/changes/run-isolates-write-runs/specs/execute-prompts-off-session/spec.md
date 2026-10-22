@@ -56,8 +56,9 @@ and the session, and name it in the result. Under `--json`, the `workspace` obje
 
 The runner MUST build the run's change from the workspace's final files against the copy it started from, so a harness
 that squashes, absorbs, or abandons revisions cannot lose its work. The runner MUST record the repository operation and
-the caller's mutable commits when it creates the workspace. When any of those commits changed by the end of the run, the
-result MUST say so and name the recorded operation, so the owner can find and revert the change in jj's operation log.
+the caller's mutable commits before it makes the copy. When any of those commits changed by the end of the run, the
+result MUST say so and name the operations the run spans, so the owner can find and revert the change in jj's operation
+log.
 
 #### Scenario: Harness squashes its work into the copy
 
@@ -67,7 +68,8 @@ result MUST say so and name the recorded operation, so the owner can find and re
 #### Scenario: Harness rewrites a caller commit
 
 - **WHEN** the harness changes the description of one of the caller's commits below the caller's working copy
-- **THEN** the result says that commits outside the run changed, and it names the operation the run started from
+- **THEN** the result says that commits outside the run changed, and it names the operations the run started from and
+  ended with
 
 #### Scenario: Caller keeps editing during the run
 
@@ -76,10 +78,10 @@ result MUST say so and name the recorded operation, so the owner can find and re
 
 ### Requirement: The runner never deletes a file that jj did not record
 
-The runner MUST record every new file that the repository does not ignore, whatever its size. When a file in the
-workspace is still unrecorded, the runner MUST keep the folder, report its path and the unrecorded files in the
-`workspace` object, and name a change that still exists. Files that the repository ignores, such as build output, are removed with
-the folder. When any step of the finish fails after the change is known, the result MUST still name that change.
+The runner MUST record every new file that the repository does not ignore, whatever its size, with jj's own size limit
+lifted for that snapshot. Files that the repository ignores, such as build output, are removed with the folder. When any
+step of the finish fails after the change is known, the result MUST still name that change, and the folder MUST stay
+with its path in the `workspace` object.
 
 #### Scenario: Harness writes a large new file
 

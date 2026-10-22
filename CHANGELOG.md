@@ -27,8 +27,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Report the files an agy run created in its brain folder as `artifact:` lines and `artifacts` in the JSON result, and copy them to `--artifacts-dir <DIR>` or the rune state directory.
 - Run every `rune run --mode workspace-write` in its own jj workspace under `$XDG_STATE_HOME/rune/workspaces/`, on a copy of the caller's files, and leave the caller's checkout untouched.
 - Fold a workspace-write run's files into one change on the caller's current change, named `rune run <route>: <session>` and reported as the `workspace` object, or leave no trace.
-- Set `outside_changes` and `operation_id` when a caller commit was rewritten during a workspace-write run, by the harness or by the caller's own jj commands, never by edits alone.
-- Build no change from a workspace-write run whose harness moved its workspace off the copy (`jj new main`, `jj edit`), keep the folder, and set `outside_changes`.
+- Set `outside_changes` when a caller commit or a git setting that runs commands changed during a workspace-write run, by the harness or by the caller's own commands, never by edits alone.
+- Name the operations a workspace-write run spans as `start_operation` and `end_operation`, and point at `jj op diff --from <start> --to <end>` on stderr.
+- Build no change from a workspace-write run whose harness moved its workspace off the copy (`jj new main`): its change stays, `left_copy` names it, and no folder stays.
+- Set jj's immutability guard in the run's workspace, so a harness commits, describes, and squashes only its own revisions there, and remove the guard's configuration folder with the workspace.
+- Find the caller's root with `jj workspace root`, remove the workspace with `jj workspace remove`, and snapshot with jj's own `snapshot.max-new-file-size=0` and `snapshot.auto-track="all()"`.
+- Keep the workspace folder when a process of the harness outlives the run, and say so in the result.
+- Write a run state file beside the workspace folder that names the run, its phase, its operations, and its configuration folder for the cleanup after a kill.
 - Abandon only revisions a workspace-write run made, so a caller's branch the harness rebased onto its work stays.
 - Colocate jj in a git repository before a workspace-write run, refuse a folder under neither with exit 125, and print `workspace:`, `workspace_parent:`, and `workspace_colocate:` in the dry run.
 - Serialize the workspace registration of concurrent runs in one repository, so seats do not collide on git's config lock.
