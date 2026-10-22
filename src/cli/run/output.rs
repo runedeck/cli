@@ -42,16 +42,29 @@ struct Folder {
 }
 
 impl Folder {
+    /// Open the checked folder itself. On unix the open follows no symlink
+    /// (`O_NOFOLLOW`), and the handle must be the folder the check judged
+    /// by device and inode, so a folder swapped between the check and the
+    /// open, for a symlink or for another folder, is refused.
     fn open(path: &Path) -> std::io::Result<Self> {
         #[cfg(unix)]
         {
             use nix::fcntl::OFlag;
+            let checked = std::fs::metadata(path)?;
             let handle = nix::fcntl::open(
                 path,
-                OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+                OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
                 nix::sys::stat::Mode::empty(),
             )?;
-            Ok(Self { handle })
+            let opened = std::fs::File::from(handle);
+            if !same_file(&opened.metadata()?, &checked) {
+                return Err(std::io::Error::other(
+                    "the folder changed between the check and the open",
+                ));
+            }
+            Ok(Self {
+                handle: opened.into(),
+            })
         }
         #[cfg(not(unix))]
         {
@@ -113,6 +126,21 @@ impl Folder {
         {
             std::fs::remove_file(self.path.join(name))
         }
+    }
+}
+
+/// Whether two metadata records name one file: the same device and inode
+/// on unix. Elsewhere there is no identity to compare, so they match.
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (left, right);
+        true
     }
 }
 
@@ -377,6 +405,18 @@ mod tests {
         let error =
             accept(&repository.path().join("x/.."), Some(repository.path())).expect_err("refused");
         assert!(error.contains("names no file"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_handle_follows_no_symlink() {
+        let repository = repository();
+        let real = repository.path().join("real");
+        std::fs::create_dir_all(&real).expect("real");
+        let link = repository.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(Folder::open(&link).is_err(), "a symlink was opened");
+        assert!(Folder::open(&real).is_ok());
     }
 
     #[cfg(unix)]
