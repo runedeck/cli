@@ -1098,13 +1098,15 @@ fn filter_profile_args(
                 }
                 filtered.warnings.append(&mut notes);
             }
-            // The flag alone: a value (an opencode `--password`, an `--attach`
-            // URL with a token) may be a credential, and the warning reaches
-            // the terminal and the JSON.
+            // The value is shown by the credential rules: a credential-named
+            // flag (an opencode `--password`) hides it whole, a URL loses its
+            // password and credential-named parameters, and a plain flag value
+            // (`--sandbox workspace-local`) reads as written.
             None => filtered.warnings.push(match value.as_deref() {
                 Some(v) if !v.is_empty() => format!(
-                    "automated {name} execution owns {}; the profile value {REDACTED_VALUE} is dropped",
-                    arg.option
+                    "automated {name} execution owns {}; the profile value {} is dropped",
+                    arg.option,
+                    dropped_value(arg.option, v)
                 ),
                 _ => format!(
                     "automated {name} execution owns {}; the profile flag is dropped",
@@ -1115,6 +1117,23 @@ fn filter_profile_args(
         index += 1 + usize::from(next_is_value);
     }
     filtered
+}
+
+/// A dropped profile value as a warning shows it: hidden whole when the
+/// flag or the key path is credential-named, else as written after the
+/// by-name redaction (URL passwords, credential-named parameters and
+/// `NAME=value` pairs), one line, cut. A flag value such as
+/// `workspace-local` is no secret, and the owner reads what was dropped.
+fn dropped_value(name: &str, value: &str) -> String {
+    let credential = crate::cli::launch::is_credential_flag(name)
+        || name
+            .split('.')
+            .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()));
+    if credential {
+        REDACTED_VALUE.to_string()
+    } else {
+        shown(&redact_text(value, &[]))
+    }
 }
 
 /// No key-level handling: every owned option is dropped whole.
@@ -1171,13 +1190,14 @@ fn codex_config_key(option: &str, assignment: &str, model: Option<&str>) -> Keye
     if key == "model" && model.is_some_and(|model| codex_config_string(value) == model) {
         return Some((None, Vec::new()));
     }
-    // The key alone: a value under `mcp_servers.*.env` or `http_headers`
-    // may be a credential, and a warning reaches the terminal and the JSON.
+    // A value under a credential-named segment (`mcp_servers.*.env.TOKEN`,
+    // `http_headers.Authorization`) is hidden; `sandbox_mode` reads as written.
     Some((
         None,
         vec![format!(
-            "automated codex execution owns config key {}; the profile value {REDACTED_VALUE} is dropped",
-            shown(key)
+            "automated codex execution owns config key {}; the profile value {} is dropped",
+            shown(key),
+            dropped_value(key, &codex_config_string(value))
         )],
     ))
 }

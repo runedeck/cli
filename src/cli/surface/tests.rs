@@ -162,7 +162,9 @@ fn claude_settings_path_is_dropped_not_loaded() {
 }
 
 #[test]
-fn warnings_name_the_flag_and_never_the_value() {
+fn warnings_show_a_dropped_value_by_the_credential_rules() {
+    // A plain value reads as written, on one line: a forged line break
+    // cannot add a warning.
     let filtered = filter_surface_args(&invocation(
         Surface::Claude,
         &["--model", "evil\nwarning: forged"],
@@ -170,12 +172,23 @@ fn warnings_name_the_flag_and_never_the_value() {
     assert_eq!(filtered.warnings.len(), 1);
     assert!(!filtered.warnings[0].contains('\n'));
     assert!(
-        !filtered.warnings[0].contains("evil"),
+        filtered.warnings[0].contains("owns --model; the profile value evil"),
         "{}",
         filtered.warnings[0]
     );
-    assert!(filtered.warnings[0].contains("owns --model; the profile value <redacted> is dropped"));
+    let grok = filter_surface_args(&invocation(
+        Surface::Grok,
+        &["--sandbox", "workspace-local"],
+    ));
+    assert_eq!(grok.warnings.len(), 1, "{:?}", grok.warnings);
+    assert!(
+        grok.warnings[0].contains("owns --sandbox; the profile value workspace-local is dropped"),
+        "{}",
+        grok.warnings[0]
+    );
 
+    // A credential-named flag hides its value whole, a URL loses its
+    // password and credential-named parameter, a model name stays.
     let opencode = filter_surface_args(&invocation(
         Surface::Opencode,
         &[
@@ -189,11 +202,24 @@ fn warnings_name_the_flag_and_never_the_value() {
     assert_eq!(opencode.warnings.len(), 3, "{:?}", opencode.warnings);
     for warning in &opencode.warnings {
         assert!(!warning.contains("fake-"), "{warning}");
-        assert!(!warning.contains("lumo-max"), "{warning}");
-        assert!(warning.contains("<redacted>"), "{warning}");
     }
-    assert!(opencode.warnings[0].contains("owns --password"));
+    assert!(
+        opencode.warnings[0].contains("owns --password; the profile value <redacted> is dropped"),
+        "{}",
+        opencode.warnings[0]
+    );
     assert!(opencode.warnings[1].contains("owns --attach"));
+    assert!(
+        opencode.warnings[1].contains("user:<redacted>@127.0.0.1:4096/?token=<redacted>"),
+        "{}",
+        opencode.warnings[1]
+    );
+    assert!(
+        opencode.warnings[2]
+            .contains("owns --model; the profile value proton-lumo/lumo-max is dropped"),
+        "{}",
+        opencode.warnings[2]
+    );
 }
 
 #[test]
@@ -2216,6 +2242,18 @@ fn drop_warnings_name_the_key_and_never_the_value() {
     for warning in &codex.warnings {
         assert!(!warning.contains("fake-"), "{warning}");
     }
+    // A key that names no credential shows its value.
+    let plain = filter_surface_args(&invocation(
+        Surface::Codex,
+        &["-c", "sandbox_mode=\"danger-full-access\""],
+    ));
+    assert_eq!(plain.warnings.len(), 1, "{:?}", plain.warnings);
+    assert!(
+        plain.warnings[0]
+            .contains("config key sandbox_mode; the profile value danger-full-access is dropped"),
+        "{}",
+        plain.warnings[0]
+    );
 
     let claude = filter_surface_args(&invocation(
         Surface::Claude,
