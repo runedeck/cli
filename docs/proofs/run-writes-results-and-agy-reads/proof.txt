@@ -1,0 +1,74 @@
+## execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/failed-run-still-writes-its-result
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo partial answer" "echo still working >&2" "sleep 5" > slow-claude && chmod 755 slow-claude'
+$ rune --json run sol@claude --binary ./slow-claude --timeout 1s "x" --output seat.json
+  {"exit_code":124,"kind":"timeout","ok":false,"output":"/private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-writes-its-result-to-a-file-on-request-failed-run-still-writes-its-result-df48280-4-0/seat.json"}
+$ cat seat.json
+  {"details":{"harness_errors":[],"stderr_tail":"still working","stdout_tail":"partial answer","timeout_ms":1000},"hint":null,"kind":"timeout","ok":false,"tool":"claude","workspace":null}
+
+## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/output-path-in-a-protected-place-is-refused
+kind: check
+$ sh -c 'rune run sol@claude x --output ~/.claude/settings.json'
+  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp/claude-501), the temporary directory (/private/tmp)
+$ mkdir .git
+$ rune run sol@claude x --output .git/hook.json
+  fatal: output file /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-1344e450-9-0/.git/hook.json lies under the hidden folder .git inside /private/tmp/claude-501
+$ sh -c 'printf "{}\n" > real.json && ln -s real.json link.json'
+$ rune run sol@claude x --output link.json
+  fatal: output file /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-1344e450-9-0/link.json is a symlink, and the runner replaces only a regular file
+
+## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/caller-names-a-protected-folder-as-the-repository
+kind: check
+$ sh -c 'rune run sol@claude x --repo ~/.claude --output ~/.claude/settings.json'
+  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp/claude-501), the temporary directory (/private/tmp)
+
+## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/argument-error-with-an-output-file
+kind: check
+$ rune run sol@claude x --mode bogus --output seat.json
+  error: invalid value 'bogus' for '--mode <MODE>'
+    [possible values: read-only, workspace-write, answer-only]
+
+  For more information, try '--help'.
+$ ls
+
+## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/output-folder-moved-during-the-run
+kind: check
+$ mkdir out
+$ sh -c 'printf "%s\n" "#!/bin/sh" "mv out out.old" "mkdir out" "echo planted > out/seat.json" "echo real answer" > mover && chmod 755 mover'
+$ rune --json run sol@claude --binary ./mover "x" --output out/seat.json
+  error: cannot write result file /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-folder-moved-during-the-run-191109b8-23-0/out/seat.json: the file at that path is not the file the runner wrote (the folder moved during the run)
+  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":201,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./mover","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
+$ cat out/seat.json
+  planted
+
+## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/output-file-already-exists
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo first answer" > one && printf "%s\n" "#!/bin/sh" "echo second answer" > two && chmod 755 one two'
+$ rune run sol@claude --binary ./one "x" --output seat.txt
+  output: /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-26f7efd8-29-0/seat.txt
+$ cat seat.txt
+  first answer
+$ rune run sol@claude --binary ./two "x" --output seat.txt
+  output: /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-26f7efd8-29-0/seat.txt
+$ cat seat.txt
+  second answer
+$ ls -l seat.txt
+  -rw-------@ 1 N4M3Z  wheel  14 Oct 22 20:40 seat.txt
+
+## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/result-file-cannot-be-written
+kind: check
+$ mkdir out
+$ sh -c 'printf "%s\n" "#!/bin/sh" "chmod 555 out" "echo real answer" > locker && chmod 755 locker'
+$ rune --json run sol@claude --binary ./locker "x" --output out/seat.json
+  error: cannot write result file /private/tmp/claude-501/rune-proof-6564-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-result-file-cannot-be-written-6acb1c8-37-0/out/seat.json: Permission denied (os error 13)
+  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":195,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./locker","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
+$ chmod 755 out
+$ ls out
+
+## execute-prompts-off-session#a-read-only-agy-run-is-refused/agy-council-seat-in-read-only-mode
+kind: check
+$ rune run gemini@agy "Review this repository"
+  fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
+$ rune run gemini@agy --mode read-only "Review this repository"
+  fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
+
