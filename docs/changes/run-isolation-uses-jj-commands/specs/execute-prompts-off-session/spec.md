@@ -5,7 +5,8 @@
 The runner MUST set jj's immutable heads in the run's workspace configuration to jj's built-in immutable heads, the
 copy, and every other workspace's working-copy commit, and leave the run's own working copy out. The harness MAY commit,
 describe, and squash its own revisions on the copy. The runner MUST remove that configuration folder when the workspace
-goes. The guard is one layer: the store is shared, so the outside change report stays.
+goes. When the configuration cannot be written, the run MUST go on without the guard, the `workspace` object MUST say
+`guard: false` with the reason, the text output MUST warn once, and the outside change report MUST still run.
 
 #### Scenario: Harness probes the guard
 
@@ -13,6 +14,12 @@ goes. The guard is one layer: the store is shared, so the outside change report 
   working copy, and `jj abandon` of the copy, then `jj commit`
 - **THEN** the first four fail, the commit succeeds, the caller's commits are unchanged, and the run's change holds the
   harness's files
+
+#### Scenario: Guard cannot be written
+
+- **WHEN** the folder that holds jj's workspace configurations is not writable
+- **THEN** the run finishes with its change, the `workspace` object says `guard: false` and names the reason, stderr
+  prints one warning, and `outside_changes` is reported as usual
 
 ### Requirement: The result names the operations the run spans
 

@@ -556,6 +556,8 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         "kept": outcome.kept,
         "conflicted": outcome.conflicted,
         "colocated": workspace.colocated,
+        "guard": workspace.guard_error.is_none(),
+        "guard_error": workspace.guard_error,
         "outside_changes": outcome.outside_changes,
         "left_copy": outcome.left_copy,
         "start_operation": outcome.start_operation,
@@ -582,6 +584,11 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
         lines.push(format!(
             "workspace: colocated jj in {}",
             workspace.root.display()
+        ));
+    }
+    if let Some(reason) = &workspace.guard_error {
+        lines.push(format!(
+            "warning: the guard could not be set in the run's workspace, so the harness could rewrite the copy there; the outside change report still ran ({reason})"
         ));
     }
     match (&outcome.change_id, outcome.kept) {

@@ -157,6 +157,9 @@ pub(crate) struct Workspace {
     /// The folder that holds the workspace's own jj configuration (the
     /// guard), once the guard is set.
     config_dir: Option<PathBuf>,
+    /// Why the guard could not be set, when it could not: the run goes on
+    /// without that layer, and the result says so.
+    pub(crate) guard_error: Option<String>,
     /// Whether `jj workspace add` succeeded.
     added: bool,
     lock_path: PathBuf,
@@ -897,6 +900,7 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
         caller_head,
         git_settings,
         config_dir: None,
+        guard_error: None,
         added: false,
         lock_path: plan.lock_path.clone(),
         state_path: plan.state_path.clone(),
@@ -973,9 +977,12 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
     }
     workspace.added = true;
     // The guard goes into the workspace's own configuration, so it binds
-    // every jj command the harness runs there and none the caller runs.
+    // every jj command the harness runs there and none the caller runs. It
+    // is one layer: where that configuration cannot be written (a sandbox
+    // that denies the user's jj configuration folder), the run goes on
+    // without it, says so, and the outside change report still runs.
     let guard = guard_revset(&workspace.name, &copy.commit_id);
-    jj_in(
+    match jj_in(
         &workspace.path,
         &[
             OsStr::new("-R"),
@@ -987,8 +994,10 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
             OsStr::new(GUARD_KEY),
             OsStr::new(&guard),
         ],
-    )?;
-    workspace.config_dir = workspace_config_dir(workspace);
+    ) {
+        Ok(_) => workspace.config_dir = workspace_config_dir(workspace),
+        Err(error) => workspace.guard_error = Some(error),
+    }
     workspace.write_state("added", None);
     Ok(())
 }

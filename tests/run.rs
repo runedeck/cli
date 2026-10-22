@@ -3372,6 +3372,82 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
 
 #[cfg(unix)]
 #[test]
+fn a_guard_that_cannot_be_written_does_not_stop_the_run() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // jj keeps a workspace's configuration under the user's jj folder: a
+    // sandbox that denies it leaves the run without the guard, and the
+    // run still finishes with its change and its outside change report.
+    let config_root = home.path().join(".config/jj/workspaces");
+    std::fs::create_dir_all(&config_root).expect("config root");
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-unguarded",
+        FAKE_REWRITER,
+    );
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod back");
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["guard"], false, "{result}");
+    assert!(
+        workspace["guard_error"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("config set")),
+        "{result}"
+    );
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A NEW.md"]);
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+
+    // The text output warns once.
+    let second = jj_repository(home.path());
+    let second_repo = second.path().to_str().expect("repository path");
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            second_repo,
+            "--binary",
+            home.path()
+                .join("fake-unguarded")
+                .to_str()
+                .expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod back");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.starts_with("warning: the guard could not be set"))
+            .count(),
+        1,
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");
