@@ -1,29 +1,30 @@
 ---
 type: proof
 change: exempt-tool-is-the-whole-command
-recorded: 2026-10-22
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+head: a31acad03da1951aff4c1aa8e3ce0d82a27b5aae
+recorded: 2026-10-24
+transcript: ee710085e49578ff84c068ff1af6bed52647296baff02f4a2dc18cf14150ceed
 scenes:
 - scenario: exempt-tool-is-the-whole-command#a-sandbox-off-request-for-an-exempt-command-is-refused/sandbox-off-request-for-a-jj-command
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#a-sandbox-off-request-for-an-exempt-command-is-refused/sandbox-off-request-for-a-build
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#an-exempt-tool-the-sandbox-would-keep-is-refused-with-the-command-to-run/directory-change-before-jj
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#an-exempt-tool-the-sandbox-would-keep-is-refused-with-the-command-to-run/pipe-into-head-after-gh
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#an-exempt-tool-the-sandbox-would-keep-is-refused-with-the-command-to-run/shell-around-rune-run
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#a-substitution-is-refused-with-a-way-to-pass-the-text/prompt-read-through-a-substitution
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/build-after-a-directory-change
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/test-output-through-a-pipe
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#the-exempt-list-is-the-harness-s-own/patterns-from-the-settings
-  kind: unproven
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#the-exempt-list-is-the-harness-s-own/sandbox-turned-off
-  kind: unproven
+  kind: check
 ---
 
 # Proof: exempt-tool-is-the-whole-command
