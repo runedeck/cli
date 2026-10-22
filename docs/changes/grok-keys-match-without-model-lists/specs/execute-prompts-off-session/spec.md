@@ -35,6 +35,11 @@ Otherwise it MUST send nothing. The report MUST say beside the credential when i
 - **WHEN** the key map holds only `gpt-5`, and the check asks for `grok-4`
 - **THEN** the check sends nothing, and the report says that no entry is of the family `grok`
 
+#### Scenario: Model id without a family
+
+- **WHEN** the key map holds `1-old`, and the check asks for `2-new`, whose id starts with a digit
+- **THEN** the check sends nothing, because an id without a family matches no entry but its own
+
 #### Scenario: Entry of a family that starts with the model's family
 
 - **WHEN** the key map holds `grokker-1` and `gpt-5`, and the check asks for `grok-4`

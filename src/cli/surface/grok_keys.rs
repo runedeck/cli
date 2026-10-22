@@ -99,6 +99,15 @@ pub(crate) fn choose(entries: &[GrokKeyEntry], model: &str) -> GrokKeyChoice {
         };
     }
     let family = model_family(model);
+    // An id that starts with a digit has no family: `1-old` and `2-new`
+    // would otherwise share the empty one, so no guess is made.
+    if family.is_empty() {
+        return GrokKeyChoice::None {
+            reason: format!(
+                "no entry for {model}, and its id has no family (it starts with a digit)"
+            ),
+        };
+    }
     let kin: Vec<&GrokKeyEntry> = entries
         .iter()
         .filter(|entry| model_family(&entry.model) == family)
@@ -293,6 +302,19 @@ mod tests {
         let lookalike = [entry("grokker-1", "OTHER_HANDLE"), entry("gpt-5", "OPENAI")];
         assert_eq!(choose(&lookalike, "grok-4").variable(), None);
         assert_eq!(choose(&[], "grok-4").variable(), None);
+        // An id that starts with a digit has no family, and the empty
+        // family is nobody's: `1-old` never speaks for `2-new`.
+        let digits = [entry("1-old", "OTHER_HANDLE")];
+        let choice = choose(&digits, "2-new");
+        assert_eq!(choice.variable(), None);
+        assert_eq!(
+            choice.note(),
+            Some("no entry for 2-new, and its id has no family (it starts with a digit)")
+        );
+        assert_eq!(
+            choose(&digits, "1-old"),
+            GrokKeyChoice::Named("OTHER_HANDLE".to_string())
+        );
     }
 
     #[test]
