@@ -73,7 +73,7 @@ fn plan_without_a_base_url_has_nothing_to_check() {
         Some("kimi-k3"),
     );
     assert_eq!(
-        plan_checks(&launch, None, &[]),
+        plan_checks(&launch, None, &[], &[]),
         [] as [crate::cli::launch::check::EndpointCheck; 0]
     );
     let report = run_checks(&launch, None);
@@ -93,7 +93,7 @@ fn claude_plan_names_route_and_small_fast_model_with_the_credential_key() {
         ]),
         Some("kimi-k3"),
     );
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(
         checks,
         vec![EndpointCheck {
@@ -117,7 +117,7 @@ fn model_override_replaces_the_route_id() {
         ]),
         Some("kimi-k3"),
     );
-    let checks = plan_checks(&launch, Some("kimi-k3-256k"), &[]);
+    let checks = plan_checks(&launch, Some("kimi-k3-256k"), &[], &[]);
     assert_eq!(checks[0].models, vec!["kimi-k3-256k".to_string()]);
 }
 
@@ -141,7 +141,7 @@ fn codex_plan_reads_model_arguments() {
     .iter()
     .map(OsString::from)
     .collect();
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(checks[0].credential_key.as_deref(), Some("OPENAI_API_KEY"));
     assert_eq!(
         checks[0].models,
@@ -166,7 +166,7 @@ fn two_families_get_their_own_credential_and_models() {
         .iter()
         .map(OsString::from)
         .collect();
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(
         checks,
         vec![
@@ -192,7 +192,7 @@ fn middleware_base_url_binds_to_the_running_tool_family() {
         Some("kimi-k3"),
     );
     launch.base_url = Some("http://proxy.test".to_string());
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0].base_url, "http://proxy.test");
     assert_eq!(checks[0].models, vec!["kimi-k3".to_string()]);
@@ -206,7 +206,7 @@ fn a_tool_outside_both_families_checks_its_route_model() {
         Some("proton-lumo/lumo-max"),
     );
     launch.base_url = Some("http://proxy.test".to_string());
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(
         checks,
         vec![EndpointCheck {
@@ -215,7 +215,7 @@ fn a_tool_outside_both_families_checks_its_route_model() {
             models: vec!["proton-lumo/lumo-max".to_string()],
         }]
     );
-    let overridden = plan_checks(&launch, Some("lumo-lite"), &[]);
+    let overridden = plan_checks(&launch, Some("lumo-lite"), &[], &[]);
     assert_eq!(overridden[0].models, vec!["lumo-lite".to_string()]);
 }
 
@@ -227,7 +227,7 @@ fn a_tool_with_a_configured_base_url_key_uses_it() {
         Some("grok-4.6"),
     );
     launch.base_url_env = Some("GROK_BASE_URL".to_string());
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(checks[0].base_url, "http://grok.test");
     assert_eq!(checks[0].models, vec!["grok-4.6".to_string()]);
 }
@@ -236,7 +236,7 @@ fn a_tool_with_a_configured_base_url_key_uses_it() {
 fn a_tool_without_any_base_url_has_nothing_to_check() {
     let launch = resolved("ollama", env(&[]), Some("llama3"));
     assert_eq!(
-        plan_checks(&launch, None, &[]),
+        plan_checks(&launch, None, &[], &[]),
         [] as [crate::cli::launch::check::EndpointCheck; 0]
     );
 }
@@ -254,20 +254,29 @@ fn an_inherited_endpoint_of_the_running_tool_is_checked_with_its_credential() {
         ("GROK_CODE_XAI_API_KEY", "fake-inherited-key"),
     ]);
     assert_eq!(
-        plan_checks(&launch, None, &inherited),
+        plan_checks(&launch, None, &inherited, &[]),
         vec![EndpointCheck {
             base_url: "http://127.0.0.1:8317/v1".to_string(),
             credential_key: Some("GROK_CODE_XAI_API_KEY".to_string()),
             models: vec!["grok-4.7".to_string()],
         }]
     );
-    assert_eq!(plan_checks(&launch, None, &[]), [] as [EndpointCheck; 0]);
+    assert_eq!(
+        plan_checks(&launch, None, &[], &[]),
+        [] as [EndpointCheck; 0]
+    );
+    // A credential under another name is sent only when the route's own
+    // configuration names it (a grok `env_key`).
     let proxied = env(&[
         ("GROK_MODELS_BASE_URL", "http://127.0.0.1:8317/v1"),
         ("CLIPROXY_API_KEY", "fake-proxy-key"),
     ]);
     assert_eq!(
-        plan_checks(&launch, None, &proxied)[0]
+        plan_checks(&launch, None, &proxied, &[])[0].credential_key,
+        None
+    );
+    assert_eq!(
+        plan_checks(&launch, None, &proxied, &["CLIPROXY_API_KEY".to_string()])[0]
             .credential_key
             .as_deref(),
         Some("CLIPROXY_API_KEY")
@@ -278,9 +287,51 @@ fn an_inherited_endpoint_of_the_running_tool_is_checked_with_its_credential() {
     let launch = resolved("claude", env(&[]), Some("kimi-k3"));
     let inherited = env(&[("ANTHROPIC_BASE_URL", "http://proxy.test")]);
     assert_eq!(
-        plan_checks(&launch, None, &inherited),
+        plan_checks(&launch, None, &inherited, &[]),
         [] as [EndpointCheck; 0]
     );
+}
+
+#[test]
+fn a_credential_the_route_does_not_name_is_never_sent() {
+    let (base_url, handle) = stub(200, r#"{"data":[{"id":"grok-4.7"}]}"#);
+    let mut launch = resolved("grok", env(&[]), Some("grok-4.7"));
+    launch.base_url_env = Some("GROK_MODELS_BASE_URL".to_string());
+    // The shell holds credentials of its own beside the inherited endpoint.
+    // Nothing the route carries names them, so the check sends none.
+    let inherited = env(&[
+        ("AWS_SECRET_ACCESS_KEY", "fake-aws-secret-value"),
+        ("CLIPROXY_API_KEY", "fake-proxy-secret-value"),
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+    ]);
+    let report = run_checks_with(&launch, None, &inherited, &[]);
+    let head = handle.join().expect("stub");
+    let head_lower = head.to_ascii_lowercase();
+    assert!(!head_lower.contains("authorization"), "{head}");
+    assert!(!head_lower.contains("x-api-key"), "{head}");
+    assert!(!head.contains("fake-"), "{head}");
+    assert_eq!(report.exit_code, EXIT_SERVED);
+    assert!(format_report(&report).contains("credential: <none>"));
+
+    // The variable the route's configuration names is sent, and the other
+    // shell credential still never.
+    let (base_url, handle) = stub(200, r#"{"data":[{"id":"grok-4.7"}]}"#);
+    let inherited = env(&[
+        ("AWS_SECRET_ACCESS_KEY", "fake-aws-secret-value"),
+        ("CLIPROXY_API_KEY", "fake-proxy-secret-value"),
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+    ]);
+    let report = run_checks_with(&launch, None, &inherited, &["CLIPROXY_API_KEY".to_string()]);
+    let head = handle.join().expect("stub");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("authorization: bearer fake-proxy-secret-value"),
+        "{head}"
+    );
+    assert!(!head.contains("fake-aws-secret-value"), "{head}");
+    let text = format_report(&report);
+    assert!(text.contains("credential: CLIPROXY_API_KEY"), "{text}");
+    assert!(!text.contains("fake-"), "{text}");
 }
 
 #[test]
@@ -314,7 +365,7 @@ fn a_credential_under_any_name_is_sent() {
         ]),
         Some("kimi-k3"),
     );
-    let checks = plan_checks(&launch, None, &[]);
+    let checks = plan_checks(&launch, None, &[], &[]);
     assert_eq!(checks[0].credential_key.as_deref(), Some("PROXY_TOKEN"));
 }
 
@@ -532,7 +583,7 @@ fn a_claude_settings_env_sets_the_endpoint_and_credential_the_check_reads() {
         dir.path(),
     );
 
-    let checks = plan_checks(&resolved, None, &[]);
+    let checks = plan_checks(&resolved, None, &[], &[]);
 
     assert_eq!(checks.len(), 1, "{checks:?}");
     assert_eq!(checks[0].base_url, "http://127.0.0.1:9/settings");
@@ -556,7 +607,7 @@ fn the_check_never_borrows_a_credential_of_another_family() {
         ],
         dir.path(),
     );
-    let checks = plan_checks(&claude, None, &[]);
+    let checks = plan_checks(&claude, None, &[], &[]);
     let anthropic = checks
         .iter()
         .find(|check| check.base_url == "http://127.0.0.1:9/a")
@@ -578,7 +629,7 @@ fn the_check_never_borrows_a_credential_of_another_family() {
         ],
         dir.path(),
     );
-    let checks = plan_checks(&foreign, None, &[]);
+    let checks = plan_checks(&foreign, None, &[], &[]);
     let anthropic = checks
         .iter()
         .find(|check| check.base_url == "http://127.0.0.1:9/a")
@@ -601,7 +652,7 @@ fn the_check_never_borrows_a_credential_of_another_family() {
             std::ffi::OsString::from("fake-grok-secret"),
         ),
     ];
-    let checks = plan_checks(&grok, None, &[]);
+    let checks = plan_checks(&grok, None, &[], &[]);
     assert_eq!(checks.len(), 1, "{checks:?}");
     assert_eq!(checks[0].credential_key.as_deref(), Some("GROK_API_KEY"));
 }
@@ -714,7 +765,7 @@ fn the_check_takes_the_credential_and_the_model_from_the_effective_view() {
         ),
     ];
 
-    let checks = plan_checks(&resolved, None, &[]);
+    let checks = plan_checks(&resolved, None, &[], &[]);
     assert_eq!(checks.len(), 1, "{checks:?}");
     assert_eq!(checks[0].base_url, "http://127.0.0.1:9/settings");
     assert!(

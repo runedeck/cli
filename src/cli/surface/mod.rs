@@ -1542,7 +1542,7 @@ fn copy_grok_model_keys(source: &Path, target: &Path) -> Result<Vec<String>, Sur
 /// The names of the environment variables the owner's grok key map points
 /// at: every `env_key` value under `model`. Empty without a readable key
 /// map, since this feeds redaction and never fails a run.
-fn grok_key_variable_names(source: &Path) -> Vec<String> {
+pub(crate) fn grok_key_variable_names(source: &Path) -> Vec<String> {
     fn collect(value: &toml::Value, names: &mut Vec<String>) {
         if let Some(table) = value.as_table() {
             for (key, inner) in table {
@@ -1561,7 +1561,7 @@ fn grok_key_variable_names(source: &Path) -> Vec<String> {
 }
 
 /// The owner's grok configuration file.
-fn grok_config_source() -> Result<PathBuf, SurfaceFailure> {
+pub(crate) fn grok_config_source() -> Result<PathBuf, SurfaceFailure> {
     dirs::home_dir()
         .map(|home| home.join(".grok/config.toml"))
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))

@@ -211,16 +211,32 @@ fn inherited_environment(resolved: &ResolvedLaunch) -> Vec<(OsString, OsString)>
     super::inherited_env(&isolation.removals())
 }
 
+/// The variables the route's own configuration names as credentials, which
+/// the check may read from the inherited environment: grok's
+/// `model.<id>.env_key` entries. No other tool names one this way.
+fn route_named_variables(tool: &str) -> Vec<String> {
+    if tool != "grok" {
+        return Vec::new();
+    }
+    crate::cli::surface::grok_config_source()
+        .map(|source| crate::cli::surface::grok_key_variable_names(&source))
+        .unwrap_or_default()
+}
+
 /// Collect the endpoints the plan talks to. `model_override` is the
 /// `rune run --model` value, which replaces the route id the plan carries.
 /// `inherited` is the environment the child inherits beside the plan's
 /// own: a tool outside the families reads its endpoint and credential
 /// there too, as the dry run's `base_url` does, so a grok route whose
 /// `GROK_MODELS_BASE_URL` is set in the shell is checked and not skipped.
-pub(crate) fn plan_checks(
+/// `named` lists the variables the route's configuration names
+/// ([`route_named_variables`]), given by the caller so a test needs no
+/// grok configuration in the home directory.
+fn plan_checks(
     resolved: &ResolvedLaunch,
     model_override: Option<&str>,
     inherited: &[(OsString, OsString)],
+    named: &[String],
 ) -> Vec<EndpointCheck> {
     // The child's view: a claude settings object's `env` wins over the
     // process env, so the check reads the same endpoint and credential.
@@ -273,7 +289,7 @@ pub(crate) fn plan_checks(
             checks.push(EndpointCheck {
                 base_url,
                 credential_key: fallback_credential_key(env)
-                    .or_else(|| tool_credential_key(&resolved.tool, inherited)),
+                    .or_else(|| tool_credential_key(&resolved.tool, inherited, named)),
                 models,
             });
         }
@@ -282,18 +298,22 @@ pub(crate) fn plan_checks(
 }
 
 /// The inherited credential a tool outside the families reads: a
-/// credential-shaped key that starts with the tool's own name
-/// (`GROK_CODE_XAI_API_KEY` for grok), else the first credential-shaped
-/// key of no family, as [`fallback_credential_key`] takes from the plan.
-fn tool_credential_key(tool: &str, env: &[(OsString, OsString)]) -> Option<String> {
+/// credential-shaped key under the tool's own name (`GROK_CODE_XAI_API_KEY`
+/// for grok), else a variable the route's configuration names (a grok
+/// `env_key`). Any other credential in the shell, `AWS_SECRET_ACCESS_KEY`
+/// or a proxy token under its own name, is never sent: nothing the route
+/// carries names it, so the endpoint has no claim to it.
+fn tool_credential_key(
+    tool: &str,
+    env: &[(OsString, OsString)],
+    named: &[String],
+) -> Option<String> {
     let prefix = format!("{}_", tool.to_ascii_uppercase());
+    let is_set = |key: &str| env_value(env, key).is_some_and(|value| !value.is_empty());
     env.iter()
-        .map(|(key, value)| (key.to_string_lossy().into_owned(), value))
-        .find(|(key, value)| {
-            key.starts_with(&prefix) && super::is_credential_env_key(key) && !value.is_empty()
-        })
-        .map(|(key, _)| key)
-        .or_else(|| fallback_credential_key(env))
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .find(|key| key.starts_with(&prefix) && super::is_credential_env_key(key) && is_set(key))
+        .or_else(|| named.iter().find(|key| is_set(key)).cloned())
 }
 
 /// A profile for a tool outside the families can authenticate under any
@@ -407,18 +427,34 @@ fn credential_value(check: &EndpointCheck, env: &[(OsString, OsString)]) -> Opti
 }
 
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
+    run_checks_with(
+        resolved,
+        model_override,
+        &inherited_environment(resolved),
+        &route_named_variables(&resolved.tool),
+    )
+}
+
+/// [`run_checks`] with the inherited environment and the route-named
+/// variables given, so a test controls what the check may send.
+fn run_checks_with(
+    resolved: &ResolvedLaunch,
+    model_override: Option<&str>,
+    inherited: &[(OsString, OsString)],
+    named: &[String],
+) -> CheckReport {
     let effective = resolved.effective_env();
-    // An inherited endpoint comes with an inherited credential: the check
-    // sends it, and the report hides it like the plan's own.
-    let inherited = inherited_environment(resolved);
+    // An inherited endpoint comes with the inherited credential the route
+    // names: the check sends it, and the report hides it like the plan's
+    // own. Every other inherited credential is hidden and never sent.
     let mut secrets = credential_values(&effective);
-    secrets.extend(credential_values(&inherited));
+    secrets.extend(credential_values(inherited));
     let (roots, roots_warnings) = root_certs_from(|variable| std::env::var_os(variable));
-    let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override, &inherited)
+    let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override, inherited, named)
         .into_iter()
         .map(|check| {
             let credential = credential_value(&check, &effective)
-                .or_else(|| credential_value(&check, &inherited));
+                .or_else(|| credential_value(&check, inherited));
             let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
                     let (served, missing) = check

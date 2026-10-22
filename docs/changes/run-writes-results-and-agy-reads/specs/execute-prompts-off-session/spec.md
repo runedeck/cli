@@ -44,8 +44,14 @@ file, or when the target exists and is a symlink or not a regular file.
 
 The runner MUST create the result file readable by the owner only. It MUST hold the parent folder it checked, write the
 result to a temporary file that it creates exclusively in that folder, and replace the target in one rename relative to
-that folder, so a folder swapped for a symlink during the run cannot move the write. When the final write fails, the
-runner MUST print the full result on stdout and exit with code 74.
+that folder, so a folder swapped for a symlink during the run cannot move the write. When the final write fails, or the
+file at the output path is not the file the runner wrote, the runner MUST print the full result on stdout and exit with
+code 74.
+
+#### Scenario: Output folder moved during the run
+
+- **WHEN** the harness renames the output folder and plants a file at the output path
+- **THEN** stdout carries the full result, the exit code is 74, and the confirmation names no planted file
 
 #### Scenario: Output file already exists
 
