@@ -1998,6 +1998,22 @@ fn the_grok_key_map_names_the_variables_whose_values_are_credentials() {
         grok_key_variable_names(&temporary.path().join("absent.toml")),
         Vec::<String>::new()
     );
+    // One model's entry, and only that one: a model without an entry, or
+    // without a key map, names nothing.
+    assert_eq!(
+        grok_model_env_key(&source, "grok-4.5").as_deref(),
+        Some("GROK_SEAT_HANDLE")
+    );
+    assert_eq!(
+        grok_model_env_key(&source, "grok-4.6").as_deref(),
+        Some("XAI_SECOND_HANDLE")
+    );
+    assert_eq!(grok_model_env_key(&source, "local"), None);
+    assert_eq!(grok_model_env_key(&source, "grok-4"), None);
+    assert_eq!(
+        grok_model_env_key(&temporary.path().join("absent.toml"), "grok-4.5"),
+        None
+    );
 }
 
 #[test]

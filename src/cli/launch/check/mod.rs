@@ -211,16 +211,24 @@ fn inherited_environment(resolved: &ResolvedLaunch) -> Vec<(OsString, OsString)>
     super::inherited_env(&isolation.removals())
 }
 
-/// The variables the route's own configuration names as credentials, which
-/// the check may read from the inherited environment: grok's
-/// `model.<id>.env_key` entries. No other tool names one this way.
-fn route_named_variables(tool: &str) -> Vec<String> {
+/// The variables the route's own configuration names as credentials for
+/// `model`, which the check may read from the inherited environment:
+/// grok's `model.<model>.env_key` entry, and that one alone. The entry of
+/// another model is not the credential of this one (the check sent the
+/// `OpenAI` key of one model while it asked for grok-4), and a model without
+/// an entry sends nothing. No other tool names one this way.
+fn route_named_variables(tool: &str, model: Option<&str>) -> Vec<String> {
     if tool != "grok" {
         return Vec::new();
     }
+    let Some(model) = model else {
+        return Vec::new();
+    };
     crate::cli::surface::grok_config_source()
-        .map(|source| crate::cli::surface::grok_key_variable_names(&source))
-        .unwrap_or_default()
+        .ok()
+        .and_then(|source| crate::cli::surface::grok_model_env_key(&source, model))
+        .into_iter()
+        .collect()
 }
 
 /// Collect the endpoints the plan talks to. `model_override` is the
@@ -427,11 +435,12 @@ fn credential_value(check: &EndpointCheck, env: &[(OsString, OsString)]) -> Opti
 }
 
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
+    let model = model_override.or_else(|| resolved.model.as_ref().map(|model| model.id.as_str()));
     run_checks_with(
         resolved,
         model_override,
         &inherited_environment(resolved),
-        &route_named_variables(&resolved.tool),
+        &route_named_variables(&resolved.tool, model),
     )
 }
 

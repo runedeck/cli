@@ -4433,6 +4433,73 @@ fn grok_check_covers_an_inherited_endpoint_and_asks_for_models_once() {
         ));
 }
 
+/// One-shot HTTP stub for a model list: answers the next request with
+/// `status` and `body`, and hands back the request head it received.
+fn stub_models(status: u16, body: &str) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    let body = body.to_string();
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buffer = [0_u8; 4096];
+        let read = stream.read(&mut buffer).unwrap_or(0);
+        let head = String::from_utf8_lossy(&buffer[..read]).into_owned();
+        let reason = if status == 200 { "OK" } else { "Error" };
+        let response = format!(
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).expect("write");
+        head
+    });
+    (format!("http://{address}"), handle)
+}
+
+#[test]
+fn grok_check_sends_only_the_key_of_the_model_it_checks() {
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
+    // Two models, two keys: the check of one must not borrow the other's.
+    std::fs::write(
+        home.path().join(".grok/config.toml"),
+        "[model.aaa-gpt]\nenv_key = \"OPENAI_API_KEY\"\n\n[model.grok-4]\nenv_key = \"XAI_API_KEY\"\n",
+    )
+    .expect("grok configuration");
+    let openai = "sk-openai-fake-value-123";
+    let xai = "xai-fake-value-456789";
+    for (model, sent) in [
+        ("grok-4", Some(xai)),
+        ("aaa-gpt", Some(openai)),
+        ("grok-3-without-entry", None),
+    ] {
+        let (base_url, handle) = stub_models(200, &format!(r#"{{"data":[{{"id":"{model}"}}]}}"#));
+        let output = rune(home.path())
+            .env("OPENAI_API_KEY", openai)
+            .env("XAI_API_KEY", xai)
+            .env("GROK_MODELS_BASE_URL", format!("{base_url}/v1"))
+            .env_remove("GROK_CODE_XAI_API_KEY")
+            .args(["--json", "run", "grok", "x", "--check", "--model", model])
+            .output()
+            .expect("check output");
+        let head = handle.join().expect("stub");
+        let head_lower = head.to_ascii_lowercase();
+        match sent {
+            Some(value) => assert!(
+                head_lower.contains(&format!("authorization: bearer {value}")),
+                "{model}: {head}"
+            ),
+            None => assert!(!head_lower.contains("authorization"), "{model}: {head}"),
+        }
+        for other in [openai, xai] {
+            if sent != Some(other) {
+                assert!(!head.contains(other), "{model}: {head}");
+            }
+        }
+        assert_eq!(output.status.code(), Some(0), "{model}: {output:?}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn grok_echoing_the_value_of_its_key_variable_leaves_no_trace_in_any_output() {
