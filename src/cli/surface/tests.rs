@@ -177,14 +177,23 @@ fn warnings_show_a_dropped_value_only_for_a_fixed_choice_option() {
         filtered.warnings[0]
     );
     assert!(!filtered.warnings[0].contains("evil"));
-    // A mode from a fixed list reads as written.
+    // A mode from a fixed list reads as written, and only a known value
+    // of that list: an allowed flag can carry a URL with a password too.
     let grok = filter_surface_args(&invocation(
         Surface::Grok,
-        &["--sandbox", "workspace-local", "--permission-mode", "plan"],
+        &[
+            "--sandbox",
+            "read-only",
+            "--permission-mode",
+            "plan",
+            "--sandbox=https://user:fake-sandbox-secret@host.test/",
+            "--permission-mode",
+            "workspace-local",
+        ],
     ));
-    assert_eq!(grok.warnings.len(), 2, "{:?}", grok.warnings);
+    assert_eq!(grok.warnings.len(), 4, "{:?}", grok.warnings);
     assert!(
-        grok.warnings[0].contains("owns --sandbox; the profile value workspace-local is dropped"),
+        grok.warnings[0].contains("owns --sandbox; the profile value read-only is dropped"),
         "{}",
         grok.warnings[0]
     );
@@ -193,9 +202,34 @@ fn warnings_show_a_dropped_value_only_for_a_fixed_choice_option() {
         "{}",
         grok.warnings[1]
     );
-    let codex = filter_surface_args(&invocation(Surface::Codex, &["-s", "read-only"]));
+    assert!(
+        grok.warnings[2].contains("owns --sandbox; the profile value <redacted> is dropped"),
+        "{}",
+        grok.warnings[2]
+    );
+    assert!(!grok.warnings[2].contains("fake-"), "{}", grok.warnings[2]);
+    assert!(
+        !grok.warnings[2].contains("host.test"),
+        "{}",
+        grok.warnings[2]
+    );
+    assert!(
+        grok.warnings[3]
+            .contains("owns --permission-mode; the profile value <redacted> is dropped"),
+        "{}",
+        grok.warnings[3]
+    );
+    let codex = filter_surface_args(&invocation(
+        Surface::Codex,
+        &["-s", "read-only", "-s", "fake-unknown-mode"],
+    ));
     assert!(
         codex.warnings[0].contains("owns -s; the profile value read-only is dropped"),
+        "{:?}",
+        codex.warnings
+    );
+    assert!(
+        codex.warnings[1].contains("owns -s; the profile value <redacted> is dropped"),
         "{:?}",
         codex.warnings
     );
