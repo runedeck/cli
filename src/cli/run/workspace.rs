@@ -85,12 +85,22 @@ impl Plan {
     }
 }
 
-/// One of the caller's mutable commits as recorded at the start.
+/// The caller's working-copy change as recorded at the start: what a
+/// snapshot leaves alone. The tree is left out on purpose. The caller
+/// keeps editing while the run lasts, and every edit rewrites the commit,
+/// so the commit id would flag almost every run. A new description or a
+/// new parent is somebody's jj command, and that is reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RecordedCommit {
+struct RecordedHead {
     change_id: String,
-    commit_id: String,
+    description: String,
+    parents: Vec<String>,
 }
+
+/// The record template: the change id, the parent commit ids on one line,
+/// then the description, which may span lines, so it comes last.
+const HEAD_TEMPLATE: &str =
+    "change_id ++ \"\\n\" ++ parents.map(|p| p.commit_id()).join(\" \") ++ \"\\n\" ++ description";
 
 /// A run's copy and workspace, from the moment the copy exists. `finish`
 /// takes it down, whether or not the workspace was added yet.
@@ -115,8 +125,11 @@ pub(crate) struct Workspace {
     copy_commit: String,
     /// The operation the run started from, for `jj op log`.
     operation_id: String,
-    /// The caller's mutable commits at the start.
-    caller_commits: Vec<RecordedCommit>,
+    /// The caller's mutable commits below its working copy at the start,
+    /// by commit id.
+    caller_commits: Vec<String>,
+    /// The caller's working-copy change at the start, without its tree.
+    caller_head: Option<RecordedHead>,
     /// Whether `jj workspace add` succeeded.
     added: bool,
     lock_path: PathBuf,
@@ -531,18 +544,48 @@ fn copy_caller_files(
     Ok((copy_change, copy_commit))
 }
 
-/// The caller's mutable commits, change id and commit id each.
-fn caller_commits(root: &Path) -> Result<Vec<RecordedCommit>, String> {
-    Ok(
-        log_lines(root, "::@ & mutable()", "change_id ++ \" \" ++ commit_id")?
-            .iter()
-            .filter_map(|line| line.split_once(' '))
-            .map(|(change_id, commit_id)| RecordedCommit {
-                change_id: change_id.to_string(),
-                commit_id: commit_id.to_string(),
-            })
-            .collect(),
-    )
+/// The caller's mutable commits below its working copy, by commit id: a
+/// snapshot never rewrites them, so a new commit id is a rewrite.
+fn caller_commits(root: &Path) -> Result<Vec<String>, String> {
+    log_lines(root, "::@- & mutable()", "commit_id")
+}
+
+/// The record of the one visible revision `revset` names, or `None` when
+/// it names none or several (an abandoned or a divergent change).
+fn head_record(root: &Path, revset: &str) -> Result<Option<RecordedHead>, String> {
+    let commits = log_lines(root, &visible(revset), "commit_id")?;
+    let [commit] = commits.as_slice() else {
+        return Ok(None);
+    };
+    let printed = jj_root_command(
+        root,
+        &[
+            OsStr::new("log"),
+            OsStr::new("-r"),
+            OsStr::new(commit),
+            OsStr::new("--no-graph"),
+            OsStr::new("-T"),
+            OsStr::new(HEAD_TEMPLATE),
+        ],
+    )?
+    .stdout;
+    let mut parts = printed.splitn(3, '\n');
+    let change_id = parts.next().unwrap_or_default().trim().to_string();
+    if change_id.is_empty() {
+        return Err(format!("jj printed no change id for {revset}"));
+    }
+    let parents = parts
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let description = parts.next().unwrap_or_default().to_string();
+    Ok(Some(RecordedHead {
+        change_id,
+        description,
+        parents,
+    }))
 }
 
 /// The id of the latest operation of the repository.
@@ -612,11 +655,13 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
         copy_commit,
         operation_id: String::new(),
         caller_commits: Vec::new(),
+        caller_head: None,
         added: false,
         lock_path: plan.lock_path.clone(),
     };
     workspace.operation_id = operation_id(&workspace.root)?;
     workspace.caller_commits = caller_commits(&workspace.root)?;
+    workspace.caller_head = head_record(&workspace.root, "@")?;
     Ok(workspace)
 }
 
@@ -813,17 +858,28 @@ fn final_commit(workspace: &Workspace) -> Result<String, String> {
 
 /// Whether any of the caller's commits recorded at the start is gone or
 /// rewritten: a harness that describes or abandons one by id, or the
-/// caller's own work meanwhile. A commit id resolves hidden or not, so the
-/// question is whether the recorded commit is still visible; a change id
-/// of an abandoned change does not resolve at all.
+/// caller's own squash, rebase, or describe meanwhile. A commit below the
+/// working copy counts by commit id, which resolves hidden or not, so the
+/// question is whether it is still visible. The working-copy change counts
+/// by its record without the tree, so the caller's own edits and snapshots
+/// change nothing recorded.
 fn caller_commits_changed(workspace: &Workspace) -> Result<bool, String> {
-    for recorded in &workspace.caller_commits {
+    for commit in &workspace.caller_commits {
         let still_there = log_first(
             &workspace.root,
-            &visible(&format!("present({})", recorded.commit_id)),
+            &visible(&format!("present({commit})")),
             "commit_id",
         )?;
         if still_there.is_none() {
+            return Ok(true);
+        }
+    }
+    if let Some(recorded) = &workspace.caller_head {
+        let now = head_record(
+            &workspace.root,
+            &format!("change_id({})", recorded.change_id),
+        )?;
+        if now.as_ref() != Some(recorded) {
             return Ok(true);
         }
     }

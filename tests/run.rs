@@ -2643,11 +2643,11 @@ fn caller_keeps_working_while_a_seat_runs_and_a_second_seat_starts() {
             result["workspace"]["conflicted"], false,
             "seat {seat}: {result}"
         );
-        // The caller's snapshot rewrote its working-copy change under seat
-        // a; nothing outside seat b changed while it ran.
+        // The caller's edit and snapshot under seat a rewrote its
+        // working-copy commit, which is the caller's own work and no
+        // outside change: the flag stays off for both seats.
         assert_eq!(
-            result["workspace"]["outside_changes"],
-            seat == "a",
+            result["workspace"]["outside_changes"], false,
             "seat {seat}: {result}"
         );
         let id = result["workspace"]["change_id"]
@@ -3351,6 +3351,29 @@ fn a_caller_that_squashes_during_the_run_does_not_stall_the_workspace() {
     assert_eq!(parents.trim(), caller.trim(), "{parents}");
     assert_eq!(workspace_names(home.path(), repo), ["default"]);
     assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_that_describes_its_change_during_the_run_is_reported() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // A new description on the caller's working-copy change is a jj
+    // command of the caller's, unlike an edit: it is reported.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-caller-describe",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj -R \"$CALLER\" describe -m 'caller renamed its change' >/dev/null 2>&1\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
 }
 
 #[cfg(unix)]

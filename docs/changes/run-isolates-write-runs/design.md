@@ -32,11 +32,15 @@ to the revisions in between: a squash into the copy, an absorb, an abandoned par
 rebase conflict is kept and reported as `conflicted`. The copy carries the run's description with a `base copy for`
 line, so a leftover after a kill names the run.
 
-The harness can still rewrite a caller commit by naming it (`jj describe -r <id>`): the store is shared. The runner
-records the repository's latest operation id and the caller's mutable commits (`::@ & mutable()`, by commit id) when
-it makes the copy. At finish, a recorded commit that is no longer visible means a rewrite or an abandon, by the harness
-or by the caller's own work meanwhile: `outside_changes` is true, `operation_id` names the recorded operation, and the
-text line points at `jj op log` from it. The runner reports the change and never reverts it.
+The harness can still rewrite a caller commit by naming it (`jj describe -r <id>`): the store is shared. When it makes
+the copy, the runner records the repository's latest operation id, the caller's mutable commits below the working copy
+(`::@- & mutable()`) by commit id, and of the working-copy change only its change id, description, and parent commit
+ids. Its tree is left out. The caller keeps editing while the run lasts, and every snapshot rewrites the working-copy commit,
+so its commit id would flag almost every run. At finish, a recorded commit that is no longer visible, or a working-copy
+change that is gone, divergent, described anew, or rebased, means a rewrite by the harness or by the caller's own jj
+command: `outside_changes` is true, `operation_id` names the recorded operation, and the text line points at
+`jj op log` from it. The caller's own edits and snapshots change nothing recorded. The runner reports the change and
+never reverts it.
 
 ## Structure
 
@@ -68,7 +72,8 @@ group does not reach a jj command in the middle of the finish.
 | The runner reads the caller's change | `jj -R <repo> --ignore-working-copy log -r @ --no-graph -T change_id` |
 | The runner finds the immutable base | `jj -R <repo> --ignore-working-copy log -r 'heads(::@ & immutable())' -T commit_id`, else `root()` |
 | The runner copies the caller's files | `jj -R <repo> new <base> --no-edit -m <desc>` (this snapshots the caller's checkout), then `jj -R <repo> --ignore-working-copy restore --from @ --to <copy>` |
-| The runner records the operation and the caller's commits | `jj -R <repo> --ignore-working-copy op log -n 1 --no-graph -T id`, then `log -r '::@ & mutable()' -T 'change_id ++ " " ++ commit_id'` |
+| The runner records the operation and the caller's commits | `jj -R <repo> --ignore-working-copy op log -n 1 --no-graph -T id`, then `log -r '::@- & mutable()' -T commit_id`, then `log -r @ -T 'change_id ++ "\n" ++ parents.map(\|p\| p.commit_id()).join(" ") ++ "\n" ++ description'` |
+| The runner tests the caller's working-copy change | `jj -R <repo> --ignore-working-copy log -r 'change_id(<id>) & ::visible_heads()' -T commit_id` (exactly one), then the record template on that commit, compared with the record |
 | The runner creates the workspace | `jj -R <repo> workspace add --name run-<id> --revision <copy commit> --message <desc> <state>/workspaces/<repo-id>/run-<id>` |
 | The runner records the harness's files | `jj -R <workspace> --config 'snapshot.auto-track="all()"' --config 'snapshot.max-new-file-size="1TiB"' util snapshot` |
 | The runner lists what jj still left unrecorded | the `Refused to snapshot` lines of that snapshot, then `jj -R <workspace> --config 'snapshot.auto-track="none()"' --config 'snapshot.max-new-file-size="1TiB"' status` (`? <path>` lines) |
@@ -103,5 +108,6 @@ A colocated workspace is also a git worktree, and git locks `.git/config` while 
 - Ignored files are absent, so a run that needs `.env` or a warm build cache fails or runs slowly. The result says the run
   was isolated, so the cause is visible.
 - Colocation changes the owner's repository setup once. The result says so, and the change is reversible.
-- The caller's own snapshot while a run lasts sets `outside_changes` too: the flag says that something outside the run
-  moved, and the operation id lets the owner see what.
+- The caller's own `jj squash`, `jj rebase`, or `jj describe` while a run lasts sets `outside_changes` too: the flag
+  says that a recorded commit moved, and the operation id lets the owner see what. Edits and snapshots alone never set
+  it.

@@ -64,10 +64,15 @@ result MUST say so and name the recorded operation, so the owner can find and re
 - **WHEN** the harness edits a file and squashes it into the revision it started from
 - **THEN** the run's change holds the edit, and the result says `kept` is true
 
-#### Scenario: Harness moves a line into a caller commit
+#### Scenario: Harness rewrites a caller commit
 
-- **WHEN** the harness runs `jj absorb`, and a line moves into one of the caller's commits
+- **WHEN** the harness changes the description of one of the caller's commits below the caller's working copy
 - **THEN** the result says that commits outside the run changed, and it names the operation the run started from
+
+#### Scenario: Caller keeps editing during the run
+
+- **WHEN** the caller edits files in the checkout while the run works, and nothing else changes
+- **THEN** the result does not say that commits outside the run changed
 
 ### Requirement: The runner never deletes a file that jj did not record
 

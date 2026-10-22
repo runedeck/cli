@@ -570,7 +570,7 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
     }
     if outcome.outside_changes == Some(true) {
         lines.push(format!(
-            "warning: commits outside the run changed while it ran (a harness's jj absorb, or your own work); review them with jj op log from operation {}",
+            "warning: commits outside the run changed while it ran (a harness rewrote one, or your own squash, rebase, or describe did); review them with jj op log from operation {}",
             outcome.operation_id.as_deref().unwrap_or("<unknown>")
         ));
     }
