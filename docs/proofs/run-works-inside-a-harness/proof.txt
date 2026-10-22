@@ -1,0 +1,303 @@
+## execute-prompts-off-session#the-child-harness-starts-free-of-the-parent-harness-s-session/desktop-session-starts-a-proxied-claude-route
+kind: check
+$ rune run sol@claude --dry-run "Reply with exactly two words: proof ready"
+  tool: claude
+  model: sol
+  model_id: gpt-6.1-sol
+  model_context: 272000
+  model_source: config
+  argv: claude --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-6.1-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}
+  env:
+    ANTHROPIC_MODEL=gpt-6.1-sol
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000
+    ANTHROPIC_AUTH_TOKEN=<redacted>
+    ANTHROPIC_BASE_URL=https://cliproxy.internal
+    ANTHROPIC_SMALL_FAST_MODEL=gpt-6-luna
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: https://cliproxy.internal
+  wrap:
+  pre:
+  stdin: <prompt>
+  repository: /private/tmp/claude-501/rune-proof-1776-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-desktop-session-starts-a-proxied-claude-route-33608ac8-1-0
+  mode: read-only
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: --name
+  artifacts_dir: none
+  clean_config_keys: none
+  workspace: none
+$ rune run sol@claude "Reply with exactly two words: proof ready"
+  ⚠ Permission mode forced to default — CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set (allowed_non_write_users hardening). Declare allowedTools explicitly, or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to opt out.
+  [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  proof ready
+
+## execute-prompts-off-session#the-child-harness-starts-free-of-the-parent-harness-s-session/codex-session-starts-another-harness
+kind: check
+$ CODEX_SANDBOX=seatbelt CODEX_SANDBOX_NETWORK_DISABLED=1 rune run sol@claude --dry-run "x"
+  tool: claude
+  model: sol
+  model_id: gpt-6.1-sol
+  model_context: 272000
+  model_source: config
+  argv: claude --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-6.1-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}
+  env:
+    ANTHROPIC_MODEL=gpt-6.1-sol
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000
+    ANTHROPIC_AUTH_TOKEN=<redacted>
+    ANTHROPIC_BASE_URL=https://cliproxy.internal
+    ANTHROPIC_SMALL_FAST_MODEL=gpt-6-luna
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+    CODEX_SANDBOX
+    CODEX_SANDBOX_NETWORK_DISABLED
+  base_url: https://cliproxy.internal
+  wrap:
+  pre:
+  stdin: <prompt>
+  repository: /private/tmp/claude-501/rune-proof-1776-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-codex-session-starts-another-harness-11907d90-5-0
+  mode: read-only
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: --name
+  artifacts_dir: none
+  clean_config_keys: none
+  workspace: none
+
+## execute-prompts-off-session#a-failed-run-shows-what-the-harness-said/claude-prints-its-error-on-stdout
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo API Error: 400 bad request" "echo warning: model deprecated >&2" "exit 1" > fake-claude && chmod 755 fake-claude'
+$ rune run sol@claude --binary ./fake-claude "x"
+  error: process Exited(1)
+  harness errors:
+    API Error: 400 bad request
+  stdout tail:
+    API Error: 400 bad request
+  stderr tail:
+    warning: model deprecated
+
+## execute-prompts-off-session#a-failed-run-shows-what-the-harness-said/run-times-out
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo partial answer" "sleep 5" > slow-claude && chmod 755 slow-claude'
+$ rune run sol@claude --binary ./slow-claude --timeout 1s "x"
+  error: process timed out after 1 seconds
+  stdout tail:
+    partial answer
+$ rune --json run sol@claude --binary ./slow-claude --timeout 1s "x"
+  {"details":{"harness_errors":[],"stderr_tail":"","stdout_tail":"partial answer","timeout_ms":1000},"hint":null,"kind":"timeout","ok":false,"tool":"claude","workspace":null}
+
+## execute-prompts-off-session#json-output-is-one-object-for-every-outcome/dry-run-as-json
+kind: check
+$ rune --json run sol@claude --dry-run "x"
+  {"argv":["claude","--print","--output-format","text","--permission-mode","plan","--tools","Read,Glob,Grep","--allowedTools","Read,Glob,Grep","--model","gpt-6.1-sol","--settings","{\"env\":{\"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\":\"0\"}}"],"artifacts_dir":null,"base_url":"https://cliproxy.internal","clean":false,"clean_config_keys":[],"env":{"ANTHROPIC_AUTH_TOKEN":"<redacted>","ANTHROPIC_BASE_URL":"https://cliproxy.internal","ANTHROPIC_MODEL":"gpt-6.1-sol","ANTHROPIC_SMALL_FAST_MODEL":"gpt-6-luna","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"272000","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"272000"},"env_removed":["CLAUDECODE","CLAUDE_AGENT_SDK_MCP_NO_PREFIX","CLAUDE_AGENT_SDK_VERSION","CLAUDE_CODE_ACCOUNT_UUID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_DESKTOP_APP_VERSION","CLAUDE_CODE_DISABLE_CRON","CLAUDE_CODE_DISABLE_TERMINAL_TITLE","CLAUDE_CODE_EAGER_FLUSH","CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES","CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL","CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_EXECPATH","CLAUDE_CODE_HOST_SESSION_ID","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_OAUTH_SCOPES","CLAUDE_CODE_ORGANIZATION_UUID","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_SIMPLE","CLAUDE_CODE_STARTUP_FAILURE_RESULTS","CLAUDE_CODE_SUBPROCESS_ENV_SCRUB","CLAUDE_CODE_TERMINAL_MCP_TOOLS","CLAUDE_CODE_TMPDIR","CLAUDE_CODE_TMUX_TRUECOLOR","CLAUDE_CODE_USER_EMAIL","CLAUDE_EFFORT","CLAUDE_PID","CLAUDE_PREVIEW_CLASSIFIER_FLOOR","CLAUDE_TMPDIR"],"inherited_withheld":[],"kind":"dry_run","mode":"read-only","model":"sol","model_context":272000,"model_id":"gpt-6.1-sol","model_source":"config","native_timeout":null,"ok":true,"pre":[],"repository":"/private/tmp/claude-501/rune-proof-1776-execute-prompts-off-session-json-output-is-one-object-for-every-outcome-dry-run-as-json-26c867e0-17-0","requested_route":"sol@claude","resolved_binary":"claude","resolved_route":"claude","session_name":null,"session_name_flag":"--name","stdin":"<prompt>","timeout":null,"tool":"claude","warnings":[],"workspace":null,"wrap":[]}
+
+## execute-prompts-off-session#json-output-is-one-object-for-every-outcome/unknown-profile-as-json
+kind: check
+$ rune --json run nosuch@claude "x"
+  {"details":{"message":"no launch profile 'nosuch' for claude (profiles: alt, astra, fable, grok, kimi, lumo, main, opus, sol, sol61, sonnet)","profiles":["alt","astra","fable","grok","kimi","lumo","main","opus","sol","sol61","sonnet"]},"kind":"configuration_error","ok":false,"tool":"nosuch@claude"}
+
+## execute-prompts-off-session#the-dry-run-shows-what-would-start/endpoint-set-through-the-environment
+kind: check
+$ rune run sol@claude --dry-run "x"
+  tool: claude
+  model: sol
+  model_id: gpt-6.1-sol
+  model_context: 272000
+  model_source: config
+  argv: claude --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-6.1-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}
+  env:
+    ANTHROPIC_MODEL=gpt-6.1-sol
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000
+    ANTHROPIC_AUTH_TOKEN=<redacted>
+    ANTHROPIC_BASE_URL=https://cliproxy.internal
+    ANTHROPIC_SMALL_FAST_MODEL=gpt-6-luna
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: https://cliproxy.internal
+  wrap:
+  pre:
+  stdin: <prompt>
+  repository: /private/tmp/claude-501/rune-proof-1776-execute-prompts-off-session-the-dry-run-shows-what-would-start-endpoint-set-through-the-environment-27e958a0-23-0
+  mode: read-only
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: --name
+  artifacts_dir: none
+  clean_config_keys: none
+  workspace: none
+
+## execute-prompts-off-session#the-dry-run-shows-what-would-start/credential-in-the-plan
+kind: check
+$ rune run sol@claude --dry-run "x"
+  tool: claude
+  model: sol
+  model_id: gpt-6.1-sol
+  model_context: 272000
+  model_source: config
+  argv: claude --print --output-format text --permission-mode plan --tools Read,Glob,Grep --allowedTools Read,Glob,Grep --model gpt-6.1-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}
+  env:
+    ANTHROPIC_MODEL=gpt-6.1-sol
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000
+    ANTHROPIC_AUTH_TOKEN=<redacted>
+    ANTHROPIC_BASE_URL=https://cliproxy.internal
+    ANTHROPIC_SMALL_FAST_MODEL=gpt-6-luna
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: https://cliproxy.internal
+  wrap:
+  pre:
+  stdin: <prompt>
+  repository: /private/tmp/claude-501/rune-proof-1776-execute-prompts-off-session-the-dry-run-shows-what-would-start-credential-in-the-plan-286ef3c0-26-0
+  mode: read-only
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: --name
+  artifacts_dir: none
+  clean_config_keys: none
+  workspace: none
+
+## execute-prompts-off-session#a-failure-caused-by-a-sandbox-says-so/proxy-certificate-fails-inside-a-sandbox
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo error: certificate verify failed, OSStatus -26276 >&2" "exit 1" > fake-claude && chmod 755 fake-claude'
+$ rune run sol@claude --binary ./fake-claude "x"
+  error: process Exited(1)
+  stderr tail:
+    error: certificate verify failed, OSStatus -26276
+  hint: an outer sandbox blocked the certificate check for the proxy (OSStatus -26276): set NODE_EXTRA_CA_CERTS to the proxy's root certificate file, or run rune outside the sandbox
+
+## execute-prompts-off-session#a-failure-caused-by-a-sandbox-says-so/model-text-quotes-a-denial
+kind: check
+$ sh -c 'printf "%s\n" "#!/bin/sh" "echo the tool said Operation not permitted" "exit 1" > fake-claude && chmod 755 fake-claude'
+$ rune run sol@claude --binary ./fake-claude "x"
+  error: process Exited(1)
+  stdout tail:
+    the tool said Operation not permitted
+
