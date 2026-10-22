@@ -491,9 +491,13 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     // A signal that arrived during the finish was deferred until the
     // workspace was down: the result is whole, and the process ends with
     // the signal's code.
+    // The signal is the outcome: the object says so beside the answer it
+    // still carries, as a forwarded signal does.
     if let Some(signal) = watch.as_ref().and_then(SignalWatch::received) {
         outcome.exit_code = 128 + signal;
         if let Some(object) = outcome.json.as_object_mut() {
+            object.insert("ok".to_string(), json!(false));
+            object.insert("kind".to_string(), json!("signal"));
             object.insert("stopped_by_signal".to_string(), json!(signal));
         }
         eprintln!("stopped by signal {signal} after the run; the workspace was finished first");
@@ -1006,11 +1010,15 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
             ..
         } => *code,
         SurfaceFailure::Noted { inner, .. } => failure_exit_code(inner),
-        SurfaceFailure::Process { .. }
-        | SurfaceFailure::NoAnswer { .. }
-        | SurfaceFailure::Reported(_)
-        | SurfaceFailure::Io(_)
-        | SurfaceFailure::Arguments(_) => 1,
+        // The runner's own failures: a scratch directory or prompt file it
+        // cannot create, an argument it cannot build, a supervisor that
+        // cannot wait for, read, or signal the harness.
+        SurfaceFailure::Process { .. } | SurfaceFailure::Io(_) | SurfaceFailure::Arguments(_) => {
+            EXIT_RUNNER_ERROR
+        }
+        // A harness that exited 0 without an answer, or reported its own
+        // failure, keeps 1: its status would read as success.
+        SurfaceFailure::NoAnswer { .. } | SurfaceFailure::Reported(_) => 1,
     }
 }
 

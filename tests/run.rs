@@ -1826,6 +1826,37 @@ fn grok_run_reports_no_artifacts() {
 
 #[cfg(unix)]
 #[test]
+fn a_scratch_directory_the_runner_cannot_create_exits_125() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let marker = home.path().join("harness-started");
+    let provider = marking_provider(home.path(), "fake-grok", "{\"text\":\"ok\"}");
+    // The runner's own failure, before the harness starts: the scratch
+    // directory for the prompt cannot be created under a TMPDIR that is
+    // no directory.
+    let output = rune(home.path())
+        .env("TMPDIR", "/dev/null")
+        .args([
+            "--json",
+            "run",
+            "grok",
+            "x",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["exit_code"], 125, "{result}");
+    assert_eq!(result["ok"], false, "{result}");
+    assert!(!marker.exists(), "the harness started");
+}
+
+#[cfg(unix)]
+#[test]
 fn dry_run_names_the_artifacts_destination() {
     let home = tempfile::tempdir().expect("home");
     let repository = jj_repository(home.path());
@@ -4296,7 +4327,10 @@ fn a_sigint_to_the_process_group_during_the_finish_lets_the_finish_complete() {
         String::from_utf8_lossy(&output.stderr)
     );
     let result: serde_json::Value = serde_json::from_str(printed.trim()).expect("run JSON");
-    assert_eq!(result["kind"], "success", "{printed}");
+    assert_eq!(result["kind"], "signal", "{printed}");
+    assert_eq!(result["ok"], false, "{printed}");
+    assert_eq!(result["exit_code"], 130, "{printed}");
+    assert_eq!(result["text"], "done", "{printed}");
     assert_eq!(result["stopped_by_signal"], 2, "{printed}");
     assert_eq!(result["workspace"]["kept"], true, "{printed}");
     assert!(result["workspace"]["error"].is_null(), "{printed}");

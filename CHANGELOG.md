@@ -195,7 +195,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - **Breaking:** Exit `rune run` by the POSIX `timeout` table: the harness's own status, 124 on the time limit, 126 for a binary that cannot run, 127 for one not found, and 128 plus the signal number.
-- **Breaking:** Exit `rune run` 125 for a usage or configuration error, an unwritable result file, or an output limit, which were 2, 74, and 70.
+- **Breaking:** Exit `rune run` 125 for a usage or configuration error, an unwritable result file, an output limit, or a runner I/O or supervisor failure, which were 2, 74, 70, and 1.
+- Report a signal that arrives during the finish as `kind` signal with `ok` false beside the answer, and exit 128 plus the signal number.
 - Carry `exit_code` in every `rune run --json` result object, the result file included, so the file and the confirmation on stdout say the same number.
 - **Breaking:** Replace the JSON failure field `details.stderr` with `details.stdout_tail` and `details.stderr_tail`, the last 40 lines of each stream, and add `hint` and `details.harness_errors`.
 - Redact every credential value the child could echo in the stream tails, drop warnings, and the dry-run argv, inside a `--settings` object or a `-c key=value` assignment included.

@@ -22,7 +22,8 @@ utility instead:
 - the harness's own exit status, `0` on success
 - `124`: the time limit passed
 - `125`: an error of the runner itself: a usage error, a configuration error,
-  a result file it could not write, an output limit it enforced
+  a result file it could not write, an output limit it enforced, a scratch
+  file it could not create, a supervisor failure
 - `126`: the harness binary exists but cannot run
 - `127`: the harness binary is not found
 - `128` plus the signal number: a signal ended the harness or the runner

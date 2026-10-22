@@ -2,11 +2,11 @@
 
 ### Requirement: Exit statuses follow the POSIX timeout utility
 
-`rune run` supervises a child as the POSIX.1-2024 `timeout` utility does, so its exit status MUST take that utility's
-table. The harness's status passes through, 0 on success. 124 means the time limit expired. 125 means an error of the
-runner: a usage error, a configuration error, an unwritable result file, an enforced output limit. 126 means the harness
-binary cannot run, 127 that it is not found, and 128 plus the signal number that a signal ended the harness or the
-runner. Every `--json` result object MUST carry that number as `exit_code`, the result file included.
+`rune run` supervises a child, so its exit status MUST take the POSIX.1-2024 `timeout` table. The harness's status
+passes through, 0 on success. 124: the time limit expired. 125: an error of the runner (a usage or configuration error,
+an unwritable result file, an output limit, a scratch file it cannot create, a supervisor failure). 126: the harness
+binary cannot run. 127: it is not found. 128 plus the signal number: a signal ended the harness or the runner, with
+`kind` signal and `ok` false. Every `--json` result object MUST carry that number as `exit_code`.
 
 #### Scenario: Harness answers
 
@@ -25,9 +25,15 @@ runner. Every `--json` result object MUST carry that number as `exit_code`, the 
 
 #### Scenario: Runner refuses or fails on its own
 
-- **WHEN** the command line is invalid, the route or the output path is refused, or the result file cannot be written
-  at the end
+- **WHEN** the command line is invalid, the route or the output path is refused, the scratch directory cannot be
+  created, or the result file cannot be written at the end
 - **THEN** the runner exits 125, and the JSON object it prints carries `exit_code: 125`
+
+#### Scenario: Signal arrives during the finish
+
+- **WHEN** a signal arrives while the runner takes the workspace down after the harness answered
+- **THEN** the runner finishes the workspace, exits 128 plus the signal number, and the JSON object says `kind` signal,
+  `ok` false, and `stopped_by_signal`, beside the answer
 
 #### Scenario: Harness binary cannot run
 
