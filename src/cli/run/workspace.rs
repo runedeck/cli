@@ -97,6 +97,10 @@ struct RecordedHead {
     parents: Vec<String>,
 }
 
+/// How many recorded commits one revset query names: a full commit id is
+/// 40 characters, so a batch stays far below any argument length limit.
+const COMMIT_QUERY_BATCH: usize = 200;
+
 /// The record template: the change id, the parent commit ids on one line,
 /// then the description, which may span lines, so it comes last.
 const HEAD_TEMPLATE: &str =
@@ -967,13 +971,18 @@ fn final_commit(workspace: &Workspace) -> Result<String, String> {
 /// by its record without the tree, so the caller's own edits and snapshots
 /// change nothing recorded.
 fn caller_commits_changed(workspace: &Workspace) -> Result<bool, String> {
-    for commit in &workspace.caller_commits {
-        let still_there = log_first(
-            &workspace.root,
-            &visible(&format!("present({commit})")),
-            "commit_id",
-        )?;
-        if still_there.is_none() {
+    // One query per batch of recorded commits, never one per commit: a
+    // long local-only history (200 mutable commits, reviewer repro
+    // `perf.sh`) cost a jj process each. Every `present(<commit>)` yields
+    // that commit or nothing, so fewer lines than commits means one is gone.
+    for batch in workspace.caller_commits.chunks(COMMIT_QUERY_BATCH) {
+        let revset = batch
+            .iter()
+            .map(|commit| format!("present({commit})"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let still_there = log_lines(&workspace.root, &visible(&revset), "commit_id")?;
+        if still_there.len() != batch.len() {
             return Ok(true);
         }
     }

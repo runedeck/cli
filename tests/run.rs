@@ -3586,6 +3586,80 @@ fn a_caller_branch_a_harness_rebased_onto_its_work_is_not_abandoned() {
     assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
 }
 
+/// One isolated run on `repository`, timed from spawn to exit.
+#[cfg(unix)]
+fn timed_isolated_run(
+    home: &std::path::Path,
+    state: &std::path::Path,
+    repository: &std::path::Path,
+    provider: &std::path::Path,
+) -> (serde_json::Value, std::time::Duration) {
+    let started = std::time::Instant::now();
+    let output = rune_isolated(home, state)
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repository.to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    let elapsed = started.elapsed();
+    assert!(output.status.success(), "{output:?}");
+    (
+        serde_json::from_slice(&output.stdout).expect("run JSON"),
+        elapsed,
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn a_long_local_history_costs_the_finish_no_process_per_commit() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let provider = executable_provider(home.path(), "fake-claude", FAKE_EDITOR);
+    // A short history first, as the yardstick.
+    let short = jj_repository(home.path());
+    let short_repo = short.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", short_repo, "new", "-m", "commit 1"]);
+    jj(home.path(), &["-R", short_repo, "new", "-m", "commit 2"]);
+    let (result, short_time) =
+        timed_isolated_run(home.path(), state.path(), short.path(), &provider);
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    // A local-only repository has only the root commit immutable, so 200
+    // commits are mutable and recorded, and the finish tests them all.
+    let long = jj_repository(home.path());
+    let long_repo = long.path().to_str().expect("repository path");
+    for n in 1..=200 {
+        jj(
+            home.path(),
+            &[
+                "-R",
+                long_repo,
+                "--ignore-working-copy",
+                "new",
+                "-m",
+                &format!("commit {n}"),
+            ],
+        );
+    }
+    let (result, long_time) = timed_isolated_run(home.path(), state.path(), long.path(), &provider);
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    assert_eq!(result["workspace"]["outside_changes"], false, "{result}");
+    // One process per recorded commit made the long run several times the
+    // short one; one query per batch keeps them close.
+    assert!(
+        long_time < short_time * 3 + std::time::Duration::from_secs(2),
+        "short {short_time:?}, long {long_time:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_caller_that_describes_its_change_during_the_run_is_reported() {

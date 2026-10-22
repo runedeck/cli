@@ -98,7 +98,7 @@ group does not reach a jj command in the middle of the finish.
 | The runner gives the result the final tree | `jj -R <repo> --ignore-working-copy restore --from <final commit> --to <result>` |
 | The runner tests for an empty change | `jj -R <repo> --ignore-working-copy log -r <result> --no-graph -T empty` |
 | The runner moves the change onto the caller's current change | `jj -R <repo> --ignore-working-copy rebase -r <result> -o @`, then `log -r <result> -T conflict` |
-| The runner tests a recorded caller commit | `jj -R <repo> --ignore-working-copy log -r 'present(<commit>) & ::visible_heads()' -T commit_id`, empty means changed |
+| The runner tests the recorded caller commits, 200 per query | `jj -R <repo> --ignore-working-copy log -r '(present(<commit>) \| present(<commit>) ...) & ::visible_heads()' -T commit_id`, fewer lines than commits means one changed |
 | The runner lists the candidates for the abandon | `jj -R <repo> --ignore-working-copy log -r '((change_id(<copy>) \| present(<copy commit>))::) ~ ::@ ~ change_id(<kept result>)' -T 'change_id ++ " " ++ commit_id'` |
 | The runner tells the run's own revisions from others' | `jj -R <repo> --ignore-working-copy --at-op <start operation> log -r 'present(<id>) \| present(<id>) ...' -T change_id`: a change id listed there existed before the run |
 | The runner drops the run's own revisions | `jj -R <repo> --ignore-working-copy abandon <commit ids>` of the candidates whose change id was not listed |
