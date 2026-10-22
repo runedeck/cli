@@ -71,6 +71,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add `rune hook record` to list the record with `--since`, `--until`, `--harness`, `--hook`, `--rule`, `--file`, `--asked`, `--answer`, and `--json`.
 - Add `rune hook record stats` with rules by findings, cause runs, sole-cause runs, and advice runs, weeks, repeat denials, files, hooks, and `--top`.
 - Add `rune hook record import --harness claude` to backfill the record from raw Claude Code transcripts with a per-file checkpoint.
+- Add the `sandbox-guard` adapter, which refuses a sandbox-off request for a Claude Code Bash command that the sandbox already exempts.
+- Refuse an exempt tool that the line keeps inside the sandbox, such as `cd DIR && jj log`, and name the one command to run, such as `jj -R DIR log`.
+- Advise a Bash line that joins separate commands to split them, and pass every line that holds no exempt tool.
+- Read the exempt patterns from the handler's arguments, else from `sandbox.excludedCommands` while `sandbox.enabled` is on.
+- Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.

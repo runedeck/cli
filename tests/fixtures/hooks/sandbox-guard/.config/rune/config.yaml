@@ -1,0 +1,6 @@
+hooks:
+  handlers:
+    - id: sandbox-guard
+      exec: [rune-hook-sandbox-guard, "gh *", "git *", "jj *", "rune *", "codex *"]
+      events: [tool.before]
+      order: 25

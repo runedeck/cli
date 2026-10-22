@@ -17,6 +17,7 @@ pub(crate) mod payload;
 pub(crate) mod plan;
 pub(crate) mod record;
 pub(crate) mod run;
+pub(crate) mod sandbox_guard;
 pub(crate) mod stats;
 
 #[cfg(test)]

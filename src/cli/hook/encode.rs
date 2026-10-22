@@ -173,7 +173,14 @@ fn encode_claude(
     }
     if let Some(context) = context {
         match canonical {
-            Some(Canonical::ToolAfter | Canonical::PromptBefore | Canonical::SessionStart) => {
+            // PreToolUse takes `additionalContext` beside its decision
+            // (hooks reference, read 2026-10-22).
+            Some(
+                Canonical::ToolBefore
+                | Canonical::ToolAfter
+                | Canonical::PromptBefore
+                | Canonical::SessionStart,
+            ) => {
                 specific.insert("additionalContext".into(), json!(context));
             }
             _ => unexpressed(answer, Harness::Claude, "context", native),

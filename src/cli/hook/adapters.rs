@@ -26,6 +26,7 @@ pub(crate) const NAMES: &[&str] = &[
     "turn-checkpoint",
     "tmux-status",
     "jj-guards",
+    "sandbox-guard",
 ];
 
 /// Run one adapter over the payload on stdin; print its result.
@@ -77,6 +78,7 @@ pub(crate) fn dispatch(
         "turn-checkpoint" => turn_checkpoint(payload),
         "tmux-status" => tmux_status(payload),
         "jj-guards" => jj_guards(payload),
+        "sandbox-guard" => super::sandbox_guard::guard(payload, args),
         other => Err(format!(
             "`{other}` is not a built-in adapter ({})",
             NAMES.join(", ")
