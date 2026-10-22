@@ -42,22 +42,34 @@ struct Folder {
 }
 
 impl Folder {
-    /// Open the checked folder itself. On unix the open follows no symlink
-    /// (`O_NOFOLLOW`), and the handle must be the folder the check judged
-    /// by device and inode, so a folder swapped between the check and the
-    /// open, for a symlink or for another folder, is refused.
-    fn open(path: &Path) -> std::io::Result<Self> {
+    /// Open the checked folder `path` under the trusted `root`. On unix the
+    /// walk starts at the root and opens one component at a time with
+    /// `openat(O_NOFOLLOW | O_DIRECTORY)`, so no component, the last or an
+    /// ancestor, is ever a symlink (a single open of the full path followed
+    /// a symlink put in place of an ancestor). The final handle must be the
+    /// folder the check judged, `checked`, by device and inode, so a folder
+    /// swapped for another folder between the check and the open is refused
+    /// as well.
+    fn open(root: &Path, path: &Path, checked: &std::fs::Metadata) -> std::io::Result<Self> {
         #[cfg(unix)]
         {
             use nix::fcntl::OFlag;
-            let checked = std::fs::metadata(path)?;
-            let handle = nix::fcntl::open(
-                path,
-                OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-                nix::sys::stat::Mode::empty(),
-            )?;
+            use nix::sys::stat::Mode;
+            let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+            let inside = path.strip_prefix(root).map_err(|_| {
+                std::io::Error::other("the folder does not lie under its permitted root")
+            })?;
+            let mut handle = nix::fcntl::open(root, flags, Mode::empty())?;
+            for component in inside.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(std::io::Error::other(
+                        "the folder path holds a component that is not a name",
+                    ));
+                };
+                handle = nix::fcntl::openat(&handle, Path::new(name), flags, Mode::empty())?;
+            }
             let opened = std::fs::File::from(handle);
-            if !same_file(&opened.metadata()?, &checked) {
+            if !same_file(&opened.metadata()?, checked) {
                 return Err(std::io::Error::other(
                     "the folder changed between the check and the open",
                 ));
@@ -68,6 +80,7 @@ impl Folder {
         }
         #[cfg(not(unix))]
         {
+            let _ = (root, checked);
             Ok(Self {
                 path: path.to_path_buf(),
             })
@@ -208,6 +221,14 @@ pub(crate) fn accept(path: &Path, repository: Option<&Path>) -> Result<Destinati
             path.display()
         )
     })?;
+    // The folder's identity at the check: the handle opened below must be
+    // this folder, whatever happens to the path meanwhile.
+    let checked = std::fs::metadata(&parent).map_err(|error| {
+        format!(
+            "cannot inspect the parent folder of output file {}: {error}",
+            path.display()
+        )
+    })?;
     let target = parent.join(file_name);
     let roots = permitted_roots(repository);
     let Some((_, root)) = roots.iter().find(|(_, root)| target.starts_with(root)) else {
@@ -257,7 +278,7 @@ pub(crate) fn accept(path: &Path, repository: Option<&Path>) -> Result<Destinati
     }
     // The folder is held from here on: the probe and the final write go
     // through the same handle.
-    let folder = Folder::open(&parent).map_err(|error| {
+    let folder = Folder::open(root, &parent, &checked).map_err(|error| {
         format!(
             "cannot open the parent folder of output file {}: {error}",
             target.display()
@@ -418,14 +439,41 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn the_folder_handle_follows_no_symlink() {
+    fn the_folder_handle_follows_no_symlink_in_any_component() {
         let repository = repository();
-        let real = repository.path().join("real");
+        let root = repository.path();
+        let real = root.join("a/b");
         std::fs::create_dir_all(&real).expect("real");
-        let link = repository.path().join("link");
+        let checked = std::fs::metadata(&real).expect("checked");
+        assert!(Folder::open(root, &real, &checked).is_ok());
+
+        // The last component is a symlink.
+        let link = root.join("link");
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        assert!(Folder::open(&link).is_err(), "a symlink was opened");
-        assert!(Folder::open(&real).is_ok());
+        assert!(
+            Folder::open(root, &link, &checked).is_err(),
+            "a symlink was opened"
+        );
+
+        // An ancestor is swapped for a symlink to a folder with the same
+        // layout: a single open of the full path would follow it.
+        let elsewhere = root.join("elsewhere/b");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::fs::rename(root.join("a"), root.join("a-aside")).expect("move");
+        std::os::unix::fs::symlink(root.join("elsewhere"), root.join("a")).expect("symlink");
+        assert!(
+            Folder::open(root, &real, &checked).is_err(),
+            "an ancestor symlink was followed"
+        );
+
+        // An ancestor is swapped for another folder with the same layout:
+        // the handle is not the checked folder.
+        std::fs::remove_file(root.join("a")).expect("unlink");
+        std::fs::create_dir_all(&real).expect("another a/b");
+        assert!(
+            Folder::open(root, &real, &checked).is_err(),
+            "another folder passed as the checked one"
+        );
     }
 
     #[cfg(unix)]
