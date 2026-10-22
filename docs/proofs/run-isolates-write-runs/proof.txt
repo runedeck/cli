@@ -5,7 +5,12 @@ $ jj git init repo
 $ sh -c 'printf "# Scratch\n\nOne line before the seat.\n" > repo/README.md'
 $ rune run sol@claude --clean --mode workspace-write --repo repo --session-name proof-edit "Append the line 'edited by the seat' to README.md with the Edit tool, then reply with the single word done."
   [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
-  workspace: kept change ltskupzztsoyzvlylpuvtktmtpovoyrv (run-1792704374010-26913); review it with jj, then squash or abandon it
+  warning: the guard could not be set in the run's workspace, so the harness could rewrite the copy there; the outside change report still ran (jj -R /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-workspace-write-seat-edits-a-file-26462ff0-1-0-767ec6d717c6/run-1792707805736-21142 --ignore-working-copy config set --workspace revset-aliases."immutable_heads()" builtin_immutable_heads() | commit_id("53342a11fa2d63884b26b8d16e9c93a41ad7ff24") | (working_copies() ~ "run-1792707805736-21142"@) failed (exit status: 255): Internal error: Failed to determine the secure config for a repo
+  Caused by:
+  1: Cannot access /Users/N4M3Z/.config/jj/workspaces/fb4b734b35af88a272e2
+  2: Operation not permitted (os error 1))
+  workspace: kept change okolvntpswokkzrnplklllwosqyyovvw (run-1792707805736-21142); review it with jj, then squash or abandon it
+  workspace: review what the run did to the repository with jj op diff --from 1bca4e2017e577b742456c2bdaa8d79fc0a0f9a490f392b3a789afd6d2a97f3ecf7bd81ceb4d34d1e15d88c63608fd3468029d572b8f2e3b5ab4c2e928c47cf8 --to 030b5762576b1bcb07a5f1dfd0a303d0e0566fc2c97faa95eafa3b59a7ad7425388e5e923158d4cedb12773651d1f15bd3a550d7846737a233fde656b2c0fc28
   done
 $ cat repo/README.md
   # Scratch
@@ -14,11 +19,11 @@ $ cat repo/README.md
 $ jj -R repo diff -r 'description(substring:"proof-edit")' --summary
   M repo/README.md
 $ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
-  ltskupzztsoy rune run sol@claude: proof-edit
-  tnpyzpsylyxt
+  okolvntpswok rune run sol@claude: proof-edit
+  lvwplvwnwmxw
   zzzzzzzzzzzz
 $ jj -R repo workspace list
-  default: repo tnpyzpsy 62dae819 (no description set)
+  default: repo lvwplvwn 74ad2ee6 (no description set)
 
 ## execute-prompts-off-session#a-workspace-write-run-works-in-its-own-jj-workspace/dry-run-of-a-workspace-write-route
 kind: check
@@ -74,7 +79,7 @@ $ rune run sol@claude --mode workspace-write --repo repo --dry-run "x"
   wrap:
   pre:
   stdin: <prompt>
-  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-26892-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-2fe9b388-10-0-12293565cfab/run-1792704385887-28382/
+  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-2fc47848-10-0-d6c85960c729/run-1792707817882-22543/
   mode: workspace-write
   timeout: none
   native_timeout: none
@@ -82,11 +87,11 @@ $ rune run sol@claude --mode workspace-write --repo repo --dry-run "x"
   session_name_flag: --name
   artifacts_dir: none
   clean_config_keys: none
-  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-26892-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-2fe9b388-10-0-12293565cfab/run-1792704385887-28382
-  workspace_parent: nqnrnmptzvstlkkrptponqolqpmqlruq
+  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-2fc47848-10-0-d6c85960c729/run-1792707817882-22543
+  workspace_parent: smpmnunqlmwmmptqmpnquwoqswlqykrx
   workspace_colocate: false
 $ jj -R repo workspace list
-  default: repo nqnrnmpt ce14af51 (empty) (no description set)
+  default: repo smpmnunq d77d229b (empty) (no description set)
 
 ## execute-prompts-off-session#the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run/run-that-changes-nothing
 kind: check
@@ -95,13 +100,18 @@ $ jj git init repo
 $ sh -c 'printf "# Scratch\n" > repo/README.md'
 $ rune run sol@claude --clean --mode workspace-write --repo repo "Reply with the single word done. Change no file."
   [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  warning: the guard could not be set in the run's workspace, so the harness could rewrite the copy there; the outside change report still ran (jj -R /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run-run-that-changes-nothing-38112640-15-0-6ea1cdeda83e/run-1792707818036-22565 --ignore-working-copy config set --workspace revset-aliases."immutable_heads()" builtin_immutable_heads() | commit_id("1d3423c3558ba994de4c1015651711fd653b99aa") | (working_copies() ~ "run-1792707818036-22565"@) failed (exit status: 255): Internal error: Failed to determine the secure config for a repo
+  Caused by:
+  1: Cannot access /Users/N4M3Z/.config/jj/workspaces/f8721394f54095e0ba7d
+  2: Operation not permitted (os error 1))
   workspace: no file changed, nothing kept
+  workspace: review what the run did to the repository with jj op diff --from 78cb875c08c3808797828b28e59dcbad6da9bcb7bd3e1ad626d3bc2b80ba679052d6646a8a0c4017075edc02554b22e2057d1317ee88508dd939b8cd667dd513 --to 6c547c06b72fa1416b471b897a66447d3bd80dc35d92b733bbb6821900ec0aeef423f0682540952197d4221638bec0ba79c32b3f72fc97074f7c66d7537baacb
   done
 $ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
-  ossmklpolpot
+  uzqrlwosnmwl
   zzzzzzzzzzzz
 $ jj -R repo workspace list
-  default: repo ossmklpo ad388ce8 (no description set)
+  default: repo uzqrlwos 2e3e40ba (no description set)
 
 ## execute-prompts-off-session#the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run/run-that-edits-files
 kind: check
@@ -110,16 +120,16 @@ $ jj git init repo
 $ sh -c 'printf "# Scratch\n" > repo/README.md'
 $ rune --json run sol@claude --clean --mode workspace-write --repo repo --session-name proof-two-files "Append the line 'edited by the seat' to README.md with the Edit tool, create NOTES.md holding the single line 'notes by the seat' with the Write tool, then reply with the single word done."
   [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
-  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":15066,"exit_code":0,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":"proof-two-files","session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"tzltkozrwouwxunypxtvlmvykzprsxww","colocated":false,"conflicted":false,"kept":true,"name":"run-1792704388939-28855","operation_id":"2b398d297784f50bc0dd85d3bc0c47b5cb43239a69625b117a95955cefdd6f5294e31460cee31b3ddf3f56243e5f5c3092d136bca448552adcb7d21fa2bde007","outside_changes":false,"unrecorded":[]}}
+  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":15504,"exit_code":0,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":"proof-two-files","session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"yxvzprxonupuonsquoklykooozwqwyos","colocated":false,"conflicted":false,"end_operation":"029b5668d1991d7c46bd98809a1a199d8e87e4bac43441c8732bc0e709abe345af57d76e83c46d7b58c846d7e54e79321ac017dc6a21bb25b481bc687ccc346c","guard":false,"guard_error":"jj -R /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run-run-that-edits-files-242add88-22-0-495fb9fe8d98/run-1792707821703-23474 --ignore-working-copy config set --workspace revset-aliases.\"immutable_heads()\" builtin_immutable_heads() | commit_id(\"3e06abd81e790a9cf91afeaf67428236e1608318\") | (working_copies() ~ \"run-1792707821703-23474\"@) failed (exit status: 255): Internal error: Failed to determine the secure config for a repo\nCaused by:\n1: Cannot access /Users/N4M3Z/.config/jj/workspaces/e438ee6ad0f2ce2372d8\n2: Operation not permitted (os error 1)","kept":true,"left_copy":null,"name":"run-1792707821703-23474","outside_changes":false,"start_operation":"3880e69d219dc15ed89a73afe06ac00c0992ad1495d729dd614bba3700f56c6e954a4768e3bef1e42a4d999c680610227e99455397fdc31694bb46c1c160e060"}}
 $ jj -R repo diff -r 'description(substring:"proof-two-files")' --summary
   A repo/NOTES.md
   M repo/README.md
 $ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
-  tzltkozrwouw rune run sol@claude: proof-two-files
-  ztnopnmotymr
+  yxvzprxonupu rune run sol@claude: proof-two-files
+  kvqwxvxxqxmv
   zzzzzzzzzzzz
 $ jj -R repo workspace list
-  default: repo ztnopnmo e289a924 (no description set)
+  default: repo kvqwxvxx 7766f87b (no description set)
 
 ## execute-prompts-off-session#a-plain-git-repository-gets-jj-before-an-isolated-run/git-repository-without-jj
 kind: check
@@ -127,15 +137,15 @@ $ git init -q repo
 $ sh -c 'printf "# Scratch\n" > repo/README.md'
 $ rune --json run sol@claude --clean --mode workspace-write --repo repo "Reply with the single word done. Change no file."
   [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
-  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":2303,"exit_code":0,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"zovqsyxvunkstntonuxtsxxuyzmwkptm","colocated":true,"conflicted":false,"kept":false,"name":"run-1792704404473-31182","operation_id":"e1a94b8751bc9bab75288fd7726a86bc887b2c47fbc46192f402c76165c4e31bfe7babbac0f13f725d9848e5b60cd1d49018d5af0a79fb265cc4134e1dd55f13","outside_changes":false,"unrecorded":[]}}
+  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":3778,"exit_code":0,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"xtnrlmolnwmklnqzynsvxzruumkkoyon","colocated":true,"conflicted":false,"end_operation":"5991a4123efd6b19b61e760400b4ad9536d8e7439e217ee327571810fa0b47294a2011617808dbc3a5b138a2da533b475c0656dd570c5161d194a6e54222273f","guard":false,"guard_error":"jj -R /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-21125-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-git-repository-without-jj-28b789c8-30-0-8e6178088ef3/run-1792707837769-25776 --ignore-working-copy config set --workspace revset-aliases.\"immutable_heads()\" builtin_immutable_heads() | commit_id(\"f56612a9383cf1c82056f7b551221c94261669d7\") | (working_copies() ~ \"run-1792707837769-25776\"@) failed (exit status: 255): Internal error: Failed to determine the secure config for a repo\nCaused by:\n1: Cannot access /Users/N4M3Z/.config/jj/workspaces/07c0bf5e47e286bc0063\n2: Operation not permitted (os error 1)","kept":false,"left_copy":null,"name":"run-1792707837769-25776","outside_changes":false,"start_operation":"16d4080248ba8ef0ffe748c7c2be2418652dcae8e7f587aa8bd223a18b115652236ed5947499dee74ab7f9d993554d479cca1a7de45d9f7050dadcd867cf8574"}}
 $ ls -d repo/.jj
   repo/.jj
 $ jj -R repo workspace list
-  default: repo srkqzoxz 6d971086 (no description set)
+  default: repo slywwoko 4f2ca21c (no description set)
 
 ## execute-prompts-off-session#a-plain-git-repository-gets-jj-before-an-isolated-run/folder-without-version-control
 kind: check
 $ mkdir plain
 $ rune run sol@claude --mode workspace-write --repo plain "x"
-  fatal: a workspace-write run needs a jj or git repository to isolate the harness, and /private/tmp/claude-501/rune-proof-26892-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-1168c598-37-0/plain is in neither; use --mode read-only, or run `jj git init --colocate /private/tmp/claude-501/rune-proof-26892-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-1168c598-37-0/plain` first
+  fatal: a workspace-write run needs a jj or git repository to isolate the harness, and /private/tmp/claude-501/rune-proof-21125-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-509fe48-37-0/plain is in neither; use --mode read-only, or run `jj git init --colocate /private/tmp/claude-501/rune-proof-21125-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-509fe48-37-0/plain` first
 
