@@ -59,7 +59,7 @@ The workspace takes `--colocate` when the repository is colocated, so a harness 
 
 The runner holds the workspace in a guard whose `Drop` runs `finish`, so a panic or an early return after `prepare` still takes the workspace down and prints the report on stderr. Before `prepare` it installs a watch on SIGINT and SIGTERM (the process module's flags, without a child): a signal then only sets a flag. One that arrived while the workspace was made stops the run before the harness starts, with the signal's kind and exit code and a note. One during the harness run reaches the harness as before. One during the finish is read after it: the result is whole, `stopped_by_signal` names it, and the exit code is the signal's.
 
-A colocated workspace is also a git worktree, and git locks `.git/config` while it sets one up: two seats that start together failed on that lock in the test. Every run of one repository therefore holds an exclusive file lock, `<state>/workspaces/<repo-id>.lock`, while it adds or forgets its workspace. The harness runs outside the lock.
+A colocated workspace is also a git worktree, and git locks `.git/config` while it sets one up: two seats that start together failed on that lock in the test. Every run of one repository therefore holds an exclusive file lock, `<state>/workspaces/<repo-id>.lock`, while it adds or forgets its workspace. The harness runs outside the lock. `<repo-id>` is the repository's name plus a digest of its store (the target of `.jj/repo`, or `git rev-parse --git-common-dir` for a git repository without jj), not of the workspace root, so runs started from two workspaces of one repository share the lock and the folder.
 
 ## Risks
 

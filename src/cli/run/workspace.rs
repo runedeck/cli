@@ -159,20 +159,56 @@ pub(crate) fn detect(repository: &Path) -> Result<Vcs, String> {
         .ok_or_else(|| no_vcs_message(repository))
 }
 
+/// The repository store behind a workspace root: the folder every workspace
+/// of one repository shares. For jj it is `.jj/repo`, which a secondary
+/// workspace holds as a file naming the main workspace's store. For a git
+/// repository without jj it is the git common directory.
+fn repository_store(vcs: &Vcs) -> PathBuf {
+    let root = vcs.root();
+    let store = match vcs {
+        Vcs::Jj { .. } => {
+            let marker = root.join(".jj/repo");
+            match std::fs::read_to_string(&marker) {
+                Ok(target) if !target.trim().is_empty() => root.join(".jj").join(target.trim()),
+                _ => marker,
+            }
+        }
+        Vcs::GitOnly { .. } => {
+            let common = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(["rev-parse", "--git-common-dir"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|common| !common.is_empty())
+                .unwrap_or_else(|| ".git".to_string());
+            root.join(common)
+        }
+    };
+    std::fs::canonicalize(&store).unwrap_or(store)
+}
+
 /// The folder under the state directory that holds every workspace of one
-/// repository: its name and a short digest of its path, so two checkouts
-/// with one name stay apart.
-fn repository_id(root: &Path) -> String {
-    let digest = Sha256::digest(root.as_os_str().as_encoded_bytes());
+/// repository: the repository's name and a short digest of its store path,
+/// so every workspace of one repository shares it and two repositories with
+/// one name stay apart.
+fn repository_id(store: &Path) -> String {
+    let digest = Sha256::digest(store.as_os_str().as_encoded_bytes());
     let short = digest.iter().take(6).fold(String::new(), |mut hex, byte| {
         use std::fmt::Write as _;
         let _ = write!(hex, "{byte:02x}");
         hex
     });
-    let name = root.file_name().map_or_else(
-        || "root".to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
+    // `<name>/.jj/repo` or `<name>/.git`: the first ancestor that is not
+    // part of the store names the repository.
+    let name = store
+        .ancestors()
+        .filter_map(|ancestor| ancestor.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .find(|name| !matches!(name.as_str(), "repo" | ".jj" | ".git"))
+        .unwrap_or_else(|| "root".to_string());
     format!("{name}-{short}")
 }
 
@@ -366,7 +402,7 @@ pub(crate) fn plan(repository: &Path, route: &str, session: Option<&str>) -> Res
     let vcs = detect(repository)?;
     let state = crate::cli::sign::state_dir().map_err(|error| error.to_string())?;
     let name = workspace_name();
-    let repository_id = repository_id(vcs.root());
+    let repository_id = repository_id(&repository_store(&vcs));
     let workspaces = state.join("workspaces");
     let path = workspaces.join(&repository_id).join(&name);
     refuse_inside_checkout(&path, vcs.root())?;
@@ -771,12 +807,38 @@ mod tests {
     }
 
     #[test]
-    fn repository_id_keeps_the_name_and_tells_two_paths_apart() {
-        let one = repository_id(Path::new("/home/me/cli"));
-        let two = repository_id(Path::new("/home/you/cli"));
+    fn repository_id_names_the_repository_and_tells_two_stores_apart() {
+        let one = repository_id(Path::new("/home/me/cli/.jj/repo"));
+        let two = repository_id(Path::new("/home/you/cli/.jj/repo"));
         assert!(one.starts_with("cli-"), "{one}");
         assert_ne!(one, two);
-        assert_eq!(one, repository_id(Path::new("/home/me/cli")));
+        assert_eq!(one, repository_id(Path::new("/home/me/cli/.jj/repo")));
+        assert!(repository_id(Path::new("/home/me/cli/.git")).starts_with("cli-"));
+    }
+
+    #[test]
+    fn every_workspace_of_one_repository_shares_the_store() {
+        let root = tempfile::tempdir().expect("root");
+        let main = root.path().join("main");
+        std::fs::create_dir_all(main.join(".jj/repo")).expect("main store");
+        let secondary = root.path().join("second");
+        std::fs::create_dir_all(secondary.join(".jj")).expect("secondary .jj");
+        std::fs::write(secondary.join(".jj/repo"), "../../main/.jj/repo\n").expect("marker");
+        let main_store = repository_store(&Vcs::Jj {
+            root: main.clone(),
+            colocated: false,
+        });
+        let secondary_store = repository_store(&Vcs::Jj {
+            root: secondary,
+            colocated: false,
+        });
+        assert_eq!(main_store, secondary_store);
+        assert_eq!(
+            main_store,
+            std::fs::canonicalize(main.join(".jj/repo")).expect("canonical")
+        );
+        assert_eq!(repository_id(&main_store), repository_id(&secondary_store));
+        assert!(repository_id(&main_store).starts_with("main-"));
     }
 
     #[test]
