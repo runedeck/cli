@@ -741,16 +741,63 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
     Ok(())
 }
 
-/// Abandon the visible revisions `revset` names, if any: by commit id, so a
-/// change that jj lists twice (a copy the harness squashed into, next to
-/// the recorded copy commit) goes without a divergence error.
-fn abandon_visible(root: &Path, revset: &str) -> Result<(), String> {
-    let existing = log_lines(root, &visible(revset), "commit_id")?;
-    if existing.is_empty() {
+/// Abandon the run's own revisions among the visible ones `revset` names.
+/// A revision is the run's own when its change id did not exist at the
+/// operation the run started from: one query at that operation answers
+/// for every candidate. A candidate that existed then belongs to someone
+/// else (a harness rebased a caller's branch onto its work): it stays, and
+/// `outside_changes` says so. The abandon goes by commit id, so a change
+/// that jj lists twice (a copy the harness squashed into, next to the
+/// recorded copy commit) goes without a divergence error.
+fn abandon_run_owned(
+    workspace: &Workspace,
+    outcome: &mut Outcome,
+    revset: &str,
+) -> Result<(), String> {
+    let root = &workspace.root;
+    let candidates: Vec<(String, String)> =
+        log_lines(root, &visible(revset), "change_id ++ \" \" ++ commit_id")?
+            .iter()
+            .filter_map(|line| line.split_once(' '))
+            .map(|(change, commit)| (change.to_string(), commit.to_string()))
+            .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let at_start: Vec<String> = candidates
+        .iter()
+        .map(|(change, _)| format!("present({change})"))
+        .collect();
+    let existed: std::collections::HashSet<String> = jj_root_command(
+        root,
+        &[
+            OsStr::new("--at-op"),
+            OsStr::new(&workspace.operation_id),
+            OsStr::new("log"),
+            OsStr::new("-r"),
+            OsStr::new(&at_start.join(" | ")),
+            OsStr::new("--no-graph"),
+            OsStr::new("-T"),
+            OsStr::new("change_id ++ \"\\n\""),
+        ],
+    )?
+    .stdout
+    .lines()
+    .map(str::trim)
+    .filter(|line| !line.is_empty())
+    .map(str::to_string)
+    .collect();
+    let (foreign, owned): (Vec<_>, Vec<_>) = candidates
+        .iter()
+        .partition(|(change, _)| existed.contains(change));
+    if !foreign.is_empty() {
+        outcome.outside_changes = Some(true);
+    }
+    if owned.is_empty() {
         return Ok(());
     }
     let mut args = vec![OsStr::new("abandon")];
-    args.extend(existing.iter().map(OsStr::new));
+    args.extend(owned.iter().map(|(_, commit)| OsStr::new(commit)));
     jj_root_command(root, &args).map(|_| ())
 }
 
@@ -870,8 +917,24 @@ fn record_files(workspace: &Workspace) -> Result<Vec<String>, String> {
     Ok(unrecorded)
 }
 
-/// The commit id of the workspace's working-copy commit after the
-/// snapshot: its tree is the run's final state.
+/// Stop tracking the workspace, under the repository lock that guards
+/// git's worktree registration.
+fn forget_workspace(workspace: &Workspace) -> Result<(), String> {
+    let _lock = lock_repository(&workspace.lock_path)?;
+    jj_root_command(
+        &workspace.root,
+        &[
+            OsStr::new("workspace"),
+            OsStr::new("forget"),
+            OsStr::new(&workspace.name),
+        ],
+    )
+    .map(|_| ())
+}
+
+/// The commit id of the workspace's working-copy commit, read without a
+/// snapshot: before `record_files` it is the revision the harness left
+/// the workspace on, after it its tree is the run's final state.
 fn final_commit(workspace: &Workspace) -> Result<String, String> {
     let printed = jj_in(
         &workspace.path,
@@ -926,13 +989,49 @@ fn caller_commits_changed(workspace: &Workspace) -> Result<bool, String> {
     Ok(false)
 }
 
+/// The workspace's own change must still stand on the copy. A harness
+/// that moved to another revision (`jj new main`, `jj edit default@`, or
+/// `jj abandon @-` on the copy itself) left the run's lineage: a change
+/// built from its files would revert the caller's work, and a snapshot
+/// would rewrite somebody else's commit, so neither happens. The
+/// workspace is forgotten, the folder stays, the flag is set, and the
+/// error says so.
+fn require_on_copy(
+    workspace: &Workspace,
+    outcome: &mut Outcome,
+    lineage: &str,
+) -> Result<(), String> {
+    let root = &workspace.root;
+    let before_snapshot = final_commit(workspace)?;
+    let stands_on_copy = log_first(
+        root,
+        &visible(&format!("present({before_snapshot}) & ({lineage})")),
+        "commit_id",
+    )?
+    .is_some();
+    if stands_on_copy {
+        return Ok(());
+    }
+    forget_workspace(workspace)?;
+    outcome.outside_changes = Some(true);
+    outcome.path = Some(workspace.path.clone());
+    let change = log_first(root, &before_snapshot, "change_id")?.unwrap_or_default();
+    Err(format!(
+        "the workspace's change {change} does not stand on the run's copy: the harness moved to another revision (jj new or jj edit), so no change was built from its files, nothing was abandoned, and the folder stays"
+    ))
+}
+
 /// The finish, step by step, writing into `outcome` as each fact is known.
 fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), String> {
     let root = &workspace.root;
     if !workspace.added {
         // The copy exists and nothing else: it goes, and a half-made folder
         // with it.
-        abandon_visible(root, &format!("{} ~ ::@", workspace.lineage()))?;
+        abandon_run_owned(
+            workspace,
+            outcome,
+            &format!("{} ~ ::@", workspace.lineage()),
+        )?;
         if workspace.path.exists() {
             std::fs::remove_dir_all(&workspace.path).map_err(|error| {
                 format!(
@@ -946,19 +1045,11 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
     let Some(copy) = &workspace.copy else {
         return Err("the workspace was added without a prepared copy".to_string());
     };
+    let lineage = workspace.lineage();
+    require_on_copy(workspace, outcome, &lineage)?;
     outcome.unrecorded = record_files(workspace)?;
     let final_commit = final_commit(workspace)?;
-    {
-        let _lock = lock_repository(&workspace.lock_path)?;
-        jj_root_command(
-            root,
-            &[
-                OsStr::new("workspace"),
-                OsStr::new("forget"),
-                OsStr::new(&workspace.name),
-            ],
-        )?;
-    }
+    forget_workspace(workspace)?;
     // The run's change is built from trees: a new commit on the recorded
     // copy commit (which resolves hidden or rewritten) takes the
     // workspace's final tree, so its diff is what the harness changed,
@@ -1017,21 +1108,15 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
         return Ok(());
     }
     // The copy under every commit it had (a harness's squash rewrites it
-    // beside the recorded commit), the workspace's own change wherever the
-    // harness moved it, and whatever the run made on top of either. The
-    // caller's line stays, and so does a kept result.
+    // beside the recorded commit), the workspace's own change, and whatever
+    // the run made on top of either. The caller's line stays, and so does
+    // a kept result; a revision that existed before the run stays too.
     let kept_result = if kept {
         format!(" ~ change_id({result})")
     } else {
         String::new()
     };
-    abandon_visible(
-        root,
-        &format!(
-            "({} | present({final_commit})::) ~ ::@{kept_result}",
-            workspace.lineage()
-        ),
-    )?;
+    abandon_run_owned(workspace, outcome, &format!("{lineage} ~ ::@{kept_result}"))?;
     std::fs::remove_dir_all(&workspace.path).map_err(|error| {
         format!(
             "cannot remove workspace folder {}: {error}",

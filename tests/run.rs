@@ -3167,14 +3167,6 @@ fn a_harness_that_squashes_into_its_base_still_leaves_its_work_in_one_change() {
             "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash -m 'harness work' >/dev/null 2>&1\nprintf 'done\\n'\n",
             vec!["A NEW.md"],
         ),
-        // Abandoning the copy drops the caller's unpushed edits from the
-        // workspace's files: the result shows that as the deletion it is,
-        // for the owner to see in review.
-        (
-            "fake-abandon-parent",
-            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj abandon @- >/dev/null 2>&1\nprintf 'done\\n'\n",
-            vec!["A NEW.md", "D README.md"],
-        ),
         // absorb moves the edited line into the copy, the only mutable
         // ancestor the workspace has: the caller's commits are out of its
         // reach, and the fold still keeps the line.
@@ -3349,6 +3341,247 @@ fn a_caller_that_squashes_during_the_run_does_not_stall_the_workspace() {
         ],
     );
     assert_eq!(parents.trim(), caller.trim(), "{parents}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_harness_that_leaves_the_copy_keeps_the_folder_and_builds_no_change() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    // An immutable trunk under the caller's unpushed feature commit.
+    jj(home.path(), &["-R", repo, "commit", "-m", "trunk"]);
+    jj(
+        home.path(),
+        &["-R", repo, "bookmark", "create", "main", "-r", "@-"],
+    );
+    jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "config",
+            "set",
+            "--repo",
+            "revset-aliases.\"immutable_heads()\"",
+            "main",
+        ],
+    );
+    std::fs::write(repository.path().join("feature.md"), "feature work\n").expect("feature");
+    jj(
+        home.path(),
+        &["-R", repo, "commit", "-m", "caller feature (unpushed)"],
+    );
+    // The harness starts its own change from trunk: a change built from
+    // its files would delete the caller's feature.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-trunk",
+        "#!/bin/sh\njj new main -m 'harness: start from main' >/dev/null 2>&1\nprintf 'harness\\n' > NEW.md\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["kept"].is_null(), "{result}");
+    assert!(workspace["change_id"].is_null(), "{result}");
+    assert!(
+        workspace["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not stand on the run's copy")),
+        "{result}"
+    );
+    let folder = std::path::PathBuf::from(workspace["path"].as_str().expect("path"));
+    assert_eq!(
+        std::fs::read_to_string(folder.join("NEW.md")).expect("the harness's file stays"),
+        "harness\n"
+    );
+    let feature = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "file",
+            "show",
+            "-r",
+            "@-",
+            "root:\"feature.md\"",
+        ],
+    );
+    assert_eq!(feature, "feature work\n");
+    let summary = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "mutable()",
+            "--no-graph",
+            "--summary",
+            "-T",
+            "description.first_line() ++ \"\\n\"",
+        ],
+    );
+    assert!(
+        !summary
+            .lines()
+            .any(|line| line.starts_with("D ") && line.contains("feature.md")),
+        "{summary}"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_harness_that_abandons_the_copy_keeps_the_folder() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // Abandoning the copy moves the workspace's change off the run's
+    // lineage: nothing descends from the copy any more, so no change is
+    // built, and the harness's file stays in the folder.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-abandon-parent",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj abandon @- >/dev/null 2>&1\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["kept"].is_null(), "{result}");
+    assert!(
+        workspace["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not stand on the run's copy")),
+        "{result}"
+    );
+    let folder = std::path::PathBuf::from(workspace["path"].as_str().expect("path"));
+    assert_eq!(
+        std::fs::read_to_string(folder.join("NEW.md")).expect("the harness's file stays"),
+        "harness\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("README.md")).expect("README"),
+        "base\n"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_harness_that_edits_the_callers_change_abandons_nothing_of_anyone_else() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    let first = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-seat-one",
+        "#!/bin/sh\nprintf 'one\\n' > SEAT1.md\nprintf 'done\\n'\n",
+    );
+    let seat_one = first["workspace"]["change_id"]
+        .as_str()
+        .expect("seat one change")
+        .to_string();
+    // The second harness checks out the caller's working-copy commit in
+    // its workspace and writes beside it.
+    let second = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-seat-two",
+        "#!/bin/sh\njj edit 'default@' >/dev/null 2>&1\nprintf 'evil\\n' > EVIL.md\nprintf 'done\\n'\n",
+    );
+    let workspace = &second["workspace"];
+    assert_eq!(workspace["outside_changes"], true, "{second}");
+    assert!(workspace["kept"].is_null(), "{second}");
+    assert!(
+        workspace["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not stand on the run's copy")),
+        "{second}"
+    );
+    // Seat one's change is still there, the caller's checkout is as it
+    // was, and the caller's commands still run (the checkout is not stale).
+    let visible = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            &format!("change_id({seat_one}) & ::visible_heads()"),
+            "--no-graph",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    );
+    assert_eq!(visible.trim(), seat_one);
+    let status = jj(home.path(), &["-R", repo, "status"]);
+    assert!(!status.contains("EVIL"), "{status}");
+    assert!(!repository.path().join("EVIL.md").exists());
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_branch_a_harness_rebased_onto_its_work_is_not_abandoned() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // A mutable side branch of the caller's, beside its working copy.
+    jj(
+        home.path(),
+        &["-R", repo, "new", "root()", "-m", "side branch"],
+    );
+    std::fs::write(repository.path().join("side.md"), "side\n").expect("side");
+    jj(
+        home.path(),
+        &["-R", repo, "new", "description(exact:\"base\\n\")"],
+    );
+    // The harness rebases that branch onto its own work: the branch then
+    // stands on the copy, but it existed before the run.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-rebaser",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj rebase -r 'description(exact:\"side branch\\n\")' -o @ >/dev/null 2>&1\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A NEW.md"]);
+    let side = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "description(exact:\"side branch\\n\") & ::visible_heads()",
+            "--no-graph",
+            "--summary",
+            "-T",
+            "description.first_line() ++ \"\\n\"",
+        ],
+    );
+    assert!(side.contains("side branch"), "{side}");
+    assert!(side.contains("side.md"), "{side}");
     assert_eq!(workspace_names(home.path(), repo), ["default"]);
     assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
 }

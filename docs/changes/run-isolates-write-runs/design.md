@@ -22,15 +22,26 @@ of the caller's `@` fails: every snapshot of the caller's checkout rewrites `@` 
 workspace goes stale (reviewer repro `seats.sh`, `e2e.sh`). A duplicate of `@` carries the caller's unpushed stack as
 ancestors, where a harness's `jj squash` or `jj absorb` rewrites it (reviewer repro `attack2.sh`). The copy has no
 mutable ancestor, so nothing the harness does in its workspace reaches the caller's commits. The cost: the harness
-sees the unpushed stack as one commit, so `jj log` in the workspace shows the caller's work as the copy, and a harness
-that abandons the copy drops the caller's unpushed edits from its files, which the result then shows as deletions.
+sees the unpushed stack as one commit, so `jj log` in the workspace shows the caller's work as the copy.
 
-The run's change is built from trees. At finish the runner makes a new commit on the recorded copy
-commit (a commit id resolves even when the harness rewrote or abandoned the copy), restores the workspace's final tree
-into it, and rebases it onto the caller's current `@`. Its diff is what the harness changed, whatever the harness did
-to the revisions in between: a squash into the copy, an absorb, an abandoned parent. An empty result is dropped. A
-rebase conflict is kept and reported as `conflicted`. The copy carries the run's description with a `base copy for`
-line, so a leftover after a kill names the run.
+The run's change is built from trees. At finish the runner first asks whether the workspace's change still stands on
+the copy, by the copy's change id or its recorded commit id (`(change_id(<copy>) | present(<copy commit>))::`). A
+harness that moved its workspace elsewhere (`jj new main`, `jj edit default@`, or `jj abandon @-` on the copy itself)
+left the run's lineage: a change built from its files would revert the caller's unpushed work (reviewer repro
+`trunk.sh`), and a snapshot would rewrite somebody else's commit (reviewer repro `editcaller.sh`). The runner then
+records nothing, forgets the workspace, keeps the folder with the harness's files, builds no change, abandons nothing,
+sets `outside_changes`, and says so in the error. When the change stands on the copy, the runner makes a new commit on
+the recorded copy commit (a commit id resolves even when the harness rewrote the copy), restores the workspace's final
+tree into it, and rebases it onto the caller's current `@`. Its diff is what the harness changed, whatever the harness
+did to the revisions in between: a squash into the copy, an absorb. An empty result is dropped. A rebase conflict is
+kept and reported as `conflicted`. The copy carries the run's description with a `base copy for` line, so a leftover
+after a kill names the run.
+
+The runner abandons only the run's own revisions. The candidates are the copy's descendants, minus the caller's line
+and a kept result. A candidate is the run's own when its change id did not exist at the operation the run started
+from, which one query at that operation answers for every candidate (`jj --at-op <start> log -r 'present(<id>) |
+present(<id>) ...' -T change_id`). A candidate that existed then belongs to someone else, a caller's branch the harness
+rebased onto its work: it stays, and `outside_changes` is set.
 
 The harness can still rewrite a caller commit by naming it (`jj describe -r <id>`): the store is shared. When it makes
 the copy, the runner records the repository's latest operation id, the caller's mutable commits below the working copy
@@ -80,14 +91,17 @@ group does not reach a jj command in the middle of the finish.
 | The runner creates the workspace | `jj -R <repo> workspace add --name run-<id> --revision <copy commit> --message <desc> <state>/workspaces/<repo-id>/run-<id>` |
 | The runner records the harness's files | `jj -R <workspace> --config 'snapshot.auto-track="all()"' --config 'snapshot.max-new-file-size="1TiB"' util snapshot` |
 | The runner lists what jj still left unrecorded | the `Refused to snapshot` lines of that snapshot, then `jj -R <workspace> --config 'snapshot.auto-track="none()"' --config 'snapshot.max-new-file-size="1TiB"' status` (`? <path>` lines) |
-| The runner reads the workspace's final commit | `jj -R <workspace> --ignore-working-copy log -r @ -T commit_id` |
+| The runner reads the workspace's change, before and after the snapshot | `jj -R <workspace> --ignore-working-copy log -r @ -T commit_id` |
+| The runner tests that the workspace's change stands on the copy | `jj -R <repo> --ignore-working-copy log -r 'present(<workspace commit>) & ((change_id(<copy>) \| present(<copy commit>))::) & ::visible_heads()' -T commit_id`, empty means it left |
 | The runner stops tracking the workspace | `jj -R <repo> --ignore-working-copy workspace forget run-<id>` |
 | The runner makes the result on the copy | `jj -R <repo> --ignore-working-copy new <copy commit> --no-edit -m <desc>` |
 | The runner gives the result the final tree | `jj -R <repo> --ignore-working-copy restore --from <final commit> --to <result>` |
 | The runner tests for an empty change | `jj -R <repo> --ignore-working-copy log -r <result> --no-graph -T empty` |
 | The runner moves the change onto the caller's current change | `jj -R <repo> --ignore-working-copy rebase -r <result> -o @`, then `log -r <result> -T conflict` |
 | The runner tests a recorded caller commit | `jj -R <repo> --ignore-working-copy log -r 'present(<commit>) & ::visible_heads()' -T commit_id`, empty means changed |
-| The runner drops the copy and every leftover | `jj -R <repo> --ignore-working-copy abandon <commit ids>` of `(change_id(<copy>) \| present(<copy commit>) \| present(<final commit>)):: ~ ::@`, minus a kept result |
+| The runner lists the candidates for the abandon | `jj -R <repo> --ignore-working-copy log -r '((change_id(<copy>) \| present(<copy commit>))::) ~ ::@ ~ change_id(<kept result>)' -T 'change_id ++ " " ++ commit_id'` |
+| The runner tells the run's own revisions from others' | `jj -R <repo> --ignore-working-copy --at-op <start operation> log -r 'present(<id>) \| present(<id>) ...' -T change_id`: a change id listed there existed before the run |
+| The runner drops the run's own revisions | `jj -R <repo> --ignore-working-copy abandon <commit ids>` of the candidates whose change id was not listed |
 
 The workspace takes `--colocate` when the repository has git, so a harness that calls git finds a git checkout. `jj -R` does not search upward (jj 0.46 answers "There is no jj repo" for a subfolder), so the runner walks the ancestors itself. `jj workspace add` refuses `--ignore-working-copy` ("This command must be able to update the working copy"), so it snapshots the caller's checkout once more, which changes nothing the copy holds. The other commands that run in the caller's workspace pass `--ignore-working-copy`: the caller's files took no part in the run, and the owner may be editing them. The runner finds the copy and the result by a marker line in their descriptions (`children(<base>) & description(substring:...)`), so it reads nothing from jj's human output. Leftovers are abandoned by commit id: a copy the harness squashed into exists twice under one change id, and `jj abandon <change id>` refuses a divergent change. Every jj command runs with its working directory set to the workspace it operates on.
 
