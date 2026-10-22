@@ -347,10 +347,17 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         Some(signal) => Err(stopped_before_start(signal)),
         None => invoke_surface(&invocation),
     };
-    // A signal during the harness run went to the harness and is in the
-    // result. One during the finish is read after it.
-    if let Some(watch) = &watch {
-        watch.clear();
+    // A signal the supervisor forwarded to the harness is in the result and
+    // is acknowledged, so it is not reported twice. Any other signal, one
+    // that arrived after the supervisor ended included, stays pending and
+    // ends the run after the finish.
+    if let (Some(watch), Err(failure)) = (&watch, &result)
+        && let SurfaceFailure::Process {
+            failure: ProcessFailure::ForwardedSignal { signal, .. },
+            ..
+        } = failure.unwrapped()
+    {
+        watch.acknowledge(*signal);
     }
     // On every outcome, a forced stop included: the files are recorded, the
     // workspace is forgotten, and an empty change leaves no trace.

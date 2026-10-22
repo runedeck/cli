@@ -300,10 +300,26 @@ impl SignalWatch {
         self.0.received()
     }
 
-    /// Forget the signal received so far, so one that arrives later counts
-    /// anew.
-    pub(crate) fn clear(&self) {
-        self.0.clear();
+    /// Forget one signal that another party handled (the supervisor
+    /// forwarded it to the harness and reported it), so it is not reported
+    /// twice. A signal of the other kind, or one that arrives later, stays
+    /// pending.
+    pub(crate) fn acknowledge(&self, signal: i32) {
+        #[cfg(unix)]
+        {
+            use signal_hook::consts::signal::{SIGINT, SIGTERM};
+
+            if signal == SIGINT {
+                self.0.interrupt.store(false, Ordering::Relaxed);
+            }
+            if signal == SIGTERM {
+                self.0.terminate.store(false, Ordering::Relaxed);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = signal;
+        }
     }
 }
 
