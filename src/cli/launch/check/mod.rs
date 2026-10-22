@@ -464,6 +464,17 @@ fn run_checks_with(
         .map(|check| {
             let credential = credential_value(&check, &effective)
                 .or_else(|| credential_value(&check, inherited));
+            // The exact value sent joins the redaction set before the
+            // request: a refusal that echoes it is hidden whatever the
+            // variable is called, in the text, the JSON, and the result
+            // file. Longest first, so a value inside another goes with it.
+            let mut secrets = secrets.clone();
+            if let Some(value) = &credential
+                && !secrets.contains(value)
+            {
+                secrets.push(value.clone());
+                secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+            }
             let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
                     let (served, missing) = check

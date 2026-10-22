@@ -335,6 +335,35 @@ fn a_credential_the_route_does_not_name_is_never_sent() {
 }
 
 #[test]
+fn a_refusal_that_echoes_the_sent_credential_is_redacted_under_any_name() {
+    // The variable's name looks like no credential, so the by-name pass
+    // never knew its value: the sent value itself must be in the set.
+    let value = "plain-handle-value-7788";
+    let (base_url, handle) = stub(401, &format!(r#"{{"error":"bad key {value}"}}"#));
+    let mut launch = resolved("grok", env(&[]), Some("grok-4.7"));
+    launch.base_url_env = Some("GROK_MODELS_BASE_URL".to_string());
+    let inherited = env(&[
+        ("GROK_SEAT_HANDLE", value),
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+    ]);
+    let report = run_checks_with(&launch, None, &inherited, &["GROK_SEAT_HANDLE".to_string()]);
+    let head = handle.join().expect("stub");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {value}")),
+        "{head}"
+    );
+    assert_eq!(report.exit_code, EXIT_ENDPOINT);
+    let text = format_report(&report);
+    assert!(text.contains("HTTP 401 (credential refused)"), "{text}");
+    assert!(text.contains("credential: GROK_SEAT_HANDLE"), "{text}");
+    assert!(!text.contains(value), "{text}");
+    let json = report_json(&report).to_string();
+    assert!(!json.contains(value), "{json}");
+    assert!(json.contains("<redacted>"), "{json}");
+}
+
+#[test]
 fn the_models_url_adds_v1_only_when_the_base_lacks_it() {
     assert_eq!(
         models_url("http://127.0.0.1:8317/v1"),
