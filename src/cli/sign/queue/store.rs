@@ -62,6 +62,21 @@ pub(crate) enum Kind {
     Open,
     /// A merge-seal is signed above the reviewed head. Nothing pushes.
     Merge,
+    /// Every commit a direct push of the head adds is signed in place, in
+    /// one run.
+    Range,
+}
+
+/// What `rune sign queue --range` recorded: the commits between the
+/// protected branch as the remote had it and the head, oldest first.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct RangeRequest {
+    /// The remote-tracking ref of the protected branch.
+    pub protected: String,
+    /// The commit `protected` pointed at when the request was recorded.
+    pub base: String,
+    /// The identity of every commit in the range. The last one is the head.
+    pub commits: Vec<Identity>,
 }
 
 /// What `rune sign open --queue` recorded for the owner to complete.
@@ -127,6 +142,8 @@ pub(crate) struct Request {
     pub open: Option<OpenRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<Coverage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<RangeRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1134,9 +1134,14 @@ enum SignAction {
         /// Workspace of the bookmark. Defaults to the enclosing jj workspace.
         #[arg(long, value_name = "DIR")]
         repo: Option<QueuePathBuf>,
-        /// Remove stale, signed, and failed requests.
+        /// Remove stale, signed, moved, and failed requests.
         #[arg(long)]
         prune: bool,
+        /// Queue every commit a direct push of the head adds: the commits
+        /// above the protected branch as origin has it, signed in one run.
+        /// The receipt names the head.
+        #[arg(long, requires = "bookmark", conflicts_with = "prune")]
+        range: bool,
     },
     /// Queue a reviewed head for the merge-seal
     ///

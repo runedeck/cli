@@ -4,7 +4,7 @@
 //! trusts it. Plus the one acknowledgment the owner gives before the key.
 
 use super::repo::{Repo, SignOutcome, Signing};
-use super::store::{Coverage, Request};
+use super::store::{Coverage, Identity, RangeRequest, Request};
 use super::{SIGN_ATTEMPTS, owner_signature, short};
 use crate::cli::sign::seal::{self, Seal};
 use rune::error::{Error, ErrorKind};
@@ -40,7 +40,13 @@ pub(crate) fn seal_above(
 ) -> Result<Attempt, Error> {
     let commit = repo.empty_commit(parent, message)?;
     repo.move_bookmark(bookmark, &commit, parent)?;
-    if let Err(reason) = sign_with_retry(repo, bookmark, &commit, signing)? {
+    if let Err(reason) = sign_with_retry(
+        repo,
+        bookmark,
+        &commit,
+        std::slice::from_ref(&commit),
+        signing,
+    )? {
         repo.move_bookmark(bookmark, parent, &commit)?;
         return Ok(Attempt::NotSigned(reason));
     }
@@ -104,10 +110,13 @@ pub(crate) fn check_seal(
 /// has focus types a one-time password there instead.
 pub(crate) const TIMEOUT_HINT: &str = "Keep the pinentry focused and touch the key as soon as it appears; a touch while another window has focus types an OTP into that window.";
 
+/// `commits` is what gets signed: the observed head alone, or every commit
+/// of a range ending at it.
 pub(crate) fn sign_with_retry(
     repo: &Repo,
     bookmark: &str,
     observed: &str,
+    commits: &[String],
     signing: &Signing,
 ) -> Result<Result<(), String>, Error> {
     for attempt in 1..=SIGN_ATTEMPTS {
@@ -120,7 +129,7 @@ pub(crate) fn sign_with_retry(
                 short(&head.identity.commit_id)
             )));
         }
-        match repo.sign(observed, signing)? {
+        match repo.sign(commits, signing)? {
             SignOutcome::Signed => return Ok(Ok(())),
             SignOutcome::Timeout(detail) if attempt < SIGN_ATTEMPTS => {
                 eprintln!("signing timed out (attempt {attempt} of {SIGN_ATTEMPTS}): {detail}");
@@ -191,6 +200,59 @@ pub(crate) fn view(repo: &Repo, request: &Request, base: &str) -> Result<String,
     let mut out = lines.join("\n");
     out.push('\n');
     Ok(out)
+}
+
+/// What the owner sees before the key signs a range: the base, the head,
+/// the count, each author with the commits they wrote, and one line for
+/// every commit, oldest first. `commits` is the range as it is now.
+pub(crate) fn range_view(request: &Request, range: &RangeRequest, commits: &[Identity]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("bookmark     {}", request.bookmark));
+    lines.push(format!("workspace    {}", request.workspace));
+    lines.extend(range_lines(range, commits));
+    if let Some(receipt) = &request.receipt {
+        lines.push(format!("proof        {}", receipt.path));
+        lines.push(format!("exit         {}", receipt.exit_line));
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// The range part of the view, which `rune sign show` prints too.
+pub(crate) fn range_lines(range: &RangeRequest, commits: &[Identity]) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let head = commits.last().map_or("", |last| last.commit_id.as_str());
+    lines.push(format!(
+        "range        {} at {}..{}",
+        range.protected,
+        short(&range.base),
+        short(head)
+    ));
+    lines.push(format!("commits      {}", commits.len()));
+    let mut authors: Vec<(&str, usize)> = Vec::new();
+    for commit in commits {
+        match authors
+            .iter_mut()
+            .find(|(author, _)| *author == commit.author)
+        {
+            Some((_, count)) => *count += 1,
+            None => authors.push((&commit.author, 1)),
+        }
+    }
+    authors.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(right.0)));
+    for (author, count) in authors {
+        lines.push(format!("author       {author} {count}"));
+    }
+    for commit in commits {
+        lines.push(format!(
+            "             {}  {}  {}",
+            short(&commit.commit_id),
+            commit.author,
+            commit.description.lines().next().unwrap_or("")
+        ));
+    }
+    lines
 }
 
 fn coverage_table(coverage: &Coverage) -> Vec<String> {

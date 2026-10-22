@@ -47,6 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse `rune spec archive` on a change whose files link to a draft term or to no term, naming each link.
 - Refuse `rune sign queue` on a head that `origin` already holds or sits above, because signing it in place would rewrite a pushed tip.
 - Report jj's immutable-commit refusal in `rune sign next` without a retry, print the pinentry focus hint on every timeout, and print the `jj git push` line after a signed head.
+- Add `rune sign queue <bookmark> --range`: one request for every commit a direct push adds, listed before the key, signed in one `jj sign` run, and checked against `KEYS`.
+- List a signed request whose bookmark moved as `moved` instead of `stale`. `rune sign next` and `rune sign all` pass over it without failing, and `rune sign queue --prune` removes it.
 - Add `rune launch --check` and `rune run --check`, which ask each base URL in the plan for its model list and report every model the plan sends as served or missing, without spawning.
 - Add the built-in model route `kimi` (`kimi-k3`).
 - Add `rune draft`, which writes an unmanaged rune into the consumer and tracks it in `.drafts`.
@@ -227,6 +229,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Name each commit the queue signs as `commit_id("<id>")` and refuse a `commit_id` alias, so a bookmark, tag, or alias named after an id cannot move the owner's signature.
 - Let `rune sign submit` queue a head whose `owner-seal` check is red, because that check turns green only after the merge-seal the request asks for.
 - Read the comment of an ontology term whose closing quote directly precedes the terminating period. The reader dropped that quote, so `rune spec glossary` listed the term with no definition.
 - Fix `rune run --clean` for codex: the clean `config.toml` keeps every `[model_providers.*]` table with its `auth` and names the one custom provider as the route.

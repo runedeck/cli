@@ -304,6 +304,7 @@ fn open_request(repo: &Repo, bookmark: &str, candidate: &Candidate) -> Request {
             body: candidate.body.clone(),
         }),
         coverage: None,
+        range: None,
         signed_commit: None,
         claim: None,
         failure: None,

@@ -146,17 +146,41 @@ impl Repo {
         let Some(commit) = self.resolve(bookmark)? else {
             return Ok(None);
         };
-        let raw = self.cat_commit(&commit)?;
-        let mut identity = parse_commit(&commit, &raw)?;
+        self.head_at(&commit).map(Some)
+    }
+
+    /// A commit read the way a request records it: the identity with its
+    /// parents as change ids, and whether it carries a signature.
+    pub(crate) fn head_at(&self, commit: &str) -> Result<Head, Error> {
+        let raw = self.cat_commit(commit)?;
+        let mut identity = parse_commit(commit, &raw)?;
         identity.parents = identity
             .parents
             .iter()
             .map(|parent| Ok(parse_commit(parent, &self.cat_commit(parent)?)?.change_id))
             .collect::<Result<Vec<_>, Error>>()?;
-        Ok(Some(Head {
+        Ok(Head {
             identity,
             signed: has_signature(&raw),
-        }))
+        })
+    }
+
+    /// The commits `head` reaches and `base` does not, oldest first: what a
+    /// push of `head` over a remote tip at `base` adds. git lists them, so no
+    /// jj revset alias can widen the set.
+    pub(crate) fn range(&self, base: &str, head: &str) -> Result<Vec<String>, Error> {
+        let listing = self.git_stdout(&[
+            "rev-list",
+            "--reverse",
+            "--topo-order",
+            &format!("{base}..{head}"),
+        ])?;
+        Ok(listing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     fn export(&self, bookmark: &str) -> Result<(), Error> {
@@ -575,10 +599,16 @@ impl Repo {
         })
     }
 
-    /// `jj sign -r <commit>` with the owner's settings pinned. The behavior
-    /// is pinned to `drop`, so the rewrite of descendants signs nothing: a
-    /// descendant that was signed is queued again and signed in its turn.
-    pub(crate) fn sign(&self, commit: &str, signing: &Signing) -> Result<SignOutcome, Error> {
+    /// `jj sign` over exactly `commits`, with the owner's settings pinned.
+    /// The behavior is pinned to `drop`, so the rewrite of descendants signs
+    /// nothing: a descendant that was signed is queued again and signed in
+    /// its turn.
+    ///
+    /// A bare commit id is a symbol to jj, and a tag, a bookmark, or a revset
+    /// alias with that name wins over the id. So every commit is named
+    /// through `commit_id("<id>")`, which reads commit ids alone, and the
+    /// signing is refused while an alias redefines that function.
+    pub(crate) fn sign(&self, commits: &[String], signing: &Signing) -> Result<SignOutcome, Error> {
         if !self.jj {
             return Err(Error::new(
                 ErrorKind::Config,
@@ -588,12 +618,17 @@ impl Repo {
                 ),
             ));
         }
+        if let Some(alias) = commit_id_alias(&self.workspace)? {
+            return Ok(SignOutcome::Failed(format!(
+                "the jj config defines revset alias {alias}, which redefines commit_id(): unset it before signing"
+            )));
+        }
         let mut command = jj(&self.workspace);
         for setting in signing.overrides() {
             command.arg("--config").arg(setting);
         }
         let output = command
-            .args(["sign", "-r", commit])
+            .args(["sign", "-r", &commit_id_revset(commits)])
             .stdin(Stdio::inherit())
             .output()
             .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
@@ -675,20 +710,7 @@ impl Signing {
 /// are checked against `template-aliases` first, through `jj config get`,
 /// which renders nothing.
 fn user_setting(workspace: &Path, key: &str) -> Result<Option<String>, Error> {
-    for keyword in ["name", "value", "overridden"] {
-        let probe = jj(workspace)
-            .args(["config", "get", &format!("template-aliases.{keyword}")])
-            .output()
-            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
-        if probe.status.success() {
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!(
-                    "the jj config defines template-aliases.{keyword}, which changes what jj reports: unset it before signing"
-                ),
-            ));
-        }
-    }
+    refuse_listing_aliases(workspace)?;
     let output = jj(workspace)
         .args([
             "config",
@@ -704,9 +726,67 @@ fn user_setting(workspace: &Path, key: &str) -> Result<Option<String>, Error> {
     Ok(user_value(&String::from_utf8_lossy(&output.stdout), key))
 }
 
+/// The listing templates read three keywords. A `template-aliases` entry
+/// for any of them changes what the listing says, so it is refused first,
+/// through `jj config get`, which renders nothing.
+fn refuse_listing_aliases(workspace: &Path) -> Result<(), Error> {
+    for keyword in ["name", "value", "overridden"] {
+        let probe = jj(workspace)
+            .args(["config", "get", &format!("template-aliases.{keyword}")])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        if probe.status.success() {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "the jj config defines template-aliases.{keyword}, which changes what jj reports: unset it before signing"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Fields split by the unit separator, records by the record separator,
 /// with no template function a `template-aliases` entry could shadow.
 const LISTING: &str = "name ++ \"\\x1f\" ++ value ++ \"\\x1f\" ++ overridden ++ \"\\x1e\"";
+
+/// The revset that names exactly `commits`: `commit_id("<id>")` for each,
+/// joined by `|`. The function matches commit ids only, so no bookmark or
+/// tag named after an id changes the set.
+pub(crate) fn commit_id_revset(commits: &[String]) -> String {
+    commits
+        .iter()
+        .map(|commit| format!("commit_id(\"{commit}\")"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The configured revset alias that redefines `commit_id()`, from any
+/// scope, or `None`.
+fn commit_id_alias(workspace: &Path) -> Result<Option<String>, Error> {
+    refuse_listing_aliases(workspace)?;
+    let output = jj(workspace)
+        .args(["config", "list", "revset-aliases", "-T", LISTING])
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    Ok(shadowing_alias(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// The first `revset-aliases` entry in a listing whose name, with its quotes
+/// and whitespace removed, is the `commit_id` function: `commit_id(x)`,
+/// `commit_id( x )`, and any other parameter name.
+pub(crate) fn shadowing_alias(listing: &str) -> Option<String> {
+    listing.split('\u{1e}').find_map(|record| {
+        let name = record.trim_matches('\n').split('\u{1f}').next()?;
+        let bare: String = name
+            .strip_prefix("revset-aliases.")?
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'')
+            .collect();
+        bare.starts_with("commit_id(").then(|| name.to_string())
+    })
+}
 
 /// The value of `key` among user-scope entries: the one nothing overrides
 /// when there is one, otherwise the last one, which a repository entry

@@ -66,11 +66,13 @@ pub(crate) fn run_queue(action: super::SignAction, json: bool) -> Result<i32, Er
             receipt,
             repo,
             prune,
+            range,
         } => queue::queue(
             bookmark.as_deref(),
             receipt.as_deref(),
             repo.as_deref(),
             prune,
+            range,
             json,
         ),
         SignAction::Submit {

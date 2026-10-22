@@ -22,7 +22,7 @@ use std::process::Command;
 use std::rc::Rc;
 
 pub(crate) use open::{adopt, open, repo_slug};
-use store::{Claim, Kind, Receipt, Request, Status, Store};
+use store::{Claim, Identity, Kind, RangeRequest, Receipt, Request, Status, Store};
 
 const SIGN_ATTEMPTS: usize = 3;
 
@@ -39,6 +39,9 @@ pub(crate) enum State {
     /// that died after `jj sign`, or a signature made outside the queue.
     Unverified,
     Signed,
+    /// Signed and recorded, and the bookmark has moved off the signed
+    /// commit since: done, and ready to prune.
+    Moved,
     Failed,
 }
 
@@ -64,13 +67,88 @@ pub(crate) fn queue(
     receipt: Option<&Path>,
     repository: Option<&Path>,
     prune: bool,
+    range: bool,
     json: bool,
 ) -> Result<i32, Error> {
     match bookmark {
+        Some(bookmark) if range => queue_range(bookmark, receipt, repository, json),
         Some(bookmark) => queue_head(bookmark, receipt, repository, json),
+        None if range => Err(Error::new(
+            ErrorKind::Config,
+            "--range needs the bookmark whose head ends the range",
+        )),
         None if prune => prune_requests(json),
         None => list(json),
     }
+}
+
+/// `rune sign queue <bookmark> --range`: every commit a direct push of the
+/// head adds, from the protected branch as `origin` has it, in one request.
+fn queue_range(
+    bookmark: &str,
+    receipt: Option<&Path>,
+    repository: Option<&Path>,
+    json: bool,
+) -> Result<i32, Error> {
+    let repo = Repo::open(&start_path(repository)?)?;
+    let receipt_path = receipt.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            "a signing request needs --receipt <FILE>: the check log that ends with the exit line",
+        )
+    })?;
+    let head = repo.head(bookmark)?.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            format!("no bookmark {bookmark} in {}", repo.workspace.display()),
+        )
+    })?;
+    refuse_published_head(&repo, bookmark, &head.identity.commit_id)?;
+    let protected = repo.protected_ref("origin")?;
+    let base = repo.rev_parse(&protected)?.ok_or_else(|| {
+        Error::new(
+            ErrorKind::Config,
+            format!("cannot resolve {protected}: fetch origin first"),
+        )
+    })?;
+    let commits = repo.range(&base, &head.identity.commit_id)?;
+    if commits.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "{bookmark} at {} adds no commit to {protected}: there is nothing to sign",
+                short(&head.identity.commit_id)
+            ),
+        )
+        .with_code("sign.range_empty"));
+    }
+    let identities = commits
+        .iter()
+        .map(|commit| repo.head_at(commit).map(|head| head.identity))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let receipt = qualify_receipt(receipt_path, &head.identity.commit_id)?;
+    let request = Request {
+        id: store::new_request_id(&repo.key(), bookmark),
+        repository: repo.key(),
+        workspace: repo.workspace.to_string_lossy().into_owned(),
+        bookmark: bookmark.to_string(),
+        head: head.identity,
+        receipt: Some(receipt),
+        requested_at: store::now(),
+        status: Status::Queued,
+        kind: Kind::Range,
+        open: None,
+        coverage: None,
+        range: Some(RangeRequest {
+            protected,
+            base,
+            commits: identities,
+        }),
+        signed_commit: None,
+        claim: None,
+        failure: None,
+    };
+    record_request(&repo, &request, json)
 }
 
 /// `rune sign queue <bookmark>`: the CLI-0041 request, the recorded head
@@ -95,6 +173,7 @@ fn queue_head(
         kind: Kind::Head,
         open: None,
         coverage: None,
+        range: None,
         signed_commit: None,
         claim: None,
         failure: None,
@@ -180,6 +259,7 @@ pub(crate) fn submit(
         kind: Kind::Merge,
         open: None,
         coverage: Some(coverage),
+        range: None,
         signed_commit: None,
         claim: None,
         failure: None,
@@ -272,6 +352,7 @@ fn record_request(repo: &Repo, request: &Request, json: bool) -> Result<i32, Err
         .coverage
         .as_ref()
         .map(|coverage| coverage.verdict.clone());
+    let commits = request.range.as_ref().map(|range| range.commits.len());
     if json {
         println!(
             "{}",
@@ -282,18 +363,25 @@ fn record_request(repo: &Repo, request: &Request, json: bool) -> Result<i32, Err
                 "bookmark": request.bookmark,
                 "commit": request.head.commit_id,
                 "coverage": coverage,
+                "commits": commits,
                 "next": "rune sign next",
             })
         );
     } else {
-        match coverage {
-            Some(coverage) => println!(
+        match (coverage, commits) {
+            (_, Some(commits)) => println!(
+                "queued {} {} at {} ({commits} commits): run `rune sign next` at the key",
+                request.id,
+                request.bookmark,
+                short(&request.head.commit_id)
+            ),
+            (Some(coverage), None) => println!(
                 "queued {} {} at {} ({coverage}): run `rune sign next` at the key",
                 request.id,
                 request.bookmark,
                 short(&request.head.commit_id)
             ),
-            None => println!(
+            (None, None) => println!(
                 "queued {} {} at {}: run `rune sign next` at the key",
                 request.id,
                 request.bookmark,
@@ -377,7 +465,9 @@ fn receipt_still_holds(request: &Request) -> Result<(), String> {
     let Some(receipt) = &request.receipt else {
         return match request.kind {
             Kind::Open => Ok(()),
-            Kind::Head | Kind::Merge => Err("the request records no receipt".to_string()),
+            Kind::Head | Kind::Merge | Kind::Range => {
+                Err("the request records no receipt".to_string())
+            }
         };
     };
     let path = Path::new(&receipt.path);
@@ -475,7 +565,10 @@ fn prune_requests(json: bool) -> Result<i32, Error> {
             repo: entry.repo.clone(),
         };
         let state = derive(&fresh, &live)?;
-        if matches!(state, State::Stale | State::Signed | State::Failed) {
+        if matches!(
+            state,
+            State::Stale | State::Signed | State::Moved | State::Failed
+        ) {
             store.remove(&fresh.request.id)?;
             removed.push((
                 fresh.request.id.clone(),
@@ -542,6 +635,16 @@ pub(crate) fn show(
             match &coverage.reason {
                 Some(reason) => println!("{:<12} {} ({reason})", "coverage", coverage.verdict),
                 None => println!("{:<12} {}", "coverage", coverage.verdict),
+            }
+        }
+        if let Some(range) = &request.range {
+            // The range as it is now when it can be read, else as recorded.
+            let live = match (&entry.repo, &entry.head) {
+                (Some(repo), Some(head)) => live_range(repo, range, &head.identity.commit_id).ok(),
+                _ => None,
+            };
+            for line in ceremony::range_lines(range, live.as_deref().unwrap_or(&range.commits)) {
+                println!("{line}");
             }
         }
         println!("{:<12} {}", "requested", request.requested_at);
@@ -634,6 +737,19 @@ impl Outcome {
         }
     }
 
+    fn moved(request: &Request) -> Self {
+        Self {
+            id: request.id.clone(),
+            bookmark: request.bookmark.clone(),
+            result: format!(
+                "skipped: moved: signed at {}, the bookmark moved since",
+                short(request.signed_commit.as_deref().unwrap_or(""))
+            ),
+            commit: None,
+            push: None,
+        }
+    }
+
     fn attempted(&self) -> bool {
         !self.result.starts_with("skipped: ")
     }
@@ -658,15 +774,24 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
     }
     let mut outcomes: Vec<Outcome> = Vec::new();
     let mut failed = false;
+    let mut moved = false;
     // The owner's signing settings are read once, and only when a request
     // is about to be signed, so a stale or blocked queue never fails on
     // configuration it does not need.
     let mut signing: Option<Signing> = None;
     for entry in &live {
         let Some(repo) = &entry.repo else {
-            let outcome = Outcome::skipped(&entry.request, State::Stale);
-            failed = true;
-            outcomes.push(outcome);
+            match entry.request.status {
+                Status::Signed => {
+                    moved = true;
+                    outcomes.push(Outcome::moved(&entry.request));
+                }
+                Status::Failed => {}
+                Status::Queued => {
+                    failed = true;
+                    outcomes.push(Outcome::skipped(&entry.request, State::Stale));
+                }
+            }
             continue;
         };
         // Observe this request again: signing an ancestor rewrote its head
@@ -680,6 +805,12 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
         let outcome = match state {
             State::Current => sign_one(&store, fresh, signing_for(&mut signing, &repo.workspace)?)?,
             State::Failed | State::Signed => continue,
+            // Done earlier: the owner sees it once, and it fails nothing.
+            State::Moved => {
+                moved = true;
+                outcomes.push(Outcome::moved(&fresh.request));
+                continue;
+            }
             // Signed on disk but never recorded: the signer died between
             // `jj sign` and the store write, or the owner signed by hand.
             State::Unverified => {
@@ -717,6 +848,9 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
             if let Some(push) = &outcome.push {
                 println!("   publish with: {push}");
             }
+        }
+        if moved {
+            println!("prune signed requests whose bookmark moved with `rune sign queue --prune`");
         }
     }
     Ok(i32::from(failed))
@@ -775,7 +909,13 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
     };
     let attempt = match request.kind {
         Kind::Head => {
-            match ceremony::sign_with_retry(&repo, &request.bookmark, &observed, signing)? {
+            match ceremony::sign_with_retry(
+                &repo,
+                &request.bookmark,
+                &observed,
+                std::slice::from_ref(&observed),
+                signing,
+            )? {
                 Ok(()) => match verify_signed_head(&repo, &request, signing, &keys)? {
                     Ok(commit) => Attempt::Signed(commit),
                     Err(reason) => Attempt::Failed(reason),
@@ -785,6 +925,7 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
         }
         Kind::Open => open::complete_from_queue(&repo, &live, signing, &keys)?,
         Kind::Merge => merge_seal(&repo, &live, signing, &keys)?,
+        Kind::Range => sign_range(&repo, &request, &observed, signing, &keys)?,
     };
     let outcome = match attempt {
         Attempt::Signed(commit) => {
@@ -792,7 +933,7 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
             request.signed_commit = Some(commit.clone());
             request.claim = None;
             store.save(&request)?;
-            let push = (request.kind == Kind::Head).then(|| {
+            let push = matches!(request.kind, Kind::Head | Kind::Range).then(|| {
                 format!(
                     "jj git push --remote origin --bookmark {}",
                     request.bookmark
@@ -863,6 +1004,182 @@ fn merge_seal(
         signing,
         keys,
     )
+}
+
+/// `next` on a `range` request. The protected branch must still point at
+/// the base after `owner_keys` refreshed it, because a push from a newer
+/// remote tip adds another set of commits. The owner sees every commit and
+/// answers, one `jj sign` covers the range, and git checks every commit
+/// afterwards. Nothing pushes.
+fn sign_range(
+    repo: &Repo,
+    request: &Request,
+    observed: &str,
+    signing: &Signing,
+    keys: &[String],
+) -> Result<Attempt, Error> {
+    let Some(range) = &request.range else {
+        return Ok(Attempt::Failed("the request records no range".to_string()));
+    };
+    let now = repo.rev_parse(&range.protected)?;
+    if now.as_deref() != Some(range.base.as_str()) {
+        return Ok(Attempt::NotSigned(format!(
+            "stale: {} moved to {} since the request: rebase and queue again",
+            range.protected,
+            now.as_deref().map_or("nothing", short)
+        )));
+    }
+    let commits = repo.range(&range.base, observed)?;
+    let heads = commits
+        .iter()
+        .map(|commit| repo.head_at(commit))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let live: Vec<Identity> = heads.iter().map(|head| head.identity.clone()).collect();
+    if !range_identities_match(&range.commits, &live) {
+        return Ok(Attempt::NotSigned(format!(
+            "stale: the commits between {} and {} changed since the request",
+            short(&range.base),
+            short(observed)
+        )));
+    }
+    // A signer that stopped after `jj sign` left every commit signed by the
+    // owner: record that, and ask for no key.
+    if heads.iter().all(|head| head.signed)
+        && check_signatures(repo, &commits, signing, keys)?.is_ok()
+    {
+        return Ok(Attempt::Signed(observed.to_string()));
+    }
+    print!("{}", ceremony::range_view(request, range, &live));
+    if !ceremony::acknowledge(&format!(
+        "sign {} commits on {} from {} to {}?",
+        commits.len(),
+        request.bookmark,
+        short(&range.base),
+        short(observed)
+    ))? {
+        return Ok(Attempt::NotSigned("declined".to_string()));
+    }
+    if let Err(reason) =
+        ceremony::sign_with_retry(repo, &request.bookmark, observed, &commits, signing)?
+    {
+        return Ok(Attempt::NotSigned(reason));
+    }
+    Ok(
+        match verify_signed_range(repo, request, range, signing, keys)? {
+            Ok(head) => Attempt::Signed(head),
+            Err(reason) => Attempt::Failed(reason),
+        },
+    )
+}
+
+/// After the run, every commit between the base and the bookmark's new head
+/// keeps its recorded identity, in order, and carries a `KEYS` signature.
+/// The first commit that does not is the reason.
+fn verify_signed_range(
+    repo: &Repo,
+    request: &Request,
+    range: &RangeRequest,
+    signing: &Signing,
+    keys: &[String],
+) -> Result<Result<String, String>, Error> {
+    let Some(head) = repo.head(&request.bookmark)? else {
+        return Ok(Err(format!(
+            "bookmark {} vanished after signing",
+            request.bookmark
+        )));
+    };
+    if !identity_matches(request, &head) {
+        return Ok(Err(format!(
+            "{} changed identity while signing",
+            request.bookmark
+        )));
+    }
+    let commits = repo.range(&range.base, &head.identity.commit_id)?;
+    if commits.len() != range.commits.len() {
+        return Ok(Err(format!(
+            "{} commits between {} and {}, the request recorded {}",
+            commits.len(),
+            short(&range.base),
+            short(&head.identity.commit_id),
+            range.commits.len()
+        )));
+    }
+    for (recorded, commit) in range.commits.iter().zip(&commits) {
+        let live = repo.head_at(commit)?;
+        if !same_commit(recorded, &live.identity) {
+            return Ok(Err(format!(
+                "{} changed identity while signing",
+                short(commit)
+            )));
+        }
+        if !live.signed {
+            return Ok(Err(format!(
+                "{}: jj sign returned without a signature",
+                short(commit)
+            )));
+        }
+    }
+    Ok(check_signatures(repo, &commits, signing, keys)?.map(|()| head.identity.commit_id))
+}
+
+/// Every commit carries a signature from a `KEYS` key, or the reason the
+/// first one does not.
+fn check_signatures(
+    repo: &Repo,
+    commits: &[String],
+    signing: &Signing,
+    keys: &[String],
+) -> Result<Result<(), String>, Error> {
+    for commit in commits {
+        if let Err(reason) = owner_signature(repo, commit, signing, keys)? {
+            return Ok(Err(format!("{}: {reason}", short(commit))));
+        }
+    }
+    Ok(Ok(()))
+}
+
+/// The commits of a range as they are now, from the recorded base to `head`.
+fn live_range(repo: &Repo, range: &RangeRequest, head: &str) -> Result<Vec<Identity>, Error> {
+    repo.range(&range.base, head)?
+        .iter()
+        .map(|commit| repo.head_at(commit).map(|head| head.identity))
+        .collect()
+}
+
+/// A range request holds while the protected branch still points at the
+/// base and the commits up to the head keep their recorded identities.
+fn range_holds(repo: &Repo, request: &Request, head: &Head) -> Result<bool, Error> {
+    let Some(range) = &request.range else {
+        return Ok(false);
+    };
+    if repo.rev_parse(&range.protected)?.as_deref() != Some(range.base.as_str()) {
+        return Ok(false);
+    }
+    let live = live_range(repo, range, &head.identity.commit_id)?;
+    Ok(range_identities_match(&range.commits, &live))
+}
+
+/// The same commits in the same order, by everything a signature leaves
+/// alone.
+pub(crate) fn range_identities_match(recorded: &[Identity], live: &[Identity]) -> bool {
+    recorded.len() == live.len()
+        && recorded
+            .iter()
+            .zip(live)
+            .all(|(recorded, live)| same_commit(recorded, live))
+}
+
+/// One commit before and after a signature. A commit that git wrote has no
+/// `change-id` header until jj rewrites it, so an empty recorded change id,
+/// or an empty recorded parent change id, matches what jj writes then.
+pub(crate) fn same_commit(recorded: &Identity, live: &Identity) -> bool {
+    (recorded.change_id.is_empty() || recorded.change_id == live.change_id)
+        && recorded.tree_id == live.tree_id
+        && recorded.author == live.author
+        && recorded.description == live.description
+        && (recorded.parents == live.parents
+            || (recorded.parents.len() == live.parents.len()
+                && recorded.parents.iter().any(String::is_empty)))
 }
 
 fn record_failure(store: &Store, mut request: Request, reason: &str) -> Result<Outcome, Error> {
@@ -985,21 +1302,26 @@ fn derive(entry: &Live, others: &[Live]) -> Result<State, Error> {
     if request.status == Status::Failed {
         return Ok(State::Failed);
     }
+    // A signed request is done. It stays `signed` while the bookmark points
+    // at what was signed, and is `moved` once the bookmark, or the
+    // workspace, went elsewhere: never `stale`, which reads as not done.
+    if request.status == Status::Signed {
+        let at_signed = entry.head.as_ref().is_some_and(|head| {
+            request.signed_commit.as_deref() == Some(head.identity.commit_id.as_str())
+        });
+        return Ok(if at_signed {
+            State::Signed
+        } else {
+            State::Moved
+        });
+    }
     let (Some(repo), Some(head)) = (&entry.repo, &entry.head) else {
         return Ok(State::Stale);
     };
-    // A seal is a new commit above the recorded head, so a signed request
-    // is current only while the bookmark still points at what was signed.
-    if request.status == Status::Signed {
-        return Ok(
-            if request.signed_commit.as_deref() == Some(&head.identity.commit_id) {
-                State::Signed
-            } else {
-                State::Stale
-            },
-        );
-    }
     if !identity_matches(request, head) {
+        return Ok(State::Stale);
+    }
+    if request.kind == Kind::Range && !range_holds(repo, request, head)? {
         return Ok(State::Stale);
     }
     // A merge-seal binds the reviewed commit id itself, not an identity a
@@ -1012,7 +1334,9 @@ fn derive(entry: &Live, others: &[Live]) -> Result<State, Error> {
     {
         return Ok(State::Stale);
     }
-    if head.signed && request.kind != Kind::Merge {
+    // A range may end at a signed head with unsigned commits below it; the
+    // signer checks every commit, so a signed head says nothing here.
+    if head.signed && !matches!(request.kind, Kind::Merge | Kind::Range) {
         return Ok(State::Unverified);
     }
     for other in others {
@@ -1129,6 +1453,7 @@ fn kind_label(kind: Kind) -> &'static str {
         Kind::Head => "head",
         Kind::Open => "open",
         Kind::Merge => "merge",
+        Kind::Range => "range",
     }
 }
 
@@ -1140,6 +1465,7 @@ fn state_label(state: State) -> &'static str {
         State::Claimed => "claimed",
         State::Unverified => "unverified",
         State::Signed => "signed",
+        State::Moved => "moved",
         State::Failed => "failed",
     }
 }

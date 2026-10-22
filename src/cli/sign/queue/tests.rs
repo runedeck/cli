@@ -1,10 +1,12 @@
 use super::repo::{
-    SignOutcome, Signing, classify_sign_output, export_refused, has_signature, parse_commit,
-    user_value,
+    SignOutcome, Signing, classify_sign_output, commit_id_revset, export_refused, has_signature,
+    parse_commit, shadowing_alias, user_value,
 };
 use super::repo::{helper_applies, helper_settings};
 use super::store::{Identity, Kind, Receipt, Request, Status, Store, claim_is_dead, split_holder};
-use super::{exit_status, names_commit, notifier_commands, topological};
+use super::{
+    exit_status, names_commit, notifier_commands, range_identities_match, same_commit, topological,
+};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -32,10 +34,82 @@ fn request(id: &str, repository: &str, at: &str) -> Request {
         kind: Kind::Head,
         open: None,
         coverage: None,
+        range: None,
         signed_commit: None,
         claim: None,
         failure: None,
     }
+}
+
+#[test]
+fn every_commit_is_named_through_commit_id_and_an_alias_of_it_is_found() {
+    let commits = vec!["a".repeat(40), "b".repeat(40)];
+    assert_eq!(
+        commit_id_revset(&commits),
+        format!(
+            "commit_id(\"{}\") | commit_id(\"{}\")",
+            "a".repeat(40),
+            "b".repeat(40)
+        )
+    );
+    let listing = "revset-aliases.\"closest_bookmark(to)\"\u{1f}'heads(::to & bookmarks())'\u{1e}\
+                   revset-aliases.\"commit_id( x )\"\u{1f}'all()'\u{1e}";
+    assert_eq!(
+        shadowing_alias(listing).as_deref(),
+        Some("revset-aliases.\"commit_id( x )\"")
+    );
+    assert_eq!(
+        shadowing_alias("revset-aliases.'commit_id(id)'\u{1f}'all()'\u{1e}").as_deref(),
+        Some("revset-aliases.'commit_id(id)'")
+    );
+    // A symbol alias, another function, and an empty listing redefine nothing.
+    assert_eq!(
+        shadowing_alias("revset-aliases.commit_id\u{1f}'all()'\u{1e}"),
+        None
+    );
+    assert_eq!(
+        shadowing_alias("revset-aliases.\"commit_ids(x)\"\u{1f}'all()'\u{1e}"),
+        None
+    );
+    assert_eq!(shadowing_alias(""), None);
+}
+
+fn identity(change: &str, commit: &str, parents: &[&str]) -> Identity {
+    Identity {
+        change_id: change.to_string(),
+        commit_id: commit.to_string(),
+        tree_id: format!("tree-{change}"),
+        author: "Model One <model-one@example.com>".to_string(),
+        description: format!("feat: {change}\n"),
+        parents: parents.iter().map(|parent| (*parent).to_string()).collect(),
+    }
+}
+
+#[test]
+fn a_range_matches_by_identity_in_order_and_ignores_commit_ids() {
+    let recorded = vec![
+        identity("ca", "k1", &["cbase"]),
+        identity("cb", "k2", &["ca"]),
+    ];
+    // Signed: new commit ids, everything else kept.
+    let signed = vec![
+        identity("ca", "s1", &["cbase"]),
+        identity("cb", "s2", &["ca"]),
+    ];
+    assert!(range_identities_match(&recorded, &signed));
+    // Reordered, shortened, or amended ranges do not match.
+    let reordered = vec![signed[1].clone(), signed[0].clone()];
+    assert!(!range_identities_match(&recorded, &reordered));
+    assert!(!range_identities_match(&recorded, &signed[..1]));
+    let mut amended = signed.clone();
+    amended[0].description = "feat: other\n".to_string();
+    assert!(!range_identities_match(&recorded, &amended));
+    // A commit git wrote has no change id until jj rewrites it.
+    let from_git = identity("", "k1", &[""]);
+    assert!(same_commit(&from_git, &identity("", "s1", &["cbase"])));
+    let mut retree = identity("", "s1", &["cbase"]);
+    retree.tree_id = "tree-other".to_string();
+    assert!(!same_commit(&from_git, &retree));
 }
 
 #[test]
