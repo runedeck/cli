@@ -1113,7 +1113,7 @@ fn route_credential_without_an_endpoint_withholds_the_inherited_endpoint() {
 }
 
 #[test]
-fn a_later_settings_object_replaces_env_whole_in_the_childs_view() {
+fn a_later_settings_object_replaces_env_whole_in_the_child_view() {
     let claude = invocation(
         Surface::Claude,
         &[
