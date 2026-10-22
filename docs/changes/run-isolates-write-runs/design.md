@@ -94,7 +94,7 @@ group does not reach a jj command in the middle of the finish.
 | The runner records the harness's files | `jj -R <workspace> --config 'snapshot.auto-track="all()"' --config snapshot.max-new-file-size=0 util snapshot` |
 | The runner reads the workspace's change after the snapshot | `jj -R <workspace> --ignore-working-copy log -r @ -T commit_id` |
 | The runner tests that the workspace's change stands on the copy | `jj -R <repo> --ignore-working-copy log -r '"run-<id>"@ ~ (change_id("<copy>") \| commit_id("<copy commit>"))::' -T change_id`, a line means it left |
-| The runner removes the workspace and its files | `jj -R <repo> workspace remove run-<id>`, under the lock, then the guard's configuration folder; `workspace forget` when a process survived |
+| The runner removes the workspace and its files | `jj -R <repo> workspace remove run-<id>`, under the lock, then the guard's configuration folder. `workspace forget` stands in when a process survived |
 | The runner makes the result on the copy | `jj -R <repo> --ignore-working-copy new <copy commit> --no-edit -m <desc>` |
 | The runner gives the result the final tree | `jj -R <repo> --ignore-working-copy restore --from <final commit> --to <result>` |
 | The runner tests for an empty change | `jj -R <repo> --ignore-working-copy log -r <result> --no-graph -T empty` |
