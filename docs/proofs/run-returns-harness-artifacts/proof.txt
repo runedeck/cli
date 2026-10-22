@@ -1,3 +1,18 @@
+## execute-prompts-off-session#the-run-reports-the-files-the-harness-created/agy-draws-an-image
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ rune --json run gemini@agy --mode workspace-write --repo repo --artifacts-dir out "Draw a tiny icon of a rune stone and save it as rune_icon.jpg. Then reply with the single word done."
+  {"artifacts":["/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-72143-execute-prompts-off-session-the-run-reports-the-files-the-harness-created-agy-draws-an-image-226ca328-1-0/out/rune_icon_1792695072171.jpg"],"clean":false,"completion_tokens":2026.0,"duration_ms":70809,"kind":"success","model":"gemini-4-argon-high","ok":true,"requested_provider":"gemini@agy","requested_route":"gemini@agy","resolved_binary":"agy","resolved_model":"gemini-4-argon-high","resolved_route":"agy","session_name":null,"session_name_flag":null,"text":"Generating the rune stone icon.\ndone","tool":"agy","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":2026.0,"total_tokens":null},"warnings":[],"workspace":{"change_id":"zuwwsxnzwpsnuyzswuspmxkluyznsonm","colocated":false,"conflicted":false,"kept":false,"name":"run-1792695025645-72159","operation_id":"0f6ad722e8c37832e96c43ec11a3d98b197b2bab7b73d17379d03fa4b957c929bfe5968be5102a38cfdb0162e916d9b7d04ff70dec4baf6a11ad8ff1110c5b9d","outside_changes":false,"unrecorded":[]}}
+$ ls out
+  rune_icon_1792695072171.jpg
+
+## execute-prompts-off-session#the-run-reports-the-files-the-harness-created/grok-answers-in-text
+kind: check
+$ rune --json run grok@grok --clean "Reply with exactly two words: grok ready"
+  warning: automated grok execution owns --sandbox; the profile value <redacted> is dropped
+  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":1958,"kind":"success","model":"grok-4.7","ok":true,"requested_provider":"grok@grok","requested_route":"grok@grok","resolved_binary":"/Users/N4M3Z/.grok/bin/grok","resolved_model":"grok-4.7","resolved_route":"grok","session_name":null,"session_name_flag":null,"text":"grok ready","tool":"grok","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":["automated grok execution owns --sandbox; the profile value <redacted> is dropped"],"workspace":null}
+
 ## execute-prompts-off-session#the-run-copies-the-files-where-the-user-asks/dry-run-with-a-destination
 kind: check
 $ jj git init repo
@@ -37,7 +52,6 @@ $ rune run gemini@agy --mode workspace-write --repo repo --artifacts-dir out --d
     CLAUDE_CODE_STARTUP_FAILURE_RESULTS
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
     CLAUDE_CODE_TERMINAL_MCP_TOOLS
-    CLAUDE_CODE_TMPDIR
     CLAUDE_CODE_TMUX_TRUECOLOR
     CLAUDE_CODE_USER_EMAIL
     CLAUDE_EFFORT
@@ -48,7 +62,7 @@ $ rune run gemini@agy --mode workspace-write --repo repo --artifacts-dir out --d
   wrap:
   pre:
   stdin: none
-  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-77103-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-3662dde8-14-0-2543aee4c20d/run-1792694198980-87532/
+  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-72143-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-186b01d0-15-0-07ab9d847e4f/run-1792695142473-81234/
   mode: workspace-write
   timeout: none
   native_timeout: none
@@ -56,7 +70,7 @@ $ rune run gemini@agy --mode workspace-write --repo repo --artifacts-dir out --d
   session_name_flag: none
   artifacts_dir: out
   clean_config_keys: none
-  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-77103-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-3662dde8-14-0-2543aee4c20d/run-1792694198980-87532
-  workspace_parent: uwqnymqmxvxmzrxnorvrprmomklrmmzq
+  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-72143-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-186b01d0-15-0-07ab9d847e4f/run-1792695142473-81234
+  workspace_parent: xlqrurnwlyvlrtwwyzmrypwnqvlqurzm
   workspace_colocate: false
 

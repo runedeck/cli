@@ -1,14 +1,14 @@
 ---
 type: proof
 change: run-returns-harness-artifacts
-head: 5923e57016f3b95520eeb6f546a5e793bef41d29
+head: d875d9a012467cfc61a8d56b46328efd4c751f0b
 recorded: 2026-10-22
-transcript: 21c3c5c93d33b1ee9755fa0c5b0d9be572d453447aa5a5946b4c1793fbda951b
+transcript: f5a5818001537d30b11810795b2983ffc5dc3fd7c7984aa6463213149ac11b19
 scenes:
 - scenario: execute-prompts-off-session#the-run-reports-the-files-the-harness-created/agy-draws-an-image
-  kind: unproven
+  kind: check
 - scenario: execute-prompts-off-session#the-run-reports-the-files-the-harness-created/grok-answers-in-text
-  kind: unproven
+  kind: check
 - scenario: execute-prompts-off-session#the-run-reports-the-files-the-harness-created/agy-run-leaves-a-file-from-an-earlier-turn
   kind: unproven
 - scenario: execute-prompts-off-session#the-run-copies-the-files-where-the-user-asks/name-clash-in-the-destination
