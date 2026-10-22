@@ -62,8 +62,9 @@ A colocated workspace is also a git worktree, and git locks `.git/config` while 
   `run-`, so the owner can find and forget it.
 - Several seats in one council create workspaces at the same time. jj merges concurrent operations, the repository lock
   serializes the git worktree setup, and a test runs two isolated runs at once.
-- A `finish` step that fails (jj gone, a file above jj's `snapshot.max-new-file-size`) stops the rest: the workspace
-  stays on disk and tracked, the result keeps the answer, and the `workspace` object carries the error with the path.
+- A `finish` step that fails stops the rest: the workspace folder stays on disk, the result keeps the answer, and the
+  `workspace` object carries every field the finish learned before the failure (`change_id`, `kept`, `conflicted`)
+  beside the error and the path. An artifact copy that fails after the finish keeps the `workspace` object too.
 - Ignored files are absent, so a run that needs `.env` or a warm build cache fails or runs slowly. The result says the run
   was isolated, so the cause is visible.
 - Colocation changes the owner's repository setup once. The result says so, and the change is reversible.

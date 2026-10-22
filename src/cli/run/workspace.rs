@@ -94,15 +94,22 @@ fn lock_repository(path: &Path) -> Result<RepositoryLock, String> {
     Ok(RepositoryLock(file))
 }
 
-/// What the run left behind: one change when it changed files, nothing
-/// when it did not.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What the run left behind. Every field is filled as far as the finish
+/// got: a step that fails after the change is known still names it, and
+/// `error` says what stopped the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Outcome {
-    pub(crate) change_id: String,
-    pub(crate) kept: bool,
+    /// The change that holds the run's work, once it exists.
+    pub(crate) change_id: Option<String>,
+    /// Whether the run changed files, once that is known.
+    pub(crate) kept: Option<bool>,
     /// Whether the rebase onto the caller's current change left a conflict
-    /// in the kept change.
-    pub(crate) conflicted: bool,
+    /// in the kept change, once the rebase ran.
+    pub(crate) conflicted: Option<bool>,
+    /// The workspace folder, when it stays on disk.
+    pub(crate) path: Option<PathBuf>,
+    /// The step that failed, when one did.
+    pub(crate) error: Option<String>,
 }
 
 /// The refusal for a folder that is in neither git nor jj.
@@ -470,9 +477,20 @@ fn abandon_existing(root: &Path, ids: &[String]) -> Result<(), String> {
 /// harness's files, stop tracking the workspace, fold every revision the
 /// run made into one change on top of the caller's current change, drop
 /// the copy and an empty result, and remove the folder. A step that fails
-/// stops the rest, so nothing the harness wrote is lost: the error names
-/// the workspace that stays.
-pub(crate) fn finish(workspace: &Workspace) -> Result<Outcome, String> {
+/// stops the rest, so nothing the harness wrote is lost: the outcome keeps
+/// what the finish learned before the failure, names the error, and names
+/// the folder that stays.
+pub(crate) fn finish(workspace: &Workspace) -> Outcome {
+    let mut outcome = Outcome::default();
+    if let Err(error) = finish_steps(workspace, &mut outcome) {
+        outcome.error = Some(error);
+        outcome.path = Some(workspace.path.clone());
+    }
+    outcome
+}
+
+/// The finish, step by step, writing into `outcome` as each fact is known.
+fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), String> {
     jj_in(
         &workspace.path,
         &[
@@ -514,6 +532,7 @@ pub(crate) fn finish(workspace: &Workspace) -> Result<Outcome, String> {
         .ok_or_else(|| format!("jj new named no change: {}", created.stderr.trim()))?;
     let folded = change_id(root, short)?
         .ok_or_else(|| format!("jj new named a change jj does not list: {short}"))?;
+    outcome.change_id = Some(folded.clone());
     let run_revisions = format!("({copy}:: ~ {copy}) ~ {folded}", copy = workspace.copy);
     if !change_ids(root, &run_revisions)?.is_empty() {
         jj_root_command(
@@ -529,7 +548,7 @@ pub(crate) fn finish(workspace: &Workspace) -> Result<Outcome, String> {
         )?;
     }
     let kept = !flag(root, &folded, "empty")?;
-    let mut conflicted = false;
+    outcome.kept = Some(kept);
     if kept {
         jj_root_command(
             root,
@@ -541,9 +560,10 @@ pub(crate) fn finish(workspace: &Workspace) -> Result<Outcome, String> {
                 OsStr::new("@"),
             ],
         )?;
-        conflicted = flag(root, &folded, "conflict")?;
+        outcome.conflicted = Some(flag(root, &folded, "conflict")?);
         abandon_existing(root, std::slice::from_ref(&workspace.copy))?;
     } else {
+        outcome.conflicted = Some(false);
         abandon_existing(root, &[folded.clone(), workspace.copy.clone()])?;
     }
     std::fs::remove_dir_all(&workspace.path).map_err(|error| {
@@ -551,11 +571,6 @@ pub(crate) fn finish(workspace: &Workspace) -> Result<Outcome, String> {
             "cannot remove workspace folder {}: {error}",
             workspace.path.display()
         )
-    })?;
-    Ok(Outcome {
-        change_id: folded,
-        kept,
-        conflicted,
     })
 }
 

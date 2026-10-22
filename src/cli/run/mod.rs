@@ -347,12 +347,29 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                 }
             }
             // Before `clean_state` drops: a clean run's files live inside it.
-            let artifacts = collect_artifacts(
+            // A copy that fails keeps the workspace object: the change the
+            // run left is named whatever happens after it.
+            let artifacts = match collect_artifacts(
                 options,
                 &invocation,
                 reply.conversation_id.as_deref(),
                 started_at,
-            )?;
+            ) {
+                Ok(artifacts) => artifacts,
+                Err(message) => {
+                    let mut outcome = configuration_outcome(options, message.into());
+                    if let Some(object) = outcome.json.as_object_mut() {
+                        object.insert("workspace".to_string(), workspace_json);
+                    }
+                    if let Text::Fatal(text) = &mut outcome.text {
+                        for line in &workspace_lines {
+                            text.push('\n');
+                            text.push_str(line);
+                        }
+                    }
+                    return Ok(outcome);
+                }
+            };
             if !options.json {
                 for artifact in &artifacts {
                     eprintln!("artifact: {artifact}");
@@ -412,39 +429,31 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     }
 }
 
-/// The `workspace` object of a result: the change the run left and whether
-/// it was kept, or the error that left the workspace in place.
-fn workspace_json(
-    workspace: &workspace::Workspace,
-    outcome: &Result<workspace::Outcome, String>,
-) -> Value {
-    match outcome {
-        Ok(outcome) => json!({
-            "name": workspace.name,
-            "change_id": outcome.change_id,
-            "kept": outcome.kept,
-            "conflicted": outcome.conflicted,
-            "colocated": workspace.colocated,
-        }),
-        Err(error) => json!({
-            "name": workspace.name,
-            "path": workspace.path.display().to_string(),
-            "change_id": Value::Null,
-            "kept": Value::Null,
-            "conflicted": Value::Null,
-            "colocated": workspace.colocated,
-            "error": error,
-        }),
+/// The `workspace` object of a result: the change the run left, whether it
+/// was kept, and, when a step failed, the error and the folder that stays.
+/// A field the finish did not reach is null.
+fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Value {
+    let mut object = json!({
+        "name": workspace.name,
+        "change_id": outcome.change_id,
+        "kept": outcome.kept,
+        "conflicted": outcome.conflicted,
+        "colocated": workspace.colocated,
+    });
+    if let (Some(fields), Some(error)) = (object.as_object_mut(), &outcome.error) {
+        fields.insert("error".to_string(), json!(error));
+        fields.insert(
+            "path".to_string(),
+            json!(outcome.path.as_ref().map(|path| path.display().to_string())),
+        );
     }
+    object
 }
 
 /// The text lines for the workspace: one names the change kept or says
 /// nothing was, one more when this run colocated jj, and a warning when
 /// the workspace could not be taken down.
-fn workspace_lines(
-    workspace: &workspace::Workspace,
-    outcome: &Result<workspace::Outcome, String>,
-) -> Vec<String> {
+fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Vec<String> {
     let mut lines = Vec::new();
     if workspace.colocated {
         lines.push(format!(
@@ -452,23 +461,28 @@ fn workspace_lines(
             workspace.root.display()
         ));
     }
-    match outcome {
-        Ok(outcome) if outcome.kept => lines.push(format!(
+    match (&outcome.change_id, outcome.kept) {
+        (Some(change_id), Some(true)) => lines.push(format!(
             "workspace: kept change {} ({}){}; review it with jj, then squash or abandon it",
-            outcome.change_id,
+            change_id,
             workspace.name,
-            if outcome.conflicted {
+            if outcome.conflicted == Some(true) {
                 ", with a conflict against your current change"
             } else {
                 ""
             }
         )),
-        Ok(_) => lines.push("workspace: no file changed, nothing kept".to_string()),
-        Err(error) => lines.push(format!(
+        (Some(_), Some(false)) => {
+            lines.push("workspace: no file changed, nothing kept".to_string());
+        }
+        _ => {}
+    }
+    if let Some(error) = &outcome.error {
+        lines.push(format!(
             "warning: workspace {} stays at {}: {error}",
             workspace.name,
-            workspace.path.display()
-        )),
+            outcome.path.as_deref().unwrap_or(&workspace.path).display()
+        ));
     }
     lines
 }

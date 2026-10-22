@@ -2709,6 +2709,97 @@ fn harness_that_commits_its_own_work_still_leaves_one_change() {
 
 #[cfg(unix)]
 #[test]
+fn finish_error_after_the_change_is_known_still_names_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    // The harness edits a file, then makes the folder above its workspace
+    // read-only: the fold works, and the last step, removing the folder,
+    // fails.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\npwd -P > \"$(dirname \"$0\")/cwd.txt\"\nprintf 'new\\n' > NEW.md\nchmod 555 \"$(dirname \"$(pwd -P)\")\"\nprintf 'done\\n'\n",
+    );
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    let cwd = std::fs::read_to_string(home.path().join("cwd.txt")).expect("recorded cwd");
+    let folder = std::path::PathBuf::from(cwd.trim());
+    let parent = folder.parent().expect("parent").to_path_buf();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A NEW.md"]);
+    assert!(
+        workspace["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("cannot remove workspace folder")),
+        "{result}"
+    );
+    let reported = std::path::PathBuf::from(workspace["path"].as_str().expect("path"));
+    assert_eq!(canonical(&reported), canonical(&folder), "{result}");
+    assert!(
+        folder.exists(),
+        "the folder went although the removal failed"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn artifact_copy_failure_after_the_run_keeps_the_workspace_object() {
+    let home = tempfile::tempdir().expect("home");
+    let data = tempfile::tempdir().expect("data");
+    let state = tempfile::tempdir().expect("state");
+    // A regular file where the artifacts directory should go: the copy
+    // cannot create it, after the workspace was finished.
+    let blocker = home.path().join("blocker");
+    std::fs::write(&blocker, "not a folder").expect("blocker");
+    let out = blocker.join("out");
+
+    let output = run_fake_agy(
+        home.path(),
+        data.path(),
+        state.path(),
+        true,
+        &["--artifacts-dir", out.to_str().expect("out path")],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "configuration_error", "{result}");
+    assert!(
+        result["details"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("artifacts directory")),
+        "{result}"
+    );
+    assert!(result["workspace"]["change_id"].is_string(), "{result}");
+    assert_eq!(result["workspace"]["kept"], false, "{result}");
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
 fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");
