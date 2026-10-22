@@ -883,7 +883,8 @@ fn clean_grok_run_starts_without_an_authentication_file() {
 #[test]
 fn workspace_write_run_starts_claude_with_the_shell_in_the_sandbox() {
     let home = tempfile::tempdir().expect("home");
-    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
     let provider = executable_provider(
         home.path(),
         "fake-claude",
@@ -893,7 +894,7 @@ printf 'built\n'
 "#,
     );
 
-    rune(home.path())
+    rune_isolated(home.path(), state.path())
         .args([
             "run",
             "sol@claude",
@@ -1861,4 +1862,670 @@ fn dry_run_names_the_artifacts_destination() {
         .assert()
         .success()
         .stdout(predicate::str::contains("artifacts_dir: none\n"));
+}
+
+/// A jj command under the test's home, with an identity so jj prints no
+/// configuration warning. The test fails on a jj failure.
+#[cfg(unix)]
+fn jj(home: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("jj")
+        .env("HOME", home)
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .args(args)
+        .output()
+        .expect("jj runs");
+    assert!(
+        output.status.success(),
+        "jj {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// A colocated jj repository (jj beside a git checkout, as `jj git init`
+/// makes one by default) with one tracked file, `README.md`, in the
+/// caller's working-copy change.
+#[cfg(unix)]
+fn jj_repository(home: &std::path::Path) -> tempfile::TempDir {
+    jj_repository_with(home, &["git", "init"])
+}
+
+/// A jj repository without a git checkout.
+#[cfg(unix)]
+fn plain_jj_repository(home: &std::path::Path) -> tempfile::TempDir {
+    jj_repository_with(home, &["--config", "git.colocate=false", "git", "init"])
+}
+
+#[cfg(unix)]
+fn jj_repository_with(home: &std::path::Path, init: &[&str]) -> tempfile::TempDir {
+    let repository = tempfile::tempdir().expect("repository");
+    let path = repository.path().to_str().expect("repository path");
+    let mut args = init.to_vec();
+    args.push(path);
+    jj(home, &args);
+    std::fs::write(repository.path().join("README.md"), "base\n").expect("README");
+    jj(home, &["-R", path, "util", "snapshot"]);
+    repository
+}
+
+/// `rune` with its state directory pinned under `state`, so a run's
+/// workspaces never touch the real one, and with a jj identity for the jj
+/// commands the run makes.
+#[cfg(unix)]
+fn rune_isolated(home: &std::path::Path, state: &std::path::Path) -> Command {
+    let mut command = rune(home);
+    command
+        .env("XDG_STATE_HOME", state)
+        .env_remove("RUNE_STATE_DIR")
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test");
+    command
+}
+
+/// The workspace folders left under the state directory, if any.
+#[cfg(unix)]
+fn leftover_workspaces(state: &std::path::Path) -> Vec<String> {
+    let Ok(repositories) = std::fs::read_dir(state.join("rune/workspaces")) else {
+        return Vec::new();
+    };
+    repositories
+        .flatten()
+        .flat_map(|repository| std::fs::read_dir(repository.path()).into_iter().flatten())
+        .flatten()
+        .map(|entry| entry.path().display().to_string())
+        .collect()
+}
+
+/// The files one change touches, as `jj diff --summary` reports them:
+/// the status letter and the file name.
+#[cfg(unix)]
+fn changed_files(home: &std::path::Path, repository: &str, change_id: &str) -> Vec<String> {
+    jj(
+        home,
+        &["-R", repository, "diff", "-r", change_id, "--summary"],
+    )
+    .lines()
+    .filter_map(|line| {
+        let (status, path) = line.split_once(' ')?;
+        let name = std::path::Path::new(path.trim()).file_name()?;
+        Some(format!("{status} {}", name.to_string_lossy()))
+    })
+    .collect()
+}
+
+/// The names in `jj workspace list`.
+#[cfg(unix)]
+fn workspace_names(home: &std::path::Path, repository: &str) -> Vec<String> {
+    jj(home, &["-R", repository, "workspace", "list"])
+        .lines()
+        .filter_map(|line| {
+            line.split_once(':')
+                .map(|(name, _)| name.trim().to_string())
+        })
+        .collect()
+}
+
+/// Every visible change id in the repository, in log order.
+#[cfg(unix)]
+fn change_ids(home: &std::path::Path, repository: &str) -> Vec<String> {
+    jj(
+        home,
+        &[
+            "-R",
+            repository,
+            "log",
+            "-r",
+            "all()",
+            "--no-graph",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
+}
+
+/// A fake harness that edits one file, creates another, and records the
+/// directory it worked in beside itself.
+#[cfg(unix)]
+const FAKE_EDITOR: &str = r#"#!/bin/sh
+pwd -P > "$(dirname "$0")/cwd.txt"
+printf 'edited\n' > README.md
+printf 'new\n' > NEW.md
+printf 'done\n'
+"#;
+
+#[cfg(unix)]
+#[test]
+fn workspace_write_run_edits_its_own_change_and_leaves_the_checkout_alone() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(home.path(), "fake-claude", FAKE_EDITOR);
+    let parent = change_ids(home.path(), repo);
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit the README",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+            "--session-name",
+            "council/sol",
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["text"], "done");
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    assert_eq!(result["workspace"]["colocated"], false, "{result}");
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id")
+        .to_string();
+    let name = result["workspace"]["name"].as_str().expect("name");
+    assert!(name.starts_with("run-"), "{result}");
+
+    // The caller's checkout is untouched.
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("README.md")).expect("README"),
+        "base\n"
+    );
+    assert!(!repository.path().join("NEW.md").exists());
+
+    // The harness worked under the state directory, which holds nothing now.
+    let cwd = std::fs::read_to_string(home.path().join("cwd.txt")).expect("recorded cwd");
+    assert!(
+        cwd.contains("/rune/workspaces/"),
+        "the harness ran in {cwd}"
+    );
+    assert!(!std::path::Path::new(cwd.trim()).exists(), "{cwd} remains");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+
+    // One change holds both edits, named after the route and the session,
+    // as a child of the caller's working-copy change.
+    let mut changed = changed_files(home.path(), repo, &change_id);
+    changed.sort();
+    assert_eq!(changed, ["A NEW.md", "M README.md"]);
+    let description = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            &change_id,
+            "--no-graph",
+            "-T",
+            "description",
+        ],
+    );
+    assert!(description.contains("sol@claude"), "{description}");
+    assert!(description.contains("council/sol"), "{description}");
+    let parents = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            &format!("{change_id}-"),
+            "--no-graph",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    );
+    assert_eq!(parents.trim(), parent[0], "{parents}");
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_write_run_that_changes_nothing_leaves_no_trace() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    // A jj repository without git: the workspace is no git worktree.
+    let repository = plain_jj_repository(home.path());
+    assert!(!repository.path().join(".git").exists());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf 'looked only\\n'\n",
+    );
+    let before = change_ids(home.path(), repo);
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Look around",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(output.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["workspace"]["kept"], false, "{result}");
+    assert!(result["workspace"]["change_id"].is_string(), "{result}");
+
+    assert_eq!(change_ids(home.path(), repo), before);
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Look around",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stdout("looked only\n")
+        .stderr(predicate::str::contains("workspace: no file changed"));
+}
+
+#[cfg(unix)]
+#[test]
+fn timed_out_workspace_write_run_keeps_its_partial_edit() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf 'partial\\n' > partial.md\nprintf 'working'\nsleep 5\n",
+    );
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Write partial.md",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+            "--timeout",
+            "1s",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(124));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "timeout");
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id");
+    assert_eq!(
+        changed_files(home.path(), repo, change_id),
+        ["A partial.md"]
+    );
+    assert!(!repository.path().join("partial.md").exists());
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn dry_run_of_a_workspace_write_route_names_the_workspace_and_the_parent() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let parent = change_ids(home.path(), repo);
+
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Edit the README",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "workspace: {}/rune/workspaces/",
+            state.path().display()
+        )))
+        .stdout(predicate::str::contains(format!(
+            "workspace_parent: {}\n",
+            parent[0]
+        )))
+        .stdout(predicate::str::contains("workspace_colocate: false\n"));
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit the README",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(
+        result["workspace"]["parent_change_id"], parent[0],
+        "{result}"
+    );
+    assert_eq!(result["workspace"]["colocate"], false, "{result}");
+    assert!(
+        result["workspace"]["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("run-")),
+        "{result}"
+    );
+
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert!(!state.path().join("rune/workspaces").exists());
+
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Look",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--mode",
+            "read-only",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("workspace: none\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn git_repository_without_jj_is_colocated_before_an_isolated_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    for args in [
+        vec!["init", "-q", repo],
+        vec!["-C", repo, "commit", "-q", "--allow-empty", "-m", "base"],
+    ] {
+        let status = std::process::Command::new("git")
+            .env("HOME", home.path())
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.test")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.test")
+            .args(&args)
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?}");
+    }
+    std::fs::write(repository.path().join("README.md"), "base\n").expect("README");
+    let provider = executable_provider(home.path(), "fake-claude", FAKE_EDITOR);
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit the README",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["workspace"]["colocated"], true, "{result}");
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    assert!(repository.path().join(".jj").is_dir());
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("README.md")).expect("README"),
+        "base\n"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    // The git side is clean too: no worktree and no branch from the run.
+    for (args, expected_lines) in [
+        (vec!["-C", repo, "worktree", "list"], 1),
+        (vec!["-C", repo, "branch", "--list", "jj-worktree-*"], 0),
+    ] {
+        let printed = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(args)
+                .output()
+                .expect("git runs")
+                .stdout,
+        )
+        .into_owned();
+        assert_eq!(printed.lines().count(), expected_lines, "{printed}");
+    }
+
+    // The second run finds jj in place and says nothing about colocation.
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Edit the README",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stderr.contains("colocated"), "{stderr}");
+    assert!(stderr.contains("workspace: kept change "), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn folder_without_version_control_refuses_a_workspace_write_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let folder = tempfile::tempdir().expect("folder");
+    let marker = home.path().join("harness-started");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!("#!/bin/sh\ntouch '{}'\nprintf 'ran\\n'\n", marker.display()),
+    );
+    let path = folder.path().to_str().expect("folder path");
+    let binary = provider.to_str().expect("provider path");
+
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "Edit",
+            "--repo",
+            path,
+            "--binary",
+            binary,
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--mode read-only"))
+        .stderr(predicate::str::contains("jj git init --colocate"));
+    assert!(!marker.exists(), "the harness started");
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit",
+            "--repo",
+            path,
+            "--binary",
+            binary,
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(2));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["kind"], "configuration_error");
+    assert!(!marker.exists(), "the harness started");
+}
+
+#[cfg(unix)]
+#[test]
+fn two_isolated_runs_at_once_each_keep_their_own_change() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nsleep 1\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\nprintf 'seat %s\\n' \"$SEAT\"\n",
+    );
+    let parent = change_ids(home.path(), repo);
+
+    let children: Vec<std::process::Child> = ["a", "b"]
+        .iter()
+        .map(|seat| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+                .env("HOME", home.path())
+                .env("CLIPROXY_API_KEY", "test-token")
+                .env("XDG_STATE_HOME", state.path())
+                .env_remove("RUNE_STATE_DIR")
+                .env("JJ_USER", "Test Runner")
+                .env("JJ_EMAIL", "runner@example.test")
+                .env("SEAT", seat)
+                .args([
+                    "--json",
+                    "run",
+                    "sol@claude",
+                    "Write your seat file",
+                    "--repo",
+                    repo,
+                    "--binary",
+                    provider.to_str().expect("provider path"),
+                    "--mode",
+                    "workspace-write",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("rune spawns")
+        })
+        .collect();
+    let mut ids = Vec::new();
+    for child in children {
+        let output = child.wait_with_output().expect("rune output");
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+        assert_eq!(result["workspace"]["kept"], true, "{result}");
+        ids.push(
+            result["workspace"]["change_id"]
+                .as_str()
+                .expect("change id")
+                .to_string(),
+        );
+    }
+    assert_ne!(ids[0], ids[1]);
+    for id in &ids {
+        let parents = jj(
+            home.path(),
+            &[
+                "-R",
+                repo,
+                "log",
+                "-r",
+                &format!("{id}-"),
+                "--no-graph",
+                "-T",
+                "change_id ++ \"\\n\"",
+            ],
+        );
+        assert_eq!(parents.trim(), parent[0], "{parents}");
+    }
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert!(!repository.path().join("seat-a.md").exists());
+    assert!(!repository.path().join("seat-b.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let briefs = tempfile::tempdir().expect("briefs");
+    std::fs::write(briefs.path().join("brief.md"), "The brief text.\n").expect("brief");
+    let provider = executable_provider(home.path(), "fake-claude", "#!/bin/sh\ncat\n");
+
+    rune_isolated(home.path(), state.path())
+        .current_dir(briefs.path())
+        .args([
+            "run",
+            "sol@claude",
+            "--prompt-file",
+            "brief.md",
+            "--repo",
+            repository.path().to_str().expect("repository path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("The brief text."));
 }

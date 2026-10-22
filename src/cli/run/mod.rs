@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 pub(crate) use crate::cli::surface::AccessMode;
 
 mod artifacts;
+mod workspace;
 
 const AGY_SUPERVISOR_MARGIN: Duration = Duration::from_secs(30);
 /// The placeholder the dry run prints for the clean state directory a
@@ -161,6 +162,12 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .model
         .clone()
         .or_else(|| resolved.model.as_ref().map(|model| model.id.clone()));
+    // A workspace-write run never works in the caller's checkout: the plan
+    // for its own jj workspace is made before anything starts, so a folder
+    // that cannot take one is refused here.
+    let isolation = (options.mode == AccessMode::WorkspaceWrite)
+        .then(|| workspace::plan(&repository, &options.tool, options.session_name.as_deref()))
+        .transpose()?;
     let invocation = SurfaceInvocation {
         surface,
         binary,
@@ -191,6 +198,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             &resolved,
             &invocation,
             &filtered.warnings,
+            isolation.as_ref(),
         )?);
     }
 
@@ -208,7 +216,15 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         prepare_clean_state(surface, state.path(), invocation.model.as_deref())
             .map_err(|error| error.to_string())?;
     }
+    // The workspace is the harness's repository; the caller's checkout
+    // stays out of the run.
+    let workspace = isolation.as_ref().map(workspace::prepare).transpose()?;
+    let repository = workspace.as_ref().map_or_else(
+        || invocation.repository.clone(),
+        |workspace| workspace.path.clone(),
+    );
     let invocation = SurfaceInvocation {
+        repository,
         clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
         ..invocation
     };
@@ -216,7 +232,22 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     // The wall clock beside the monotonic one: a file the run created is
     // told from an older one by its modification time.
     let started_at = SystemTime::now();
-    match invoke_surface(&invocation) {
+    let result = invoke_surface(&invocation);
+    // On every outcome, a forced stop included: the files are recorded, the
+    // workspace is forgotten, and an empty change leaves no trace.
+    let isolated = workspace
+        .as_ref()
+        .map(|workspace| (workspace, workspace::finish(workspace)));
+    let workspace_json = isolated
+        .as_ref()
+        .map_or(Value::Null, |(workspace, outcome)| {
+            workspace_json(workspace, outcome)
+        });
+    let workspace_lines = isolated
+        .as_ref()
+        .map(|(workspace, outcome)| workspace_lines(workspace, outcome))
+        .unwrap_or_default();
+    match result {
         Ok(reply) => {
             if !reply.stderr.is_empty() {
                 eprint!("{}", reply.stderr);
@@ -234,6 +265,9 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             if !options.json {
                 for artifact in &artifacts {
                     eprintln!("artifact: {artifact}");
+                }
+                for line in &workspace_lines {
+                    eprintln!("{line}");
                 }
             }
             Ok(Outcome {
@@ -263,16 +297,112 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                     "completion_tokens": reply.completion_tokens,
                     "warnings": filtered.warnings,
                     "artifacts": artifacts,
+                    "workspace": workspace_json,
                 }),
                 text: Text::Stdout(reply.text),
             })
         }
-        Err(failure) => Ok(Outcome {
-            exit_code: failure_exit_code(&failure),
-            json: failure_json(&resolved.tool, &failure),
-            text: Text::Stderr(format!("error: {failure}")),
+        Err(failure) => {
+            let mut json = failure_json(&resolved.tool, &failure);
+            if let Some(object) = json.as_object_mut() {
+                object.insert("workspace".to_string(), workspace_json);
+            }
+            let mut text = format!("error: {failure}");
+            for line in &workspace_lines {
+                text.push('\n');
+                text.push_str(line);
+            }
+            Ok(Outcome {
+                exit_code: failure_exit_code(&failure),
+                json,
+                text: Text::Stderr(text),
+            })
+        }
+    }
+}
+
+/// The `workspace` object of a result: the change the run left and whether
+/// it was kept, or the error that left the workspace in place.
+fn workspace_json(
+    workspace: &workspace::Workspace,
+    outcome: &Result<workspace::Outcome, String>,
+) -> Value {
+    match outcome {
+        Ok(outcome) => json!({
+            "name": workspace.name,
+            "change_id": outcome.change_id,
+            "kept": outcome.kept,
+            "colocated": workspace.colocated,
+        }),
+        Err(error) => json!({
+            "name": workspace.name,
+            "path": workspace.path.display().to_string(),
+            "change_id": Value::Null,
+            "kept": Value::Null,
+            "colocated": workspace.colocated,
+            "error": error,
         }),
     }
+}
+
+/// The text lines for the workspace: one names the change kept or says
+/// nothing was, one more when this run colocated jj, and a warning when
+/// the workspace could not be taken down.
+fn workspace_lines(
+    workspace: &workspace::Workspace,
+    outcome: &Result<workspace::Outcome, String>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if workspace.colocated {
+        lines.push(format!(
+            "workspace: colocated jj in {}",
+            workspace.root.display()
+        ));
+    }
+    match outcome {
+        Ok(outcome) if outcome.kept => lines.push(format!(
+            "workspace: kept change {} ({}); review it with jj, then squash or abandon it",
+            outcome.change_id, workspace.name
+        )),
+        Ok(_) => lines.push("workspace: no file changed, nothing kept".to_string()),
+        Err(error) => lines.push(format!(
+            "warning: workspace {} stays at {}: {error}",
+            workspace.name,
+            workspace.path.display()
+        )),
+    }
+    lines
+}
+
+/// The dry run's `workspace` object: the one a workspace-write run would
+/// create, with the caller's change it would branch from, else null.
+fn planned_workspace_json(plan: Option<&workspace::Plan>) -> Value {
+    plan.map_or(Value::Null, |plan| {
+        json!({
+            "name": plan.name,
+            "path": plan.path.display().to_string(),
+            "parent_change_id": plan.parent_change_id,
+            "colocate": plan.vcs.colocate(),
+        })
+    })
+}
+
+/// The dry run's text lines for the workspace, `workspace: none` when the
+/// run stays in the caller's checkout.
+fn planned_workspace_text(plan: Option<&workspace::Plan>) -> String {
+    plan.map_or_else(
+        || "workspace: none".to_string(),
+        |plan| {
+            format!(
+                "workspace: {}\nworkspace_parent: {}\nworkspace_colocate: {}",
+                plan.path.display(),
+                plan.parent_change_id
+                    .as_deref()
+                    .unwrap_or("<the change jj git init --colocate creates>"),
+                plan.vcs.colocate()
+            )
+        },
+    )
 }
 
 /// The dry run: the process the surface would start, rendered from the
@@ -285,6 +415,7 @@ fn dry_run_outcome(
     resolved: &launch::ResolvedLaunch,
     invocation: &SurfaceInvocation,
     filter_warnings: &[String],
+    workspace_plan: Option<&workspace::Plan>,
 ) -> Result<Outcome, String> {
     let planned_invocation = SurfaceInvocation {
         clean_state_root: options
@@ -327,7 +458,7 @@ fn dry_run_outcome(
         warnings: &warnings,
     };
     let text = format!(
-        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}",
+        "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}\n{}",
         resolved.format_dry_run_with(&parts),
         stdin.unwrap_or("none"),
         invocation.repository.display(),
@@ -336,7 +467,8 @@ fn dry_run_outcome(
         duration_label(invocation.native_timeout),
         options.session_name.as_deref().unwrap_or("none"),
         session_name_flag(invocation.surface).unwrap_or("none"),
-        artifacts_dir.as_deref().unwrap_or("none")
+        artifacts_dir.as_deref().unwrap_or("none"),
+        planned_workspace_text(workspace_plan)
     );
     // The launcher's plan object, plus the runner's own fields.
     let mut json = resolved.plan_json(&parts, &isolation);
@@ -366,6 +498,7 @@ fn dry_run_outcome(
             ),
             ("clean", json!(options.clean)),
             ("artifacts_dir", json!(artifacts_dir)),
+            ("workspace", planned_workspace_json(workspace_plan)),
         ] {
             object.insert(key.to_string(), value);
         }

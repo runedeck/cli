@@ -801,7 +801,10 @@ enum Command {
         #[arg(long, value_name = "DIR", default_value = ".")]
         repo: std::path::PathBuf,
 
-        /// What the coding surface may access: read-only, workspace-write, or answer-only (no tool at all; claude and opencode).
+        /// What the coding surface may access: read-only, workspace-write, or
+        /// answer-only (no tool at all; claude and opencode). A workspace-write
+        /// run works in its own jj workspace, never in this checkout, and
+        /// leaves its edits as one jj change.
         #[arg(long, value_enum, default_value_t = run::AccessMode::ReadOnly)]
         mode: run::AccessMode,
 

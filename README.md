@@ -418,6 +418,10 @@ Let claude build its own work: workspace-write mode allows `Read,Glob,Grep,Edit,
 rune run sol@claude --mode workspace-write "Fix the failing test, then run cargo test."
 ```
 
+A workspace-write run never works in your checkout. The runner creates a jj workspace under `$XDG_STATE_HOME/rune/workspaces/<repository>/run-<id>/` (default `~/.local/state/rune/workspaces/`), whose working-copy change is a child of your current change, and starts the harness there. After the run, on every outcome, it records the files, forgets the workspace, and removes the folder. A run that changed nothing leaves no change behind. A run that changed files leaves one change, described as `rune run <route>: <session name>`, and the result names it: `workspace: kept change <id>` on stderr, and a `workspace` object with `change_id` and `kept` in the JSON result (`null` for a read-only or answer-only run). Review it with `jj diff -r <id>`, then `jj squash` it into your change or `jj abandon` it. The dry run prints `workspace:`, `workspace_parent:` and `workspace_colocate:` without creating anything.
+
+A git repository without jj is colocated first (`jj git init --colocate`), once, and the result says so. A folder under neither git nor jj cannot take a workspace-write run: the refusal names read-only mode and the colocation command. Ignored files, such as build output and `.env`, are absent from the workspace, so a build inside a run starts cold. Every workspace-write run needs `jj` on the PATH. A runner killed with SIGKILL cannot clean up. Its workspace then stays in `jj workspace list` with a `run-` name, and `jj workspace forget <name>` removes it.
+
 Run a helper script bundled with a skill:
 
 ```sh
