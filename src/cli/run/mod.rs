@@ -320,7 +320,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     };
     let repository = isolated.workspace.as_ref().map_or_else(
         || invocation.repository.clone(),
-        |workspace| workspace.path.clone(),
+        |workspace| workspace.harness_dir.clone(),
     );
     let invocation = SurfaceInvocation {
         repository,

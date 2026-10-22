@@ -49,6 +49,9 @@ pub(crate) struct Plan {
     pub(crate) vcs: Vcs,
     pub(crate) name: String,
     pub(crate) path: PathBuf,
+    /// Where `--repo` sits under the caller's workspace root: the harness
+    /// starts at the same subfolder of the run's workspace.
+    pub(crate) subfolder: PathBuf,
     pub(crate) description: String,
     /// The change id of the caller's working-copy change, which the run
     /// copies at the start and lands its result on at the end. `None`
@@ -59,6 +62,14 @@ pub(crate) struct Plan {
     lock_path: PathBuf,
 }
 
+impl Plan {
+    /// The folder the harness starts in: the workspace, at the subfolder
+    /// that matches `--repo`.
+    pub(crate) fn harness_path(&self) -> PathBuf {
+        self.path.join(&self.subfolder)
+    }
+}
+
 /// A workspace that exists. `finish` takes it down.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Workspace {
@@ -66,6 +77,8 @@ pub(crate) struct Workspace {
     pub(crate) root: PathBuf,
     pub(crate) name: String,
     pub(crate) path: PathBuf,
+    /// The folder the harness starts in, under `path`.
+    pub(crate) harness_dir: PathBuf,
     description: String,
     /// Whether this run colocated jj in a plain git repository.
     pub(crate) colocated: bool,
@@ -411,11 +424,18 @@ pub(crate) fn plan(repository: &Path, route: &str, session: Option<&str>) -> Res
         Vcs::Jj { root, .. } => Some(parent_change_id(root)?),
         Vcs::GitOnly { .. } => None,
     };
+    // `--repo` below the root: the same subfolder of the workspace. The
+    // root came from the repository's own ancestors, so the prefix holds.
+    let subfolder = repository
+        .strip_prefix(vcs.root())
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     Ok(Plan {
         description: description(route, session, &name),
         vcs,
         name,
         path,
+        subfolder,
         parent_change_id,
         lock_path,
     })
@@ -518,6 +538,7 @@ pub(crate) fn prepare(plan: &Plan) -> Result<Workspace, String> {
         root,
         name: plan.name.clone(),
         path: plan.path.clone(),
+        harness_dir: plan.harness_path(),
         description: plan.description.clone(),
         colocated: plan.vcs.colocate(),
         copy,

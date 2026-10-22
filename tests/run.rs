@@ -2990,6 +2990,59 @@ fn a_state_directory_inside_the_checkout_refuses_the_isolated_run() {
 
 #[cfg(unix)]
 #[test]
+fn a_subfolder_repo_starts_the_harness_in_the_matching_subfolder_of_the_workspace() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::create_dir_all(repository.path().join("crates/core")).expect("subfolder");
+    std::fs::write(repository.path().join("crates/core/lib.rs"), "// base\n").expect("lib");
+    jj(home.path(), &["-R", repo, "util", "snapshot"]);
+    let provider = executable_provider(home.path(), "fake-claude", FAKE_EDITOR);
+    let subfolder = repository.path().join("crates/core");
+
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Edit the crate",
+            "--repo",
+            subfolder.to_str().expect("subfolder path"),
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    let cwd = std::fs::read_to_string(home.path().join("cwd.txt")).expect("recorded cwd");
+    assert!(
+        cwd.contains("/rune/workspaces/"),
+        "the harness ran in {cwd}"
+    );
+    assert!(
+        cwd.trim().ends_with("/crates/core"),
+        "the harness ran in {cwd}"
+    );
+    assert_ne!(cwd.trim(), canonical(&subfolder));
+    // The edits landed under the subfolder of the run's change.
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id");
+    let summary = jj(
+        home.path(),
+        &["-R", repo, "diff", "-r", change_id, "--summary"],
+    );
+    assert!(summary.contains("crates/core/NEW.md"), "{summary}");
+    assert!(summary.contains("crates/core/README.md"), "{summary}");
+    assert!(!subfolder.join("NEW.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");

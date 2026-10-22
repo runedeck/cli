@@ -31,7 +31,8 @@ is rebased onto the caller's current `@`, and the copy is abandoned. A rebase co
   caller's current change or drops them, abandons the copy, and removes the folder. It runs on every outcome, from the
   same place that already cleans clean state.
 - `src/cli/run/mod.rs`: workspace-write runs call `prepare` before the spawn and pass the workspace path as the
-  invocation's repository. The result gains the `workspace` object, and the text mode prints one line with the change id.
+  invocation's repository, at the subfolder that matches `--repo` when `--repo` lies below the root. The result gains
+  the `workspace` object, and the text mode prints one line with the change id.
 - The argv builders for each harness stay unchanged. They already take the repository from the invocation.
 - `--output` and `--prompt-file` paths resolve against the caller's working directory.
 
