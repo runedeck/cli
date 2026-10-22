@@ -585,6 +585,34 @@ fn a_missing_model_names_the_closest_served_id_of_its_family() {
     assert_eq!(json["endpoints"][0]["closest"]["grok-4.5"], "grok-4.7");
     assert_eq!(json["endpoints"][0]["missing"][0], "grok-4.5");
 
+    // A served id that carries the sent credential is redacted in the
+    // suggestion, in the text and in the JSON.
+    let value = "plain-handle-value-1234";
+    let (base_url, handle) = stub(200, &format!(r#"{{"data":[{{"id":"grok-4.8-{value}"}}]}}"#));
+    let mut launch = resolved("grok", env(&[]), Some("grok-4.7"));
+    launch.base_url_env = Some("GROK_MODELS_BASE_URL".to_string());
+    let inherited = env(&[
+        ("GROK_SEAT_HANDLE", value),
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+    ]);
+    let report = run_checks_with(
+        &launch,
+        None,
+        &inherited,
+        &["GROK_SEAT_HANDLE".to_string()],
+        None,
+    );
+    handle.join().expect("stub");
+    let text = format_report(&report);
+    assert!(
+        text.contains("  missing  grok-4.7 (closest served: grok-4.8-<redacted>)"),
+        "{text}"
+    );
+    assert!(!text.contains(value), "{text}");
+    let json = report_json(&report).to_string();
+    assert!(!json.contains(value), "{json}");
+    assert!(json.contains("grok-4.8-<redacted>"), "{json}");
+
     // No served id of the family: no suggestion, and the line stays short.
     assert_eq!(closest_served("gemini-3", &["grok-4.7".to_string()]), None);
     // The longest shared prefix wins before the greatest id.

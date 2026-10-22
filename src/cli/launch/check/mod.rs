@@ -530,10 +530,13 @@ fn run_checks_with(
                         .iter()
                         .cloned()
                         .partition(|model| listed.contains(model));
+                    // A served id comes from the endpoint: one that carries
+                    // the sent credential is redacted like a failure body.
                     let closest = missing
                         .iter()
                         .filter_map(|model| {
-                            closest_served(model, &listed).map(|found| (model.clone(), found))
+                            closest_served(model, &listed)
+                                .map(|found| (model.clone(), redact_credentials(&found, &secrets)))
                         })
                         .collect();
                     EndpointResult::Listed {

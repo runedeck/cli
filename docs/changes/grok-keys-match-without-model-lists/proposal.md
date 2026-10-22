@@ -11,7 +11,7 @@ The grok key map in `~/.grok/config.toml` is read by exact model id, so every ne
 ## What Changes
 
 - The key map is read whatever the quoting: nested tables flatten to a dotted id, so `[model.grok-4.5]` and `[model."grok-4.5"]` are the same entry.
-- A checked model without an entry gets a safe guess. When every entry names one variable, that variable. Otherwise the entry with the longest shared id prefix, reaching at least the model's family (the id up to its first digit), and only when no entry naming another variable ties with it. When nothing matches, the check sends nothing and says why. Sending the key of an unrelated model stays impossible.
+- A checked model without an entry gets a safe guess from the entries of its family alone (the id up to its first digit). When they all name one variable, that variable. Otherwise the one with the longest shared id prefix, and only when no entry naming another variable ties with it. Another family, or no entry of the family, sends nothing, and the check says why. Sending the key of an unrelated model stays impossible.
 - The check report carries the reason beside the credential, in the text (`credential: XAI_API_KEY (no entry for grok-4.7: guessed from grok-4.5, …)`) and in the JSON (`credential_note`).
 - A missing model id gets the closest served id of its family as a suggestion, in the text (`missing  grok-4.5 (closest served: grok-4.7)`) and in the JSON (`closest`).
 

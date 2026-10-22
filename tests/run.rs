@@ -5102,6 +5102,46 @@ fn stub_models(status: u16, body: &str) -> (String, std::thread::JoinHandle<Stri
 }
 
 #[test]
+fn grok_check_sends_no_key_of_another_family() {
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
+    // The one entry of the map names another provider's key (reviewer
+    // repro `check-guess.sh`): the check of grok-4 sends nothing.
+    std::fs::write(
+        home.path().join(".grok/config.toml"),
+        "[model.gpt-5]\nenv_key = \"OPENAI_API_KEY\"\n",
+    )
+    .expect("grok configuration");
+    let openai = "sk-openai-fake-value-123";
+    let (base_url, handle) = stub_models(200, r#"{"data":[{"id":"grok-4"}]}"#);
+    let output = rune(home.path())
+        .env("OPENAI_API_KEY", openai)
+        .env("GROK_MODELS_BASE_URL", format!("{base_url}/v1"))
+        .env_remove("GROK_CODE_XAI_API_KEY")
+        .env_remove("XAI_API_KEY")
+        .args(["--json", "run", "grok", "x", "--check", "--model", "grok-4"])
+        .output()
+        .expect("check output");
+    let head = handle.join().expect("stub");
+    assert!(
+        !head.to_ascii_lowercase().contains("authorization"),
+        "{head}"
+    );
+    assert!(!head.contains(openai), "{head}");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("check JSON");
+    assert_eq!(
+        result["endpoints"][0]["credential_note"],
+        "no entry for grok-4, and no entry of the family grok",
+        "{result}"
+    );
+    assert!(
+        result["endpoints"][0]["credential_key"].is_null(),
+        "{result}"
+    );
+}
+
+#[test]
 fn grok_check_sends_only_the_key_of_the_model_it_checks() {
     let home = tempfile::tempdir().expect("home");
     std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
@@ -5114,24 +5154,20 @@ fn grok_check_sends_only_the_key_of_the_model_it_checks() {
     .expect("grok configuration");
     let openai = "sk-openai-fake-value-123";
     let xai = "xai-fake-value-456789";
-    // A model without an entry gets the key of the closest entry of its
-    // family, and the report says so. A model of another family gets none.
+    // A model without an entry gets the one key its family's entries name,
+    // and the report says so. A model of another family gets none.
     for (model, sent, note) in [
         ("grok-4.5", Some(xai), None),
         ("aaa-gpt", Some(openai), None),
         (
             "grok-3-guessed",
             Some(xai),
-            Some(
-                "no entry for grok-3-guessed: guessed from grok-4.5, the entry with the longest shared prefix",
-            ),
+            Some("no entry for grok-3-guessed: every grok entry names XAI_API_KEY"),
         ),
         (
             "mistral-7-without-entry",
             None,
-            Some(
-                "no entry for mistral-7-without-entry, no entry shares its family, and the entries name different variables",
-            ),
+            Some("no entry for mistral-7-without-entry, and no entry of the family mistral"),
         ),
     ] {
         let (base_url, handle) = stub_models(200, &format!(r#"{{"data":[{{"id":"{model}"}}]}}"#));

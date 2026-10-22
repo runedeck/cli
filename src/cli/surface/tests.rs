@@ -2077,13 +2077,13 @@ fn the_grok_key_map_reads_an_unquoted_dotted_id_as_one_model() {
     let mut names = copy_grok_model_keys(&source, &target).expect("clean copy");
     names.sort();
     assert_eq!(names, ["model.grok-3.env_key", "model.grok-4.5.env_key"]);
-    // Every entry names one variable: a model without an entry gets it,
-    // and the choice says so.
+    // Every grok entry names one variable: a grok model without an entry
+    // gets it, and the choice says so.
     let guessed = grok_model_env_key(&source, "grok-4.7");
     assert_eq!(guessed.variable(), Some("XAI_NESTED_HANDLE"));
     assert_eq!(
         guessed.note(),
-        Some("no entry for grok-4.7: every entry of the key map names XAI_NESTED_HANDLE")
+        Some("no entry for grok-4.7: every grok entry names XAI_NESTED_HANDLE")
     );
 }
 

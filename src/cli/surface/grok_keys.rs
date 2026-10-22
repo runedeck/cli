@@ -81,36 +81,47 @@ pub(crate) fn entries(models: &toml::Value) -> Vec<GrokKeyEntry> {
     into
 }
 
-/// The variable for `model`. Its own entry wins. Without one, the guess is
-/// safe or absent: the one variable every entry names, else the entry with
-/// the longest shared id prefix that reaches past the model's family, and
-/// only when no entry naming another variable ties with it. Sending the
-/// key of an unrelated model was a review finding, so a tie between
-/// different variables and a prefix shorter than the family send nothing.
+/// The variable for `model`. Its own entry wins. Without one, only the
+/// entries of the model's family (the id up to its first digit) count:
+/// `gpt-5` never speaks for `grok-4`, and neither does `grokker-1`, whose
+/// family is `grokker`. Among them, the one variable they all name, else
+/// the entry with the longest shared id prefix, and only when no entry
+/// naming another variable ties with it. Sending the key of an unrelated
+/// model was a review finding, so another family, a tie between different
+/// variables, and an empty family send nothing.
 pub(crate) fn choose(entries: &[GrokKeyEntry], model: &str) -> GrokKeyChoice {
     if let Some(entry) = entries.iter().find(|entry| entry.model == model) {
         return GrokKeyChoice::Named(entry.variable.clone());
     }
-    let Some(first) = entries.first() else {
+    if entries.is_empty() {
         return GrokKeyChoice::None {
             reason: "the key map has no entry".to_string(),
         };
+    }
+    let family = model_family(model);
+    let kin: Vec<&GrokKeyEntry> = entries
+        .iter()
+        .filter(|entry| model_family(&entry.model) == family)
+        .collect();
+    let Some(first) = kin.first() else {
+        return GrokKeyChoice::None {
+            reason: format!("no entry for {model}, and no entry of the family {family}"),
+        };
     };
-    if entries.iter().all(|entry| entry.variable == first.variable) {
+    if kin.iter().all(|entry| entry.variable == first.variable) {
         return GrokKeyChoice::Guessed {
             variable: first.variable.clone(),
             reason: format!(
-                "no entry for {model}: every entry of the key map names {}",
+                "no entry for {model}: every {family} entry names {}",
                 first.variable
             ),
         };
     }
-    let floor = model_family(model).len().max(1);
     let mut closest: Vec<&GrokKeyEntry> = Vec::new();
     let mut longest = 0;
-    for entry in entries {
+    for entry in kin {
         let shared = shared_prefix_len(&entry.model, model);
-        if shared < floor || shared < longest {
+        if shared < longest {
             continue;
         }
         if shared > longest {
@@ -121,9 +132,7 @@ pub(crate) fn choose(entries: &[GrokKeyEntry], model: &str) -> GrokKeyChoice {
     }
     let Some(nearest) = closest.first() else {
         return GrokKeyChoice::None {
-            reason: format!(
-                "no entry for {model}, no entry shares its family, and the entries name different variables"
-            ),
+            reason: format!("no entry for {model}, and no entry of the family {family}"),
         };
     };
     if closest
@@ -133,7 +142,7 @@ pub(crate) fn choose(entries: &[GrokKeyEntry], model: &str) -> GrokKeyChoice {
         return GrokKeyChoice::Guessed {
             variable: nearest.variable.clone(),
             reason: format!(
-                "no entry for {model}: guessed from {}, the entry with the longest shared prefix",
+                "no entry for {model}: guessed from {}, the {family} entry with the longest shared prefix",
                 nearest.model
             ),
         };
@@ -208,13 +217,26 @@ mod tests {
     }
 
     #[test]
-    fn one_variable_in_the_whole_file_is_the_guess_for_any_model() {
-        let map = [entry("grok-4.5", "XAI_A"), entry("grok-3", "XAI_A")];
-        let choice = choose(&map, "gpt-5");
+    fn one_variable_among_the_family_is_the_guess() {
+        let map = [
+            entry("grok-4.5", "XAI_A"),
+            entry("grok-3", "XAI_A"),
+            entry("gpt-5", "OPENAI"),
+        ];
+        let choice = choose(&map, "grok-4.7");
         assert_eq!(choice.variable(), Some("XAI_A"));
         assert_eq!(
             choice.note(),
-            Some("no entry for gpt-5: every entry of the key map names XAI_A")
+            Some("no entry for grok-4.7: every grok entry names XAI_A")
+        );
+        assert_eq!(choose(&map, "gpt-6").variable(), Some("OPENAI"));
+        // Another family's entries never speak for the model, however
+        // many of them agree.
+        let choice = choose(&map, "gemini-3");
+        assert_eq!(choice.variable(), None);
+        assert_eq!(
+            choice.note(),
+            Some("no entry for gemini-3, and no entry of the family gemini")
         );
     }
 
@@ -230,7 +252,7 @@ mod tests {
         assert_eq!(
             choice.note(),
             Some(
-                "no entry for grok-4.7: guessed from grok-4.5, the entry with the longest shared prefix"
+                "no entry for grok-4.7: guessed from grok-4.5, the grok entry with the longest shared prefix"
             )
         );
         // Two entries at the same distance that agree on the variable.
@@ -256,17 +278,20 @@ mod tests {
     }
 
     #[test]
-    fn a_prefix_shorter_than_the_family_is_no_match() {
-        let map = [entry("grok-4.5", "XAI_A"), entry("gpt-5", "OPENAI")];
-        // `g` is shared, and it is not the family `gemini`.
-        let choice = choose(&map, "gemini-3");
+    fn another_family_is_never_a_match() {
+        // The one entry of the file names another provider's key (reviewer
+        // repro `check-guess.sh`): nothing is sent for grok-4.
+        let only_openai = [entry("gpt-5", "OPENAI_API_KEY")];
+        let choice = choose(&only_openai, "grok-4");
         assert_eq!(choice.variable(), None);
         assert_eq!(
             choice.note(),
-            Some(
-                "no entry for gemini-3, no entry shares its family, and the entries name different variables"
-            )
+            Some("no entry for grok-4, and no entry of the family grok")
         );
+        // A family that starts with the model's family is another family:
+        // the shared prefix `grok` ends exactly at it.
+        let lookalike = [entry("grokker-1", "OTHER_HANDLE"), entry("gpt-5", "OPENAI")];
+        assert_eq!(choose(&lookalike, "grok-4").variable(), None);
         assert_eq!(choose(&[], "grok-4").variable(), None);
     }
 
