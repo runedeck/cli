@@ -31,9 +31,10 @@ binary cannot run. 127: it is not found. 128 plus the signal number: a signal en
 
 #### Scenario: Signal arrives during the finish
 
-- **WHEN** a signal arrives while the runner takes the workspace down after the harness answered
+- **WHEN** a signal arrives while the runner takes the workspace down after the harness answered, or after a workspace
+  setup that failed
 - **THEN** the runner finishes the workspace, exits 128 plus the signal number, and the JSON object says `kind` signal,
-  `ok` false, and `stopped_by_signal`, beside the answer
+  `ok` false, and `stopped_by_signal`, beside the answer or the setup error
 
 #### Scenario: Harness binary cannot run
 

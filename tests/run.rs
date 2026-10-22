@@ -3525,6 +3525,378 @@ fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
     );
     assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
     assert_eq!(result["workspace"]["kept"], true, "{result}");
+
+    // A symlink dropped there, and an existing hook made executable, count
+    // the same: the entry's kind, target, and mode are recorded.
+    let third = jj_repository(home.path());
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        third.path(),
+        "fake-hook-linker",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nhooks=\"$(git rev-parse --git-common-dir)/hooks\"\nmkdir -p \"$hooks\"\nln -s /bin/sh \"$hooks/pre-commit\"\nprintf 'done\\n'\n",
+    );
+    assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
+    let fourth = jj_repository(home.path());
+    let hooks = fourth.path().join(".git/hooks");
+    std::fs::create_dir_all(&hooks).expect("hooks");
+    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\n").expect("hook");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            hooks.join("pre-commit"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("chmod");
+    }
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        fourth.path(),
+        "fake-hook-enabler",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nchmod +x \"$(git rev-parse --git-common-dir)/hooks/pre-commit\"\nprintf 'done\\n'\n",
+    );
+    assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_bookmarked_caller_branch_the_harness_builds_on_survives_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    jj(home.path(), &["-R", repo, "describe", "-m", "caller wip"]);
+    // The caller makes a bookmarked side branch during the run and returns
+    // to its change; the harness rebases that branch onto its work and
+    // goes on on top of it. Ancestry of the final commit proves nothing:
+    // the branch was made in the caller's workspace, and it carries a
+    // bookmark, so it stays (reviewer repro `sidebranch.sh` v2).
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-builds-on-user-side",
+        concat!(
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\n",
+            "orig=$(jj -R \"$CALLER\" --ignore-working-copy log -r @ --no-graph -T change_id)\n",
+            "jj -R \"$CALLER\" new @- -m 'user side' >/dev/null 2>&1\n",
+            "printf 'user\\n' > \"$CALLER/USER.md\"\n",
+            "jj -R \"$CALLER\" bookmark create user-side -r @ >/dev/null 2>&1\n",
+            "jj -R \"$CALLER\" edit \"$orig\" >/dev/null 2>&1\n",
+            "jj rebase -s 'bookmarks(exact:\"user-side\")' -d @ >/dev/null 2>&1\n",
+            "jj new 'bookmarks(exact:\"user-side\")' >/dev/null 2>&1\n",
+            "printf 'more\\n' > MORE.md\nprintf 'done\\n'\n",
+        ),
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    let mut changed = changed_files(home.path(), repo, change_id);
+    changed.sort();
+    assert_eq!(changed, ["A MORE.md", "A NEW.md", "A USER.md"]);
+    let bookmarks = jj(home.path(), &["-R", repo, "bookmark", "list"]);
+    assert!(bookmarks.contains("user-side"), "{bookmarks}\n{result}");
+    let side = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "bookmarks(exact:\"user-side\")",
+            "--no-graph",
+            "--summary",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    );
+    assert!(side.contains("USER.md"), "{side}\n{result}");
+    let side_change = side.lines().next().expect("side change").trim();
+    let kept: Vec<&str> = workspace["kept_revisions"]
+        .as_array()
+        .expect("kept revisions")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(kept.contains(&side_change), "{result}");
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_branch_the_harness_leaves_on_the_copy_keeps_the_unpushed_files_below() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = unpushed_feature_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    // The harness commits a side branch on the copy and finishes on another
+    // change on the copy: the branch is not in the result, so it stays, and
+    // the copy stays under it, else the branch would lose the caller's
+    // unpushed feature below (reviewer finding: the copy left the bulk
+    // abandon last).
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-side-then-other",
+        "#!/bin/sh\nprintf 'A\\n' > A.md\njj commit -m 'side A' >/dev/null 2>&1\njj new 'description(substring:\"base copy for\")' -m 'other' >/dev/null 2>&1\nprintf 'B\\n' > B.md\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A B.md"]);
+    let side_files = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "file",
+            "list",
+            "-r",
+            "description(exact:\"side A\\n\")",
+        ],
+    );
+    assert!(side_files.contains("A.md"), "{side_files}\n{result}");
+    assert!(
+        side_files.contains("feature.md"),
+        "the branch lost the files below it: {side_files}\n{result}"
+    );
+    let copies = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "mutable() & description(substring:\"base copy for\")",
+            "--no-graph",
+            "-T",
+            "change_id ++ \"\\n\"",
+        ],
+    );
+    assert_eq!(
+        copies.lines().count(),
+        1,
+        "the copy stays under the branch: {copies}"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_that_edits_the_runs_head_gets_nothing_snapshotted_into_it() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // The caller checks out the run's working-copy commit in its own
+    // workspace: both point at one commit, which stands on the copy, so a
+    // snapshot would write the harness's files into the caller's change.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-shared-head",
+        concat!(
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\n",
+            "head=$(jj --ignore-working-copy log -r @ --no-graph -T commit_id)\n",
+            "jj -R \"$CALLER\" edit \"$head\" > \"$HOME/edit.log\" 2>&1\n",
+            "printf 'evil\\n' > EVIL.md\nprintf 'done\\n'\n",
+        ),
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], false, "{result}");
+    assert!(workspace["change_id"].is_null(), "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["left_copy"].is_string(), "{result}");
+    let folder = std::path::PathBuf::from(workspace["path"].as_str().expect("path"));
+    assert!(folder.join("EVIL.md").exists(), "{result}");
+    let in_caller = jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "log",
+            "-r",
+            "@",
+            "--no-graph",
+            "--summary",
+            "-T",
+            "\"\"",
+        ],
+    );
+    assert!(!in_caller.contains("EVIL"), "{in_caller}\n{result}");
+    assert!(!repository.path().join("EVIL.md").exists());
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cleanup_that_fails_still_measures_the_conflict() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    // The harness and the caller both edit README, and the harness makes
+    // its own commit immutable through the shared repository
+    // configuration: the cleanup cannot abandon it, and the conflict flag
+    // is still measured on the final result.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-immutable-leftover",
+        concat!(
+            "#!/bin/sh\nprintf 'harness\\n' > README.md\n",
+            "printf 'caller\\n' > \"$CALLER/README.md\"\n",
+            "jj commit -m 'harness work' >/dev/null 2>&1\n",
+            "jj config set --repo 'revset-aliases.\"immutable_heads()\"' 'description(exact:\"harness work\\n\")' >/dev/null 2>&1\n",
+            "printf 'done\\n'\n",
+        ),
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["conflicted"], true, "{result}");
+    assert!(
+        workspace["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("immutable")),
+        "{result}"
+    );
+    assert!(workspace["change_id"].is_string(), "{result}");
+}
+
+/// One clean workspace-write run, and the repository's workspace folder it
+/// made under the state directory.
+#[cfg(unix)]
+fn workspace_folder_after_a_run(
+    home: &std::path::Path,
+    state: &std::path::Path,
+    repo: &str,
+    provider: &std::path::Path,
+) -> std::path::PathBuf {
+    rune_isolated(home, state)
+        .args([
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success();
+    std::fs::read_dir(state.join("rune/workspaces"))
+        .expect("workspaces")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.is_dir())
+        .expect("the repository's workspace folder")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signal_during_a_failed_setup_is_the_outcome() {
+    use std::time::{Duration, Instant};
+
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    // A first run makes the repository's workspace folder under the state
+    // directory. Made read-only, it refuses the next run's `jj workspace
+    // add` after the copy exists, and the runner takes the copy down. A
+    // signal that arrives meanwhile is the outcome, as after a run.
+    let folder = workspace_folder_after_a_run(home.path(), state.path(), repo, &provider);
+    std::fs::remove_file(home.path().join("harness-started")).expect("the first run's marker");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let started = Instant::now();
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+        .env("HOME", home.path())
+        .env("CLIPROXY_API_KEY", "test-token")
+        .env("XDG_STATE_HOME", state.path())
+        .env_remove("RUNE_STATE_DIR")
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("rune spawns");
+    // The copy appears in the repository before the add.
+    let copy_revset = "description(substring:\"base copy for\")";
+    while jj(
+        home.path(),
+        &[
+            "-R",
+            repo,
+            "--ignore-working-copy",
+            "log",
+            "-r",
+            copy_revset,
+            "--no-graph",
+            "-T",
+            "change_id",
+        ],
+    )
+    .trim()
+    .is_empty()
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the run never made its copy"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let delivered = std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(delivered.success(), "kill failed");
+    let output = child.wait_with_output().expect("rune output");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "stdout: {printed}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_str(printed.trim()).expect("run JSON");
+    assert_eq!(result["kind"], "signal", "{printed}");
+    assert_eq!(result["stopped_by_signal"], 2, "{printed}");
+    assert!(
+        result["details"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("workspace add")),
+        "{printed}"
+    );
+    assert!(result["workspace"].is_object(), "{printed}");
+    assert!(!home.path().join("harness-started").exists());
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
 }
 
 /// A colocated repository with an immutable trunk (bookmark `main`) and the

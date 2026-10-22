@@ -30,8 +30,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Set `outside_changes` when a caller commit or a git setting that runs commands changed during a workspace-write run, by the harness or by the caller's own commands, never by edits alone.
 - Name the operations a workspace-write run spans as `start_operation` and `end_operation`, and point at `jj op diff --from <start> --to <end>` on stderr.
 - Record nothing from a workspace-write run whose harness moved its workspace off the copy or onto another working copy: `left_copy` names the change, the folder stays, and `outside_changes` is set.
-- Abandon a revision a workspace-write run left on the copy only when it is empty or already in the result, keep every other one, and list them in `kept_revisions`.
-- Compare the shared git hook files, by name and digest, before and after a workspace-write run, and read `conflicted` after the workspace is removed.
+- Abandon a revision a workspace-write run left on the copy only with jj's or git's record that the run made it, no bookmark on it, and content that is empty or in the result.
+- Keep every other revision a workspace-write run left on the copy, list it in `kept_revisions`, and abandon the copy last, only when nothing stands on it.
+- Compare every entry of the shared git hooks folder (kind, symlink target, mode, content digest) before and after a workspace-write run.
+- Read `conflicted` after the workspace is removed, and leave it null until it is measured.
+- Record nothing from a workspace-write run whose head another workspace checked out meanwhile (`jj edit <run head>`).
+- Report a signal that arrives during a failed workspace setup as the outcome, with the setup error in `details`.
 - Set jj's immutability guard in the run's workspace, so a harness commits, describes, and squashes only its own revisions there, and remove the guard's configuration folder with the workspace.
 - Go on without the guard when its configuration cannot be written, with `guard: false` and the reason in the `workspace` object and one warning on stderr.
 - Find the caller's root with `jj workspace root`, remove the workspace with `jj workspace remove`, and snapshot with jj's own `snapshot.max-new-file-size=0` and `snapshot.auto-track="all()"`.

@@ -41,9 +41,11 @@ for` line, and a commit found by its whole description must be the one commit ma
 carries it.
 
 The runner never loses a revision. The candidates are the copy's descendants, minus the caller's line and a kept
-result. A candidate goes when it is empty, or when its changes are in the result already (it is an ancestor of the
-workspace's final commit). The copy goes only when nothing stands on it. Every other candidate stays, whoever made it
-(a caller's branch the harness rebased onto its work, a branch the caller made during the run), is listed in
+result. A candidate goes only with evidence that the run made it (jj's record of the workspace the creating operation
+ran in, or the run worktree's git reflog), a change id absent at the start, no bookmark, and content that is empty or
+in the result already (an ancestor of the workspace's final commit). The copy goes last, and only when nothing stands
+on it. Every other candidate stays, whoever made it (a caller's branch the harness rebased onto its work or built on,
+a branch the caller made during the run), is listed in
 `kept_revisions`, and sets `outside_changes`.
 
 The harness can still rewrite a caller commit by naming it (`jj describe -r <id>`): the store is shared. When it makes

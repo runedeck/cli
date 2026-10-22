@@ -483,9 +483,56 @@ fn runs_a_command(key: &str) -> bool {
     }
 }
 
-/// The hook files of the repository's shared git directory, as sorted
-/// `hook:<name>=<digest>` lines: a colocated worktree shares them, and a
-/// hook a harness drops there runs on the caller's next git command.
+/// The hex digest of `bytes`.
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// One entry of the shared hooks folder as a line: its kind (file,
+/// symlink, or directory), the symlink's target, the mode bits, and the
+/// digest of the content it resolves to. A symlink dropped there, or an
+/// existing hook made executable, changes the line as a new file does.
+fn hook_line(entry: &std::fs::DirEntry) -> Option<String> {
+    let path = entry.path();
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    let kind = if metadata.is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "dir"
+    } else {
+        "file"
+    };
+    let target = std::fs::read_link(&path)
+        .map(|target| target.display().to_string())
+        .unwrap_or_default();
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o7777
+    };
+    #[cfg(not(unix))]
+    let mode = u32::from(metadata.permissions().readonly());
+    // The content of the file the entry resolves to: a dangling symlink or
+    // a directory has none.
+    let content = std::fs::read(&path)
+        .map(|bytes| sha256_hex(&bytes))
+        .unwrap_or_default();
+    Some(format!(
+        "hook:{}={kind}:{target}:{mode:o}:{content}",
+        entry.file_name().to_string_lossy()
+    ))
+}
+
+/// The entries of the repository's shared hooks folder, as sorted lines
+/// with their kind, target, mode, and content: a colocated worktree shares
+/// them, and a hook a harness drops or enables there runs on the caller's
+/// next git command.
 fn git_hooks(root: &Path) -> Vec<String> {
     let Some(common) = git_query(root, &["rev-parse", "--git-common-dir"]) else {
         return Vec::new();
@@ -496,20 +543,7 @@ fn git_hooks(root: &Path) -> Vec<String> {
     };
     let mut lines: Vec<String> = entries
         .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter_map(|entry| {
-            let content = std::fs::read(entry.path()).ok()?;
-            let digest = Sha256::digest(&content);
-            let hex = digest.iter().fold(String::new(), |mut hex, byte| {
-                use std::fmt::Write as _;
-                let _ = write!(hex, "{byte:02x}");
-                hex
-            });
-            Some(format!(
-                "hook:{}={hex}",
-                entry.file_name().to_string_lossy()
-            ))
-        })
+        .filter_map(|entry| hook_line(&entry))
         .collect();
     lines.sort();
     lines
@@ -1162,12 +1196,31 @@ fn final_commit(workspace: &Workspace) -> Result<String, String> {
 /// unpushed work, so the runner asks before it snapshots anything. `None`
 /// while the workspace is on the copy's lineage and on its own change.
 fn foreign_head(workspace: &Workspace, lineage: &str) -> Result<Option<String>, String> {
+    let root = &workspace.root;
     let own = format!("\"{}\"@", workspace.name);
-    log_first(
-        &workspace.root,
-        &format!("{own} ~ ({lineage} ~ (working_copies() ~ {own}))"),
-        "change_id",
-    )
+    // The head's change, with the names of every workspace that uses it as
+    // its working copy: a caller that ran `jj edit <run head>` shares the
+    // commit, and a snapshot would then write into the caller's change.
+    let Some(line) = log_first(
+        root,
+        &own,
+        "change_id ++ \" \" ++ working_copies.map(|w| w.name()).join(\",\")",
+    )?
+    else {
+        return Err(format!(
+            "jj lists no working copy for workspace {}",
+            workspace.name
+        ));
+    };
+    let (change, names) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+    let shared = names
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .any(|name| name != workspace.name);
+    if shared {
+        return Ok(Some(change.to_string()));
+    }
+    log_first(root, &format!("{own} ~ ({lineage})"), "change_id")
 }
 
 /// Abandon `commits`, by commit id, in one command. Nothing to abandon is
@@ -1182,20 +1235,83 @@ fn abandon_commits(root: &Path, commits: &[String]) -> Result<(), String> {
     jj_root_command(root, &args).map(|_| ())
 }
 
+/// The commits git's HEAD of the run's worktree pointed at, newest first,
+/// from the worktree's own reflog: a `git commit` the harness made there
+/// is listed with its hash, which is the jj commit id of the commit jj
+/// imports. jj records no operation for an imported commit, so this is
+/// the evidence for it. Empty without git, or once the worktree is gone,
+/// so it is read before the removal.
+fn worktree_head_log(workspace: &Workspace) -> Vec<String> {
+    if !workspace.has_git || !workspace.path.exists() {
+        return Vec::new();
+    }
+    let Some(printed) = git_query(&workspace.path, &["reflog", "--format=%H"]) else {
+        return Vec::new();
+    };
+    printed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether the run made `commit`: jj records, for every version of a
+/// change, the operation that created it and the workspace that operation
+/// was created from (`jj evolog -T operation.workspace_name()`). The
+/// oldest version is the change's creation, so a change the run's
+/// workspace created (`jj new`, `jj commit`, `jj split`, the initial
+/// working copy of `jj workspace add`) carries the run's name on it. A
+/// commit imported from git carries no operation: the run's worktree
+/// reflog names the ones made there. A commit the caller made and the
+/// harness merely rebased carries the caller's workspace there: ancestry
+/// of the final commit proves nothing about who made it.
+fn made_by_the_run(
+    workspace: &Workspace,
+    commit: &str,
+    worktree_log: &[String],
+) -> Result<bool, String> {
+    if worktree_log.iter().any(|logged| logged == commit) {
+        return Ok(true);
+    }
+    let printed = jj_root_command(
+        &workspace.root,
+        &[
+            OsStr::new("evolog"),
+            OsStr::new("-r"),
+            OsStr::new(&commit_revset(commit)),
+            OsStr::new("--no-graph"),
+            OsStr::new("-T"),
+            OsStr::new("operation.workspace_name() ++ \"\\n\""),
+        ],
+    )?
+    .stdout;
+    let creation = printed
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    Ok(creation.trim_end_matches('@') == workspace.name)
+}
+
 /// Take the run's leftovers on the copy down without losing content. The
 /// candidates are the copy's descendants minus the caller's line and the
-/// kept result. A candidate goes when it is empty, or when its changes are
-/// in the result already (it is an ancestor of the workspace's final
+/// kept result. A candidate goes only with positive evidence: the run made
+/// it ([`made_by_the_run`]), its change did not exist at the start
+/// operation, no bookmark points at it, and it is empty or its changes
+/// are in the result already (it is an ancestor of the workspace's final
 /// commit, whose tree the result holds). Every other candidate stays,
-/// whoever made it: a branch the harness or the caller made during the run
-/// and the final tree does not hold. The copy itself goes last, and only
-/// when nothing stands on it. What stays is listed in `kept_revisions`,
-/// and `outside_changes` says so.
+/// whoever made it. The copy itself goes last, and only when nothing
+/// stands on it, so a kept branch on it keeps the caller's unpushed files
+/// below. What stays is listed in `kept_revisions`, and `outside_changes`
+/// says so.
 fn clean_up(
     workspace: &Workspace,
     outcome: &mut Outcome,
     lineage: &str,
     final_commit: Option<&str>,
+    worktree_log: &[String],
 ) -> Result<(), String> {
     let root = &workspace.root;
     let kept_result = match (&outcome.change_id, outcome.kept) {
@@ -1210,20 +1326,40 @@ fn clean_up(
     // What stays is read before the abandon: an abandoned parent moves
     // the survivors off the copy's lineage, and their change ids hold.
     let all = id_pairs(root, &candidates)?;
-    let gone: HashSet<String> = id_pairs(root, &contained)?
+    let contained: HashSet<String> = id_pairs(root, &contained)?
         .into_iter()
         .map(|(_, commit)| commit)
         .collect();
-    let copy_commit = workspace.copy.as_ref().map(|copy| copy.commit_id.as_str());
-    let mut remaining: Vec<String> = all
-        .iter()
-        .filter(|(_, commit)| !gone.contains(commit) && Some(commit.as_str()) != copy_commit)
-        .map(|(change, _)| change.clone())
+    let bookmarked: HashSet<String> = id_pairs(root, &format!("({candidates}) & bookmarks()"))?
+        .into_iter()
+        .map(|(_, commit)| commit)
         .collect();
-    abandon_commits(root, &gone.iter().cloned().collect::<Vec<_>>())?;
-    if let Some(copy) = &workspace.copy
-        && !gone.contains(&copy.commit_id)
-    {
+    let changes: Vec<String> = all.iter().map(|(change, _)| change.clone()).collect();
+    let existed = changes_at(root, &workspace.start_operation, &changes)?;
+    let copy_commit = workspace.copy.as_ref().map(|copy| copy.commit_id.as_str());
+    // The result itself is the runner's own, made in the caller's workspace
+    // and found by its description: an empty one goes without a look at
+    // its evolution.
+    let result_change = outcome.change_id.as_deref();
+    let mut gone = Vec::new();
+    let mut remaining = Vec::new();
+    for (change, commit) in &all {
+        if Some(commit.as_str()) == copy_commit {
+            continue;
+        }
+        let abandon = contained.contains(commit)
+            && !existed.contains(change)
+            && !bookmarked.contains(commit)
+            && (Some(change.as_str()) == result_change
+                || made_by_the_run(workspace, commit, worktree_log)?);
+        if abandon {
+            gone.push(commit.clone());
+        } else {
+            remaining.push(change.clone());
+        }
+    }
+    abandon_commits(root, &gone)?;
+    if let Some(copy) = &workspace.copy {
         let copy_revset = commit_revset(&copy.commit_id);
         let visible = log_first(
             root,
@@ -1399,7 +1535,9 @@ fn build_result(
     let result = find_marked(root, marker, &workspace.start_operation)?;
     let kept = !flag(root, &commit_revset(&result.commit_id), "empty")?;
     outcome.kept = Some(kept);
-    outcome.conflicted = Some(false);
+    // Unknown until measured on the final result: an empty result has no
+    // conflict, a kept one is asked once the workspace is gone.
+    outcome.conflicted = (!kept).then_some(false);
     if kept {
         jj_root_command(
             root,
@@ -1447,7 +1585,7 @@ fn finish_steps(
     if !workspace.added {
         // The copy exists and nothing else: it goes, and a half-made folder
         // with it.
-        clean_up(workspace, outcome, &lineage, None)?;
+        clean_up(workspace, outcome, &lineage, None, &[])?;
         if workspace.path.exists() {
             std::fs::remove_dir_all(&workspace.path).map_err(|error| {
                 format!(
@@ -1463,6 +1601,8 @@ fn finish_steps(
     // or on another workspace's working copy is not the run's to record.
     // Its files stay in the folder, the workspace is forgotten, the copy's
     // leftovers are cleaned, and the result names the change.
+    // The worktree's reflog goes with the worktree: read while it stands.
+    let worktree_log = worktree_head_log(workspace);
     if let Some(change) = foreign_head(workspace, &lineage)? {
         outcome.left_copy = Some(change.clone());
         outcome.kept = Some(false);
@@ -1472,7 +1612,7 @@ fn finish_steps(
         if let Some(dir) = &workspace.config_dir {
             let _ = std::fs::remove_dir_all(dir);
         }
-        clean_up(workspace, outcome, &lineage, None)?;
+        clean_up(workspace, outcome, &lineage, None, &worktree_log)?;
         outcome.end_operation = Some(latest_operation(root)?);
         return Err(format!(
             "the harness moved its workspace to change {change}, off the run's copy: its files were not recorded, no result was built, the workspace is forgotten, and the folder stays with the files"
@@ -1500,8 +1640,19 @@ fn finish_steps(
     if let Some(dir) = &workspace.config_dir {
         let _ = std::fs::remove_dir_all(dir);
     }
-    clean_up(workspace, outcome, &lineage, Some(&final_commit))?;
-    read_conflict(workspace, outcome)?;
+    // The conflict flag is measured whatever the cleanup did: a cleanup
+    // that fails (a run commit made immutable meanwhile) must not leave an
+    // unmeasured value behind.
+    let cleanup = clean_up(
+        workspace,
+        outcome,
+        &lineage,
+        Some(&final_commit),
+        &worktree_log,
+    );
+    let conflict = read_conflict(workspace, outcome);
+    cleanup?;
+    conflict?;
     outcome.end_operation = Some(latest_operation(root)?);
     removal?;
     if workspace.path.exists() {

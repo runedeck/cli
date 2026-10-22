@@ -1,9 +1,9 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination, SignalWatch};
 use crate::cli::surface::{
-    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, clean_config_keys,
-    effective_env, filter_surface_args, invoke_surface, output_tail, parent_session_isolation,
-    planned_request, prepare_clean_state, route_keys, session_name_flag,
+    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, SurfaceReply,
+    clean_config_keys, effective_env, filter_surface_args, invoke_surface, output_tail,
+    parent_session_isolation, planned_request, prepare_clean_state, route_keys, session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -344,16 +344,14 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .map(|_| SignalWatch::install())
         .transpose()?;
     let mut isolated = Isolated { workspace: None };
-    if let Some(plan) = &isolation {
-        // The guard holds the copy from the moment it exists: a failure or
-        // a signal while the copy is prepared or the workspace is added
-        // still abandons it.
-        isolated.workspace = Some(workspace::begin(plan)?);
-        if let Some(workspace) = isolated.workspace.as_mut() {
-            workspace::prepare(workspace)?;
-            workspace::add(workspace)?;
-        }
-    }
+    // The guard holds the copy from the moment it exists: a failure or a
+    // signal while the copy is prepared or the workspace is added still
+    // abandons it. A setup that fails is no early return: the finish and
+    // the signal check below run for it as for a harness failure, so a
+    // signal that arrives during that cleanup is the outcome.
+    let setup = isolation
+        .as_ref()
+        .map_or(Ok(()), |plan| set_up_workspace(&mut isolated, plan));
     let repository = isolated.workspace.as_ref().map_or_else(
         || invocation.repository.clone(),
         |workspace| workspace.harness_dir.clone(),
@@ -369,16 +367,19 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     let started_at = SystemTime::now();
     // A signal that arrived while the workspace was made stops the run
     // before the harness starts: the workspace is finished, the signal is
-    // reported, and the exit code is the signal's.
-    let result = match watch.as_ref().and_then(SignalWatch::received) {
-        Some(signal) => Err(stopped_before_start(signal)),
-        None => invoke_surface(&invocation),
-    };
+    // reported, and the exit code is the signal's. The outer error is the
+    // setup's, the inner the harness's.
+    let result: Result<Result<SurfaceReply, SurfaceFailure>, String> =
+        match (setup, watch.as_ref().and_then(SignalWatch::received)) {
+            (Err(message), _) => Err(message),
+            (Ok(()), Some(signal)) => Ok(Err(stopped_before_start(signal))),
+            (Ok(()), None) => Ok(invoke_surface(&invocation)),
+        };
     // A signal the supervisor forwarded to the harness is in the result and
     // is acknowledged, so it is not reported twice. Any other signal, one
     // that arrived after the supervisor ended included, stays pending and
     // ends the run after the finish.
-    if let (Some(watch), Err(failure)) = (&watch, &result)
+    if let (Some(watch), Ok(Err(failure))) = (&watch, &result)
         && let SurfaceFailure::Process {
             failure: ProcessFailure::ForwardedSignal { signal, .. },
             ..
@@ -399,7 +400,10 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .map(|(workspace, outcome)| workspace_lines(workspace, outcome))
         .unwrap_or_default();
     let mut outcome = match result {
-        Ok(reply) => {
+        Err(message) => {
+            configuration_with_workspace(options, message, workspace_json, &workspace_lines)
+        }
+        Ok(Ok(reply)) => {
             if !reply.stderr.is_empty() {
                 eprint!("{}", reply.stderr);
                 if !reply.stderr.ends_with('\n') {
@@ -416,17 +420,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                 started_at,
             ) {
                 Err(message) => {
-                    let mut outcome = configuration_outcome(options, message.into());
-                    if let Some(object) = outcome.json.as_object_mut() {
-                        object.insert("workspace".to_string(), workspace_json);
-                    }
-                    if let Text::Fatal(text) = &mut outcome.text {
-                        for line in &workspace_lines {
-                            text.push('\n');
-                            text.push_str(line);
-                        }
-                    }
-                    outcome
+                    configuration_with_workspace(options, message, workspace_json, &workspace_lines)
                 }
                 Ok(artifacts) => {
                     if !options.json {
@@ -471,7 +465,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                 }
             }
         }
-        Err(failure) => {
+        Ok(Err(failure)) => {
             let mut json = failure_json(&resolved.tool, &failure);
             if let Some(object) = json.as_object_mut() {
                 object.insert("workspace".to_string(), workspace_json);
@@ -503,6 +497,38 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         eprintln!("stopped by signal {signal} after the run; the workspace was finished first");
     }
     Ok(outcome)
+}
+
+/// Make the run's workspace: the copy, the caller's files in it, and the
+/// jj workspace on it, each step under the guard that takes it all down.
+fn set_up_workspace(isolated: &mut Isolated, plan: &workspace::Plan) -> Result<(), String> {
+    isolated.workspace = Some(workspace::begin(plan)?);
+    if let Some(workspace) = isolated.workspace.as_mut() {
+        workspace::prepare(workspace)?;
+        workspace::add(workspace)?;
+    }
+    Ok(())
+}
+
+/// A configuration error that still names what the run's workspace left:
+/// the `workspace` object in the JSON, and its lines after the message.
+fn configuration_with_workspace(
+    options: &RunOptions,
+    message: String,
+    workspace_json: Value,
+    workspace_lines: &[String],
+) -> Outcome {
+    let mut outcome = configuration_outcome(options, message.into());
+    if let Some(object) = outcome.json.as_object_mut() {
+        object.insert("workspace".to_string(), workspace_json);
+    }
+    if let Text::Fatal(text) = &mut outcome.text {
+        for line in workspace_lines {
+            text.push('\n');
+            text.push_str(line);
+        }
+    }
+    outcome
 }
 
 /// The failure for a signal that arrived before the harness started: the
