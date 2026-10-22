@@ -4575,17 +4575,33 @@ fn grok_check_sends_only_the_key_of_the_model_it_checks() {
     let home = tempfile::tempdir().expect("home");
     std::fs::create_dir_all(home.path().join(".grok")).expect(".grok");
     // Two models, two keys: the check of one must not borrow the other's.
+    // The grok entry is written unquoted, as nested tables.
     std::fs::write(
         home.path().join(".grok/config.toml"),
-        "[model.aaa-gpt]\nenv_key = \"OPENAI_API_KEY\"\n\n[model.grok-4]\nenv_key = \"XAI_API_KEY\"\n",
+        "[model.aaa-gpt]\nenv_key = \"OPENAI_API_KEY\"\n\n[model.grok-4.5]\nenv_key = \"XAI_API_KEY\"\n",
     )
     .expect("grok configuration");
     let openai = "sk-openai-fake-value-123";
     let xai = "xai-fake-value-456789";
-    for (model, sent) in [
-        ("grok-4", Some(xai)),
-        ("aaa-gpt", Some(openai)),
-        ("grok-3-without-entry", None),
+    // A model without an entry gets the key of the closest entry of its
+    // family, and the report says so. A model of another family gets none.
+    for (model, sent, note) in [
+        ("grok-4.5", Some(xai), None),
+        ("aaa-gpt", Some(openai), None),
+        (
+            "grok-3-guessed",
+            Some(xai),
+            Some(
+                "no entry for grok-3-guessed: guessed from grok-4.5, the entry with the longest shared prefix",
+            ),
+        ),
+        (
+            "mistral-7-without-entry",
+            None,
+            Some(
+                "no entry for mistral-7-without-entry, no entry shares its family, and the entries name different variables",
+            ),
+        ),
     ] {
         let (base_url, handle) = stub_models(200, &format!(r#"{{"data":[{{"id":"{model}"}}]}}"#));
         let output = rune(home.path())
@@ -4611,7 +4627,27 @@ fn grok_check_sends_only_the_key_of_the_model_it_checks() {
             }
         }
         assert_eq!(output.status.code(), Some(0), "{model}: {output:?}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("check JSON");
+        assert_eq!(
+            result["endpoints"][0]["credential_note"].as_str(),
+            note,
+            "{model}: {result}"
+        );
     }
+
+    // The text report names the suggestion beside a missing model.
+    let (base_url, handle) = stub_models(200, r#"{"data":[{"id":"grok-4.7"},{"id":"grok-3"}]}"#);
+    rune(home.path())
+        .env("XAI_API_KEY", xai)
+        .env("GROK_MODELS_BASE_URL", format!("{base_url}/v1"))
+        .env_remove("GROK_CODE_XAI_API_KEY")
+        .args(["run", "grok", "x", "--check", "--model", "grok-4.5"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "  missing  grok-4.5 (closest served: grok-4.7)\n",
+        ));
+    handle.join().expect("stub");
 }
 
 #[cfg(unix)]

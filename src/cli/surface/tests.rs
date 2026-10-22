@@ -2032,21 +2032,58 @@ fn the_grok_key_map_names_the_variables_whose_values_are_credentials() {
         grok_key_variable_names(&temporary.path().join("absent.toml")),
         Vec::<String>::new()
     );
-    // One model's entry, and only that one: a model without an entry, or
-    // without a key map, names nothing.
+    // One model's entry names its variable. The two entries name different
+    // variables and sit at the same distance from `grok-4`, so a model
+    // without an entry gets nothing, and so does a model of another family
+    // or a missing key map.
     assert_eq!(
-        grok_model_env_key(&source, "grok-4.5").as_deref(),
+        grok_model_env_key(&source, "grok-4.5").variable(),
         Some("GROK_SEAT_HANDLE")
     );
     assert_eq!(
-        grok_model_env_key(&source, "grok-4.6").as_deref(),
+        grok_model_env_key(&source, "grok-4.6").variable(),
         Some("XAI_SECOND_HANDLE")
     );
-    assert_eq!(grok_model_env_key(&source, "local"), None);
-    assert_eq!(grok_model_env_key(&source, "grok-4"), None);
+    assert_eq!(grok_model_env_key(&source, "local").variable(), None);
+    let tie = grok_model_env_key(&source, "grok-4");
+    assert_eq!(tie.variable(), None);
+    assert!(
+        tie.note()
+            .is_some_and(|note| note.contains("grok-4.5 and grok-4.6")),
+        "{tie:?}"
+    );
     assert_eq!(
-        grok_model_env_key(&temporary.path().join("absent.toml"), "grok-4.5"),
+        grok_model_env_key(&temporary.path().join("absent.toml"), "grok-4.5").variable(),
         None
+    );
+}
+
+#[test]
+fn the_grok_key_map_reads_an_unquoted_dotted_id_as_one_model() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("config.toml");
+    // `[model.grok-4.5]` nests as model, grok-4, 5: the same entry as the
+    // quoted form, and the same kept key name in the dry run.
+    std::fs::write(
+        &source,
+        "[model.grok-4.5]\nenv_key = \"XAI_NESTED_HANDLE\"\n\n[model.grok-3]\nenv_key = \"XAI_NESTED_HANDLE\"\n",
+    )
+    .expect("source configuration");
+    assert_eq!(
+        grok_model_env_key(&source, "grok-4.5").variable(),
+        Some("XAI_NESTED_HANDLE")
+    );
+    let target = temporary.path().join("clean.toml");
+    let mut names = copy_grok_model_keys(&source, &target).expect("clean copy");
+    names.sort();
+    assert_eq!(names, ["model.grok-3.env_key", "model.grok-4.5.env_key"]);
+    // Every entry names one variable: a model without an entry gets it,
+    // and the choice says so.
+    let guessed = grok_model_env_key(&source, "grok-4.7");
+    assert_eq!(guessed.variable(), Some("XAI_NESTED_HANDLE"));
+    assert_eq!(
+        guessed.note(),
+        Some("no entry for grok-4.7: every entry of the key map names XAI_NESTED_HANDLE")
     );
 }
 

@@ -6,6 +6,7 @@
 use super::{ResolvedLaunch, credential_values, env_value, redact_credentials, redact_urls};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -109,6 +110,10 @@ pub(crate) enum EndpointResult {
     Listed {
         served: Vec<String>,
         missing: Vec<String>,
+        /// For a missing id, the served id of the same family closest to
+        /// it, as a suggestion.
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        closest: BTreeMap<String, String>,
     },
     Failed {
         reason: String,
@@ -121,6 +126,10 @@ pub(crate) struct EndpointReport {
     pub(crate) check: EndpointCheck,
     #[serde(flatten)]
     pub(crate) result: EndpointResult,
+    /// Why the credential is a guess, or why there is none: the grok key
+    /// map has no entry for the checked model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_note: Option<String>,
 }
 
 impl EndpointReport {
@@ -139,8 +148,26 @@ impl EndpointReport {
                 },
                 listed @ EndpointResult::Listed { .. } => listed.clone(),
             },
+            credential_note: self.credential_note.clone(),
         }
     }
+}
+
+/// The served id closest to a missing one, as a suggestion: the same
+/// family (the id up to its first digit), the longest shared prefix, and
+/// on a tie the greatest id, which is the newest version in the usual
+/// naming. Nothing when the endpoint serves no id of that family.
+fn closest_served(missing: &str, listed: &[String]) -> Option<String> {
+    let family = crate::cli::surface::model_family(missing);
+    listed
+        .iter()
+        .filter(|id| crate::cli::surface::model_family(id) == family)
+        .max_by(|left, right| {
+            crate::cli::surface::shared_prefix_len(left, missing)
+                .cmp(&crate::cli::surface::shared_prefix_len(right, missing))
+                .then_with(|| left.cmp(right))
+        })
+        .cloned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -212,23 +239,28 @@ fn inherited_environment(resolved: &ResolvedLaunch) -> Vec<(OsString, OsString)>
 }
 
 /// The variables the route's own configuration names as credentials for
-/// `model`, which the check may read from the inherited environment:
-/// grok's `model.<model>.env_key` entry, and that one alone. The entry of
-/// another model is not the credential of this one (the check sent the
-/// `OpenAI` key of one model while it asked for grok-4), and a model without
-/// an entry sends nothing. No other tool names one this way.
-fn route_named_variables(tool: &str, model: Option<&str>) -> Vec<String> {
+/// `model`, which the check may read from the inherited environment, with
+/// the note the report shows beside the credential: grok's
+/// `model.<model>.env_key` entry, else the key map's safe guess for a model
+/// without an entry, else nothing and the reason. The entry of an
+/// unrelated model is never the credential of this one (the check sent the
+/// `OpenAI` key of one model while it asked for grok-4). No other tool
+/// names one this way.
+fn route_named_variables(tool: &str, model: Option<&str>) -> (Vec<String>, Option<String>) {
     if tool != "grok" {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     let Some(model) = model else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
-    crate::cli::surface::grok_config_source()
-        .ok()
-        .and_then(|source| crate::cli::surface::grok_model_env_key(&source, model))
-        .into_iter()
-        .collect()
+    let Ok(source) = crate::cli::surface::grok_config_source() else {
+        return (Vec::new(), None);
+    };
+    let choice = crate::cli::surface::grok_model_env_key(&source, model);
+    (
+        choice.variable().map(str::to_string).into_iter().collect(),
+        choice.note().map(str::to_string),
+    )
 }
 
 /// Collect the endpoints the plan talks to. `model_override` is the
@@ -436,21 +468,27 @@ fn credential_value(check: &EndpointCheck, env: &[(OsString, OsString)]) -> Opti
 
 pub(crate) fn run_checks(resolved: &ResolvedLaunch, model_override: Option<&str>) -> CheckReport {
     let model = model_override.or_else(|| resolved.model.as_ref().map(|model| model.id.as_str()));
+    let (named, note) = route_named_variables(&resolved.tool, model);
     run_checks_with(
         resolved,
         model_override,
         &inherited_environment(resolved),
-        &route_named_variables(&resolved.tool, model),
+        &named,
+        note.as_deref(),
     )
 }
 
-/// [`run_checks`] with the inherited environment and the route-named
-/// variables given, so a test controls what the check may send.
+/// [`run_checks`] with the inherited environment, the route-named
+/// variables, and their note given, so a test controls what the check may
+/// send. The note goes on the endpoint of the running tool when its
+/// credential is the named variable or there is none: a credential found
+/// under the tool's own name needs no explanation.
 fn run_checks_with(
     resolved: &ResolvedLaunch,
     model_override: Option<&str>,
     inherited: &[(OsString, OsString)],
     named: &[String],
+    note: Option<&str>,
 ) -> CheckReport {
     let effective = resolved.effective_env();
     // An inherited endpoint comes with the inherited credential the route
@@ -459,9 +497,19 @@ fn run_checks_with(
     let mut secrets = credential_values(&effective);
     secrets.extend(credential_values(inherited));
     let (roots, roots_warnings) = root_certs_from(|variable| std::env::var_os(variable));
+    let own_tool = !FAMILIES.iter().any(|family| family.tool == resolved.tool);
     let endpoints: Vec<EndpointReport> = plan_checks(resolved, model_override, inherited, named)
         .into_iter()
         .map(|check| {
+            let credential_note = note
+                .filter(|_| {
+                    own_tool
+                        && check
+                            .credential_key
+                            .as_ref()
+                            .is_none_or(|key| named.contains(key))
+                })
+                .map(str::to_string);
             let credential = credential_value(&check, &effective)
                 .or_else(|| credential_value(&check, inherited));
             // The exact value sent joins the redaction set before the
@@ -477,18 +525,32 @@ fn run_checks_with(
             }
             let result = match fetch_model_ids(&check.base_url, credential.as_deref(), &roots) {
                 Ok(listed) => {
-                    let (served, missing) = check
+                    let (served, missing): (Vec<String>, Vec<String>) = check
                         .models
                         .iter()
                         .cloned()
                         .partition(|model| listed.contains(model));
-                    EndpointResult::Listed { served, missing }
+                    let closest = missing
+                        .iter()
+                        .filter_map(|model| {
+                            closest_served(model, &listed).map(|found| (model.clone(), found))
+                        })
+                        .collect();
+                    EndpointResult::Listed {
+                        served,
+                        missing,
+                        closest,
+                    }
                 }
                 Err(reason) => EndpointResult::Failed {
                     reason: redact_credentials(&reason, &secrets),
                 },
             };
-            EndpointReport { check, result }
+            EndpointReport {
+                check,
+                result,
+                credential_note,
+            }
         })
         .collect();
     let exit_code = exit_code_for(&endpoints);
@@ -615,17 +677,25 @@ pub(crate) fn format_report(report: &CheckReport) -> String {
             "endpoint: {}",
             models_url(&endpoint.check.base_url)
         ));
-        lines.push(format!(
-            "credential: {}",
-            endpoint.check.credential_key.as_deref().unwrap_or("<none>")
-        ));
+        let credential = endpoint.check.credential_key.as_deref().unwrap_or("<none>");
+        lines.push(match &endpoint.credential_note {
+            Some(note) => format!("credential: {credential} ({note})"),
+            None => format!("credential: {credential}"),
+        });
         match &endpoint.result {
-            EndpointResult::Listed { served, missing } => {
+            EndpointResult::Listed {
+                served,
+                missing,
+                closest,
+            } => {
                 if served.is_empty() && missing.is_empty() {
                     lines.push("  (the plan names no model)".to_string());
                 }
                 lines.extend(served.iter().map(|model| format!("  served   {model}")));
-                lines.extend(missing.iter().map(|model| format!("  missing  {model}")));
+                lines.extend(missing.iter().map(|model| match closest.get(model) {
+                    Some(found) => format!("  missing  {model} (closest served: {found})"),
+                    None => format!("  missing  {model}"),
+                }));
             }
             EndpointResult::Failed { reason } => {
                 lines.push(format!("  failed   {reason}"));

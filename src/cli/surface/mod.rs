@@ -15,7 +15,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod grok_keys;
 mod isolation;
+pub(crate) use grok_keys::{GrokKeyChoice, model_family, shared_prefix_len};
 pub(crate) use isolation::{Isolation, parent_session_isolation, tmux_removals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1603,17 +1605,21 @@ pub(crate) fn grok_key_variable_names(source: &Path) -> Vec<String> {
     names
 }
 
-/// The environment variable the owner's grok key map names for `model`
-/// alone: `model.<model>.env_key`. `None` without a readable key map or
-/// an entry for that model, so a check of one model never borrows the key
-/// of another.
-pub(crate) fn grok_model_env_key(source: &Path, model: &str) -> Option<String> {
-    let (models, _) = grok_clean_model_table(source).ok()??;
-    models
-        .get(model)?
-        .get("env_key")?
-        .as_str()
-        .map(str::to_string)
+/// The environment variable the owner's grok key map gives `model`: its
+/// own `model.<model>.env_key` entry, read the same whether the id was
+/// written quoted or as nested tables, else the safe guess of
+/// [`grok_keys::choose`], else nothing with the reason. A check of one
+/// model never borrows the key of an unrelated one.
+pub(crate) fn grok_model_env_key(source: &Path, model: &str) -> GrokKeyChoice {
+    match grok_clean_model_table(source) {
+        Ok(Some((models, _))) => grok_keys::choose(&grok_keys::entries(&models), model),
+        Ok(None) => GrokKeyChoice::None {
+            reason: "the grok configuration has no key map".to_string(),
+        },
+        Err(failure) => GrokKeyChoice::None {
+            reason: failure.to_string(),
+        },
+    }
 }
 
 /// The owner's grok configuration file.

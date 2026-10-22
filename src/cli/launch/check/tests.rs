@@ -304,7 +304,7 @@ fn a_credential_the_route_does_not_name_is_never_sent() {
         ("CLIPROXY_API_KEY", "fake-proxy-secret-value"),
         ("GROK_MODELS_BASE_URL", base_url.as_str()),
     ]);
-    let report = run_checks_with(&launch, None, &inherited, &[]);
+    let report = run_checks_with(&launch, None, &inherited, &[], None);
     let head = handle.join().expect("stub");
     let head_lower = head.to_ascii_lowercase();
     assert!(!head_lower.contains("authorization"), "{head}");
@@ -321,7 +321,13 @@ fn a_credential_the_route_does_not_name_is_never_sent() {
         ("CLIPROXY_API_KEY", "fake-proxy-secret-value"),
         ("GROK_MODELS_BASE_URL", base_url.as_str()),
     ]);
-    let report = run_checks_with(&launch, None, &inherited, &["CLIPROXY_API_KEY".to_string()]);
+    let report = run_checks_with(
+        &launch,
+        None,
+        &inherited,
+        &["CLIPROXY_API_KEY".to_string()],
+        None,
+    );
     let head = handle.join().expect("stub");
     assert!(
         head.to_ascii_lowercase()
@@ -346,7 +352,13 @@ fn a_refusal_that_echoes_the_sent_credential_is_redacted_under_any_name() {
         ("GROK_SEAT_HANDLE", value),
         ("GROK_MODELS_BASE_URL", base_url.as_str()),
     ]);
-    let report = run_checks_with(&launch, None, &inherited, &["GROK_SEAT_HANDLE".to_string()]);
+    let report = run_checks_with(
+        &launch,
+        None,
+        &inherited,
+        &["GROK_SEAT_HANDLE".to_string()],
+        None,
+    );
     let head = handle.join().expect("stub");
     assert!(
         head.to_ascii_lowercase()
@@ -533,7 +545,9 @@ fn report_serializes_with_the_endpoint_state() {
             result: EndpointResult::Listed {
                 served: vec!["kimi-k3".to_string()],
                 missing: Vec::new(),
+                closest: BTreeMap::new(),
             },
+            credential_note: None,
         }],
         exit_code: EXIT_SERVED,
         warnings: Vec::new(),
@@ -542,6 +556,108 @@ fn report_serializes_with_the_endpoint_state() {
     assert_eq!(json["endpoints"][0]["state"], "listed");
     assert_eq!(json["endpoints"][0]["served"][0], "kimi-k3");
     assert_eq!(json["endpoints"][0]["base_url"], "http://proxy.test");
+    // The suggestion and the note appear only when they hold something.
+    assert!(json["endpoints"][0].get("closest").is_none(), "{json}");
+    assert!(
+        json["endpoints"][0].get("credential_note").is_none(),
+        "{json}"
+    );
+}
+
+#[test]
+fn a_missing_model_names_the_closest_served_id_of_its_family() {
+    let (base_url, handle) = stub(
+        200,
+        r#"{"data":[{"id":"grok-4.7"},{"id":"grok-4.6"},{"id":"grok-3"},{"id":"gpt-5"}]}"#,
+    );
+    let mut launch = resolved("grok", env(&[]), Some("grok-4.5"));
+    launch.base_url_env = Some("GROK_MODELS_BASE_URL".to_string());
+    let inherited = env(&[("GROK_MODELS_BASE_URL", base_url.as_str())]);
+    let report = run_checks_with(&launch, None, &inherited, &[], None);
+    handle.join().expect("stub");
+    assert_eq!(report.exit_code, EXIT_MISSING);
+    let text = format_report(&report);
+    assert!(
+        text.contains("  missing  grok-4.5 (closest served: grok-4.7)"),
+        "{text}"
+    );
+    let json = report_json(&report);
+    assert_eq!(json["endpoints"][0]["closest"]["grok-4.5"], "grok-4.7");
+    assert_eq!(json["endpoints"][0]["missing"][0], "grok-4.5");
+
+    // No served id of the family: no suggestion, and the line stays short.
+    assert_eq!(closest_served("gemini-3", &["grok-4.7".to_string()]), None);
+    // The longest shared prefix wins before the greatest id.
+    assert_eq!(
+        closest_served("grok-4.5", &["grok-5".to_string(), "grok-4.6".to_string()]).as_deref(),
+        Some("grok-4.6")
+    );
+}
+
+#[test]
+fn the_credential_note_explains_a_guess_or_an_absence() {
+    let (base_url, handle) = stub(200, r#"{"data":[{"id":"grok-4.7"}]}"#);
+    let mut launch = resolved("grok", env(&[]), Some("grok-4.7"));
+    launch.base_url_env = Some("GROK_MODELS_BASE_URL".to_string());
+    let inherited = env(&[
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+        ("XAI_GUESSED_HANDLE", "fake-guessed-value"),
+    ]);
+    let note =
+        "no entry for grok-4.7: guessed from grok-4.5, the entry with the longest shared prefix";
+    let report = run_checks_with(
+        &launch,
+        None,
+        &inherited,
+        &["XAI_GUESSED_HANDLE".to_string()],
+        Some(note),
+    );
+    let head = handle.join().expect("stub");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("authorization: bearer fake-guessed-value"),
+        "{head}"
+    );
+    let text = format_report(&report);
+    assert!(
+        text.contains(&format!("credential: XAI_GUESSED_HANDLE ({note})")),
+        "{text}"
+    );
+    assert_eq!(
+        report_json(&report)["endpoints"][0]["credential_note"],
+        note
+    );
+
+    // Nothing to send: the line says why, and no header goes out.
+    let (base_url, handle) = stub(200, r#"{"data":[{"id":"grok-4.7"}]}"#);
+    let inherited = env(&[("GROK_MODELS_BASE_URL", base_url.as_str())]);
+    let absent = "no entry for grok-4.7: grok-4.5 and grok-4.6 share its longest prefix and name different variables";
+    let report = run_checks_with(&launch, None, &inherited, &[], Some(absent));
+    let head = handle.join().expect("stub");
+    assert!(
+        !head.to_ascii_lowercase().contains("authorization"),
+        "{head}"
+    );
+    assert!(
+        format_report(&report).contains(&format!("credential: <none> ({absent})")),
+        "{}",
+        format_report(&report)
+    );
+
+    // A credential under the tool's own name needs no note.
+    let (base_url, handle) = stub(200, r#"{"data":[{"id":"grok-4.7"}]}"#);
+    let inherited = env(&[
+        ("GROK_MODELS_BASE_URL", base_url.as_str()),
+        ("GROK_CODE_XAI_API_KEY", "fake-own-value"),
+    ]);
+    let report = run_checks_with(&launch, None, &inherited, &[], Some(absent));
+    handle.join().expect("stub");
+    assert!(
+        format_report(&report).contains("credential: GROK_CODE_XAI_API_KEY\n"),
+        "{}",
+        format_report(&report)
+    );
+    assert_eq!(report.endpoints[0].credential_note, None);
 }
 
 #[test]
@@ -558,6 +674,7 @@ fn the_report_shows_an_endpoint_without_its_password_or_credential_query() {
             result: EndpointResult::Failed {
                 reason: "https://u:fake-url-secret@proxy.test/v1/models: HTTP 502".to_string(),
             },
+            credential_note: None,
         }],
         exit_code: EXIT_ENDPOINT,
         warnings: Vec::new(),

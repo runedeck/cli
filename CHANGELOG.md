@@ -41,6 +41,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Start every agy prompt with an instruction to read with the file tools.
 - Refuse a mode a harness cannot take (answer-only for codex, grok, and agy too) as a configuration error with exit 125, before a profile's pre-steps run.
 - Pass `--log-file` to agy in the run's scratch directory and read it before the scratch goes, so a headless soft-deny line travels as a harness error with a hint that names the denied tool.
+- Read the grok key map whatever its quoting, so `[model.grok-4.5]` is the one id `grok-4.5`.
+- Guess the key of a grok model without an entry from the one variable of the file, else from the entry with the longest shared prefix, and send nothing on a tie.
+- Say in the check report why a credential is a guess or absent (`credential_note`), and name the closest served id of a missing model's family (`closest`).
 - Show a dropped profile value in the `owns` warning only for a fixed-choice option (`--sandbox`, `--permission-mode`, `--output-format`) and only when it is a known value, else hide it whole.
 - Check a grok endpoint set in the shell (`GROK_MODELS_BASE_URL`), and ask `<base>/models` when the base URL already ends in `/v1`.
 - Send with a grok check only the inherited `GROK_*` credential or the variable the checked model's `env_key` entry names, never another credential of the shell or another model's key.
