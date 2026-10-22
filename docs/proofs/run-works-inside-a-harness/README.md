@@ -1,9 +1,9 @@
 ---
 type: proof
 change: run-works-inside-a-harness
-head: 1c811b81f919ebbd259aafe6061fe280cfee2cef
+head: 1d1753a514fec9814da90e8d9bbde3ce64155a07
 recorded: 2026-10-22
-transcript: c2f72a1e5c2821c843395e3cef601c5e9936f37e32711e8aa506ea77db567670
+transcript: fa51d8e853fe360c1a22cdae909bbab6e559833a8a3eabfd74ae48c9b68eb7c0
 scenes:
 - scenario: execute-prompts-off-session#the-child-harness-starts-free-of-the-parent-harness-s-session/desktop-session-starts-a-proxied-claude-route
   kind: check
@@ -155,8 +155,8 @@ $ rune --json run sol@claude --dry-run "x"
 
 ```console
 $ rune --json run nosuch@claude "x"
-? 2
-{"details":{"message":"no launch profile 'nosuch' for claude (profiles: [..])","profiles":[[..]]},"kind":"configuration_error","ok":false,"tool":"nosuch@claude"}
+? 125
+{"details":{"message":"no launch profile 'nosuch' for claude (profiles: [..])","profiles":[[..]]},"exit_code":125,"kind":"configuration_error","ok":false,"tool":"nosuch@claude"}
 ```
 
 ## execute-prompts-off-session#the-dry-run-shows-what-would-start/endpoint-set-through-the-environment

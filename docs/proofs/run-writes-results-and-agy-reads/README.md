@@ -1,12 +1,12 @@
 ---
 type: proof
 change: run-writes-results-and-agy-reads
-head: 60ed9298dc88e510cfbe407857189d7e46e81e8a
+head: d9d9de72c6afc113945995fbb428915993589a26
 recorded: 2026-10-22
-transcript: d77d172621a3306a23ac8d778411d9345905cf57f727676fd49e0cc669b582ea
+transcript: 55be48989064ca8c9bd8d7822a71af3a51c8083ce984c18d38d5b3a1c50c9f8e
 scenes:
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/council-seat-writes-its-answer-to-a-file
-  kind: check
+  kind: unproven
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/failed-run-still-writes-its-result
   kind: check
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/output-path-in-a-protected-place-is-refused
@@ -24,7 +24,7 @@ scenes:
 - scenario: execute-prompts-off-session#a-read-only-agy-run-is-refused/agy-council-seat-in-read-only-mode
   kind: check
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/clean-grok-run-uses-an-api-key-from-the-environment
-  kind: check
+  kind: unproven
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/grok-echoes-its-key
   kind: unproven
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/owner-s-grok-configuration-is-malformed
@@ -63,19 +63,19 @@ $ cat seat.json
 
 ## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/output-path-in-a-protected-place-is-refused
 
-A path under the home folder, a path inside `.git`, and a symlink are refused before anything starts, with exit 2.
+A path under the home folder, a path inside `.git`, and a symlink are refused before anything starts, with exit 125.
 
 ```console
 $ sh -c 'rune run sol@claude x --output ~/.claude/settings.json'
-? 2
+? 125
 fatal: output file [..]/.claude/settings.json is outside every permitted place: [..]
 $ mkdir .git
 $ rune run sol@claude x --output .git/hook.json
-? 2
+? 125
 fatal: output file [..]/.git/hook.json lies under the hidden folder .git inside [..]
 $ sh -c 'printf "{}\n" > real.json && ln -s real.json link.json'
 $ rune run sol@claude x --output link.json
-? 2
+? 125
 fatal: output file [..]/link.json is a symlink, and the runner replaces only a regular file
 ```
 
@@ -85,7 +85,7 @@ fatal: output file [..]/link.json is a symlink, and the runner replaces only a r
 
 ```console
 $ sh -c 'rune run sol@claude x --repo ~/.claude --output ~/.claude/settings.json'
-? 2
+? 125
 fatal: output file [..]/.claude/settings.json is outside every permitted place: [..]
 ```
 
@@ -95,7 +95,7 @@ The usage error prints before the path is accepted, and no file is written.
 
 ```console
 $ rune run sol@claude x --mode bogus --output seat.json
-? 2
+? 125
 error: invalid value 'bogus' for '--mode <MODE>'
   [possible values: read-only, workspace-write, answer-only]
 
@@ -105,13 +105,13 @@ $ ls
 
 ## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/output-folder-moved-during-the-run
 
-The harness moves the output folder away and plants a file at the old path: stdout carries the full result, the exit code is 74, and the planted file is named by nothing.
+The harness moves the output folder away and plants a file at the old path: stdout carries the full result, the exit code is 125, and the planted file is named by nothing.
 
 ```console
 $ mkdir out
 $ sh -c 'printf "%s\n" "#!/bin/sh" "mv out out.old" "mkdir out" "echo planted > out/seat.json" "echo real answer" > mover && chmod 755 mover'
 $ rune --json run sol@claude --binary ./mover "x" --output out/seat.json
-? 74
+? 125
 error: cannot write result file [..]/out/seat.json: the file at that path is not the file the runner wrote (the folder moved during the run)
 {"artifacts":[],[..]"kind":"success",[..]"text":"real answer",[..]}
 $ cat out/seat.json
@@ -138,13 +138,13 @@ $ ls -l seat.txt
 
 ## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/result-file-cannot-be-written
 
-The output folder turns read-only while the harness runs: stdout carries the full result object, and the exit code is 74.
+The output folder turns read-only while the harness runs: stdout carries the full result object, and the exit code is 125.
 
 ```console
 $ mkdir out
 $ sh -c 'printf "%s\n" "#!/bin/sh" "chmod 555 out" "echo real answer" > locker && chmod 755 locker'
 $ rune --json run sol@claude --binary ./locker "x" --output out/seat.json
-? 74
+? 125
 error: cannot write result file [..]/out/seat.json: Permission denied[..]
 {"artifacts":[],[..]"kind":"success",[..]"text":"real answer",[..]}
 $ chmod 755 out
@@ -155,10 +155,10 @@ $ ls out
 
 ```console
 $ rune run gemini@agy "Review this repository"
-? 2
+? 125
 fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
 $ rune run gemini@agy --mode read-only "Review this repository"
-? 2
+? 125
 fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
 ```
 

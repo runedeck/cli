@@ -1,9 +1,9 @@
 ---
 type: proof
 change: run-isolates-write-runs
-head: 8c116dc6f9617740d86bd8c53f411e4366731c4d
+head: e92dc02c6c21b1e0f030bef763f0f1fe9137ec71
 recorded: 2026-10-22
-transcript: 45af645ee4869a83379ba366c089fac8a3cd23b664eeaa5fd8f676a907fe4e8d
+transcript: f053905426c20713201be0afc6ffc0c46a8bc9198defc90a0e73c410f600691f
 scenes:
 - scenario: execute-prompts-off-session#a-workspace-write-run-works-in-its-own-jj-workspace/workspace-write-seat-edits-a-file
   kind: check
@@ -207,6 +207,6 @@ A folder under neither git nor jj cannot take a workspace-write run: the refusal
 ```console
 $ mkdir plain
 $ rune run sol@claude --mode workspace-write --repo plain "x"
-? 2
+? 125
 fatal: [..]
 ```
