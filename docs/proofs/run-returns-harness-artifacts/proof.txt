@@ -1,0 +1,62 @@
+## execute-prompts-off-session#the-run-copies-the-files-where-the-user-asks/dry-run-with-a-destination
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ rune run gemini@agy --mode workspace-write --repo repo --artifacts-dir out --dry-run "x"
+  tool: agy
+  model: gemini
+  model_id: gemini-4-argon-high
+  model_context: 1000000
+  model_source: config
+  argv: agy --sandbox --mode accept-edits --log-file <scratch>/agy.log --print Read files with your file tools (read, list, search), never with a shell command: this run is headless, and a shell command that needs a confirmation is denied.
+
+  <prompt> --output-format json --model gemini-4-argon-high
+  env:
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: <none>
+  wrap:
+  pre:
+  stdin: none
+  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-77103-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-3662dde8-14-0-2543aee4c20d/run-1792694198980-87532/
+  mode: workspace-write
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: none
+  artifacts_dir: out
+  clean_config_keys: none
+  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-77103-execute-prompts-off-session-the-run-copies-the-files-where-the-user-asks-dry-run-with-a-destination-3662dde8-14-0-2543aee4c20d/run-1792694198980-87532
+  workspace_parent: uwqnymqmxvxmzrxnorvrprmomklrmmzq
+  workspace_colocate: false
+
