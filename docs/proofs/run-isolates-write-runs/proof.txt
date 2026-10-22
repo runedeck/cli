@@ -1,0 +1,141 @@
+## execute-prompts-off-session#a-workspace-write-run-works-in-its-own-jj-workspace/workspace-write-seat-edits-a-file
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ sh -c 'printf "# Scratch\n\nOne line before the seat.\n" > repo/README.md'
+$ rune run sol@claude --clean --mode workspace-write --repo repo --session-name proof-edit "Append the line 'edited by the seat' to README.md with the Edit tool, then reply with the single word done."
+  [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  workspace: kept change uqqyloqympnvuqtmvtwqkknlxluprsxo (run-1792694358287-2876); review it with jj, then squash or abandon it
+  done
+$ cat repo/README.md
+  # Scratch
+
+  One line before the seat.
+$ jj -R repo diff -r 'description(substring:"proof-edit")' --summary
+  M repo/README.md
+$ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
+  uqqyloqympnv rune run sol@claude: proof-edit
+  qvvstrkyqyyr
+  zzzzzzzzzzzz
+$ jj -R repo workspace list
+  default: repo qvvstrky d6b71fa8 (no description set)
+
+## execute-prompts-off-session#a-workspace-write-run-works-in-its-own-jj-workspace/dry-run-of-a-workspace-write-route
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ rune run sol@claude --mode workspace-write --repo repo --dry-run "x"
+  tool: claude
+  model: sol
+  model_id: gpt-6.1-sol
+  model_context: 272000
+  model_source: config
+  argv: claude --print --output-format text --permission-mode acceptEdits --allowedTools Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit --model gpt-6.1-sol --settings {"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"},"sandbox":{"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":true,"enabled":true,"failIfUnavailable":true}}
+  env:
+    ANTHROPIC_MODEL=gpt-6.1-sol
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000
+    ANTHROPIC_AUTH_TOKEN=<redacted>
+    ANTHROPIC_BASE_URL=https://cliproxy.internal
+    ANTHROPIC_SMALL_FAST_MODEL=gpt-6-luna
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: https://cliproxy.internal
+  wrap:
+  pre:
+  stdin: <prompt>
+  repository: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-2849-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-1d116be8-10-0-71a49f45cb9e/run-1792694374550-4103/
+  mode: workspace-write
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: --name
+  artifacts_dir: none
+  clean_config_keys: none
+  workspace: /Users/N4M3Z/.local/state/rune/workspaces/rune-proof-2849-execute-prompts-off-session-a-workspace-write-run-works-in-its-own-jj-workspace-dry-run-of-a-workspace-write-route-1d116be8-10-0-71a49f45cb9e/run-1792694374550-4103
+  workspace_parent: ltskpsntvuwkupyyryvlywkpztsooqzn
+  workspace_colocate: false
+$ jj -R repo workspace list
+  default: repo ltskpsnt 3560b64d (empty) (no description set)
+
+## execute-prompts-off-session#the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run/run-that-changes-nothing
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ sh -c 'printf "# Scratch\n" > repo/README.md'
+$ rune run sol@claude --clean --mode workspace-write --repo repo "Reply with the single word done. Change no file."
+  [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  workspace: no file changed, nothing kept
+  done
+$ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
+  qqwkostqxxvm
+  zzzzzzzzzzzz
+$ jj -R repo workspace list
+  default: repo qqwkostq 9132a5ba (no description set)
+
+## execute-prompts-off-session#the-runner-keeps-the-run-s-work-as-one-change-and-drops-an-empty-run/run-that-edits-files
+kind: check
+$ jj git init repo
+  Initialized repo in "repo"
+$ sh -c 'printf "# Scratch\n" > repo/README.md'
+$ rune --json run sol@claude --clean --mode workspace-write --repo repo --session-name proof-two-files "Append the line 'edited by the seat' to README.md with the Edit tool, create NOTES.md holding the single line 'notes by the seat' with the Write tool, then reply with the single word done."
+  [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":17609,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":"proof-two-files","session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"qqpsxnvmuvwopkuwyormlsownrorlxyp","colocated":false,"conflicted":false,"kept":true,"name":"run-1792694377597-4601","operation_id":"ffd38f5557f7a76c0986d2667b1afe531e21f6391dbb3ba77ec0ffbb2fdb273eeabea3dbdb5cb6256595a5dca8da34ecc14f687339655ab4b4f510d00a891156","outside_changes":false,"unrecorded":[]}}
+$ jj -R repo diff -r 'description(substring:"proof-two-files")' --summary
+  A repo/NOTES.md
+  M repo/README.md
+$ jj -R repo log --no-graph -T 'change_id.short() ++ " " ++ description.first_line() ++ "\n"'
+  qqpsxnvmuvwo rune run sol@claude: proof-two-files
+  oouvsxssonsz
+  zzzzzzzzzzzz
+$ jj -R repo workspace list
+  default: repo oouvsxss 9e35ee82 (no description set)
+
+## execute-prompts-off-session#a-plain-git-repository-gets-jj-before-an-isolated-run/git-repository-without-jj
+kind: check
+$ git init -q repo
+$ sh -c 'printf "# Scratch\n" > repo/README.md'
+$ rune --json run sol@claude --clean --mode workspace-write --repo repo "Reply with the single word done. Change no file."
+  [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
+  {"artifacts":[],"clean":true,"completion_tokens":null,"duration_ms":2886,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"claude","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"done","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":{"change_id":"kzuyywpuzzvzsprkmqqzmvpzpnwtkuwp","colocated":true,"conflicted":false,"kept":false,"name":"run-1792694395572-6142","operation_id":"b036f5457f9283da194600d84c2cba4671f1ecbd13eb5e1e8caf9243b32c78db273862e094d7efc0d2e916470569323df41d50bb6138a1dfe68fe05d12a97dac","outside_changes":false,"unrecorded":[]}}
+$ ls -d repo/.jj
+  repo/.jj
+$ jj -R repo workspace list
+  default: repo ttvusppr 48c96b9f (no description set)
+
+## execute-prompts-off-session#a-plain-git-repository-gets-jj-before-an-isolated-run/folder-without-version-control
+kind: check
+$ mkdir plain
+$ rune run sol@claude --mode workspace-write --repo plain "x"
+  fatal: a workspace-write run needs a jj or git repository to isolate the harness, and /private/tmp/claude-501/rune-proof-2849-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-3176a4b8-37-0/plain is in neither; use --mode read-only, or run `jj git init --colocate /private/tmp/claude-501/rune-proof-2849-execute-prompts-off-session-a-plain-git-repository-gets-jj-before-an-isolated-run-folder-without-version-control-3176a4b8-37-0/plain` first
+
