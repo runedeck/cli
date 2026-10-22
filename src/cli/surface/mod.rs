@@ -1098,15 +1098,14 @@ fn filter_profile_args(
                 }
                 filtered.warnings.append(&mut notes);
             }
-            // The value is shown by the credential rules: a credential-named
-            // flag (an opencode `--password`) hides it whole, a URL loses its
-            // password and credential-named parameters, and a plain flag value
-            // (`--sandbox workspace-local`) reads as written.
+            // The value is shown only for an option whose values come from
+            // a fixed list (`--sandbox workspace-local`); every other value
+            // is hidden whole.
             None => filtered.warnings.push(match value.as_deref() {
                 Some(v) if !v.is_empty() => format!(
                     "automated {name} execution owns {}; the profile value {} is dropped",
                     arg.option,
-                    dropped_value(arg.option, v)
+                    dropped_value(invocation.surface, arg.option, v)
                 ),
                 _ => format!(
                     "automated {name} execution owns {}; the profile flag is dropped",
@@ -1119,20 +1118,33 @@ fn filter_profile_args(
     filtered
 }
 
-/// A dropped profile value as a warning shows it: hidden whole when the
-/// flag or the key path is credential-named, else as written after the
-/// by-name redaction (URL passwords, credential-named parameters and
-/// `NAME=value` pairs), one line, cut. A flag value such as
-/// `workspace-local` is no secret, and the owner reads what was dropped.
-fn dropped_value(name: &str, value: &str) -> String {
-    let credential = crate::cli::launch::is_credential_flag(name)
-        || name
-            .split('.')
-            .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()));
-    if credential {
-        REDACTED_VALUE.to_string()
+/// The owned options and config keys of one surface whose values come from
+/// a fixed list the harness documents (`--sandbox workspace-local`,
+/// `--permission-mode plan`): the only dropped values a warning shows.
+/// Spellings are not portable: `-s` is codex's sandbox and opencode's
+/// session.
+fn fixed_choice_options(surface: Surface) -> &'static [&'static str] {
+    match surface {
+        Surface::Claude => &["--output-format", "--permission-mode"],
+        Surface::Codex => &["-s", "--sandbox", "sandbox_mode", "approval_policy"],
+        Surface::Grok => &["--output-format", "--sandbox", "--permission-mode"],
+        Surface::Agy => &["--output-format", "--sandbox", "--mode"],
+        Surface::Opencode => &["--format"],
+    }
+}
+
+/// A dropped profile value as a warning shows it: as written, one line,
+/// cut, when the option's values come from a fixed list, so the owner
+/// reads which mode was dropped; hidden whole for every other option or
+/// key path. A free value can carry a credential under any name (an MCP
+/// server's `args` array holds `--api-key` and the key side by side, a
+/// URL holds a password), and a by-name redaction cannot know every
+/// shape, so no free value reaches a warning.
+fn dropped_value(surface: Surface, name: &str, value: &str) -> String {
+    if fixed_choice_options(surface).contains(&name) {
+        shown(value)
     } else {
-        shown(&redact_text(value, &[]))
+        REDACTED_VALUE.to_string()
     }
 }
 
@@ -1190,14 +1202,15 @@ fn codex_config_key(option: &str, assignment: &str, model: Option<&str>) -> Keye
     if key == "model" && model.is_some_and(|model| codex_config_string(value) == model) {
         return Some((None, Vec::new()));
     }
-    // A value under a credential-named segment (`mcp_servers.*.env.TOKEN`,
-    // `http_headers.Authorization`) is hidden; `sandbox_mode` reads as written.
+    // `sandbox_mode` and `approval_policy` read as written; every other
+    // value (`mcp_servers.*.env.TOKEN`, an `args` array with a key in it)
+    // is hidden.
     Some((
         None,
         vec![format!(
             "automated codex execution owns config key {}; the profile value {} is dropped",
             shown(key),
-            dropped_value(key, &codex_config_string(value))
+            dropped_value(Surface::Codex, key, &codex_config_string(value))
         )],
     ))
 }

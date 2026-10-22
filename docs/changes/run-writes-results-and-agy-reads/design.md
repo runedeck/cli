@@ -18,6 +18,8 @@ For grok, the runner parses the owner's `config.toml` and copies only `model.<id
 
 The check sends only a credential the route names. For a tool outside the Anthropic and OpenAI families it takes the first credential-shaped key of the plan's own environment, else, from the inherited environment, a credential-shaped key under the tool's own name (`GROK_CODE_XAI_API_KEY`) or a variable that a grok `env_key` entry names. Any other credential in the shell, `AWS_SECRET_ACCESS_KEY` or a proxy token under its own name, is never sent (reviewer repro `check2.sh`): nothing the route carries names it, so the endpoint has no claim to it. A unit test with a fake AWS value proves that the stub endpoint receives no authorization header.
 
+The `owns` warning for a dropped profile argument shows the value only for an option whose values come from a fixed list the harness documents (`--sandbox`, `--permission-mode`, `--output-format`, `--mode`, opencode's `--format`, codex's `sandbox_mode` and `approval_policy`), so the owner reads which mode was dropped. Every other value is hidden whole. A by-name redaction showed an MCP server's `args` array with `--api-key` and the key side by side (reviewer repro), because no name in that value looks like a credential, and no rule over names can know every shape a free value takes.
+
 The output path check judges the hidden-folder rule from the closest permitted root (the repository when the repository sits under the temporary directory), and it probes the parent with an exclusive file it removes at once, so "the parent cannot take a new file" is tested rather than inferred from permission bits.
 
 ## Structure

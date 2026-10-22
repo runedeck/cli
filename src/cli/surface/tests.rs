@@ -162,9 +162,9 @@ fn claude_settings_path_is_dropped_not_loaded() {
 }
 
 #[test]
-fn warnings_show_a_dropped_value_by_the_credential_rules() {
-    // A plain value reads as written, on one line: a forged line break
-    // cannot add a warning.
+fn warnings_show_a_dropped_value_only_for_a_fixed_choice_option() {
+    // A free value is hidden whole, on one line: a forged line break
+    // cannot add a warning, and a model name may be anything.
     let filtered = filter_surface_args(&invocation(
         Surface::Claude,
         &["--model", "evil\nwarning: forged"],
@@ -172,23 +172,36 @@ fn warnings_show_a_dropped_value_by_the_credential_rules() {
     assert_eq!(filtered.warnings.len(), 1);
     assert!(!filtered.warnings[0].contains('\n'));
     assert!(
-        filtered.warnings[0].contains("owns --model; the profile value evil"),
+        filtered.warnings[0].contains("owns --model; the profile value <redacted> is dropped"),
         "{}",
         filtered.warnings[0]
     );
+    assert!(!filtered.warnings[0].contains("evil"));
+    // A mode from a fixed list reads as written.
     let grok = filter_surface_args(&invocation(
         Surface::Grok,
-        &["--sandbox", "workspace-local"],
+        &["--sandbox", "workspace-local", "--permission-mode", "plan"],
     ));
-    assert_eq!(grok.warnings.len(), 1, "{:?}", grok.warnings);
+    assert_eq!(grok.warnings.len(), 2, "{:?}", grok.warnings);
     assert!(
         grok.warnings[0].contains("owns --sandbox; the profile value workspace-local is dropped"),
         "{}",
         grok.warnings[0]
     );
+    assert!(
+        grok.warnings[1].contains("owns --permission-mode; the profile value plan is dropped"),
+        "{}",
+        grok.warnings[1]
+    );
+    let codex = filter_surface_args(&invocation(Surface::Codex, &["-s", "read-only"]));
+    assert!(
+        codex.warnings[0].contains("owns -s; the profile value read-only is dropped"),
+        "{:?}",
+        codex.warnings
+    );
 
-    // A credential-named flag hides its value whole, a URL loses its
-    // password and credential-named parameter, a model name stays.
+    // A credential-named flag, a URL with a password, and a model name
+    // are all hidden whole: the warning names the option and nothing else.
     let opencode = filter_surface_args(&invocation(
         Surface::Opencode,
         &[
@@ -197,29 +210,27 @@ fn warnings_show_a_dropped_value_by_the_credential_rules() {
             "--attach=http://user:fake-url-secret@127.0.0.1:4096/?token=fake-query-secret",
             "--model",
             "proton-lumo/lumo-max",
+            "-s",
+            "fake-session-id",
         ],
     ));
-    assert_eq!(opencode.warnings.len(), 3, "{:?}", opencode.warnings);
-    for warning in &opencode.warnings {
+    assert_eq!(opencode.warnings.len(), 4, "{:?}", opencode.warnings);
+    for (warning, option) in
+        opencode
+            .warnings
+            .iter()
+            .zip(["--password", "--attach", "--model", "-s"])
+    {
         assert!(!warning.contains("fake-"), "{warning}");
+        assert!(
+            warning.contains(&format!(
+                "owns {option}; the profile value <redacted> is dropped"
+            )),
+            "{warning}"
+        );
     }
-    assert!(
-        opencode.warnings[0].contains("owns --password; the profile value <redacted> is dropped"),
-        "{}",
-        opencode.warnings[0]
-    );
-    assert!(opencode.warnings[1].contains("owns --attach"));
-    assert!(
-        opencode.warnings[1].contains("user:<redacted>@127.0.0.1:4096/?token=<redacted>"),
-        "{}",
-        opencode.warnings[1]
-    );
-    assert!(
-        opencode.warnings[2]
-            .contains("owns --model; the profile value proton-lumo/lumo-max is dropped"),
-        "{}",
-        opencode.warnings[2]
-    );
+    assert!(!opencode.warnings[1].contains("127.0.0.1"));
+    assert!(!opencode.warnings[2].contains("lumo"));
 }
 
 #[test]
@@ -2242,17 +2253,45 @@ fn drop_warnings_name_the_key_and_never_the_value() {
     for warning in &codex.warnings {
         assert!(!warning.contains("fake-"), "{warning}");
     }
-    // A key that names no credential shows its value.
+    // A key under no credential name still carries one: an MCP server's
+    // `args` array holds the flag and the key side by side. Hidden whole.
+    let args = filter_surface_args(&invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            "mcp_servers.demo.args=[\"--api-key\",\"fake-mcp-arg-secret\"]",
+        ],
+    ));
+    assert_eq!(args.warnings.len(), 1, "{:?}", args.warnings);
+    assert!(
+        args.warnings[0]
+            .contains("config key mcp_servers.demo.args; the profile value <redacted> is dropped"),
+        "{}",
+        args.warnings[0]
+    );
+    assert!(!args.warnings[0].contains("fake-"), "{}", args.warnings[0]);
+    // A key whose values come from a fixed list shows its value.
     let plain = filter_surface_args(&invocation(
         Surface::Codex,
-        &["-c", "sandbox_mode=\"danger-full-access\""],
+        &[
+            "-c",
+            "sandbox_mode=\"danger-full-access\"",
+            "-c",
+            "approval_policy=\"never\"",
+        ],
     ));
-    assert_eq!(plain.warnings.len(), 1, "{:?}", plain.warnings);
+    assert_eq!(plain.warnings.len(), 2, "{:?}", plain.warnings);
     assert!(
         plain.warnings[0]
             .contains("config key sandbox_mode; the profile value danger-full-access is dropped"),
         "{}",
         plain.warnings[0]
+    );
+    assert!(
+        plain.warnings[1]
+            .contains("config key approval_policy; the profile value never is dropped"),
+        "{}",
+        plain.warnings[1]
     );
 
     let claude = filter_surface_args(&invocation(
