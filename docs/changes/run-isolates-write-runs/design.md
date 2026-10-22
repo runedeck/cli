@@ -9,7 +9,9 @@ whatever the harness wrote into one change that the owner can review with the us
 
 The workspace lives in the rune state directory. A workspace inside the checkout would be
 picked up by the caller's own working-copy snapshot unless the repository ignores its folder, and the runner cannot
-assume that it does. The owner's Claude Code sandbox already allows writes to the rune state directory.
+assume that it does. The owner's Claude Code sandbox already allows writes to the rune state directory. The plan
+resolves where the workspace folder would be created (its deepest existing ancestor made canonical) and refuses a
+folder inside the canonical checkout, whether a state directory was set inside the repository or a symlink leads there.
 
 Isolation applies to workspace-write runs only, as the owner chose. A read-only run stays in place because its harness
 enforces read-only access. A harness that cannot, agy, refuses read-only mode instead of running unguarded.

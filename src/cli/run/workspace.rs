@@ -330,6 +330,36 @@ fn parent_change_id(root: &Path) -> Result<String, String> {
         .ok_or_else(|| "jj log printed no change id for the working copy".to_string())
 }
 
+/// Where `path` resolves on disk: its deepest existing ancestor made
+/// canonical, with the rest of the path appended. A folder that does not
+/// exist yet is judged by where it would be created.
+fn resolved_location(path: &Path) -> PathBuf {
+    for ancestor in path.ancestors() {
+        if let Ok(canonical) = std::fs::canonicalize(ancestor) {
+            let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
+            return canonical.join(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Refuse a workspace folder that resolves inside the caller's checkout,
+/// through a state directory set inside it or a symlink that leads there:
+/// the caller's own snapshot would pick the harness's files up, and the
+/// harness would work inside the checkout it must not touch.
+fn refuse_inside_checkout(path: &Path, root: &Path) -> Result<(), String> {
+    let location = resolved_location(path);
+    let checkout = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if location.starts_with(&checkout) {
+        return Err(format!(
+            "the workspace folder {} would lie inside the checkout {}; set RUNE_STATE_DIR or XDG_STATE_HOME to a folder outside the repository, or use --mode read-only",
+            path.display(),
+            root.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Plan the workspace for one run: where it goes, what it is called, and
 /// what its change says. Nothing is created.
 pub(crate) fn plan(repository: &Path, route: &str, session: Option<&str>) -> Result<Plan, String> {
@@ -339,6 +369,7 @@ pub(crate) fn plan(repository: &Path, route: &str, session: Option<&str>) -> Res
     let repository_id = repository_id(vcs.root());
     let workspaces = state.join("workspaces");
     let path = workspaces.join(&repository_id).join(&name);
+    refuse_inside_checkout(&path, vcs.root())?;
     let lock_path = workspaces.join(format!("{repository_id}.lock"));
     let parent_change_id = match &vcs {
         Vcs::Jj { root, .. } => Some(parent_change_id(root)?),
@@ -769,6 +800,28 @@ mod tests {
                 colocated: true
             })
         );
+    }
+
+    #[test]
+    fn a_workspace_folder_inside_the_checkout_is_refused_through_a_symlink_too() {
+        let root = tempfile::tempdir().expect("root");
+        let checkout = root.path().join("repo");
+        std::fs::create_dir_all(checkout.join(".jj")).expect("checkout");
+        let inside = checkout.join(".state/workspaces/repo-1/run-1");
+        let error = refuse_inside_checkout(&inside, &checkout).expect_err("inside");
+        assert!(error.contains("would lie inside the checkout"), "{error}");
+        assert!(error.contains("RUNE_STATE_DIR"), "{error}");
+
+        let outside = root.path().join("state/workspaces/repo-1/run-1");
+        assert_eq!(refuse_inside_checkout(&outside, &checkout), Ok(()));
+
+        #[cfg(unix)]
+        {
+            let alias = root.path().join("alias");
+            std::os::unix::fs::symlink(&checkout, &alias).expect("symlink");
+            let through_alias = alias.join("state/workspaces/repo-1/run-1");
+            assert!(refuse_inside_checkout(&through_alias, &checkout).is_err());
+        }
     }
 
     #[test]

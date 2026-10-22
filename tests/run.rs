@@ -2944,6 +2944,52 @@ fn a_sigterm_during_an_isolated_run_still_finishes_the_workspace() {
 
 #[cfg(unix)]
 #[test]
+fn a_state_directory_inside_the_checkout_refuses_the_isolated_run() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let marker = home.path().join("harness-started");
+    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let binary = provider.to_str().expect("provider path");
+    // The state directory inside the repository, then a symlink outside it
+    // that leads inside.
+    let alias = home.path().join("state-alias");
+    std::fs::create_dir_all(repository.path().join("state")).expect("state inside");
+    std::os::unix::fs::symlink(repository.path().join("state"), &alias).expect("symlink");
+    for state_dir in [repository.path().join(".state"), alias] {
+        let output = rune_isolated(home.path(), state.path())
+            .env("RUNE_STATE_DIR", &state_dir)
+            .args([
+                "--json",
+                "run",
+                "sol@claude",
+                "Edit",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+                "--mode",
+                "workspace-write",
+            ])
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+        assert_eq!(result["kind"], "configuration_error", "{result}");
+        assert!(
+            result["details"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("would lie inside the checkout")),
+            "{result}"
+        );
+        assert!(!marker.exists(), "the harness started");
+        assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");
