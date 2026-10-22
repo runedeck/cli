@@ -3296,6 +3296,46 @@ fn timed_out_run_with_an_output_file_writes_the_timeout_object() {
 
 #[cfg(unix)]
 #[test]
+fn a_protected_folder_named_as_the_repository_opens_no_file_there() {
+    let home = tempfile::tempdir().expect("home");
+    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+    let claude = home.path().join(".claude");
+    std::fs::create_dir_all(&claude).expect(".claude");
+    let settings = claude.join("settings.json");
+    std::fs::write(&settings, "{\"owner\":true}").expect("settings");
+    let zshrc = home.path().join(".zshrc");
+    std::fs::write(&zshrc, "# owner\n").expect("zshrc");
+
+    // `--repo` names the protected folder, or the home itself: neither is
+    // the caller's repository, and neither widens where a file may go.
+    for (repo, output) in [(&claude, &settings), (&home.path().to_path_buf(), &zshrc)] {
+        let result = rune(home.path())
+            .args(["--json", "run", "sol@claude", "Review", "--repo"])
+            .arg(repo)
+            .args(["--binary", binary, "--output"])
+            .arg(output)
+            .output()
+            .expect("run output");
+        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        let json = confirmation_of(&result);
+        assert_eq!(json["kind"], "configuration_error", "{json}");
+        assert!(
+            !marker.exists(),
+            "the harness started for {}",
+            output.display()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(&settings).expect("settings"),
+        "{\"owner\":true}"
+    );
+    assert_eq!(std::fs::read_to_string(&zshrc).expect("zshrc"), "# owner\n");
+}
+
+#[cfg(unix)]
+#[test]
 fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
     let home = tempfile::tempdir().expect("home");
     let repository = plain_repository();

@@ -105,10 +105,13 @@ impl Text {
 pub(crate) fn execute(options: &RunOptions) -> Result<i32, String> {
     // The output path is accepted before anything else, so no later
     // outcome is lost to a bad path, and a bad path starts nothing.
+    // The permitted repository is the one the caller works in, read from
+    // the working directory. `--repo` names where the harness runs and
+    // never widens where a file may be written.
     let destination = match options
         .output
         .as_deref()
-        .map(|path| output::accept(path, &options.repository))
+        .map(|path| output::accept(path, output::caller_repository_root().as_deref()))
         .transpose()
     {
         Ok(destination) => destination,

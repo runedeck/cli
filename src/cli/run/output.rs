@@ -1,8 +1,11 @@
 //! The result file `rune run --output` writes. Any session that calls rune
 //! can name the file, so the path is checked before the harness starts: it
-//! must sit inside the repository, the system temporary directory, or the
-//! rune state directory, with no hidden folder between that root and the
-//! file, and it must not be a symlink. The write is one exclusive
+//! must sit inside the repository the caller works in, the system temporary
+//! directory, or the rune state directory, with no hidden folder between
+//! that root and the file, no hidden file name, and no symlink target. The
+//! repository root is the version-control root of the caller's working
+//! directory, never a folder `--repo` names: `--repo ~/.claude` must not
+//! open `~/.claude/settings.json` for writing. The write is one exclusive
 //! temporary file in the target's directory, synced and renamed over the
 //! target, so a reader sees the old result or the new one.
 
@@ -21,11 +24,20 @@ impl Destination {
     }
 }
 
+/// The repository the caller works in: the jj or git root above the
+/// working directory, when there is one.
+pub(crate) fn caller_repository_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    super::workspace::detect(&cwd)
+        .ok()
+        .map(|vcs| vcs.root().to_path_buf())
+}
+
 /// The roots a result file may sit under, canonical, longest first so the
 /// hidden-folder rule is judged from the closest one.
-fn permitted_roots(repository: &Path) -> Vec<(&'static str, PathBuf)> {
+fn permitted_roots(repository: Option<&Path>) -> Vec<(&'static str, PathBuf)> {
     let mut roots = Vec::new();
-    if let Ok(root) = std::fs::canonicalize(repository) {
+    if let Some(root) = repository.and_then(|path| std::fs::canonicalize(path).ok()) {
         roots.push(("the repository", root));
     }
     for (label, path) in [
@@ -52,16 +64,23 @@ fn is_hidden(component: &std::ffi::OsStr) -> bool {
     component.to_string_lossy().starts_with('.')
 }
 
-/// Check `path` against the rules above. The parent is canonicalized, so
-/// a symlinked folder is judged by where it leads. A probe file proves
-/// that the parent takes a new file now, so a refusal comes before the
-/// harness starts, not after it answered.
-pub(crate) fn accept(path: &Path, repository: &Path) -> Result<Destination, String> {
+/// Check `path` against the rules above, with `repository` the root of the
+/// caller's own repository (see [`caller_repository_root`]), if any. The
+/// parent is canonicalized, so a symlinked folder is judged by where it
+/// leads. A probe file proves that the parent takes a new file now, so a
+/// refusal comes before the harness starts, not after it answered.
+pub(crate) fn accept(path: &Path, repository: Option<&Path>) -> Result<Destination, String> {
     let absolute = std::path::absolute(path)
         .map_err(|error| format!("cannot resolve output path {}: {error}", path.display()))?;
     let Some(file_name) = absolute.file_name().filter(|name| *name != "..") else {
         return Err(format!("output path {} names no file", path.display()));
     };
+    if is_hidden(file_name) {
+        return Err(format!(
+            "output file {} has a hidden name, and the runner writes no hidden file",
+            path.display()
+        ));
+    }
     let parent = absolute.parent().unwrap_or(Path::new("/"));
     let parent = std::fs::canonicalize(parent).map_err(|error| {
         format!(
@@ -194,7 +213,8 @@ mod tests {
         let repository = repository();
         let nested = repository.path().join("council");
         std::fs::create_dir_all(&nested).expect("nested");
-        let accepted = accept(&nested.join("seat.json"), repository.path()).expect("accepted");
+        let accepted =
+            accept(&nested.join("seat.json"), Some(repository.path())).expect("accepted");
         assert!(accepted.path().is_absolute());
         assert!(accepted.path().ends_with("council/seat.json"));
         assert_eq!(
@@ -209,8 +229,18 @@ mod tests {
         let repository = repository();
         let git = repository.path().join(".git");
         std::fs::create_dir_all(&git).expect(".git");
-        let error = accept(&git.join("hook.json"), repository.path()).expect_err("refused");
+        let error = accept(&git.join("hook.json"), Some(repository.path())).expect_err("refused");
         assert!(error.contains("hidden folder .git"), "{error}");
+    }
+
+    #[test]
+    fn a_hidden_file_name_is_refused() {
+        let repository = repository();
+        let error = accept(&repository.path().join(".zshrc"), Some(repository.path()))
+            .expect_err("refused");
+        assert!(error.contains("hidden name"), "{error}");
+        let error = accept(&repository.path().join(".env"), None).expect_err("refused");
+        assert!(error.contains("hidden name"), "{error}");
     }
 
     #[test]
@@ -222,16 +252,19 @@ mod tests {
             .expect("elsewhere");
         // A folder under the temporary directory is permitted; one under a
         // fake home is not.
-        assert!(accept(&elsewhere.path().join("x.json"), repository.path()).is_ok());
+        assert!(accept(&elsewhere.path().join("x.json"), Some(repository.path())).is_ok());
         let home = elsewhere.path().join("home/.claude");
         std::fs::create_dir_all(&home).expect("home");
-        let error = accept(&home.join("settings.json"), repository.path()).expect_err("refused");
-        assert!(error.contains("hidden folder .claude"), "{error}");
-        let error = accept(Path::new("/nonexistent-root-xyz/x.json"), repository.path())
-            .expect_err("refused");
-        assert!(error.contains("cannot take a file"), "{error}");
         let error =
-            accept(Path::new("/etc/rune-output.json"), repository.path()).expect_err("refused");
+            accept(&home.join("settings.json"), Some(repository.path())).expect_err("refused");
+        assert!(error.contains("hidden folder .claude"), "{error}");
+        let error = accept(
+            Path::new("/nonexistent-root-xyz/x.json"),
+            Some(repository.path()),
+        )
+        .expect_err("refused");
+        assert!(error.contains("cannot take a file"), "{error}");
+        let error = accept(Path::new("/etc/rune-output.json"), None).expect_err("refused");
         assert!(
             error.contains("outside every permitted place") || error.contains("cannot take"),
             "{error}"
@@ -246,12 +279,12 @@ mod tests {
         std::fs::write(&real, "{}").expect("real");
         let link = repository.path().join("link.json");
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        let error = accept(&link, repository.path()).expect_err("refused");
+        let error = accept(&link, Some(repository.path())).expect_err("refused");
         assert!(error.contains("is a symlink"), "{error}");
-        let error = accept(repository.path(), repository.path()).expect_err("refused");
+        let error = accept(repository.path(), Some(repository.path())).expect_err("refused");
         assert!(error.contains("not a regular file"), "{error}");
         let error =
-            accept(&repository.path().join("x/.."), repository.path()).expect_err("refused");
+            accept(&repository.path().join("x/.."), Some(repository.path())).expect_err("refused");
         assert!(error.contains("names no file"), "{error}");
     }
 
@@ -263,7 +296,7 @@ mod tests {
         let locked = repository.path().join("locked");
         std::fs::create_dir_all(&locked).expect("locked");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("chmod");
-        let result = accept(&locked.join("seat.json"), repository.path());
+        let result = accept(&locked.join("seat.json"), Some(repository.path()));
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let error = result.expect_err("refused");
         assert!(error.contains("cannot take a new file"), "{error}");
@@ -277,7 +310,7 @@ mod tests {
         let target = repository.path().join("seat.json");
         std::fs::write(&target, "old").expect("old");
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).expect("chmod");
-        let destination = accept(&target, repository.path()).expect("accepted");
+        let destination = accept(&target, Some(repository.path())).expect("accepted");
         write(&destination, "{\"ok\":true}\n").expect("written");
         assert_eq!(
             std::fs::read_to_string(&target).expect("new"),
@@ -311,7 +344,7 @@ mod tests {
         std::fs::create_dir_all(&folder).expect("out");
         let target = folder.join("seat.json");
         std::fs::write(&target, "old").expect("old");
-        let destination = accept(&target, repository.path()).expect("accepted");
+        let destination = accept(&target, Some(repository.path())).expect("accepted");
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).expect("chmod");
         let result = write(&destination, "new");
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("chmod");

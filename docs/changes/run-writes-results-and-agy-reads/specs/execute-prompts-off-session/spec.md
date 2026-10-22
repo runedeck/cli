@@ -19,15 +19,21 @@ on failure. Under `--json`, stdout MUST carry one JSON object with `ok`, `kind`,
 
 ### Requirement: The runner writes its result file only in permitted places
 
-The runner MUST check the output path before it starts the harness. It MUST refuse the path with a configuration error
-on stdout and exit 2 when the path is outside the repository, the system temporary directory, and the rune state
-directory. It MUST also refuse when a directory between that root and the file is hidden, when the parent cannot take a
-new file, or when the target exists and is a symlink or not a regular file.
+The runner MUST check the output path before it starts the harness. The permitted repository root is the
+version-control root of the caller's working directory, never a folder that `--repo` names. The runner MUST refuse with
+exit 2 when the path is outside that root, the system temporary directory, and the rune state directory. It MUST also
+refuse when the file name or a directory between the root and the file is hidden, when the parent cannot take a new
+file, or when the target exists and is a symlink or not a regular file.
 
 #### Scenario: Output path in a protected place is refused
 
 - **WHEN** the output path is `~/.claude/settings.json`, a path inside `.git`, or a symlink
 - **THEN** the runner refuses before the harness starts, prints a configuration error, and exits 2
+
+#### Scenario: Caller names a protected folder as the repository
+
+- **WHEN** a caller runs with `--repo ~/.claude --output ~/.claude/settings.json`
+- **THEN** the runner refuses before the harness starts, and the settings file is unchanged
 
 #### Scenario: Argument error with an output file
 
@@ -36,8 +42,9 @@ new file, or when the target exists and is a symlink or not a regular file.
 
 ### Requirement: The runner replaces the result file in one step
 
-The runner MUST create the result file readable by the owner only. It MUST write the result to a temporary file that it
-creates exclusively in the target's directory, and replace the target in one rename. When the final write fails, the
+The runner MUST create the result file readable by the owner only. It MUST hold the parent folder it checked, write the
+result to a temporary file that it creates exclusively in that folder, and replace the target in one rename relative to
+that folder, so a folder swapped for a symlink during the run cannot move the write. When the final write fails, the
 runner MUST print the full result on stdout and exit with code 74.
 
 #### Scenario: Output file already exists
@@ -65,12 +72,24 @@ which runs in an isolated workspace. The runner MUST tell an agy run to read wit
 
 A clean grok run MUST keep from the owner's grok configuration only the `model.<id>.env_key` entries, which name the
 environment variable that holds each model's API key. It MUST drop every other key, telemetry, permission, sandbox, and
-shell settings included. The dry run MUST list the names of the kept keys.
+shell settings included. The dry run MUST list the names of the kept keys. The runner MUST treat the value of every
+environment variable that a kept entry names as a credential and redact it from every output. When the configuration
+cannot be parsed, the error MUST name the line and column, and never quote the configuration text.
 
 #### Scenario: Clean grok run uses an API key from the environment
 
 - **WHEN** the owner's grok configuration maps the model to an environment variable that holds its key
 - **THEN** a clean grok run authenticates with that key and answers, and its configuration holds no telemetry key
+
+#### Scenario: Grok echoes its key
+
+- **WHEN** the variable that an `env_key` entry names holds a value with no credential-like name, and grok prints that value
+- **THEN** no output of the run, the result file included, contains the value
+
+#### Scenario: Owner's grok configuration is malformed
+
+- **WHEN** a line of the owner's grok configuration cannot be parsed
+- **THEN** the configuration error names the line and column, and contains no text from the file
 
 ### Requirement: A headless denial names its cause
 

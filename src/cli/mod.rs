@@ -836,8 +836,9 @@ enum Command {
 
         /// Write the result to FILE for every outcome, instead of stdout:
         /// the JSON object under --json, else the answer or the text error.
-        /// FILE must sit inside the repository, the temporary directory, or
-        /// the rune state directory, under no hidden folder. Under --json,
+        /// FILE must sit inside the repository of the working directory (not
+        /// of --repo), the temporary directory, or the rune state directory,
+        /// under no hidden folder and with no hidden name. Under --json,
         /// stdout then carries one object with `ok`, `kind`, `exit_code`,
         /// and `output`.
         #[arg(long, value_name = "FILE")]
