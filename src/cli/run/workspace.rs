@@ -108,6 +108,9 @@ pub(crate) struct Outcome {
     pub(crate) conflicted: Option<bool>,
     /// The workspace folder, when it stays on disk.
     pub(crate) path: Option<PathBuf>,
+    /// The files, relative to the folder, that jj did not record. The
+    /// folder stays while this is not empty.
+    pub(crate) unrecorded: Vec<String>,
     /// The step that failed, when one did.
     pub(crate) error: Option<String>,
 }
@@ -489,17 +492,104 @@ pub(crate) fn finish(workspace: &Workspace) -> Outcome {
     outcome
 }
 
-/// The finish, step by step, writing into `outcome` as each fact is known.
-fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), String> {
-    jj_in(
+/// jj's own limits for new files: a file above `snapshot.max-new-file-size`
+/// (1 MiB by default) or outside `snapshot.auto-track` is skipped with a
+/// warning while the snapshot exits 0, so a harness's file would go with
+/// the folder. The finish lifts both for its snapshot.
+const TRACK_ALL: &str = "snapshot.auto-track=\"all()\"";
+const TRACK_NONE: &str = "snapshot.auto-track=\"none()\"";
+const NO_SIZE_LIMIT: &str = "snapshot.max-new-file-size=\"1TiB\"";
+
+/// The files jj refused in a snapshot's stderr, under `Refused to snapshot
+/// some files:`, one indented `<path>: <size>; ...` line each.
+fn refused_paths(stderr: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut listing = false;
+    for line in stderr.lines() {
+        if line.contains("Refused to snapshot some files:") {
+            listing = true;
+            continue;
+        }
+        if !listing {
+            continue;
+        }
+        let Some(entry) = line.strip_prefix("  ") else {
+            listing = false;
+            continue;
+        };
+        let path = entry
+            .split_once(": ")
+            .map_or(entry, |(path, _)| path)
+            .trim();
+        if !path.is_empty() {
+            paths.push(path.to_string());
+        }
+    }
+    paths
+}
+
+/// The files `jj status` lists under `Untracked paths:` as `? <path>`.
+fn untracked_paths(stdout: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut listing = false;
+    for line in stdout.lines() {
+        if line.starts_with("Untracked paths:") {
+            listing = true;
+            continue;
+        }
+        if !listing {
+            continue;
+        }
+        match line.strip_prefix("? ") {
+            Some(path) if !path.trim().is_empty() => paths.push(path.trim().to_string()),
+            _ => listing = false,
+        }
+    }
+    paths
+}
+
+/// Record every file the repository does not ignore, whatever its size,
+/// and return the paths jj still left unrecorded: the ones a warning
+/// refused, and the ones a status with tracking off still lists as
+/// untracked. Both run from the workspace folder, so the paths are
+/// relative to it.
+fn record_files(workspace: &Workspace) -> Result<Vec<String>, String> {
+    let path = workspace.path.as_os_str();
+    let snapshot = jj_in(
         &workspace.path,
         &[
             OsStr::new("-R"),
-            workspace.path.as_os_str(),
+            path,
+            OsStr::new("--config"),
+            OsStr::new(TRACK_ALL),
+            OsStr::new("--config"),
+            OsStr::new(NO_SIZE_LIMIT),
             OsStr::new("util"),
             OsStr::new("snapshot"),
         ],
     )?;
+    let mut unrecorded = refused_paths(&snapshot.stderr);
+    let status = jj_in(
+        &workspace.path,
+        &[
+            OsStr::new("-R"),
+            path,
+            OsStr::new("--config"),
+            OsStr::new(TRACK_NONE),
+            OsStr::new("--config"),
+            OsStr::new(NO_SIZE_LIMIT),
+            OsStr::new("status"),
+        ],
+    )?;
+    unrecorded.extend(untracked_paths(&status.stdout));
+    unrecorded.sort();
+    unrecorded.dedup();
+    Ok(unrecorded)
+}
+
+/// The finish, step by step, writing into `outcome` as each fact is known.
+fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), String> {
+    outcome.unrecorded = record_files(workspace)?;
     let root = &workspace.root;
     {
         let _lock = lock_repository(&workspace.lock_path)?;
@@ -566,6 +656,12 @@ fn finish_steps(workspace: &Workspace, outcome: &mut Outcome) -> Result<(), Stri
         outcome.conflicted = Some(false);
         abandon_existing(root, &[folded.clone(), workspace.copy.clone()])?;
     }
+    // A file jj did not record is never deleted: the folder stays, and the
+    // result names it with the files.
+    if !outcome.unrecorded.is_empty() {
+        outcome.path = Some(workspace.path.clone());
+        return Ok(());
+    }
     std::fs::remove_dir_all(&workspace.path).map_err(|error| {
         format!(
             "cannot remove workspace folder {}: {error}",
@@ -592,6 +688,35 @@ mod tests {
             Some("yzsqusmy")
         );
         assert_eq!(id_after("Nothing changed.", " as "), None);
+    }
+
+    #[test]
+    fn refused_and_untracked_files_are_read_from_jj_output() {
+        let stderr = concat!(
+            "Warning: Refused to snapshot some files:\n",
+            "  big.bin: 1.9MiB (2000000 bytes); the maximum size allowed is 1.0MiB (1048576 bytes)\n",
+            "  out/huge.iso: 3.0GiB (3221225472 bytes); the maximum size allowed is 1.0MiB (1048576 bytes)\n",
+            "Hint: This is to prevent large files from being added by accident. To fix this:\n",
+            "  * Add the file(s) to `.gitignore`\n",
+            "Snapshot complete.\n",
+        );
+        assert_eq!(refused_paths(stderr), ["big.bin", "out/huge.iso"]);
+        assert_eq!(refused_paths("Snapshot complete.\n"), Vec::<String>::new());
+
+        let status = concat!(
+            "Working copy changes:\n",
+            "A small.txt\n",
+            "Untracked paths:\n",
+            "? big.bin\n",
+            "? notes/draft.md\n",
+            "Working copy  (@) : zqysnyzq ee341d4e rune run x\n",
+            "Parent commit (@-): smlzuoxt 38ef79a6 base\n",
+        );
+        assert_eq!(untracked_paths(status), ["big.bin", "notes/draft.md"]);
+        assert_eq!(
+            untracked_paths("Working copy changes:\nA small.txt\n"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

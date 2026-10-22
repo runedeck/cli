@@ -42,7 +42,8 @@ is rebased onto the caller's current `@`, and the copy is abandoned. A rebase co
 | The runner reads the caller's change | `jj -R <repo> --ignore-working-copy log -r @ --no-graph -T change_id` |
 | The runner copies the caller's change | `jj -R <repo> duplicate @`, then `jj -R <repo> --ignore-working-copy describe <copy> -m <desc>` |
 | The runner creates the workspace | `jj -R <repo> workspace add --name run-<id> --revision <copy> --message <desc> <state>/workspaces/<repo-id>/run-<id>` |
-| The runner records the harness's files | `jj -R <workspace> util snapshot` |
+| The runner records the harness's files | `jj -R <workspace> --config 'snapshot.auto-track="all()"' --config 'snapshot.max-new-file-size="1TiB"' util snapshot` |
+| The runner lists what jj still left unrecorded | the `Refused to snapshot` lines of that snapshot, then `jj -R <workspace> --config 'snapshot.auto-track="none()"' --config 'snapshot.max-new-file-size="1TiB"' status` (`? <path>` lines) |
 | The runner stops tracking the workspace | `jj -R <repo> --ignore-working-copy workspace forget run-<id>` |
 | The runner makes the fold target | `jj -R <repo> --ignore-working-copy new <copy> --no-edit -m <desc>` |
 | The runner folds the run's revisions | `jj -R <repo> --ignore-working-copy squash --from '(<copy>:: ~ <copy>) ~ <target>' --into <target> --use-destination-message` |
@@ -51,6 +52,8 @@ is rebased onto the caller's current `@`, and the copy is abandoned. A rebase co
 | The runner drops the copy, and an empty result | `jj -R <repo> --ignore-working-copy abandon <ids that still exist>` |
 
 The workspace takes `--colocate` when the repository is colocated, so a harness that calls git finds a git checkout. `jj -R` does not search upward (jj 0.46 answers "There is no jj repo" for a subfolder), so the runner walks the ancestors itself. `jj workspace add` refuses `--ignore-working-copy` ("This command must be able to update the working copy"), so it snapshots the caller's checkout once more, which changes nothing the copy holds. The other commands that run in the caller's workspace pass `--ignore-working-copy`: the caller's files took no part in the run, and the owner may be editing them. `jj workspace forget` abandons an empty, undescribed `@` of the forgotten workspace by itself, so the runner abandons only change ids that still exist. jj prints the change id of a new or duplicated revision on stderr (`Duplicated … as <id> …`, `Created new commit <id> …`). The runner reads the short id there and resolves the full id with `jj log`. Every jj command runs with its working directory set to the workspace it operates on, so the paths jj prints are relative to that workspace.
+
+`jj util snapshot` exits 0 while it skips a new file above `snapshot.max-new-file-size` (1 MiB by default) or outside `snapshot.auto-track` (reviewer repro `large.sh`, `untracked.sh`), so a plain snapshot and then the folder removal deleted such a file. The finish runs its snapshot with both limits lifted, reads the `Refused to snapshot` warning, and asks `jj status` with tracking off for `Untracked paths`. A path in either list is unrecorded: the folder stays, the `workspace` object names it under `path` and `unrecorded`, and the change is still folded and named. Ignored files are neither tracked nor listed, so build output goes with the folder.
 
 A colocated workspace is also a git worktree, and git locks `.git/config` while it sets one up: two seats that start together failed on that lock in the test. Every run of one repository therefore holds an exclusive file lock, `<state>/workspaces/<repo-id>.lock`, while it adds or forgets its workspace. The harness runs outside the lock.
 

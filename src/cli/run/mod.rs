@@ -439,13 +439,15 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         "kept": outcome.kept,
         "conflicted": outcome.conflicted,
         "colocated": workspace.colocated,
+        "unrecorded": outcome.unrecorded,
     });
-    if let (Some(fields), Some(error)) = (object.as_object_mut(), &outcome.error) {
-        fields.insert("error".to_string(), json!(error));
-        fields.insert(
-            "path".to_string(),
-            json!(outcome.path.as_ref().map(|path| path.display().to_string())),
-        );
+    if let Some(fields) = object.as_object_mut() {
+        if let Some(error) = &outcome.error {
+            fields.insert("error".to_string(), json!(error));
+        }
+        if let Some(path) = &outcome.path {
+            fields.insert("path".to_string(), json!(path.display().to_string()));
+        }
     }
     object
 }
@@ -477,11 +479,20 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
         }
         _ => {}
     }
+    let folder = outcome.path.as_deref().unwrap_or(&workspace.path);
+    if !outcome.unrecorded.is_empty() {
+        lines.push(format!(
+            "warning: workspace {} stays at {}: jj did not record {}",
+            workspace.name,
+            folder.display(),
+            outcome.unrecorded.join(", ")
+        ));
+    }
     if let Some(error) = &outcome.error {
         lines.push(format!(
             "warning: workspace {} stays at {}: {error}",
             workspace.name,
-            outcome.path.as_deref().unwrap_or(&workspace.path).display()
+            folder.display()
         ));
     }
     lines

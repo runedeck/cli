@@ -2709,6 +2709,87 @@ fn harness_that_commits_its_own_work_still_leaves_one_change() {
 
 #[cfg(unix)]
 #[test]
+fn a_large_new_file_is_recorded_and_ignored_output_goes_with_the_folder() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    std::fs::write(repository.path().join(".gitignore"), "dist/\n").expect(".gitignore");
+    jj(home.path(), &["-R", repo, "util", "snapshot"]);
+    let before = change_ids(home.path(), repo);
+
+    // Twice jj's default limit for a new file.
+    let big = executable_provider(
+        home.path(),
+        "fake-big",
+        "#!/bin/sh\nhead -c 2000000 /dev/zero > big.bin\nprintf 'done\\n'\n",
+    );
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Write a big file",
+            "--repo",
+            repo,
+            "--binary",
+            big.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["workspace"]["kept"], true, "{result}");
+    assert_eq!(
+        result["workspace"]["unrecorded"],
+        serde_json::json!([]),
+        "{result}"
+    );
+    assert!(result["workspace"].get("path").is_none(), "{result}");
+    let change_id = result["workspace"]["change_id"]
+        .as_str()
+        .expect("change id");
+    assert_eq!(changed_files(home.path(), repo, change_id), ["A big.bin"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+
+    // Output under an ignored folder only: nothing to keep, and the folder
+    // goes with it.
+    let builder = executable_provider(
+        home.path(),
+        "fake-builder",
+        "#!/bin/sh\nmkdir -p dist\nprintf 'out\\n' > dist/report.html\nprintf 'built\\n'\n",
+    );
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Build",
+            "--repo",
+            repo,
+            "--binary",
+            builder.to_str().expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("run JSON");
+    assert_eq!(result["workspace"]["kept"], false, "{result}");
+    assert_eq!(
+        result["workspace"]["unrecorded"],
+        serde_json::json!([]),
+        "{result}"
+    );
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    assert_eq!(change_ids(home.path(), repo).len(), before.len() + 1);
+}
+
+#[cfg(unix)]
+#[test]
 fn finish_error_after_the_change_is_known_still_names_it() {
     use std::os::unix::fs::PermissionsExt;
 
