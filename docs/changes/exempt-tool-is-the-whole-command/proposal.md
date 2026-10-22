@@ -36,6 +36,6 @@ None.
 - New `src/cli/hook/sandbox_guard/` (the guard, its shell reader, tests). `src/cli/hook/adapters.rs` gains the name. `src/cli/hook/encode.rs` passes context on `PreToolUse`.
 - New fixtures under `tests/fixtures/hooks/sandbox-guard*/`, and `docs/proofs/exempt-tool-is-the-whole-command/`.
 - The owner's `hooks:` block gains one handler, `rune-hook-sandbox-guard`, on `tool.before`.
-- The code sits on `harness-hook-dispatch` and `hooks-record-log`, and goes into release 0.6.0 with them.
+- The code sits on `one-dispatcher-runs-every-hook` and `dispatcher-records-every-hook-execution`, and goes into release 0.6.0 with them.
 
 [HOOK]: ../../specs/glossary/hook.md
