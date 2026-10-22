@@ -1406,12 +1406,29 @@ fn read_grok_config(source: &Path) -> Result<Option<toml::Value>, SurfaceFailure
             )));
         }
     };
+    // The toml crate's message quotes the source line, which may hold a
+    // credential: the error names the place and nothing from the file.
     toml::from_str(&text).map(Some).map_err(|error| {
+        let (line, column) = line_and_column(&text, error.span().map_or(0, |span| span.start));
         SurfaceFailure::Arguments(format!(
-            "cannot parse Grok configuration {}: {error}",
+            "cannot parse Grok configuration {} at line {line}, column {column}",
             source.display()
         ))
     })
+}
+
+/// The one-based line and column of byte `offset` in `text`.
+fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(text.len());
+    let before = &text[..offset];
+    let line = before.matches('\n').count() + 1;
+    let column = before
+        .rsplit_once('\n')
+        .map_or(before, |(_, rest)| rest)
+        .chars()
+        .count()
+        + 1;
+    (line, column)
 }
 
 /// The `env_key` entries of a grok `model` table, and nothing else: the

@@ -1942,6 +1942,25 @@ fn clean_grok_configuration_keeps_only_the_model_key_map() {
 }
 
 #[test]
+fn a_malformed_grok_configuration_names_the_place_and_quotes_nothing() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let source = temporary.path().join("config.toml");
+    std::fs::write(
+        &source,
+        "[model.\"grok-4.5\"]\nenv_key = \"FAKE_GROK_KEY\"\nsecret = \"fake-grok-secret-value\nbroken\n",
+    )
+    .expect("source configuration");
+    let error = read_grok_config(&source).expect_err("malformed");
+    let message = error.to_string();
+    assert!(message.contains("at line 3, column"), "{message}");
+    assert!(!message.contains("fake-grok-secret-value"), "{message}");
+    assert!(!message.contains("secret"), "{message}");
+    assert!(!message.contains("broken"), "{message}");
+    assert_eq!(line_and_column("ab\ncd\nef", 4), (2, 2));
+    assert_eq!(line_and_column("ab", 99), (1, 3));
+}
+
+#[test]
 fn opencode_permission_follows_the_mode() {
     let mut opencode = invocation(Surface::Opencode, &[]);
     assert!(
