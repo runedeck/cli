@@ -3,7 +3,9 @@
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
-use crate::cli::launch::{REDACTED_VALUE, credential_values, inherited_env, redact_text};
+use crate::cli::launch::{
+    REDACTED_VALUE, credential_values, inherited_env, redact_credentials, redact_text,
+};
 use crate::cli::process::{
     ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination, run_process_request,
 };
@@ -2582,10 +2584,13 @@ pub(crate) fn invoke_surface(
         Surface::Grok => invoke_grok(invocation, &secrets),
         Surface::Opencode => invoke_opencode(invocation, &secrets),
     };
-    // The answer passes too: a model that echoes a key is still a leak.
+    // The answer passes too: a model that echoes a key is still a leak. It
+    // loses only the known values, though: the structural and URL passes
+    // that fit a failure tail turned `Primary key: user_id` into `Primary
+    // key: <redacted>` in an ordinary coding answer.
     match result {
         Ok(reply) => Ok(SurfaceReply {
-            text: redact_text(&reply.text, &secrets),
+            text: redact_credentials(&reply.text, &secrets),
             stderr: redact_text(&reply.stderr, &secrets),
             ..reply
         }),

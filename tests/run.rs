@@ -4096,6 +4096,44 @@ fn grok_echoing_the_value_of_its_key_variable_leaves_no_trace_in_any_output() {
         .stderr(predicate::str::contains(value).not());
 }
 
+/// An ordinary coding answer passes the redaction unchanged: the answer
+/// loses only a known credential value, never a `key: value` shape or a
+/// URL parameter.
+#[cfg(unix)]
+#[test]
+fn an_ordinary_answer_passes_the_redaction_unchanged() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let answer = concat!(
+        "Primary key: user_id\n",
+        "The lookup uses `let key = cache_key(&path);` and then `map.get(&key)`.\n",
+        "In settings.py, set SECRET_KEY = os.environ[\"DJANGO_SECRET\"] and keep it out of git.\n",
+        "Hotkey: Ctrl+Shift+P\n",
+        "Docs: https://example.com/api?token=abc123&page=2\n",
+    );
+    let text = home.path().join("answer.txt");
+    std::fs::write(&text, answer).expect("answer");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        &format!("#!/bin/sh\ncat '{}'\n", text.display()),
+    );
+    rune(home.path())
+        .args([
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .assert()
+        .success()
+        .stdout(answer);
+}
+
 #[cfg(unix)]
 #[test]
 fn clean_grok_run_keeps_only_the_model_key_map() {
