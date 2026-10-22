@@ -16,5 +16,11 @@ jobs:
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
+            # The run tests create jj repositories for isolated runs.
+            - name: Install jj
+              run: |
+                  bash scripts/install-tools jj
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
             - name: Test
               run: cargo test --workspace

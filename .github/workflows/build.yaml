@@ -47,6 +47,12 @@ jobs:
                   bash scripts/install-mdschema.sh "$RUNNER_TEMP/bin"
                   echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+            # The run tests create jj repositories for isolated runs.
+            - name: Install jj
+              run: |
+                  bash scripts/install-tools jj
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
             - name: Build dashboard feature in isolation
               run: cargo build --no-default-features --features dashboard
 

@@ -70,7 +70,8 @@ all_tools_match() {
         && tool_matches_version fd "$FD_VERSION" \
         && tool_matches_version yq "$YQ_VERSION" \
         && tool_matches_version jq "$JQ_VERSION" \
-        && tool_matches_version dcg "$DCG_VERSION"
+        && tool_matches_version dcg "$DCG_VERSION" \
+        && tool_matches_version jj "$JJ_VERSION"
 }
 
 brew_install() {
@@ -88,6 +89,7 @@ install_with_brew() {
     install_gitleaks
     install_mdschema
     install_linters
+    install_jj
 }
 
 install_linux_prerequisites() {
@@ -398,6 +400,18 @@ install_dcg() {
         "$archive_name" "$digest" dcg
 }
 
+# jj publishes musl archives for linux and one per Apple target.
+install_jj() {
+    tool_matches_version jj "$JJ_VERSION" && return
+    local archive_name digest
+    archive_name="jj-v${JJ_VERSION}-$(rust_target musl).tar.gz"
+    digest=$(archive_digest jj "$(platform)" "$(architecture)")
+    log "Installing digest-verified jj $JJ_VERSION"
+    verified_archive \
+        "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/${archive_name}" \
+        "$archive_name" "$digest" jj
+}
+
 install_linters() {
     install_rumdl
     install_typos
@@ -433,6 +447,7 @@ verify_tools() {
     tool_matches_version yq "$YQ_VERSION" || failures+=("yq $YQ_VERSION")
     tool_matches_version jq "$JQ_VERSION" || failures+=("jq $JQ_VERSION")
     tool_matches_version dcg "$DCG_VERSION" || failures+=("dcg $DCG_VERSION")
+    tool_matches_version jj "$JJ_VERSION" || failures+=("jj $JJ_VERSION")
 
     [ "${#failures[@]}" -eq 0 ] \
         || fail "setup finished without the pinned toolchain: ${failures[*]}"
@@ -441,6 +456,18 @@ verify_tools() {
 main() {
     local original_path=$PATH
     export PATH="$INSTALL_DIRECTORY:$PATH"
+
+    # Named tools only (`install-tools jj`): a workflow that needs one tool
+    # for its tests does not install the whole set.
+    if [ "$#" -gt 0 ]; then
+        local tool
+        for tool in "$@"; do
+            declare -F "install_$tool" >/dev/null \
+                || fail "no installer for $tool"
+            "install_$tool"
+        done
+        return
+    fi
 
     if ! all_tools_match; then
         if command_exists brew; then
@@ -456,6 +483,7 @@ main() {
             install_gitleaks
             install_mdschema
             install_linters
+            install_jj
         fi
 
         verify_tools
