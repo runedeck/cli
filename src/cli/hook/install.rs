@@ -631,6 +631,7 @@ pub(crate) fn prepare(
         let codex = harness == Harness::Codex;
         let mut untrusted: Vec<(String, Trust)> = Vec::new();
         let mut moved: Vec<(String, Slot, Slot)> = Vec::new();
+        let mut deferred: Vec<String> = Vec::new();
         for name in &names {
             let entries = table.groups(name);
             named_before.extend(generations_in(&entries));
@@ -643,7 +644,7 @@ pub(crate) fn prepare(
                 adapters: adapters_on(plan, harness, name),
                 adopt: !codex,
                 keep_slots: codex,
-                keep_earlier: None,
+                hold: std::collections::BTreeSet::new(),
             };
             if codex && event.want.is_some() {
                 // Codex trusts a hook at its position, so the question is
@@ -658,20 +659,24 @@ pub(crate) fn prepare(
                 // stays, and the new one goes in a group of its own after
                 // it, until Codex trusts the new one where it stands.
                 let earlier = event.trusted_earlier(&codex_config, &entries);
-                event.keep_earlier = earlier;
+                event.hold.extend(earlier);
                 let mut landing = event.landing(&codex_config, &entries)?;
-                if earlier.is_some() && landing.0 == Trust::Trusted {
-                    event.keep_earlier = None;
+                if let Some(slot) = earlier
+                    && landing.0 == Trust::Trusted
+                {
+                    event.hold.remove(&slot);
                     let without = event.landing(&codex_config, &entries)?;
                     if without.0 == Trust::Trusted {
                         landing = without;
                     } else {
-                        event.keep_earlier = earlier;
+                        event.hold.insert(slot);
                     }
                 }
                 let (trust, from, to) = landing;
                 event.adopt = trust == Trust::Trusted;
-                if let (Some(_), Some(to)) = (event.keep_earlier, to) {
+                if let (Some(slot), Some(to)) = (earlier, to)
+                    && event.hold.contains(&slot)
+                {
                     report.trust.push(format!(
                         "{harness}: {name} keeps rune's earlier entry, which {harness} trusts, until {harness} trusts the new one at {}",
                         slot_word(to)
@@ -685,7 +690,31 @@ pub(crate) fn prepare(
                     _ => untrusted.push((name.clone(), trust)),
                 }
             }
+            if codex {
+                // A removal moves every later hook of its group to a lower
+                // handler, and Codex keys trust by position, so a removal
+                // that would move a hook Codex trusts waits.
+                for (slot, shift) in event.hold_trusted(&codex_config, &entries)? {
+                    // A held rune entry is never the one the plan renders.
+                    let what = describe(&entries, slot, harness, "rune's earlier entry");
+                    let moved_hook = describe(&entries, shift.from, harness, "rune's entry");
+                    report.trust.push(format!(
+                        "{harness}: {name} keeps {what}, because removing it would move {moved_hook} from {} to {}, where {harness} does not trust it; remove it by hand, trust {moved_hook} in `/hooks` again, then run `rune install`",
+                        slot_word(shift.from),
+                        slot_word(shift.to)
+                    ));
+                    deferred.push(format!(
+                        "{}: removing {what} from {name} would move {moved_hook}, which {harness} trusts where it stands",
+                        path.display()
+                    ));
+                }
+            }
             let kept = event.reconcile(entries, &mut next, &mut report)?;
+            if codex && check {
+                // Every hook in a group install keeps rune in, or removes a
+                // hook from, must still be trusted where it stands.
+                touched_trust(&event, &codex_config, &kept, &mut report.drift);
+            }
             named_after.extend(generations_in(&kept.groups));
             if kept.changed {
                 changed = true;
@@ -750,6 +779,7 @@ pub(crate) fn prepare(
                     path.display()
                 )
             }));
+            report.drift.extend(deferred);
             continue;
         }
         if changed {
@@ -826,15 +856,27 @@ struct Event<'a> {
     /// Whether an emptied group stays as `{"hooks": []}`. Codex keys trust
     /// by position, so a removed group would move every later one.
     keep_slots: bool,
-    /// Where rune's earlier entry stands in the table, when it stays
-    /// beside the new one: Codex trusts it, and not yet the new one.
-    keep_earlier: Option<Slot>,
+    /// The slots, in the table as read, of hooks that stay although
+    /// install would remove them: rune's earlier entry while Codex trusts
+    /// it and not yet the new one, and any hook whose removal would move a
+    /// hook Codex trusts where it stands.
+    hold: std::collections::BTreeSet<Slot>,
 }
 
-/// An event's groups after install, and whether they differ from before.
+/// An event's groups after install, whether they differ from before, and
+/// the slots of the hooks install removed, in the table as read.
 struct Reconciled {
     groups: Vec<Value>,
     changed: bool,
+    removed: std::collections::BTreeSet<Slot>,
+}
+
+/// A hook Codex trusts that a removal before it in its group would move:
+/// where it stands, where it would go, and the removals that move it.
+struct Shift {
+    from: Slot,
+    to: Slot,
+    causes: Vec<Slot>,
 }
 
 /// One hook as its own registration: the group's fields with this hook
@@ -905,6 +947,80 @@ impl Event<'_> {
             self.rune_slot(&kept.groups),
             self.rune_slot(&adopted.groups),
         ))
+    }
+
+    /// The hooks Codex trusts where they stand in `entries` that the
+    /// removals in `removed` would move to a lower handler of their group.
+    /// Codex keys trust by position, so such a hook would lose it.
+    fn shifts(
+        &self,
+        config: &Path,
+        entries: &[Value],
+        removed: &std::collections::BTreeSet<Slot>,
+    ) -> Vec<Shift> {
+        let mut out = Vec::new();
+        for (g, group) in entries.iter().enumerate() {
+            for (h, hook) in group["hooks"].as_array().into_iter().flatten().enumerate() {
+                if removed.contains(&(g, h)) {
+                    continue;
+                }
+                let causes: Vec<Slot> = removed
+                    .iter()
+                    .copied()
+                    .filter(|&(rg, rh)| rg == g && rh < h)
+                    .collect();
+                if causes.is_empty() {
+                    continue;
+                }
+                let expected = codex_trust::hash(self.name, group, hook);
+                if codex_trust::trust(config, self.path, self.name, g, h, &expected)
+                    == Trust::Trusted
+                {
+                    out.push(Shift {
+                        from: (g, h),
+                        to: (g, h - causes.len()),
+                        causes,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Hold every removal that would move a hook Codex trusts, until no
+    /// removal moves one. Returns each hold with the hook it keeps in
+    /// place: the held slot, and the shift it prevents.
+    fn hold_trusted(
+        &mut self,
+        config: &Path,
+        entries: &[Value],
+    ) -> Result<Vec<(Slot, Shift)>, Error> {
+        let mut held = Vec::new();
+        loop {
+            let trial = self.reconcile(
+                entries.to_vec(),
+                &mut HarnessManifest::default(),
+                &mut Report::default(),
+            )?;
+            let shifts = self.shifts(config, entries, &trial.removed);
+            if shifts.is_empty() {
+                return Ok(held);
+            }
+            for shift in shifts {
+                for cause in &shift.causes {
+                    if self.hold.insert(*cause) {
+                        held.push((
+                            *cause,
+                            Shift {
+                                from: shift.from,
+                                to: shift.to,
+                                causes: shift.causes.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn record(&self, command: &str, by: Option<&str>) -> Recorded {
@@ -987,6 +1103,7 @@ impl Event<'_> {
         let mut groups: Vec<Value> = Vec::new();
         let mut changed = false;
         let mut placed = false;
+        let mut removed = std::collections::BTreeSet::new();
         let original = entries.clone();
         // Whether the table already holds the entry the plan renders, so
         // an earlier rune entry goes instead of turning into it.
@@ -1004,22 +1121,45 @@ impl Event<'_> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
+                let held = self.hold.contains(&(g, h));
                 if !is_owned(&command, harness) {
-                    if self.foreign(&command, next, report) {
+                    if held {
+                        // Its removal would move a hook Codex trusts.
+                        next.foreign.push(self.record(&command, None));
+                        report
+                            .foreign
+                            .push((harness, name.to_string(), command.clone()));
+                        remaining.push(hook);
+                    } else if self.foreign(&command, next, report) {
                         remaining.push(hook);
                     } else {
                         changed = true;
+                        removed.insert((g, h));
                     }
                     continue;
                 }
                 let hash = registration_hash(&group, &hook);
                 let known = self.known(&hash);
                 let current = want_hash.as_deref() == Some(hash.as_str());
-                let keep = known && !current && self.keep_earlier == Some((g, h));
+                if held && (if current { placed } else { known }) {
+                    // Codex trusts it, and not yet the new entry, or its
+                    // removal would move a hook Codex trusts: it stays
+                    // until an install can remove it without either.
+                    remaining.push(hook);
+                    next.owned.push(Recorded {
+                        event: name.to_string(),
+                        command,
+                        hash: Some(hash),
+                        by: None,
+                        source: None,
+                    });
+                    continue;
+                }
                 match self.want {
                     Some(_) if current && placed => {
                         // A second copy of the entry the plan renders.
                         changed = true;
+                        removed.insert((g, h));
                         report
                             .written
                             .push((harness, format!("{name} duplicate removed")));
@@ -1029,23 +1169,12 @@ impl Event<'_> {
                         remaining.push(hook);
                         report.unchanged.push((harness, name.to_string()));
                     }
-                    Some(_) if keep => {
-                        // Codex trusts it, and not yet the new entry, so it
-                        // keeps guarding the event until the next install.
-                        remaining.push(hook);
-                        next.owned.push(Recorded {
-                            event: name.to_string(),
-                            command,
-                            hash: Some(hash),
-                            by: None,
-                            source: None,
-                        });
-                    }
                     Some(_) if known && (placed || has_current) => {
                         // A second rune entry, such as one an install from
                         // another build path left, or the earlier entry the
                         // new one has replaced: one stays.
                         changed = true;
+                        removed.insert((g, h));
                         let what = if has_current {
                             "earlier entry removed"
                         } else {
@@ -1063,6 +1192,7 @@ impl Event<'_> {
                         // Rune wrote it and wants it no more: its command
                         // goes, the rest of the group stays.
                         changed = true;
+                        removed.insert((g, h));
                         report.written.push((harness, format!("{name} removed")));
                     }
                     _ => return Err(self.conflict()),
@@ -1103,7 +1233,11 @@ impl Event<'_> {
             groups.pop();
         }
         changed |= groups != original;
-        Ok(Reconciled { groups, changed })
+        Ok(Reconciled {
+            groups,
+            changed,
+            removed,
+        })
     }
 
     /// Where rune's own entry sits in `groups`, as Codex counts it: the
@@ -1151,6 +1285,55 @@ fn is_slot(group: &Value) -> bool {
     group
         .as_object()
         .is_some_and(|map| map.len() == 1 && map["hooks"].as_array().is_some_and(Vec::is_empty))
+}
+
+/// The hook at `slot` of `entries` as a message names it: its command,
+/// or `rune` for one of rune's own entries.
+fn describe(entries: &[Value], (g, h): Slot, harness: Harness, rune: &str) -> String {
+    let command = entries
+        .get(g)
+        .and_then(|group| group["hooks"].get(h))
+        .and_then(|hook| hook["command"].as_str())
+        .unwrap_or_default();
+    if is_owned(command, harness) {
+        rune.to_string()
+    } else {
+        format!("`{command}`")
+    }
+}
+
+/// Drift for every hook that is not rune's and that Codex does not trust
+/// where it stands, in each group of `kept` that holds a rune entry or
+/// lost a hook. Rune's own trust is reported on its own, and a hook the
+/// owner disabled is the owner's choice.
+fn touched_trust(event: &Event<'_>, config: &Path, kept: &Reconciled, drift: &mut Vec<String>) {
+    let lost: std::collections::BTreeSet<usize> = kept.removed.iter().map(|(g, _)| *g).collect();
+    for (g, group) in kept.groups.iter().enumerate() {
+        let hooks = group["hooks"].as_array().cloned().unwrap_or_default();
+        let owned =
+            |hook: &Value| is_owned(hook["command"].as_str().unwrap_or_default(), event.harness);
+        if !lost.contains(&g) && !hooks.iter().any(owned) {
+            continue;
+        }
+        for (h, hook) in hooks.iter().enumerate() {
+            if owned(hook) {
+                continue;
+            }
+            let expected = codex_trust::hash(event.name, group, hook);
+            match codex_trust::trust(config, event.path, event.name, g, h, &expected) {
+                Trust::Trusted | Trust::Disabled => {}
+                trust => drift.push(format!(
+                    "{}: `{}` on {} at {} is {} in {}",
+                    event.path.display(),
+                    hook["command"].as_str().unwrap_or_default(),
+                    event.name,
+                    slot_word((g, h)),
+                    trust.word(),
+                    event.harness
+                )),
+            }
+        }
+    }
 }
 
 /// What Codex makes of the rune entry in `groups` of one event.
@@ -2107,11 +2290,42 @@ mod tests {
                     .map(move |(h, _)| (g, h))
             })
             .collect();
-        let (g, h) = if last {
+        let slot = if last {
             slots[slots.len() - 1]
         } else {
             slots[0]
         };
+        trust_codex_slot(home, event, slot);
+    }
+
+    /// Trust the hook that runs `command` on Codex's `event`.
+    fn trust_codex_hook(home: &Path, event: &str, command: &str) {
+        let table: Value = serde_json::from_str(
+            &fs::read_to_string(home.join(".codex").join("hooks.json")).unwrap(),
+        )
+        .unwrap();
+        let slot = table["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .find_map(|(g, group)| {
+                group["hooks"]
+                    .as_array()?
+                    .iter()
+                    .position(|hook| hook["command"] == command)
+                    .map(|h| (g, h))
+            })
+            .unwrap();
+        trust_codex_slot(home, event, slot);
+    }
+
+    /// Trust the hook at `(g, h)` of Codex's `event` the way `/hooks`
+    /// records it.
+    fn trust_codex_slot(home: &Path, event: &str, (g, h): Slot) {
+        let table_path = home.join(".codex").join("hooks.json");
+        let table: Value = serde_json::from_str(&fs::read_to_string(&table_path).unwrap()).unwrap();
+        let groups = table["hooks"][event].as_array().unwrap();
         let hash = codex_trust::hash(event, &groups[g], &groups[g]["hooks"][h]);
         let label = codex_trust::label(event);
         let config = home.join(".codex").join("config.toml");
@@ -2122,6 +2336,82 @@ mod tests {
             table_path.display()
         );
         fs::write(&config, text).unwrap();
+    }
+
+    /// `plan()` with an observer on the guarded event, so the event's
+    /// plan, generation, and command change.
+    fn plan_with_observer() -> Plan {
+        serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: dcg\n    exec: [rune-hook-dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n  - id: git-ai\n    exec: [rune-hook-git-ai]\n    events: [tool.before, tool.after]\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap()
+    }
+
+    #[test]
+    fn removing_rune_s_earlier_entry_waits_while_it_would_move_a_trusted_hook() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".codex")).unwrap();
+        let manifest = home.path().join("state").join("manifest.json");
+        let table = home.path().join(".codex").join("hooks.json");
+        let run = |plan: &Plan, check: bool| {
+            apply(
+                plan,
+                home.path(),
+                "/opt/rune",
+                PLAN,
+                &manifest,
+                check,
+                false,
+            )
+            .unwrap()
+        };
+        run(&plan(), false);
+        // The owner adds a guard to rune's group, after rune's entry.
+        let mut value: Value = serde_json::from_str(&fs::read_to_string(&table).unwrap()).unwrap();
+        value["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type": "command", "command": "/owner/guard"}));
+        fs::write(&table, value.to_string()).unwrap();
+        run(&plan(), false);
+        trust_in_codex(home.path(), "PreToolUse");
+        // A hook in rune's group that Codex does not trust is drift.
+        let check = run(&plan(), true);
+        assert!(
+            check
+                .drift
+                .iter()
+                .any(|d| d.contains("`/owner/guard` on PreToolUse at group 1 handler 2")),
+            "{:?}",
+            check.drift
+        );
+        trust_codex_hook(home.path(), "PreToolUse", "/owner/guard");
+        // The plan changes, and the owner trusts the new entry.
+        run(&plan_with_observer(), false);
+        trust_rune_entry(home.path(), "PreToolUse", true);
+        // Removing the earlier entry would move the guard to handler 1.
+        let report = run(&plan_with_observer(), false);
+        let group: Value = serde_json::from_str::<Value>(&fs::read_to_string(&table).unwrap())
+            .unwrap()["hooks"]["PreToolUse"][0]
+            .clone();
+        assert_eq!(group["hooks"].as_array().unwrap().len(), 2, "{group}");
+        assert_eq!(group["hooks"][1]["command"], "/owner/guard");
+        assert!(
+            report.trust.iter().any(|t| t.contains("keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1")),
+            "{:?}",
+            report.trust
+        );
+        let check = run(&plan_with_observer(), true);
+        assert!(
+            check
+                .drift
+                .iter()
+                .any(|d| d.contains("would move `/owner/guard`")),
+            "{:?}",
+            check.drift
+        );
     }
 
     /// The rune entries of Codex's `event`, group by group.
@@ -2166,12 +2456,7 @@ mod tests {
         trust_in_codex(home.path(), "PreToolUse");
         // An observer joins the guarded event: its plan, generation, and
         // command change, and Codex does not trust the new command yet.
-        let changed = serde_yaml::from_str::<Hooks>(
-            "handlers:\n  - id: dcg\n    exec: [rune-hook-dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n  - id: git-ai\n    exec: [rune-hook-git-ai]\n    events: [tool.before, tool.after]\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n",
-        )
-        .unwrap()
-        .compile()
-        .unwrap();
+        let changed = plan_with_observer();
         let report = run(&changed, false);
         assert_eq!(
             codex_rune_groups(home.path(), "PreToolUse"),
