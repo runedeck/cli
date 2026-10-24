@@ -62,6 +62,21 @@ The sandbox guard MUST NOT refuse a line that holds no exempt tool. When a line 
 - **WHEN** the model runs `cargo test | tail -40`
 - **THEN** the call passes with no advice
 
+### Requirement: The guard judges the line the harness runs
+
+The sandbox guard MUST judge the tool input the harness will execute, after every rewriter that ran before it. When a rewriter changed the line and the guard refuses it, the reason MUST quote the line the model wrote beside the rewritten one.
+
+#### Scenario: Rewritten line outside the exempt list
+
+- **WHEN** a rewriter turns `jj log` into `rtk jj log` and only `jj *` is exempt
+- **THEN** the call is refused
+- **AND** the reason quotes `jj log` and `rtk jj log`
+
+#### Scenario: Rewritten line inside the exempt list
+
+- **WHEN** a rewriter turns `jj log` into `rtk jj log` and `rtk jj *` is exempt
+- **THEN** the call passes
+
 ### Requirement: The exempt list is the harness's own
 
 The sandbox guard MUST take the exempt patterns from its arguments when it has any. Without arguments, it MUST read them from the sandbox settings that the session's harness merges, and only while that sandbox is on. With no exempt pattern, the guard MUST refuse nothing.

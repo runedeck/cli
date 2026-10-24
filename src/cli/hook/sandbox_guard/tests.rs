@@ -382,7 +382,7 @@ fn bash(harness: Harness, raw_command: &str, effective: &str, disable: bool) -> 
         tool: Some(ToolPayload {
             name: "Bash".into(),
             id: None,
-            input: json!({"command": effective}),
+            input: json!({"command": effective, "dangerouslyDisableSandbox": disable}),
             response: None,
         }),
         prompt: None,
@@ -392,10 +392,23 @@ fn bash(harness: Harness, raw_command: &str, effective: &str, disable: bool) -> 
 }
 
 #[test]
-fn the_adapter_judges_the_command_the_model_wrote() {
+fn the_adapter_judges_the_command_the_harness_will_run() {
     let args = vec!["jj *".to_string()];
+    // A rewriter wrapped the exempt tool, so the sandbox keeps it inside.
     let payload = bash(Harness::Claude, "jj log", "rtk jj log", false);
-    assert_eq!(guard(&payload, &args).unwrap().effect, Effect::Pass);
+    let result = guard(&payload, &args).unwrap();
+    assert_eq!(result.effect, Effect::Deny);
+    let reason = result.reason.unwrap();
+    assert!(
+        reason.contains("A rewriter turned the command you wrote, `jj log`, into `rtk jj log`"),
+        "{reason}"
+    );
+    // With the rewritten form exempt too, the same call passes.
+    let both = vec!["jj *".to_string(), "rtk jj *".to_string()];
+    assert_eq!(guard(&payload, &both).unwrap().effect, Effect::Pass);
+    // A rewriter that wraps a plain line in `cd … &&` is judged as rewritten.
+    let payload = bash(Harness::Claude, "jj log", "cd /x && jj log", false);
+    assert_eq!(guard(&payload, &args).unwrap().effect, Effect::Deny);
     let payload = bash(Harness::Claude, "jj log", "jj log", true);
     assert_eq!(guard(&payload, &args).unwrap().effect, Effect::Deny);
     let payload = bash(Harness::Codex, "cd /x && jj log", "cd /x && jj log", false);

@@ -4,7 +4,7 @@
 
 The guard is one more built-in adapter. The *[hook dispatcher][HOOKDISPATCHER]* spawns it as `rune hook adapter sandbox-guard` when a handler's `exec` names `rune-hook-sandbox-guard`. It reads the normalized payload, answers for Claude's `Bash` tool only, and passes every other harness and tool.
 
-It judges `raw.tool_input`, the input the model wrote, and not the effective input. A rewriter such as rtk runs first and turns `jj log` into `rtk jj log`. The model and the refusal both speak of the line as the model wrote it.
+It judges `tool.input`, the effective input after every rewriter ordered before it. A rewriter such as rtk runs first and turns `jj log` into `rtk jj log`, and the harness runs the rewritten line. The [Claude Code hooks reference][CCHOOKS] says Claude Code evaluates permission rules against the input a hook returns, not the input Claude sent (read 2026-10-24). So `rtk jj log` runs outside the sandbox only when `rtk jj *` is exempt. When the rewritten line is refused, the reason quotes the line the model wrote from `raw.tool_input` beside the rewritten one, so the owner can see which pattern to add.
 
 A small shell reader splits the line into simple commands. It finds each command's assignments, words, redirections, substitutions (`$( )`, `$(( ))`, backticks, `<( )`), the operator after it, and whether parentheses, braces, a loop, or a condition hold it. It expands nothing. Each word keeps its source text, so a suggestion repeats the model's own quoting.
 
@@ -42,3 +42,4 @@ Arguments, when given, replace the list and use the `excludedCommands` pattern f
 - A refusal costs the model one turn. The owner accepted that cost for lines that are easier to read (2026-10-22).
 
 [HOOKDISPATCHER]: ../../specs/glossary/hook-dispatcher.md
+[CCHOOKS]: https://code.claude.com/docs/en/hooks

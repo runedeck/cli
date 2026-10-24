@@ -148,7 +148,10 @@ pub(crate) fn exemptions_from(files: &[PathBuf]) -> Exemptions {
     }
 }
 
-/// The adapter: judge the command the model wrote, before any rewriter.
+/// The adapter: judge the command the harness will run. A rewriter that
+/// ran first, such as rtk, changed the effective input, and Claude Code
+/// judges the input a hook returns, not the one the model sent. The
+/// model's own line, from `raw`, only explains a refusal.
 #[allow(clippy::unnecessary_wraps)] // every adapter has the one signature the table calls
 pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<HandlerResult, String> {
     let pass = HandlerResult::default();
@@ -161,9 +164,7 @@ pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<Handler
     if tool.name != "Bash" {
         return Ok(pass);
     }
-    // The sandbox and the model both know the input as the model wrote
-    // it; a rewriter's version is the tool's effective input.
-    let input = payload.raw.get("tool_input").unwrap_or(&tool.input);
+    let input = &tool.input;
     let Some(command) = input["command"].as_str() else {
         return Ok(pass);
     };
@@ -182,7 +183,21 @@ pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<Handler
     } else {
         Exemptions::new(args)
     };
-    Ok(judge(command, disable, &exemptions))
+    let mut result = judge(command, disable, &exemptions);
+    let written = payload.raw["tool_input"]["command"].as_str();
+    if result.effect == super::encode::Effect::Deny
+        && let Some(written) = written.filter(|w| *w != command)
+        && let Some(reason) = result.reason.as_mut()
+    {
+        use std::fmt::Write as _;
+        let _ = write!(
+            reason,
+            "\nA rewriter turned the command you wrote, `{written}`, into `{command}`, and the \
+             sandbox judges the rewritten one. If the rewritten tool should run outside the \
+             sandbox, the owner adds its pattern to `sandbox.excludedCommands`.\n"
+        );
+    }
+    Ok(result)
 }
 
 /// The verdict on one command line.
