@@ -404,18 +404,58 @@ fn run_tool(
     ))
 }
 
-/// dcg on a shell command: exit 2 or a deny decision is a denial.
-fn dcg(payload: &HandlerPayload) -> Result<HandlerResult, String> {
-    let Some(tool) = &payload.tool else {
-        return Ok(HandlerResult::default());
-    };
+/// The command line of a shell tool call, under every name the harnesses
+/// give their shell tool: `Bash` (Claude, Grok, and Codex hooks),
+/// `run_shell_command` (Gemini), `run_command` (Antigravity), and Codex's
+/// own `shell` (an argument list), `shell_command`, and `exec_command`
+/// (whose command is `cmd`). Any other tool has none.
+pub(crate) fn shell_command(tool: &super::payload::ToolPayload) -> Option<String> {
     if !matches!(
         tool.name.as_str(),
-        "Bash" | "shell" | "run_shell_command" | "bash" | "run_command"
+        "Bash"
+            | "bash"
+            | "shell"
+            | "shell_command"
+            | "exec_command"
+            | "run_shell_command"
+            | "run_command"
     ) {
-        return Ok(HandlerResult::default());
+        return None;
     }
-    let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
+    ["command", "cmd"]
+        .iter()
+        .find_map(|key| match tool.input.get(*key)? {
+            Value::String(line) => Some(line.clone()),
+            Value::Array(words) => {
+                let words: Option<Vec<String>> = words
+                    .iter()
+                    .map(|w| w.as_str().map(crate::cli::shell_quote))
+                    .collect();
+                words.map(|w| w.join(" "))
+            }
+            _ => None,
+        })
+}
+
+/// The payload dcg reads: Claude's shape, with every shell tool named
+/// `Bash` and its command line under `tool_input.command`.
+fn dcg_payload(payload: &HandlerPayload) -> Option<Value> {
+    let tool = payload.tool.as_ref()?;
+    let command = shell_command(tool)?;
+    let mut shaped = claude_shaped(payload);
+    if let Some(map) = shaped.as_object_mut() {
+        map.insert("tool_name".into(), json!("Bash"));
+        map.insert("tool_input".into(), json!({ "command": command }));
+    }
+    Some(shaped)
+}
+
+/// dcg on a shell command: exit 2 or a deny decision is a denial.
+fn dcg(payload: &HandlerPayload) -> Result<HandlerResult, String> {
+    let Some(shaped) = dcg_payload(payload) else {
+        return Ok(HandlerResult::default());
+    };
+    let stdin = serde_json::to_vec(&shaped).map_err(|e| e.to_string())?;
     let (code, stdout, stderr) =
         run_tool("dcg", &[], &stdin, payload.cwd.as_deref().map(Path::new))?;
     if code == Some(2) {
@@ -981,6 +1021,45 @@ mod tests {
             written_paths(&tool),
             vec![PathBuf::from("NOTE.md"), PathBuf::from("docs/a.md")]
         );
+    }
+
+    #[test]
+    fn dcg_reads_every_shell_tool_as_one_bash_command() {
+        let shaped = |name: &str, input: Value| {
+            dcg_payload(&payload(
+                Harness::Codex,
+                "tool.before",
+                Some((name, input)),
+                "/w",
+                None,
+            ))
+            .map(|v| (v["tool_name"].clone(), v["tool_input"]["command"].clone()))
+        };
+        let bash = (json!("Bash"), json!("git reset --hard"));
+        assert_eq!(
+            shaped("exec_command", json!({"cmd": "git reset --hard"})),
+            Some(bash.clone())
+        );
+        assert_eq!(
+            shaped("shell_command", json!({"command": "git reset --hard"})),
+            Some(bash.clone())
+        );
+        assert_eq!(
+            shaped("Bash", json!({"command": "git reset --hard"})),
+            Some(bash)
+        );
+        assert_eq!(
+            shaped(
+                "shell",
+                json!({"command": ["bash", "-lc", "git push --force origin main"]})
+            ),
+            Some((
+                json!("Bash"),
+                json!("bash -lc 'git push --force origin main'")
+            ))
+        );
+        assert_eq!(shaped("apply_patch", json!({"command": "*** Begin"})), None);
+        assert_eq!(shaped("exec_command", json!({})), None);
     }
 
     #[test]

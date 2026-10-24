@@ -121,6 +121,50 @@ fn denying_guard(scene: &Scene) {
     ));
 }
 
+// ------------------------------------------------------------- adapters ----
+
+#[test]
+fn dcg_judges_the_codex_shell_tools() {
+    if std::process::Command::new("dcg")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return; // dcg is not installed on this machine
+    }
+    let scene = Scene::new();
+    for (tool, input) in [
+        (
+            "exec_command",
+            serde_json::json!({"cmd": "git reset --hard"}),
+        ),
+        (
+            "shell_command",
+            serde_json::json!({"command": "git reset --hard"}),
+        ),
+    ] {
+        let payload = serde_json::json!({
+            "v": 1, "harness": "codex", "event": "tool.before", "native_event": "PreToolUse",
+            "cwd": scene.root.path(), "tool": {"name": tool, "id": null, "input": input, "response": null},
+            "raw": {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input}
+        });
+        let output = scene
+            .rune()
+            .args(["hook", "adapter", "dcg"])
+            .write_stdin(payload.to_string())
+            .output()
+            .unwrap();
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        assert_eq!(
+            result["effect"],
+            "deny",
+            "{tool}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 // ---------------------------------------------------- the event deadline ----
 
 #[cfg(unix)]

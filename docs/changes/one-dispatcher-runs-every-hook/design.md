@@ -40,7 +40,7 @@ encode Result for H and N -> stdout JSON, exit 0
 - `src/cli/hook/payload.rs`: decoders for Claude, Codex, Grok, Gemini, Antigravity into `HandlerPayload`, `raw` kept. Release 1 registers Claude and Codex; the others decode for the tests and the later change.
 - `src/cli/hook/run.rs`: the dispatcher above, spawning through `src/cli/process`.
 - `src/cli/hook/encode.rs`: Claude and Codex encoders for every effect; the other harnesses' tables so an unsupported effect is reported.
-- `src/cli/hook/adapters/`: built-in handlers that call the existing executables with their native payloads and translate to `Result`: `author-identity`, `dcg`, `git-ai`, `rtk`, `lint-on-write`, `session-capture`, `turn-checkpoint`, `tmux-status`, `jj-guards` (the worktree, agent isolation, and VCS internals parts as one handler). Each adapter declares `adopts`, the registration pattern of the entry it replaces.
+- `src/cli/hook/adapters/`: built-in handlers that call the existing executables with their native payloads and translate to `Result`: `author-identity`, `dcg`, `git-ai`, `rtk`, `lint-on-write`, `session-capture`, `turn-checkpoint`, `tmux-status`, `jj-guards` (the worktree, agent isolation, and VCS internals parts as one handler). Each adapter declares `adopts`, the registration pattern of the entry it replaces. The dcg adapter hands dcg every shell tool as one Claude `Bash` call: `Bash`, Gemini's `run_shell_command`, Antigravity's `run_command`, and Codex's `shell` (an argument list), `shell_command`, and `exec_command` (its `cmd` field). The [Codex hooks reference][CODEXHOOKS] matches `exec_command` as `Bash` (read 2026-10-24), so the other names are the shapes a decoded payload can still carry.
 - `src/cli/install/hooks.rs`: render one entry per subscribed event into Claude `settings.json` and Codex `hooks.json`; inventory the tables; adopt matching predecessor and legacy entries in Claude `settings.json` and Codex `hooks.json`, report a legacy entry in Codex `config.toml` with its line (that file also holds the trust state, so rune never rewrites it); write the manifest section; print the Codex trust step; `--check`.
 
 ## Data
@@ -112,3 +112,4 @@ Astra on the specification (`gpt-6-astra`, clean state, 22 hits, 2026-09-27):
 | 22 option 2 dismissed by an impossibility claim | fixed: the record states the cost |
 
 [CCHOOKS]: https://code.claude.com/docs/en/hooks
+[CODEXHOOKS]: https://developers.openai.com/codex/hooks
