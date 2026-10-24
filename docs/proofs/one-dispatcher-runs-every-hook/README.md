@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: f010ea612d0aa5d7e2723b7c922037121b2d3897
+head: 0e349b6ad5a92bb077ff51f5a93cc8bbcd359423
 recorded: 2026-10-24
-transcript: aaf1d97d521d0afa816d6d5ffc395e5815453a82d5346b166e9ed7e3f9a26477
+transcript: 913fa73cfe4cfcf82789d5625d42d5854328ac429cca89b7080da9340a94ea1b
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -68,7 +68,7 @@ scenes:
 - scenario: guards-hold-under-failure#the-registration-carries-the-plan-and-the-policy/plan-without-the-guarded-event
   kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
-  kind: unproven
+  kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
   kind: check
 - scenario: guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
