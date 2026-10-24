@@ -97,8 +97,15 @@ impl Report {
 
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
+        // A written entry is an event registered, or an event with what
+        // happened to it, such as `PreToolUse removed`.
         for (harness, event) in &self.written {
-            let _ = writeln!(out, "{harness}: {event} registered");
+            let done = if event.contains(' ') {
+                ""
+            } else {
+                " registered"
+            };
+            let _ = writeln!(out, "{harness}: {event}{done}");
         }
         for (harness, event, command) in &self.adopted {
             let _ = writeln!(out, "{harness}: {event} adopted `{command}`");
@@ -1350,6 +1357,21 @@ mod tests {
         );
         assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
         assert!(report.warnings[0].contains("legacy"));
+    }
+
+    #[test]
+    fn a_removed_entry_prints_as_removed() {
+        let report = Report {
+            written: vec![
+                (Harness::Claude, "PreToolUse".to_string()),
+                (Harness::Claude, "Stop removed".to_string()),
+            ],
+            ..Report::default()
+        };
+        assert_eq!(
+            report.render(),
+            "claude: PreToolUse registered\nclaude: Stop removed\n"
+        );
     }
 
     #[test]
