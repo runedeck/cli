@@ -48,7 +48,23 @@ pub(crate) fn generations_dir() -> Result<PathBuf, Error> {
 
 /// Whether an earlier install left a generation in `dir`.
 pub(crate) fn has_generations(dir: &Path) -> bool {
-    fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+    })
+}
+
+/// The digest a generation's file name claims for its text, when the name
+/// is one: 64 lowercase hex digits and `.json`.
+fn claimed_digest(path: &Path) -> Option<&str> {
+    let stem = path.file_stem()?.to_str()?;
+    let named = path.extension().is_some_and(|ext| ext == "json")
+        && stem.len() == 64
+        && stem
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    named.then_some(stem)
 }
 
 /// One registration's plan: the compiled plan narrowed to one harness and
@@ -106,6 +122,9 @@ pub(crate) fn write_generation(generation: &Generation) -> Result<(), Error> {
 /// The plan at `path`, and a warning when the user config is newer than
 /// it. The registration names the path install wrote, so a harness that
 /// runs the dispatcher with another state directory reads the same plan.
+/// A generation must hold the bytes its name is the digest of: an edit
+/// that clears its handlers would otherwise run the event unguarded, so a
+/// mismatch is an error, and the registration's failure policy answers.
 pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
     let path = path.to_path_buf();
     let text = fs::read_to_string(&path).map_err(|error| {
@@ -118,6 +137,19 @@ pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
         )
         .with_code("hooks.no_plan")
     })?;
+    if let Some(claimed) = claimed_digest(&path) {
+        let actual = format!("{:x}", Sha256::digest(text.as_bytes()));
+        if actual != claimed {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "{} does not hold the plan its name is the digest of: it changed after install; run `rune install`",
+                    path.display()
+                ),
+            )
+            .with_code("hooks.generation_changed"));
+        }
+    }
     let plan: Plan = serde_json::from_str(&text).map_err(|error| {
         Error::new(
             ErrorKind::Parse,
@@ -195,5 +227,30 @@ mod tests {
         assert_ne!(first.path, second.path);
         assert_eq!(fs::read_to_string(&first.path).unwrap(), first.text);
         assert_eq!(fs::read_to_string(&second.path).unwrap(), second.text);
+    }
+
+    #[test]
+    fn a_generation_edited_after_install_does_not_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let guarded = plan(
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n",
+        );
+        let written = generation(dir.path(), &guarded, Harness::Claude, "PreToolUse").unwrap();
+        write_generation(&written).unwrap();
+        assert!(read_at(&written.path).is_ok());
+        // The handlers are cleared, and the file is still a valid plan.
+        let mut cleared: serde_json::Value = serde_json::from_str(&written.text).unwrap();
+        cleared["harnesses"]["claude"]["PreToolUse"]["handlers"] = serde_json::json!([]);
+        fs::write(
+            &written.path,
+            serde_json::to_string_pretty(&cleared).unwrap(),
+        )
+        .unwrap();
+        let error = read_at(&written.path).unwrap_err();
+        assert_eq!(error.code(), "hooks.generation_changed", "{error}");
+        // A plan whose name is no digest, such as `plan.json`, loads as is.
+        let whole = dir.path().join("plan.json");
+        fs::write(&whole, serde_json::to_string_pretty(&cleared).unwrap()).unwrap();
+        assert!(read_at(&whole).is_ok());
     }
 }

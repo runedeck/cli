@@ -182,12 +182,20 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     let prepared = install::prepare(&plan, &home, &rune, &generations, &manifest_path, check)?;
     let mut report = prepared.report;
     if check {
-        // A registration whose generation is gone falls to its policy.
-        for generation in prepared.generations.iter().filter(|g| !g.path.is_file()) {
-            report.drift.push(format!(
-                "the plan generation {} is missing; run `rune hook install`",
-                generation.path.display()
-            ));
+        // A registration whose generation is gone, or no longer holds the
+        // bytes its name is the digest of, falls to its policy.
+        for generation in &prepared.generations {
+            match std::fs::read_to_string(&generation.path) {
+                Err(_) => report.drift.push(format!(
+                    "the plan generation {} is missing; run `rune hook install`",
+                    generation.path.display()
+                )),
+                Ok(text) if text != generation.text => report.drift.push(format!(
+                    "the plan generation {} was changed after install; run `rune hook install`",
+                    generation.path.display()
+                )),
+                Ok(_) => {}
+            }
         }
     }
     if !check && !dry_run {

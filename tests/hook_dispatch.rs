@@ -412,6 +412,44 @@ fn an_old_registration_reads_its_own_generation_when_an_install_fails() {
     assert!(on_disk.len() > named.len(), "{on_disk:?}");
 }
 
+/// An edit that clears the handlers of a guarded registration's
+/// generation leaves a valid plan, but not the bytes the file's name is
+/// the digest of, so the registration's `deny` answers, and `--check`
+/// names the file.
+#[cfg(unix)]
+#[test]
+fn a_generation_edited_after_install_falls_to_the_registration_s_policy() {
+    let (scene, _) = guarded_scene();
+    let command = pre_tool_command(&scene);
+    let generation = plan_of(&command);
+    let mut plan = json_at(Path::new(&generation));
+    plan["harnesses"]["claude"]["PreToolUse"]["handlers"] = serde_json::json!([]);
+    std::fs::write(&generation, serde_json::to_string_pretty(&plan).unwrap()).unwrap();
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &generation, "--on-failure", "deny"]);
+    let answer = dispatch(scene.rune(), &args, &claude_bash(scene.root.path(), "ls"));
+    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
+    assert!(
+        answer.stderr.contains("changed after install"),
+        "{}",
+        answer.stderr
+    );
+    let check = scene
+        .rune()
+        .args(["hook", "install", "--check"])
+        .output()
+        .unwrap();
+    assert!(!check.status.success());
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("was changed after install"),
+        "{}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    // An install puts the generation back, and the guard denies again.
+    scene.rune().args(["hook", "install"]).assert().success();
+    assert_eq!(registration_answers(&scene, &command), "deny");
+}
+
 /// A session that loaded its hooks before a reinstall keeps calling the
 /// old `--plan` path. The reinstall changes the plan and the table, and
 /// the old registration still answers from its old generation, which the
