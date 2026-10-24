@@ -10,8 +10,11 @@ use rune::hooks::{Canonical, Harness};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// What a handler returns on stdout, one JSON object.
+/// What a handler returns on stdout, one JSON object. A field this shape
+/// does not know is an error, so a harness-native answer such as Claude's
+/// `hookSpecificOutput` fails instead of reading as a pass.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HandlerResult {
     #[serde(default = "one")]
     pub v: u32,

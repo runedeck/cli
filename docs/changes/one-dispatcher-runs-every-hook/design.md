@@ -19,7 +19,8 @@ for handler in plan[H][event], serial, ordered:
     deadline = min(handler.timeout, remaining - reserve); none left -> failure by policy, no spawn
     spawn exec, payload on stdin, RUNE_HARNESS RUNE_EVENT RUNE_HANDLER_ID RUNE_REMAINING_MS
     kill the process group on expiry
-    parse one JSON Result; anything else is failure by policy (warn: log; deny: Result deny)
+    parse one JSON Result (unknown fields refused, v must be 1); empty stdout or anything
+    else is failure by policy (warn: log; deny: Result deny)
     a replacement input from a `rewrites: true` handler becomes the effective input
     for the handlers after it; from any other handler it is a failure by policy
     continue_turn outside turn.finish is a failure by policy; a deny outranks every effect

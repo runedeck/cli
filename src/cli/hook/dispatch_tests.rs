@@ -76,7 +76,7 @@ fn a_denial_on_claude_tool_before_ends_the_gate() {
             "dcg".to_string(),
             fake(r#"{"effect":"deny","reason":"no rm"}"#),
         ),
-        ("later".to_string(), fake("")),
+        ("later".to_string(), fake("{}")),
     ]));
     let answer = dispatch(
         &plan,
@@ -105,7 +105,7 @@ fn a_rewriter_before_the_guard_changes_what_the_guard_sees() {
             "rtk".to_string(),
             fake(r#"{"effect":"pass","input":{"command":"rtk git status"}}"#),
         ),
-        ("dcg".to_string(), fake("")),
+        ("dcg".to_string(), fake("{}")),
     ]));
     let answer = dispatch(
         &plan,
@@ -150,7 +150,7 @@ fn a_guard_timeout_denies_and_a_linter_crash_warns() {
                 sleep_ms: 0,
             },
         ),
-        ("next".to_string(), fake("")),
+        ("next".to_string(), fake("{}")),
     ]));
     let answer = dispatch(
         &plan,
@@ -191,7 +191,7 @@ fn a_spent_budget_fails_the_pending_guard_without_spawning_it() {
                 sleep_ms: 5_000,
             },
         ),
-        ("dcg".to_string(), fake("")),
+        ("dcg".to_string(), fake("{}")),
     ]));
     let answer = dispatch(
         &plan,
@@ -214,7 +214,7 @@ fn an_event_mismatch_under_a_guard_denies_and_runs_nothing() {
     let plan = plan(
         "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n",
     );
-    let (runner, seen) = runner(HashMap::from([("dcg".to_string(), fake(""))]));
+    let (runner, seen) = runner(HashMap::from([("dcg".to_string(), fake("{}"))]));
     let raw = json!({"hook_event_name": "Stop", "session_id": "s"});
     let answer = dispatch(&plan, Harness::Claude, "PreToolUse", Ok(raw), &runner);
     assert!(answer.stdout.unwrap().contains("deny"));
@@ -481,6 +481,56 @@ fn a_rewriter_on_a_passive_event_changes_nothing() {
     assert_eq!(seen.borrow()[1].1.tool.as_ref().unwrap().input["x"], 0);
 }
 
+#[test]
+fn a_result_in_another_shape_or_no_result_fails_by_policy() {
+    let plan = plan(
+        "handlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    on_failure: deny\n",
+    );
+    for (stdout, why) in [
+        (
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"}}"#,
+            "not one result",
+        ),
+        (
+            r#"{"decision":"block","reason":"old style block"}"#,
+            "not one result",
+        ),
+        ("", "printed nothing"),
+        ("  \n", "printed nothing"),
+        (r#"{"v":2,"effect":"pass"}"#, "version 2"),
+    ] {
+        let (runner, _) = runner(HashMap::from([("guard".to_string(), fake(stdout))]));
+        let answer = dispatch(
+            &plan,
+            Harness::Claude,
+            "PreToolUse",
+            Ok(claude_tool("rm -rf /tmp/x")),
+            &runner,
+        );
+        assert_eq!(decision(&answer), "deny", "{stdout:?}: {answer:?}");
+        assert!(
+            answer.stderr.iter().any(|l| l.contains(why)),
+            "{stdout:?}: {:?}",
+            answer.stderr
+        );
+    }
+}
+
+#[test]
+fn a_result_that_fails_under_warn_lets_the_call_proceed() {
+    let plan = plan("handlers:\n  - id: quiet\n    exec: [quiet]\n    events: [tool.before]\n");
+    let (runner, _) = runner(HashMap::from([("quiet".to_string(), fake(""))]));
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    assert_eq!(answer.stdout, None);
+    assert!(answer.stderr[0].contains("quiet failed: printed nothing"));
+}
+
 // ------------------------------------------------------------ the record ----
 
 fn recording_runner(fakes: HashMap<String, Fake>, dir: &std::path::Path) -> Runner {
@@ -501,7 +551,7 @@ fn two_hooks_on_one_event_leave_two_records_in_order_with_the_answer() {
     );
     let runner = recording_runner(
         HashMap::from([
-            ("dcg".to_string(), fake("")),
+            ("dcg".to_string(), fake("{}")),
             (
                 "lint-on-write".to_string(),
                 fake(
@@ -566,7 +616,7 @@ fn a_budget_spent_before_a_hook_records_the_budget_failure() {
                     sleep_ms: 500,
                 },
             ),
-            ("dcg".to_string(), fake("")),
+            ("dcg".to_string(), fake("{}")),
         ]),
         temp.path(),
     );

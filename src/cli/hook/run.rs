@@ -369,15 +369,30 @@ fn run_handler(
     }
     let text = stdout.trim();
     if text.is_empty() {
-        return Ok(HandlerResult::default());
+        return Err(fail(
+            "printed nothing; a handler prints one result".to_string(),
+            "result",
+            Some(0),
+        ));
     }
-    serde_json::from_str::<HandlerResult>(text).map_err(|e| {
+    let result = serde_json::from_str::<HandlerResult>(text).map_err(|e| {
         fail(
             format!("printed something that is not one result: {e}"),
             "result",
             Some(0),
         )
-    })
+    })?;
+    if result.v != 1 {
+        return Err(fail(
+            format!(
+                "printed a result of version {}; this rune reads 1",
+                result.v
+            ),
+            "result",
+            Some(0),
+        ));
+    }
+    Ok(result)
 }
 
 /// The first log line of a tool event: the tool and its subject, so the
