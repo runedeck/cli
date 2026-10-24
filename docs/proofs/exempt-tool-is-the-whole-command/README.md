@@ -1,7 +1,7 @@
 ---
 type: proof
 change: exempt-tool-is-the-whole-command
-head: a7ecf014b89193ee131acbcfad97a87f2acf8f45
+head: 3eb093a99e5c6efe3b36d21807adc056e61e2775
 recorded: 2026-10-24
 transcript: e6eb5b7481cc34af6d4daf8addd12ffbe8a0a7c24d4f232c0804f5cf6a4a63ff
 scenes:

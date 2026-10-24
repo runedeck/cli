@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1792821295,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
+{"version":2,"width":100,"height":30,"timestamp":1792822615,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
 [0.0,"o","\r\n\u001b[1;36m── exempt-tool-is-the-whole-command · 14 scenes ────────────────────────────────────────────────────\u001b[0m\r\n"]
 [1.2,"o","\r\n\u001b[2m┌─────────────────────────────────────────────┐\u001b[0m\r\n\u001b[2m│\u001b[0m \u001b[1m1/14 · Sandbox off request for a jj command\u001b[0m \u001b[2m│\u001b[0m\r\n\u001b[2m└─────────────────────────────────────────────┘\u001b[0m\r\n\u001b[35mcheck\u001b[0m  \u001b[2ma sandbox off request for an exempt command is refused\u001b[0m\r\n"]
 [2.4,"o","\u001b[1;32m❯\u001b[0m "]
