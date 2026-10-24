@@ -179,7 +179,15 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         Some(publish::Lock::acquire_dirs(&dirs)?)
     };
     // Every table is read and checked before anything changes.
-    let prepared = install::prepare(&plan, &home, &rune, &generations, &manifest_path, check)?;
+    let prepared = install::prepare(
+        &plan,
+        &home,
+        &rune,
+        &generations,
+        &manifest_path,
+        check,
+        chrono::Utc::now(),
+    )?;
     let mut report = prepared.report;
     if check {
         // A registration whose generation is gone, or no longer holds the

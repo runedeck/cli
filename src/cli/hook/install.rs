@@ -55,10 +55,14 @@ pub(crate) struct Manifest {
     /// The plan generations the last install's registrations name.
     #[serde(default)]
     pub generations: Vec<String>,
-    /// The generations no table names any more, each with the time the
-    /// tables stopped naming it.
+    /// The generations no table names any more, each with the time and
+    /// the install at which the tables stopped naming it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired: Vec<Retired>,
+    /// How many installs wrote this manifest: a count the clock cannot
+    /// move.
+    #[serde(default)]
+    pub installs: u64,
 }
 
 /// A generation no table names, kept for a session that loaded its hooks
@@ -66,14 +70,70 @@ pub(crate) struct Manifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Retired {
     pub generation: String,
-    /// When an install first found no table naming it, RFC 3339 in UTC.
+    /// When an install found that no table names it, RFC 3339 in UTC.
     pub since: String,
+    /// The manifest's install count at that time.
+    #[serde(default)]
+    pub install: Option<u64>,
 }
 
 /// How long a generation stays after the tables stop naming it. A
 /// session that started before the change calls the old path, and under
 /// `deny` each of its guarded calls would fail without the file.
 pub(crate) const RETENTION_DAYS: i64 = 14;
+
+/// How many installs must follow the one that retired a generation before
+/// it goes, so a clock set forward cannot end the window alone.
+pub(crate) const RETENTION_INSTALLS: u64 = 2;
+
+/// A record that a generation stopped being named now, at `install`.
+fn retired_now(path: &Path, now: chrono::DateTime<chrono::Utc>, install: u64) -> Retired {
+    Retired {
+        generation: path.display().to_string(),
+        since: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        install: Some(install),
+    }
+}
+
+/// A path as the file system names it, or as given when it is gone.
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The retired records once install knows which generations the tables
+/// named before it and name after it. A generation a table names keeps
+/// no record, so a record left from before it was named again cannot cut
+/// its next window short. A generation the old tables named and the new
+/// ones do not starts a fresh window now. Every other record stays.
+fn reconcile_retired(
+    records: &[Retired],
+    before: &std::collections::BTreeSet<PathBuf>,
+    after: &std::collections::BTreeSet<PathBuf>,
+    now: chrono::DateTime<chrono::Utc>,
+    install: u64,
+) -> Vec<Retired> {
+    let keys =
+        |paths: &std::collections::BTreeSet<PathBuf>| -> std::collections::BTreeSet<PathBuf> {
+            paths.iter().map(|path| canonical(path)).collect()
+        };
+    let (before_keys, after_keys) = (keys(before), keys(after));
+    let mut out: Vec<Retired> = records
+        .iter()
+        .filter(|record| {
+            let key = canonical(Path::new(&record.generation));
+            !after_keys.contains(&key) && !before_keys.contains(&key)
+        })
+        .cloned()
+        .collect();
+    for path in before {
+        if !after_keys.contains(&canonical(path)) {
+            out.push(retired_now(path, now, install));
+        }
+    }
+    out.sort_by(|a, b| a.generation.cmp(&b.generation));
+    out.dedup_by(|a, b| a.generation == b.generation);
+    out
+}
 
 /// What one run of the installer found and did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -457,6 +517,7 @@ pub(crate) fn apply(
         Path::new(generations),
         manifest_path,
         check,
+        chrono::Utc::now(),
     )?;
     if !check && !dry_run {
         super::publish::publish(&prepared.files)?;
@@ -474,10 +535,11 @@ fn generation_of(command: &str) -> Option<PathBuf> {
 
 /// Keep every generation in `dir` that a registration in a table under
 /// `home` names, from a fresh read of the tables. Record in the manifest
-/// when the tables stopped naming each other one, and delete it only
-/// once that time is `RETENTION_DAYS` before `now`. A generation without
-/// a record, or with one that does not parse, is recorded as unnamed
-/// from `now`. Returns the generations deleted.
+/// when, and at which install, the tables stopped naming each other one.
+/// Delete it only once that time is `RETENTION_DAYS` before `now` and
+/// `RETENTION_INSTALLS` installs have run since. A generation without a
+/// record, or with one that does not parse, is recorded as unnamed from
+/// now. Returns the generations deleted.
 pub(crate) fn sweep_generations(
     home: &Path,
     dir: &Path,
@@ -487,9 +549,9 @@ pub(crate) fn sweep_generations(
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
-    let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let named = named_generations(home, &canonical)?;
     let mut manifest = read_manifest(manifest_path);
+    let installs = manifest.installs;
     let earlier: BTreeMap<PathBuf, &Retired> = manifest
         .retired
         .iter()
@@ -508,24 +570,25 @@ pub(crate) fn sweep_generations(
         if named.contains(&key) {
             continue;
         }
-        let since = earlier
-            .get(&key)
-            .and_then(|record| chrono::DateTime::parse_from_rfc3339(&record.since).ok())
-            .map(|since| since.with_timezone(&chrono::Utc));
-        match since {
-            Some(since) if now - since >= chrono::TimeDelta::days(RETENTION_DAYS) => {
+        let record = earlier.get(&key).and_then(|record| {
+            let since = chrono::DateTime::parse_from_rfc3339(&record.since).ok()?;
+            Some((since.with_timezone(&chrono::Utc), record.install?))
+        });
+        match record {
+            Some((since, install))
+                if now - since >= chrono::TimeDelta::days(RETENTION_DAYS)
+                    && installs >= install.saturating_add(RETENTION_INSTALLS) =>
+            {
                 fs::remove_file(&path)
                     .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
                 swept.push(path);
             }
-            Some(since) => retired.push(Retired {
+            Some((since, install)) => retired.push(Retired {
                 generation: path.display().to_string(),
                 since: since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                install: Some(install),
             }),
-            None => retired.push(Retired {
-                generation: path.display().to_string(),
-                since: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            }),
+            None => retired.push(retired_now(&path, now, installs)),
         }
     }
     if retired != manifest.retired {
@@ -551,23 +614,28 @@ fn named_generations(
     for harness in Harness::REGISTERED {
         let table = Table::read(&resolved(&table_path(home, harness))?)?;
         for event in table.event_names() {
-            for group in table.groups(&event) {
-                let hooks = group["hooks"].as_array().cloned().unwrap_or_default();
-                for hook in hooks {
-                    if let Some(plan) = generation_of(hook["command"].as_str().unwrap_or_default())
-                    {
-                        named.insert(canonical(&plan));
-                    }
-                }
+            for plan in generations_in(&table.groups(&event)) {
+                named.insert(canonical(&plan));
             }
         }
     }
     Ok(named)
 }
 
+/// The generation every rune registration in an event's groups names.
+fn generations_in(groups: &[Value]) -> Vec<PathBuf> {
+    groups
+        .iter()
+        .filter_map(|group| group["hooks"].as_array())
+        .flatten()
+        .filter_map(|hook| generation_of(hook["command"].as_str().unwrap_or_default()))
+        .collect()
+}
+
 /// Read every table, find every conflict, and compute what install would
-/// write. `rune` is the dispatcher's own path as the tables will call it.
-/// One pass over every event of every registered harness: long, and
+/// write. `rune` is the dispatcher's own path as the tables will call it,
+/// and `now` the time a generation the new tables stop naming is retired
+/// at. One pass over every event of every registered harness: long, and
 /// linear.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn prepare(
@@ -577,9 +645,13 @@ pub(crate) fn prepare(
     generations_dir: &Path,
     manifest_path: &Path,
     check: bool,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Prepared, Error> {
     let mut files: Vec<Staged> = Vec::new();
     let mut generations: Vec<super::plan::Generation> = Vec::new();
+    // The generations rune's registrations name before and after install.
+    let mut named_before = std::collections::BTreeSet::new();
+    let mut named_after = std::collections::BTreeSet::new();
     let mut report = Report::default();
     let mut manifest = read_manifest(manifest_path);
     manifest.version = 1;
@@ -634,6 +706,7 @@ pub(crate) fn prepare(
         let mut moved: Vec<(String, Slot, Slot)> = Vec::new();
         for name in &names {
             let entries = table.groups(name);
+            named_before.extend(generations_in(&entries));
             let mut event = Event {
                 harness,
                 name,
@@ -676,6 +749,7 @@ pub(crate) fn prepare(
                 }
             }
             let kept = event.reconcile(entries, &mut next, &mut report)?;
+            named_after.extend(generations_in(&kept.groups));
             if kept.changed {
                 changed = true;
                 rewritten.insert(name.clone(), kept.groups);
@@ -751,12 +825,20 @@ pub(crate) fn prepare(
         manifest.harnesses.insert(harness, next);
     }
     if !check {
-        manifest.generations = generations
+        manifest.installs += 1;
+        manifest.generations = named_after
             .iter()
-            .map(|generation| generation.path.display().to_string())
+            .map(|generation| generation.display().to_string())
             .collect();
-        manifest.generations.sort();
-        manifest.generations.dedup();
+        // Before the tables change, no generation they will name keeps a
+        // record, and each one they stop naming starts its window now.
+        manifest.retired = reconcile_retired(
+            &manifest.retired,
+            &named_before,
+            &named_after,
+            now,
+            manifest.installs,
+        );
         let text = serde_json::to_string_pretty(&manifest)
             .map_err(|error| Error::io(error.to_string()))?;
         files.push(Staged {
@@ -1563,30 +1645,43 @@ mod tests {
             [Retired {
                 generation: plans.join("orphan.json").display().to_string(),
                 since: "2026-10-24T12:00:00Z".to_string(),
+                install: Some(0),
             }],
             "only rune's commands name a generation"
         );
     }
 
     #[test]
-    fn a_generation_goes_once_it_was_unnamed_for_fourteen_days() {
+    fn a_generation_goes_after_fourteen_days_and_two_installs_unnamed() {
         let (home, plans, manifest) = sweep_home();
-        fs::write(plans.join("recent.json"), "{}").unwrap();
-        fs::write(plans.join("garbled.json"), "{}").unwrap();
-        let record = |name: &str, since: &str| Retired {
+        for name in [
+            "recent.json",
+            "garbled.json",
+            "young.json",
+            "uncounted.json",
+        ] {
+            fs::write(plans.join(name), "{}").unwrap();
+        }
+        let record = |name: &str, since: &str, install: Option<u64>| Retired {
             generation: plans.join(name).display().to_string(),
             since: since.to_string(),
+            install,
         };
         let earlier = Manifest {
             version: 1,
+            installs: 7,
             retired: vec![
                 // A table names it again, so its record goes.
-                record("named.json", "2026-01-01T00:00:00Z"),
-                record("orphan.json", "2026-10-10T12:00:00Z"),
-                record("recent.json", "2026-10-10T12:00:01Z"),
-                record("garbled.json", "last week"),
+                record("named.json", "2026-01-01T00:00:00Z", Some(1)),
+                record("orphan.json", "2026-10-10T12:00:00Z", Some(5)),
+                record("recent.json", "2026-10-10T12:00:01Z", Some(5)),
+                // 14 days, but one install since: a clock set forward
+                // cannot end the window alone.
+                record("young.json", "2026-01-01T00:00:00Z", Some(6)),
+                record("garbled.json", "last week", Some(1)),
+                record("uncounted.json", "2026-01-01T00:00:00Z", None),
                 // The file is gone, and so is its record.
-                record("deleted.json", "2026-10-20T00:00:00Z"),
+                record("deleted.json", "2026-10-20T00:00:00Z", Some(6)),
             ],
             ..Manifest::default()
         };
@@ -1594,13 +1689,54 @@ mod tests {
         let now = at("2026-10-24T12:00:00Z");
         let swept = sweep_generations(home.path(), &plans, &manifest, now).unwrap();
         assert_eq!(swept, [plans.join("orphan.json")], "14 days to the second");
-        assert!(plans.join("named.json").exists());
-        assert!(plans.join("recent.json").exists());
+        for name in ["named.json", "recent.json", "young.json", "garbled.json"] {
+            assert!(plans.join(name).exists(), "{name} stays");
+        }
         assert_eq!(
             read_manifest(&manifest).retired,
             [
-                record("garbled.json", "2026-10-24T12:00:00Z"),
-                record("recent.json", "2026-10-10T12:00:01Z"),
+                record("garbled.json", "2026-10-24T12:00:00Z", Some(7)),
+                record("recent.json", "2026-10-10T12:00:01Z", Some(5)),
+                record("uncounted.json", "2026-10-24T12:00:00Z", Some(7)),
+                record("young.json", "2026-01-01T00:00:00Z", Some(6)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_named_generation_keeps_no_record_and_one_that_stops_starts_afresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        let record = |name: &str, since: &str| Retired {
+            generation: path(name).display().to_string(),
+            since: since.to_string(),
+            install: Some(1),
+        };
+        // `again` was retired, then named again by an install that stopped
+        // before its cleanup. `stale` carries a backdated record although
+        // the old tables name it. `other` was retired and stays so.
+        let records = vec![
+            record("again.json", "2026-01-01T00:00:00Z"),
+            record("stale.json", "2025-01-01T00:00:00Z"),
+            record("other.json", "2026-10-01T00:00:00Z"),
+        ];
+        let before = [path("stale.json"), path("kept.json")]
+            .into_iter()
+            .collect();
+        let after = [path("again.json"), path("kept.json")]
+            .into_iter()
+            .collect();
+        let now = at("2026-10-24T12:00:00Z");
+        let out = reconcile_retired(&records, &before, &after, now, 9);
+        assert_eq!(
+            out,
+            [
+                record("other.json", "2026-10-01T00:00:00Z"),
+                Retired {
+                    generation: path("stale.json").display().to_string(),
+                    since: "2026-10-24T12:00:00Z".to_string(),
+                    install: Some(9),
+                },
             ]
         );
     }
