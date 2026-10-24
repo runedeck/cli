@@ -54,17 +54,22 @@ Install MUST write the absolute path of the registration's plan generation into 
 
 ### Requirement: A Registration Reads The Plan Generation It Was Installed With
 
-Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. A registration of the old tables MUST then read its old plan unchanged until its table changes, whatever the new plan does with the old handlers. After the tables and the manifest, install MUST read the tables again and delete each generation that no registration names.
+Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. A registration of the old tables MUST read its old plan unchanged during the install and for 14 days after the tables stop naming its generation. The manifest MUST record when the tables stopped naming each generation. Install MUST delete a generation only when no table names it and that recorded time is 14 days old.
 
 #### Scenario: Install fails after the new generations
 
 - **WHEN** dcg, policy `deny`, guards `tool.before`, the config then gives dcg's id to an observer, and the next install fails after it wrote the new generations
-- **THEN** the old Claude registration still denies with dcg's reason, its generation has its old bytes, and every generation left is one a table names
+- **THEN** the old Claude registration still denies with dcg's reason, its generation has its old bytes, and the manifest is unchanged
 
 #### Scenario: Install replaces the tables
 
 - **WHEN** dcg, policy `deny`, guards `tool.before`, the config then gives dcg's id to an observer, and the next install succeeds
-- **THEN** the Claude registration names a new generation, the old generation is gone, and every generation left is one a table names
+- **THEN** the Claude registration names a new generation, the old registration still denies from the old generation, and the manifest records when the tables stopped naming it
+
+#### Scenario: Generation unnamed for 15 days
+
+- **WHEN** the manifest records that the tables stopped naming one generation 15 days ago and another 13 days ago, and install runs
+- **THEN** install deletes the first generation and keeps the second with its recorded time
 
 ### Requirement: The Dispatcher Log Holds No Text
 

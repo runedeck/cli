@@ -54,7 +54,7 @@ Install MUST judge rune's command by the hash of its own registration, the group
 
 ### Requirement: No Handler Left Takes Rune's Entries Back
 
-When the config declares no handler and an earlier install left a plan or an owned entry, install MUST reconcile an empty plan: it removes rune's commands, keeps every foreign one, and writes a plan with no event. `rune hook install --check` MUST count rune's remaining entries as drift until that install runs.
+When the config declares no handler and an earlier install left a plan generation or an owned entry, install MUST reconcile an empty plan: it removes rune's commands, keeps every foreign one, and records every generation as no longer named. `rune hook install --check` MUST count rune's remaining entries as drift until that install runs.
 
 #### Scenario: Owner empties the handlers
 

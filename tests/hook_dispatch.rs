@@ -293,8 +293,12 @@ fn emptying_the_handlers_takes_rune_s_entries_back_and_keeps_the_owner_s() {
         settings["hooks"]["Stop"][0]["hooks"][0]["command"],
         "/owner/stop"
     );
-    // No registration is left, so no generation is either.
-    assert_eq!(generations(&scene.state()), Vec::<PathBuf>::new());
+    // No registration is left. Each generation stays for a session that
+    // loaded the old hooks, and the manifest records when it went.
+    assert_eq!(named_generations(&scene), Vec::<PathBuf>::new());
+    let kept = generations(&scene.state());
+    assert_ne!(kept, Vec::<PathBuf>::new());
+    assert_eq!(retired(&scene), kept);
     scene
         .rune()
         .args(["hook", "install", "--check"])
@@ -308,15 +312,37 @@ fn set_mode(path: &Path, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
-/// The window of an install: the old registration names its own plan
-/// generation, so a new config cannot change what it runs. Here the
-/// install of the new config fails after it wrote its generations, the
-/// window held open, and the old registration still denies with its old
-/// plan. A successful install then leaves exactly the generations the
-/// tables name.
-#[cfg(unix)]
-#[test]
-fn an_old_registration_reads_its_own_generation_until_the_tables_change() {
+/// The generations the manifest records as no longer named, sorted.
+fn retired(scene: &Scene) -> Vec<PathBuf> {
+    let manifest = json_at(&scene.state().join("hooks/manifest.json"));
+    let mut found: Vec<PathBuf> = manifest["retired"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            assert!(
+                record["since"].as_str().is_some_and(|s| s.ends_with('Z')),
+                "{record}"
+            );
+            PathBuf::from(record["generation"].as_str().unwrap())
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// The command of the Claude `PreToolUse` registration.
+fn pre_tool_command(scene: &Scene) -> String {
+    json_at(&claude_settings(scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// A scene whose config guards `tool.before` with `dcg` under `deny`,
+/// installed, and the observer config that gives `dcg`'s id to a handler
+/// that allows every call.
+fn guarded_scene() -> (Scene, String) {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
     let guard = scene.handler(
@@ -328,18 +354,42 @@ fn an_old_registration_reads_its_own_generation_until_the_tables_change() {
         "hooks:\n  handlers:\n    - id: dcg\n      exec: [sh, {guard}]\n      events: [tool.before]\n      on_failure: deny\n"
     ));
     scene.rune().args(["hook", "install"]).assert().success();
-    let old = json_at(&claude_settings(&scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let old_plan = plan_of(&old);
-    let old_text = std::fs::read_to_string(&old_plan).unwrap();
+    let observer = format!(
+        "hooks:\n  handlers:\n    - id: dcg\n      exec: [sh, {watch}]\n      events: [tool.before]\n"
+    );
+    (scene, observer)
+}
+
+/// What the registered `command` answers for `rm -rf /tmp/x`.
+fn registration_answers(scene: &Scene, command: &str) -> String {
+    let mut args = CLAUDE_PRE.to_vec();
+    let plan = plan_of(command);
+    args.extend(["--plan", &plan, "--on-failure", "deny"]);
+    let answer = dispatch(
+        scene.rune(),
+        &args,
+        &claude_bash(scene.root.path(), "rm -rf /tmp/x"),
+    );
+    decision(&answer)
+}
+
+/// The window of an install: the old registration names its own plan
+/// generation, so a new config cannot change what it runs. Here the
+/// install of the new config fails after it wrote its generations, the
+/// window held open, and the old registration still denies with its old
+/// plan. The failed install leaves the manifest as it was.
+#[cfg(unix)]
+#[test]
+fn an_old_registration_reads_its_own_generation_when_an_install_fails() {
+    let (scene, observer) = guarded_scene();
+    let old = pre_tool_command(&scene);
+    let old_text = std::fs::read_to_string(plan_of(&old)).unwrap();
+    let manifest = scene.state().join("hooks/manifest.json");
+    let manifest_text = std::fs::read_to_string(&manifest).unwrap();
     // An observer reuses the guard's id, and the manifest's directory is
     // read-only, so the install writes its generations, then fails to
     // stage the manifest.
-    scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: dcg\n      exec: [sh, {watch}]\n      events: [tool.before]\n"
-    ));
+    scene.config(&observer);
     let hooks = scene.state().join("hooks");
     set_mode(&hooks, 0o555);
     let failed = scene.rune().args(["hook", "install"]).output().unwrap();
@@ -347,29 +397,53 @@ fn an_old_registration_reads_its_own_generation_until_the_tables_change() {
     let stderr = String::from_utf8_lossy(&failed.stderr);
     assert!(!failed.status.success());
     assert!(stderr.contains(".manifest.json.rune-new-"), "{stderr}");
-    let still = json_at(&claude_settings(&scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_eq!(still, old, "the table still holds the old registration");
-    assert_eq!(std::fs::read_to_string(&old_plan).unwrap(), old_text);
-    let mut args = CLAUDE_PRE.to_vec();
-    args.extend(["--plan", &old_plan, "--on-failure", "deny"]);
-    let answer = dispatch(
-        scene.rune(),
-        &args,
-        &claude_bash(scene.root.path(), "rm -rf /tmp/x"),
-    );
-    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
     assert_eq!(
-        generations(&scene.state()),
-        named_generations(&scene),
-        "the failed install's generations went"
+        pre_tool_command(&scene),
+        old,
+        "the table still holds the old registration"
     );
-    // The install succeeds: the old generation goes with its registration.
+    assert_eq!(std::fs::read_to_string(plan_of(&old)).unwrap(), old_text);
+    assert_eq!(registration_answers(&scene, &old), "deny");
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), manifest_text);
+    // The failed install's generations wait for the next install.
+    let named = named_generations(&scene);
+    let on_disk = generations(&scene.state());
+    assert!(named.iter().all(|g| on_disk.contains(g)), "{on_disk:?}");
+    assert!(on_disk.len() > named.len(), "{on_disk:?}");
+}
+
+/// A session that loaded its hooks before a reinstall keeps calling the
+/// old `--plan` path. The reinstall changes the plan and the table, and
+/// the old registration still answers from its old generation, which the
+/// manifest records as no longer named.
+#[cfg(unix)]
+#[test]
+fn an_old_registration_answers_from_its_generation_after_a_reinstall() {
+    let (scene, observer) = guarded_scene();
+    let old = pre_tool_command(&scene);
+    let old_text = std::fs::read_to_string(plan_of(&old)).unwrap();
+    scene.config(&observer);
     scene.rune().args(["hook", "install"]).assert().success();
-    assert!(!Path::new(&old_plan).exists());
-    assert_eq!(generations(&scene.state()), named_generations(&scene));
+    let new = pre_tool_command(&scene);
+    assert_ne!(
+        plan_of(&new),
+        plan_of(&old),
+        "the table names a new generation"
+    );
+    assert_eq!(registration_answers(&scene, &new), "");
+    assert_eq!(std::fs::read_to_string(plan_of(&old)).unwrap(), old_text);
+    assert_eq!(registration_answers(&scene, &old), "deny");
+    // Every generation is named or recorded as no longer named, the old
+    // Claude one among them.
+    let retired = retired(&scene);
+    assert!(
+        retired.contains(&PathBuf::from(plan_of(&old))),
+        "{retired:?}"
+    );
+    let mut every = named_generations(&scene);
+    every.extend(retired);
+    every.sort();
+    assert_eq!(every, generations(&scene.state()));
 }
 
 /// `rune install --json` of a one-rule module into a scratch target.

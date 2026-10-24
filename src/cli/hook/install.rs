@@ -55,7 +55,25 @@ pub(crate) struct Manifest {
     /// The plan generations the last install's registrations name.
     #[serde(default)]
     pub generations: Vec<String>,
+    /// The generations no table names any more, each with the time the
+    /// tables stopped naming it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<Retired>,
 }
+
+/// A generation no table names, kept for a session that loaded its hooks
+/// before the tables changed and still calls its path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Retired {
+    pub generation: String,
+    /// When an install first found no table naming it, RFC 3339 in UTC.
+    pub since: String,
+}
+
+/// How long a generation stays after the tables stop naming it. A
+/// session that started before the change calls the old path, and under
+/// `deny` each of its guarded calls would fail without the file.
+pub(crate) const RETENTION_DAYS: i64 = 14;
 
 /// What one run of the installer found and did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -454,14 +472,81 @@ fn generation_of(command: &str) -> Option<PathBuf> {
     words.get(at + 1).map(PathBuf::from)
 }
 
-/// Delete every generation in `dir` that no registration in any table
-/// under `home` names, from a fresh read of the tables. Returns the
-/// generations deleted.
-pub(crate) fn sweep_generations(home: &Path, dir: &Path) -> Result<Vec<PathBuf>, Error> {
+/// Keep every generation in `dir` that a registration in a table under
+/// `home` names, from a fresh read of the tables. Record in the manifest
+/// when the tables stopped naming each other one, and delete it only
+/// once that time is `RETENTION_DAYS` before `now`. A generation without
+/// a record, or with one that does not parse, is recorded as unnamed
+/// from `now`. Returns the generations deleted.
+pub(crate) fn sweep_generations(
+    home: &Path,
+    dir: &Path,
+    manifest_path: &Path,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<PathBuf>, Error> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
     let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let named = named_generations(home, &canonical)?;
+    let mut manifest = read_manifest(manifest_path);
+    let earlier: BTreeMap<PathBuf, &Retired> = manifest
+        .retired
+        .iter()
+        .map(|record| (canonical(Path::new(&record.generation)), record))
+        .collect();
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    paths.sort();
+    let mut retired = Vec::new();
+    let mut swept = Vec::new();
+    for path in paths {
+        let key = canonical(&path);
+        if named.contains(&key) {
+            continue;
+        }
+        let since = earlier
+            .get(&key)
+            .and_then(|record| chrono::DateTime::parse_from_rfc3339(&record.since).ok())
+            .map(|since| since.with_timezone(&chrono::Utc));
+        match since {
+            Some(since) if now - since >= chrono::TimeDelta::days(RETENTION_DAYS) => {
+                fs::remove_file(&path)
+                    .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
+                swept.push(path);
+            }
+            Some(since) => retired.push(Retired {
+                generation: path.display().to_string(),
+                since: since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            }),
+            None => retired.push(Retired {
+                generation: path.display().to_string(),
+                since: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            }),
+        }
+    }
+    if retired != manifest.retired {
+        manifest.retired = retired;
+        let text = serde_json::to_string_pretty(&manifest)
+            .map_err(|error| Error::io(error.to_string()))?;
+        super::publish::publish(&[Staged {
+            target: manifest_path.to_path_buf(),
+            text: format!("{text}\n"),
+            new_mode: Some(0o600),
+        }])?;
+    }
+    Ok(swept)
+}
+
+/// The canonical path of every generation a rune registration in a
+/// table under `home` names.
+fn named_generations(
+    home: &Path,
+    canonical: &dyn Fn(&Path) -> PathBuf,
+) -> Result<std::collections::BTreeSet<PathBuf>, Error> {
     let mut named = std::collections::BTreeSet::new();
     for harness in Harness::REGISTERED {
         let table = Table::read(&resolved(&table_path(home, harness))?)?;
@@ -477,17 +562,7 @@ pub(crate) fn sweep_generations(home: &Path, dir: &Path) -> Result<Vec<PathBuf>,
             }
         }
     }
-    let mut swept = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "json") || named.contains(&canonical(&path)) {
-            continue;
-        }
-        fs::remove_file(&path)
-            .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
-        swept.push(path);
-    }
-    Ok(swept)
+    Ok(named)
 }
 
 /// Read every table, find every conflict, and compute what install would
@@ -1446,31 +1521,88 @@ mod tests {
         assert!(report.warnings[0].contains("legacy"));
     }
 
-    #[test]
-    fn the_sweep_keeps_every_generation_a_table_names_and_nothing_else() {
+    /// A home whose Claude table names `named` from a rune registration
+    /// and `orphan` from a foreign command, and a generations directory
+    /// that holds both and a file that is no generation.
+    fn sweep_home() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let home = tempfile::tempdir().unwrap();
         let plans = home.path().join("plans");
         fs::create_dir_all(&plans).unwrap();
         for name in ["named.json", "orphan.json", "notes.txt"] {
             fs::write(plans.join(name), "{}").unwrap();
         }
-        let named = plans.join("named.json");
+        let manifest = home.path().join("manifest.json");
         settings(
             home.path(),
             &json!({"hooks": {"PreToolUse": [{"hooks": [
-                {"type": "command", "command": format!("/opt/rune hook run --harness claude --native-event PreToolUse --plan {}", named.display())},
+                {"type": "command", "command": format!("/opt/rune hook run --harness claude --native-event PreToolUse --plan {}", plans.join("named.json").display())},
                 {"type": "command", "command": format!("/owner/tool --plan {}", plans.join("orphan.json").display())}
             ]}]}})
             .to_string(),
         );
-        let swept = sweep_generations(home.path(), &plans).unwrap();
+        (home, plans, manifest)
+    }
+
+    fn at(text: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn the_sweep_keeps_an_unnamed_generation_and_records_when_it_went() {
+        let (home, plans, manifest) = sweep_home();
+        let now = at("2026-10-24T12:00:00Z");
+        let swept = sweep_generations(home.path(), &plans, &manifest, now).unwrap();
+        assert_eq!(swept, Vec::<PathBuf>::new());
+        for name in ["named.json", "orphan.json", "notes.txt"] {
+            assert!(plans.join(name).exists(), "{name} stays");
+        }
         assert_eq!(
-            swept,
-            [plans.join("orphan.json")],
+            read_manifest(&manifest).retired,
+            [Retired {
+                generation: plans.join("orphan.json").display().to_string(),
+                since: "2026-10-24T12:00:00Z".to_string(),
+            }],
             "only rune's commands name a generation"
         );
-        assert!(named.exists());
-        assert!(plans.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn a_generation_goes_once_it_was_unnamed_for_fourteen_days() {
+        let (home, plans, manifest) = sweep_home();
+        fs::write(plans.join("recent.json"), "{}").unwrap();
+        fs::write(plans.join("garbled.json"), "{}").unwrap();
+        let record = |name: &str, since: &str| Retired {
+            generation: plans.join(name).display().to_string(),
+            since: since.to_string(),
+        };
+        let earlier = Manifest {
+            version: 1,
+            retired: vec![
+                // A table names it again, so its record goes.
+                record("named.json", "2026-01-01T00:00:00Z"),
+                record("orphan.json", "2026-10-10T12:00:00Z"),
+                record("recent.json", "2026-10-10T12:00:01Z"),
+                record("garbled.json", "last week"),
+                // The file is gone, and so is its record.
+                record("deleted.json", "2026-10-20T00:00:00Z"),
+            ],
+            ..Manifest::default()
+        };
+        fs::write(&manifest, serde_json::to_string(&earlier).unwrap()).unwrap();
+        let now = at("2026-10-24T12:00:00Z");
+        let swept = sweep_generations(home.path(), &plans, &manifest, now).unwrap();
+        assert_eq!(swept, [plans.join("orphan.json")], "14 days to the second");
+        assert!(plans.join("named.json").exists());
+        assert!(plans.join("recent.json").exists());
+        assert_eq!(
+            read_manifest(&manifest).retired,
+            [
+                record("garbled.json", "2026-10-24T12:00:00Z"),
+                record("recent.json", "2026-10-10T12:00:01Z"),
+            ]
+        );
     }
 
     #[test]

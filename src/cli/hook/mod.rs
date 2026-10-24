@@ -193,15 +193,19 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         for generation in &prepared.generations {
             plan::write_generation(generation)?;
         }
-        let published = publish::publish(&prepared.files);
+        publish::publish(&prepared.files)?;
         // A fresh read of the tables names every generation still in use.
-        // Every other one goes, a failed install's new ones included.
-        if let Err(error) = install::sweep_generations(&home, &generations) {
+        // A session that loaded its hooks before this install still calls
+        // the old paths, so an unnamed generation stays until the tables
+        // have not named it for the retention window. A failed install
+        // writes nothing more, and its new generations wait for the next.
+        if let Err(error) =
+            install::sweep_generations(&home, &generations, &manifest_path, chrono::Utc::now())
+        {
             report
                 .warnings
-                .push(format!("old plan generations not removed: {error}"));
+                .push(format!("old plan generations not swept: {error}"));
         }
-        published?;
     }
     Ok(Some(report))
 }
