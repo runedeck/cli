@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: 87d79b10cfc49335cebf547284b164de9ce6be8b
+head: f010ea612d0aa5d7e2723b7c922037121b2d3897
 recorded: 2026-10-24
-transcript: 9fb6db91a68f3ecb381986baca5a1767f8dae5b7ceb955c84513313e13a2218f
+transcript: aaf1d97d521d0afa816d6d5ffc395e5815453a82d5346b166e9ed7e3f9a26477
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -67,6 +67,10 @@ scenes:
   kind: check
 - scenario: guards-hold-under-failure#the-registration-carries-the-plan-and-the-policy/plan-without-the-guarded-event
   kind: check
+- scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
+  kind: unproven
+- scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
+  kind: check
 - scenario: guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
   kind: check
 - scenario: install-respects-owner-tables#install-writes-every-file-or-none/unreadable-codex-table
@@ -111,7 +115,7 @@ scenes:
 
 # Proof: one-dispatcher-runs-every-hook
 
-One scene per scenario, in closure order. Every scene runs `rune` against a fixture home under `tests/fixtures/hooks/`, whose handlers are shell lines, so the scenes run on any machine. `RUNE_STATE_DIR=state` keeps the compiled plan and the manifest in the scene's own directory. A scene that installs copies its fixture home into the scene first, so it never writes a fixture or the runner's HOME. `tests/fixtures/hooks/trust-codex.sh` stands in for the owner's `/hooks` step and writes Codex's trust hash into the scene's `config.toml`.
+One scene per scenario, in closure order. Every scene runs `rune` against a fixture home under `tests/fixtures/hooks/`, whose handlers are shell lines, so the scenes run on any machine. `RUNE_STATE_DIR=state` keeps the plan generations, the compiled plan, and the manifest in the scene's own directory. A scene that installs copies its fixture home into the scene first, so it never writes a fixture or the runner's HOME. `tests/fixtures/hooks/trust-codex.sh` stands in for the owner's `/hooks` step and writes Codex's trust hash into the scene's `config.toml`.
 
 ## one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
 
@@ -456,8 +460,8 @@ rune hook: dcg failed: printed nothing; a handler prints one result (deny)
 $# install renders a 3 s timeout for the guarded event
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/stubborn-guard" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq -c "[.hooks.PreToolUse[0].hooks[0].timeout]" home/.claude/settings.json'
 [3]
-$# dcg ignores SIGTERM and sleeps 5 s, and the denial still leaves inside those 3 s
-$ sh -c 'start=$(date +%s); RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse 2>/dev/null | jq -r .hookSpecificOutput.permissionDecision; test $(( $(date +%s) - start )) -lt 3 && echo answered in under 3 s'
+$# dcg ignores SIGTERM and sleeps 5 s, and the registered command's denial still leaves inside those 3 s
+$ sh -c 'cmd=$(jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json); start=$(date +%s); HOME="$PWD/home" sh -c "$cmd" 2>/dev/null | jq -r .hookSpecificOutput.permissionDecision; test $(( $(date +%s) - start )) -lt 3 && echo answered in under 3 s'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
 deny
 answered in under 3 s
@@ -478,7 +482,7 @@ no rm -rf
 
 ```console
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$ jq -c '.hooks.PreToolUse[0].hooks[0] | {onFailure, plan: (.command | test(" --plan .?/[^ ]*/hooks/plan.json")), policy: (.command | endswith(" --on-failure deny"))}' home/.claude/settings.json
+$ jq -c '.hooks.PreToolUse[0].hooks[0] | {onFailure, plan: (.command | test(" --plan /[^ ]*/hooks/plans/[0-9a-f]{64}[.]json ")), policy: (.command | endswith(" --on-failure deny"))}' home/.claude/settings.json
 {"onFailure":"block","plan":true,"policy":true}
 ```
 
@@ -491,6 +495,45 @@ $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse 
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"rune hook could not run its handlers: the plan names no handler for PreToolUse on claude"}}
 rune hook: the plan names no handler for PreToolUse on claude; denied
+```
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
+
+```console
+$# dcg guards tool.before with the deny policy, and its registration and generation stay aside
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json > old.cmd && sed -n "s/.* --plan \([^ ]*\) .*/\1/p" old.cmd > old.plan && cp -f "$(cat old.plan)" old.json'
+$# the config gives dcg's id to an observer, and the manifest's directory turns read-only
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && chmod 555 state/hooks'
+$# the install writes the observer's generation, then fails to stage the manifest
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
+? 2
+[..]state/hooks/.manifest.json.rune-new-[..]: Permission denied (os error 13)
+$# the old registration still denies, from its generation's old bytes, and warns that the config moved on
+$ sh -c 'chmod 755 state/hooks && HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
+rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+no rm -rf
+$ sh -c 'cmp "$(cat old.plan)" old.json && echo the old generation is unchanged'
+the old generation is unchanged
+$# the observer's generation went with the failed install
+$ sh -c 'for f in state/hooks/plans/*.json; do grep -rqF "${f##*/}" home || echo "no table names $f"; done; echo every generation left is named'
+every generation left is named
+```
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
+
+```console
+$# dcg guards tool.before with the deny policy
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\) .*/\1/p" > old.plan'
+$# the config gives dcg's id to an observer, and the install succeeds
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the registration names a new generation, and the old one is gone
+$ sh -c 'new=$(jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\).*/\1/p"); test "$new" != "$(cat old.plan)" && test -f "$new" && test ! -e "$(cat old.plan)" && echo a new generation, and the old one is gone'
+a new generation, and the old one is gone
+$ sh -c 'for f in state/hooks/plans/*.json; do grep -rqF "${f##*/}" home || echo "no table names $f"; done; echo every generation left is named'
+every generation left is named
 ```
 
 ## guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
@@ -517,8 +560,8 @@ $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && printf "{ 
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
 [..]home/.codex/hooks.json is not JSON: [..]
-$# the Claude table is byte for byte what it was, and no plan or manifest was written
-$ sh -c 'cmp home/.claude/settings.json before.json && test ! -e state/hooks/plan.json && test ! -e state/hooks/manifest.json && echo unchanged'
+$# the Claude table is byte for byte what it was, and no plan generation or manifest was written
+$ sh -c 'cmp home/.claude/settings.json before.json && test -z "$(ls -A state/hooks/plans 2>/dev/null)" && test ! -e state/hooks/manifest.json && echo unchanged'
 unchanged
 ```
 
@@ -526,22 +569,22 @@ unchanged
 
 ```console
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the plan turns read-only, and copies of the plan and both tables stay aside
-$ sh -c 'chmod 444 state/hooks/plan.json && cp -f state/hooks/plan.json plan.before && cp -f home/.claude/settings.json claude.before && cp -f home/.codex/hooks.json codex.before'
+$# the Claude table turns read-only, and copies of both tables and the list of generations stay aside
+$ sh -c 'chmod 444 home/.claude/settings.json && cp -f home/.claude/settings.json claude.before && cp -f home/.codex/hooks.json codex.before && ls state/hooks/plans > plans.before'
 $# the config gains a session.start handler: every rune entry still matches, so preparation needs no manifest record
 $ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home-plus/.config/rune/config.yaml" home/.config/rune/config.yaml'
-$# a directory takes the manifest's place, so the step's last replacement fails after the plan and the tables were replaced
+$# a directory takes the manifest's place, so the step's last replacement fails after both tables were replaced
 $ sh -c 'mv state/hooks/manifest.json manifest.saved && mkdir -p state/hooks/manifest.json/inside'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
 [..]state/hooks/manifest.json: cannot keep the old file to put it back: [..]
-$# the plan and both tables have their old bytes, the plan its old mode, and no table gained SessionStart
-$ sh -c 'cmp state/hooks/plan.json plan.before && cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && ls -l state/hooks/plan.json | cut -c1-10'
+$# both tables have their old bytes, the Claude table its old mode, no table gained SessionStart, and the generations are the old ones
+$ sh -c 'cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && ls state/hooks/plans | cmp - plans.before && ls -l home/.claude/settings.json | cut -c1-10'
 -r--r--r--
 $ jq -c '[.hooks | has("SessionStart")]' home/.claude/settings.json home/.codex/hooks.json
 [false]
 [false]
-$ sh -c '! ls -a state/hooks home/.claude home/.codex | grep -q rune- && echo no staged or kept file'
+$ sh -c '! ls -a state/hooks state/hooks/plans home/.claude home/.codex | grep -q rune- && echo no staged or kept file'
 no staged or kept file
 ```
 
@@ -604,11 +647,11 @@ $# the owner empties the handler list, and the old registrations are drift
 $ sh -c 'printf "hooks:\n  handlers: []\n" > home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check >/dev/null'
 ? 1
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# no rune entry is left, the owner's Stop hook is, and the plan names no event
+$# no rune entry is left, the owner's Stop hook is, and no plan generation is
 $ jq -c '[([.hooks[][] | .hooks[].command | select(contains("rune hook run"))] | length), .hooks.Stop[0].hooks[0].command]' home/.claude/settings.json
 [0,"/owner/stop"]
-$ jq -c .harnesses state/hooks/plan.json
-{}
+$ sh -c 'test -z "$(ls -A state/hooks/plans)" && echo no plan generation left'
+no plan generation left
 ```
 
 ## install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/turn-wrap-on-stop
