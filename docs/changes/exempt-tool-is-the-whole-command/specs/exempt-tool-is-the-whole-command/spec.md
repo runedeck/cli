@@ -17,7 +17,12 @@ When the model asks to turn the sandbox off for a command line that the sandbox 
 
 ### Requirement: An exempt tool the sandbox would keep is refused with the command to run
 
-When a line holds an exempt tool and something on the line keeps it inside the sandbox, the sandbox guard MUST refuse the call. That is an assignment or a wrapper word before it, a shell that runs it, parentheses or a loop around it, a redirection to a file, a substitution, or another command that is not exempt. The reason MUST name what keeps it inside and give the command to run instead. A directory change before the tool MUST become the tool's own directory option where the tool has one.
+When a line holds an exempt tool and something on the line keeps it inside the sandbox, the sandbox guard MUST refuse the call. That is an assignment or a wrapper word before it, a shell, parentheses, or a loop around it, a redirection to a file, a substitution, or another command that is not exempt. The reason MUST name what keeps it inside and give the command to run instead. A directory change before the tool MUST become the tool's own directory option where the tool has one. The guard MUST read a `$'…'` word as the shell decodes it.
+
+#### Scenario: Tool name written in hex escapes
+
+- **WHEN** the model runs `$'\x6a\x6a' log > out`
+- **THEN** the guard reads the tool as `jj`, and the call is refused for the redirection
 
 #### Scenario: Directory change before jj
 

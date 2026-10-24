@@ -121,6 +121,23 @@ fn an_ansi_c_string_ends_at_its_first_unescaped_quote() {
 }
 
 #[test]
+fn an_ansi_c_string_decodes_its_escapes() {
+    let commands = parse(r"$'\x6a\x6a' log > out");
+    assert_eq!(commands[0].values(), ["jj", "log"]);
+    assert_eq!(parse(r"$'\152\152' log")[0].values()[0], "jj");
+    let commands = parse(r"x $'j\U0000006a' $'\e[0m' $'\cA' $'\q' $'\xc3\xa9' $'\xff'");
+    assert_eq!(
+        commands[0].values(),
+        ["x", "jj", "\u{1b}[0m", "\u{1}", "\\q", "é", "\u{fffd}"]
+    );
+    let jj = Exemptions::new(["jj *"]);
+    assert_eq!(
+        judge(r"$'\x6a\x6a' log > out", false, &jj).effect,
+        Effect::Deny
+    );
+}
+
+#[test]
 fn an_assignment_may_quote_its_value_but_not_its_name() {
     for line in [r#"FOO="1" jj log"#, "FOO='1' jj log", "FOO=$(id) jj log"] {
         let commands = parse(line);

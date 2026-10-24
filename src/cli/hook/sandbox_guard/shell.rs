@@ -288,29 +288,105 @@ impl Reader {
 
     /// `$'…'`: a backslash escapes the character after it, a quote
     /// included, so the string ends at the first quote no backslash
-    /// escapes. `$'a\'b' > f` is one word and a redirection.
+    /// escapes. `$'a\'b' > f` is one word and a redirection. The escapes
+    /// decode as Bash decodes them, so `$'\x6a\x6a'` is `jj`. Bytes that
+    /// are no UTF-8 become U+FFFD, a name no pattern matches.
     fn ansi_c_quoted(&mut self) {
         self.open_word(true);
         self.at += 2;
+        let mut bytes: Vec<u8> = Vec::new();
         while let Some(c) = self.peek(0) {
             self.at += 1;
             match c {
-                '\'' => return,
-                '\\' => {
-                    if let Some(next) = self.peek(0) {
-                        self.at += 1;
-                        let value = match next {
-                            'n' => '\n',
-                            't' => '\t',
-                            'r' => '\r',
-                            other => other,
-                        };
-                        self.push(value, true);
-                    }
-                }
-                _ => self.push(c, true),
+                '\'' => break,
+                '\\' => self.ansi_c_escape(&mut bytes),
+                _ => bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
             }
         }
+        for c in String::from_utf8_lossy(&bytes).chars() {
+            self.push(c, true);
+        }
+    }
+
+    /// One escape of a `$'…'` string after its backslash, as bytes:
+    /// `\a \b \e \E \f \n \r \t \v \\ \' \" \?`, octal `\NNN`, `\xHH`,
+    /// `\uHHHH`, `\UHHHHHHHH`, and `\cX`. Any other character stays with
+    /// its backslash.
+    fn ansi_c_escape(&mut self, bytes: &mut Vec<u8>) {
+        let Some(next) = self.peek(0) else {
+            bytes.push(b'\\');
+            return;
+        };
+        self.at += 1;
+        let simple = match next {
+            'a' => Some(0x07),
+            'b' => Some(0x08),
+            'e' | 'E' => Some(0x1b),
+            'f' => Some(0x0c),
+            'n' => Some(b'\n'),
+            'r' => Some(b'\r'),
+            't' => Some(b'\t'),
+            'v' => Some(0x0b),
+            '\\' | '\'' | '"' | '?' => u8::try_from(next).ok(),
+            _ => None,
+        };
+        if let Some(byte) = simple {
+            bytes.push(byte);
+            return;
+        }
+        match next {
+            '0'..='7' => {
+                let digits = self.take_digits(2, 8);
+                let value = format!("{next}{digits}");
+                // `\777` overflows a byte. Bash keeps its low eight bits.
+                bytes.push((u32::from_str_radix(&value, 8).unwrap_or(0) & 0xff) as u8);
+            }
+            'x' | 'u' | 'U' => {
+                let most = match next {
+                    'x' => 2,
+                    'u' => 4,
+                    _ => 8,
+                };
+                let digits = self.take_digits(most, 16);
+                if digits.is_empty() {
+                    bytes.extend_from_slice(format!("\\{next}").as_bytes());
+                    return;
+                }
+                let value = u32::from_str_radix(&digits, 16).unwrap_or(0);
+                if next == 'x' {
+                    bytes.push((value & 0xff) as u8);
+                } else {
+                    let c = char::from_u32(value).unwrap_or(char::REPLACEMENT_CHARACTER);
+                    bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                }
+            }
+            'c' => match self.peek(0) {
+                Some(control) if control.is_ascii() => {
+                    self.at += 1;
+                    bytes.push((control as u8) & 0x1f);
+                }
+                _ => bytes.extend_from_slice(b"\\c"),
+            },
+            other => {
+                bytes.push(b'\\');
+                bytes.extend_from_slice(other.encode_utf8(&mut [0; 4]).as_bytes());
+            }
+        }
+    }
+
+    /// Up to `most` digits of `radix` at the current position.
+    fn take_digits(&mut self, most: usize, radix: u32) -> String {
+        let mut digits = String::new();
+        while digits.len() < most {
+            match self.peek(0) {
+                Some(c) if c.is_digit(radix) => {
+                    digits.push(c);
+                    self.at += 1;
+                }
+                _ => break,
+            }
+        }
+        digits
     }
 
     fn double_quoted(&mut self) {
