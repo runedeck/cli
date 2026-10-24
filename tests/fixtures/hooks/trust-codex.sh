@@ -1,23 +1,26 @@
 #!/bin/sh
-# Trust the rune entry of one Codex event the way `/hooks` records it: the
+# Trust one hook of one Codex event the way `/hooks` records it: the
 # sha256 of the hook's identity, keyed by table, event label, group, and
 # handler, appended to the Codex config. Not for SessionEnd, whose
 # timeout Codex clamps. WHICH picks the event's first rune entry, the
-# default, or `last`, the one an install added after an earlier one.
+# default, `last`, the one an install added after an earlier one, or the
+# hook whose command is WHICH when it starts with a slash.
 #
 # usage: trust-codex.sh HOME EVENT LABEL [WHICH], such as PreToolUse pre_tool_use
 home=$1
 event=$2
 label=$3
+command=
 case ${4:-first} in
 last) index=-1 ;;
+/*) index=0 command=$4 ;;
 *) index=0 ;;
 esac
 table="$home/.codex/hooks.json"
-found=$(jq -c --arg e "$event" --arg l "$label" --argjson i "$index" '
+found=$(jq -c --arg e "$event" --arg l "$label" --argjson i "$index" --arg c "$command" '
   [.hooks[$e] | to_entries[] | .key as $g | .value.matcher as $m
    | .value.hooks | to_entries[]
-   | select(.value.command | contains("rune hook run"))
+   | select(if $c == "" then (.value.command | contains("rune hook run")) else .value.command == $c end)
    | {g: $g, h: .key,
       id: ({event_name: $l,
             hooks: [{async: (.value.async // false), command: .value.command,

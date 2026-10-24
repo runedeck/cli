@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: 7448920363d52ae387fe7578a44dbff6816e8e99
+head: 2dfcf2881c29f5996b78d058498982376be760ee
 recorded: 2026-10-24
-transcript: 7d1220f23deaf5297a6aa678b7fd679ccce58dd4f4f016ddfed59d9cc04afad2
+transcript: 7f3dda184308986e04669b2641a918465cd4cb8a7cbf27dd2dc8e9f9ae0117e6
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -75,11 +75,17 @@ scenes:
   kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/generation-unnamed-for-15-days
   kind: check
+- scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/clock-set-forward-before-two-installs
+  kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/stale-record-of-a-named-generation
   kind: check
 - scenario: guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/changed-plan-on-a-trusted-rune-entry
   kind: check
 - scenario: guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/replacement-trusted
+  kind: check
+- scenario: guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/earlier-entry-before-a-trusted-guard
+  kind: check
+- scenario: guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/untrusted-hook-in-rune-s-group
   kind: check
 - scenario: guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
   kind: check
@@ -572,8 +578,8 @@ $ sh -c 'jq -r --arg old "$(cat old.plan)" ".retired[] | select(.generation == \
 ```console
 $# dcg guards tool.before, then an observer takes its id, so the tables stop naming the guard's generations
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago
-$ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
+$# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago, and installs found both unnamed on 13 days up to yesterday
+$ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate) | .retired[].days = 13 | .retired[].last_day = ((now - 86400) | strftime(\"%Y-%m-%d\"))" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
 $ sh -c 'jq -r ".retired[0].generation" state/hooks/manifest.json > first && jq -r ".retired[1].generation" state/hooks/manifest.json > second && jq -r ".retired[1].since" state/hooks/manifest.json > second.since'
 $# one more install keeps both, because two installs must follow the one that retired them
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && test -f "$(cat first)" && test -f "$(cat second)" && echo both stay after one more install'
@@ -582,6 +588,18 @@ $# after a second install, the first generation is gone, and the second stays wi
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
 $ sh -c 'test ! -e "$(cat first)" && test -f "$(cat second)" && jq -r --arg g "$(cat second)" ".retired[] | select(.generation == \$g) | .since" state/hooks/manifest.json | cmp - second.since && echo the first went, the second stays'
 the first went, the second stays
+```
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/clock-set-forward-before-two-installs
+
+```console
+$# dcg guards tool.before, then an observer takes its id, so the tables stop naming the guard's generations today
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# a clock correction leaves the records 20 days old
+$ sh -c 'jq "(.retired[].since) |= ((now - 20 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json && jq -r ".retired[0].generation" state/hooks/manifest.json > first'
+$# two installs on the same day keep every generation, because installs found them unnamed on one day only
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && test -f "$(cat first)" && jq -c "[.installs, ([.retired[].days] | unique)]" state/hooks/manifest.json'
+[4,[1]]
 ```
 
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/stale-record-of-a-named-generation
@@ -627,6 +645,32 @@ $ jq -c '.hooks.PreToolUse | [.[0], (.[1].hooks | length)]' home/.codex/hooks.js
 [{"hooks":[]},1]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; ! grep -q "^drift:.*PreToolUse" check.out && echo no PreToolUse drift'
 no PreToolUse drift
+```
+
+## guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/earlier-entry-before-a-trusted-guard
+
+```console
+$# rune guards Codex's PreToolUse, and the owner adds a guard to rune's group, after rune's entry
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq ".hooks.PreToolUse[0].hooks += [{type: \"command\", command: \"/owner/guard\"}]" home/.codex/hooks.json > edited.json && mv edited.json home/.codex/hooks.json && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the owner trusts both, a changed plan adds a new rune entry beside them, and the owner trusts that one too
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use /owner/guard && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use last'
+$# removing rune's earlier entry would move the guard from handler 2 to handler 1, so the entry stays
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*PreToolUse"'
+codex: PreToolUse keeps foreign `/owner/guard`
+trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune install`
+$ jq -c '[.hooks.PreToolUse[] | [.hooks[].command | if contains("rune hook run") then "rune" else . end]]' home/.codex/hooks.json
+[["rune","/owner/guard"],["rune"]]
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "^drift:.*would move"'
+drift: [..]home/.codex/hooks.json: removing rune's earlier entry from PreToolUse would move `/owner/guard`, which codex trusts where it stands
+```
+
+## guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/untrusted-hook-in-rune-s-group
+
+```console
+$# rune guards Codex's PreToolUse, the owner adds a guard to rune's group, and trusts only rune's entry
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq ".hooks.PreToolUse[0].hooks += [{type: \"command\", command: \"/owner/guard\"}]" home/.codex/hooks.json > edited.json && mv edited.json home/.codex/hooks.json && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "^drift:.*/owner/guard"'
+drift: [..]home/.codex/hooks.json: `/owner/guard` on PreToolUse at group 1 handler 2 is not trusted yet in codex
 ```
 
 ## guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
@@ -829,6 +873,7 @@ $ jq -c '[.hooks.PreToolUse[].hooks[].command | contains("bin/dcg")]' home/.code
 [true,false]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep "^drift:.*PreToolUse" check.out'
 exit 1
+drift: [..]home/.codex/hooks.json: `/Users/x/.local/bin/dcg` on PreToolUse at group 1 handler 1 is not trusted yet in codex
 drift: [..]home/.codex/hooks.json: the rune entry for PreToolUse would move when the entries it replaces go
 ```
 
