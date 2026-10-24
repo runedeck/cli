@@ -334,6 +334,15 @@ fn resolved(path: &Path) -> Result<PathBuf, Error> {
     }
 }
 
+/// The table files install may write for every registered harness, links
+/// resolved: the set its lock covers with the plan and the manifest.
+pub(crate) fn table_files(home: &Path) -> Result<Vec<PathBuf>, Error> {
+    Harness::REGISTERED
+        .iter()
+        .map(|harness| resolved(&table_path(home, *harness)))
+        .collect()
+}
+
 /// What an install found, and the files it would write: the changed
 /// tables, then the manifest. Nothing is written while it is computed.
 #[derive(Debug)]

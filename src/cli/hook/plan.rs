@@ -23,13 +23,13 @@ pub(crate) fn path() -> Result<PathBuf, Error> {
 
 pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
     let path = path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| Error::io(error.to_string()))?;
-    }
     let text = serde_json::to_string_pretty(plan).map_err(|error| Error::io(error.to_string()))?;
-    let staged = path.with_extension("json.new");
-    fs::write(&staged, text).map_err(|error| Error::io(error.to_string()))?;
-    fs::rename(&staged, &path).map_err(|error| Error::io(error.to_string()))?;
+    let _lock = super::publish::Lock::acquire(std::slice::from_ref(&path))?;
+    super::publish::publish(&[super::publish::Staged {
+        target: path.clone(),
+        text,
+        new_mode: None,
+    }])?;
     Ok(path)
 }
 

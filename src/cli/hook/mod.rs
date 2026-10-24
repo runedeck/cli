@@ -145,6 +145,11 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     let rune = std::env::current_exe()
         .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
     let plan_path = plan::path()?;
+    let manifest_path = install::manifest_path()?;
+    // One install at a time reads and writes this set of files.
+    let mut targets = vec![plan_path.clone(), manifest_path.clone()];
+    targets.extend(install::table_files(&home)?);
+    let _lock = publish::Lock::acquire(&targets)?;
     // Every table is read and checked before the plan, a table, or the
     // manifest changes; then all of them are written as one step, the
     // plan first, so a refused install leaves the old set in place.
@@ -153,7 +158,7 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         &home,
         &rune,
         &plan_path.display().to_string(),
-        &install::manifest_path()?,
+        &manifest_path,
         check,
     )?;
     if !check && !dry_run {
