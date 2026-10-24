@@ -39,7 +39,6 @@ $ rune run sol@claude --dry-run "Reply with exactly two words: proof ready"
     CLAUDE_CODE_STARTUP_FAILURE_RESULTS
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
     CLAUDE_CODE_TERMINAL_MCP_TOOLS
-    CLAUDE_CODE_TMPDIR
     CLAUDE_CODE_TMUX_TRUECOLOR
     CLAUDE_CODE_USER_EMAIL
     CLAUDE_EFFORT
@@ -50,7 +49,7 @@ $ rune run sol@claude --dry-run "Reply with exactly two words: proof ready"
   wrap:
   pre:
   stdin: <prompt>
-  repository: /private/tmp/claude-501/rune-proof-25661-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-desktop-session-starts-a-proxied-claude-route-13edc6b0-1-0
+  repository: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18441-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-desktop-session-starts-a-proxied-claude-route-36cf3448-1-0
   mode: read-only
   timeout: none
   native_timeout: none
@@ -61,6 +60,7 @@ $ rune run sol@claude --dry-run "Reply with exactly two words: proof ready"
   workspace: none
 $ rune run sol@claude "Reply with exactly two words: proof ready"
   ⚠ Permission mode forced to default — CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set (allowed_non_write_users hardening). Declare allowedTools explicitly, or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to opt out.
+  ⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
   [claude-code:unrecognized_model] {"model":"gpt-6.1-sol","query_source":"sdk"}
   proof ready
 
@@ -105,7 +105,6 @@ $ CODEX_SANDBOX=seatbelt CODEX_SANDBOX_NETWORK_DISABLED=1 rune run sol@claude --
     CLAUDE_CODE_STARTUP_FAILURE_RESULTS
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
     CLAUDE_CODE_TERMINAL_MCP_TOOLS
-    CLAUDE_CODE_TMPDIR
     CLAUDE_CODE_TMUX_TRUECOLOR
     CLAUDE_CODE_USER_EMAIL
     CLAUDE_EFFORT
@@ -118,7 +117,7 @@ $ CODEX_SANDBOX=seatbelt CODEX_SANDBOX_NETWORK_DISABLED=1 rune run sol@claude --
   wrap:
   pre:
   stdin: <prompt>
-  repository: /private/tmp/claude-501/rune-proof-25661-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-codex-session-starts-another-harness-340ff120-5-0
+  repository: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18441-execute-prompts-off-session-the-child-harness-starts-free-of-the-parent-harness-s-session-codex-session-starts-another-harness-35f10d30-5-0
   mode: read-only
   timeout: none
   native_timeout: none
@@ -153,7 +152,7 @@ $ rune --json run sol@claude --binary ./slow-claude --timeout 1s "x"
 ## execute-prompts-off-session#json-output-is-one-object-for-every-outcome/dry-run-as-json
 kind: check
 $ rune --json run sol@claude --dry-run "x"
-  {"argv":["claude","--print","--output-format","text","--permission-mode","plan","--tools","Read,Glob,Grep","--allowedTools","Read,Glob,Grep","--model","gpt-6.1-sol","--settings","{\"env\":{\"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\":\"0\"}}"],"artifacts_dir":null,"base_url":"https://cliproxy.internal","clean":false,"clean_config_keys":[],"env":{"ANTHROPIC_AUTH_TOKEN":"<redacted>","ANTHROPIC_BASE_URL":"https://cliproxy.internal","ANTHROPIC_MODEL":"gpt-6.1-sol","ANTHROPIC_SMALL_FAST_MODEL":"gpt-6-luna","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"272000","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"272000"},"env_removed":["CLAUDECODE","CLAUDE_AGENT_SDK_MCP_NO_PREFIX","CLAUDE_AGENT_SDK_VERSION","CLAUDE_CODE_ACCOUNT_UUID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_DESKTOP_APP_VERSION","CLAUDE_CODE_DISABLE_CRON","CLAUDE_CODE_DISABLE_TERMINAL_TITLE","CLAUDE_CODE_EAGER_FLUSH","CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES","CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL","CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_EXECPATH","CLAUDE_CODE_HOST_SESSION_ID","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_OAUTH_SCOPES","CLAUDE_CODE_ORGANIZATION_UUID","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_SIMPLE","CLAUDE_CODE_STARTUP_FAILURE_RESULTS","CLAUDE_CODE_SUBPROCESS_ENV_SCRUB","CLAUDE_CODE_TERMINAL_MCP_TOOLS","CLAUDE_CODE_TMPDIR","CLAUDE_CODE_TMUX_TRUECOLOR","CLAUDE_CODE_USER_EMAIL","CLAUDE_EFFORT","CLAUDE_PID","CLAUDE_PREVIEW_CLASSIFIER_FLOOR","CLAUDE_TMPDIR"],"exit_code":0,"inherited_withheld":[],"kind":"dry_run","mode":"read-only","model":"sol","model_context":272000,"model_id":"gpt-6.1-sol","model_source":"config","native_timeout":null,"ok":true,"pre":[],"repository":"/private/tmp/claude-501/rune-proof-25661-execute-prompts-off-session-json-output-is-one-object-for-every-outcome-dry-run-as-json-a5e76f8-17-0","requested_route":"sol@claude","resolved_binary":"claude","resolved_route":"claude","session_name":null,"session_name_flag":"--name","stdin":"<prompt>","timeout":null,"tool":"claude","warnings":[],"workspace":null,"wrap":[]}
+  {"argv":["claude","--print","--output-format","text","--permission-mode","plan","--tools","Read,Glob,Grep","--allowedTools","Read,Glob,Grep","--model","gpt-6.1-sol","--settings","{\"env\":{\"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\":\"0\"}}"],"artifacts_dir":null,"base_url":"https://cliproxy.internal","clean":false,"clean_config_keys":[],"env":{"ANTHROPIC_AUTH_TOKEN":"<redacted>","ANTHROPIC_BASE_URL":"https://cliproxy.internal","ANTHROPIC_MODEL":"gpt-6.1-sol","ANTHROPIC_SMALL_FAST_MODEL":"gpt-6-luna","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"272000","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"272000"},"env_removed":["CLAUDECODE","CLAUDE_AGENT_SDK_MCP_NO_PREFIX","CLAUDE_AGENT_SDK_VERSION","CLAUDE_CODE_ACCOUNT_UUID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_DESKTOP_APP_VERSION","CLAUDE_CODE_DISABLE_CRON","CLAUDE_CODE_DISABLE_TERMINAL_TITLE","CLAUDE_CODE_EAGER_FLUSH","CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES","CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL","CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_EXECPATH","CLAUDE_CODE_HOST_SESSION_ID","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_OAUTH_SCOPES","CLAUDE_CODE_ORGANIZATION_UUID","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_SIMPLE","CLAUDE_CODE_STARTUP_FAILURE_RESULTS","CLAUDE_CODE_SUBPROCESS_ENV_SCRUB","CLAUDE_CODE_TERMINAL_MCP_TOOLS","CLAUDE_CODE_TMUX_TRUECOLOR","CLAUDE_CODE_USER_EMAIL","CLAUDE_EFFORT","CLAUDE_PID","CLAUDE_PREVIEW_CLASSIFIER_FLOOR","CLAUDE_TMPDIR"],"exit_code":0,"inherited_withheld":[],"kind":"dry_run","mode":"read-only","model":"sol","model_context":272000,"model_id":"gpt-6.1-sol","model_source":"config","native_timeout":null,"ok":true,"pre":[],"repository":"/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18441-execute-prompts-off-session-json-output-is-one-object-for-every-outcome-dry-run-as-json-bbc5d30-17-0","requested_route":"sol@claude","resolved_binary":"claude","resolved_route":"claude","session_name":null,"session_name_flag":"--name","stdin":"<prompt>","timeout":null,"tool":"claude","warnings":[],"workspace":null,"wrap":[]}
 
 ## execute-prompts-off-session#json-output-is-one-object-for-every-outcome/unknown-profile-as-json
 kind: check
@@ -201,7 +200,6 @@ $ rune run sol@claude --dry-run "x"
     CLAUDE_CODE_STARTUP_FAILURE_RESULTS
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
     CLAUDE_CODE_TERMINAL_MCP_TOOLS
-    CLAUDE_CODE_TMPDIR
     CLAUDE_CODE_TMUX_TRUECOLOR
     CLAUDE_CODE_USER_EMAIL
     CLAUDE_EFFORT
@@ -212,7 +210,7 @@ $ rune run sol@claude --dry-run "x"
   wrap:
   pre:
   stdin: <prompt>
-  repository: /private/tmp/claude-501/rune-proof-25661-execute-prompts-off-session-the-dry-run-shows-what-would-start-endpoint-set-through-the-environment-b9d1d30-23-0
+  repository: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18441-execute-prompts-off-session-the-dry-run-shows-what-would-start-endpoint-set-through-the-environment-c7c03b0-23-0
   mode: read-only
   timeout: none
   native_timeout: none
@@ -263,7 +261,6 @@ $ rune run sol@claude --dry-run "x"
     CLAUDE_CODE_STARTUP_FAILURE_RESULTS
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
     CLAUDE_CODE_TERMINAL_MCP_TOOLS
-    CLAUDE_CODE_TMPDIR
     CLAUDE_CODE_TMUX_TRUECOLOR
     CLAUDE_CODE_USER_EMAIL
     CLAUDE_EFFORT
@@ -274,7 +271,7 @@ $ rune run sol@claude --dry-run "x"
   wrap:
   pre:
   stdin: <prompt>
-  repository: /private/tmp/claude-501/rune-proof-25661-execute-prompts-off-session-the-dry-run-shows-what-would-start-credential-in-the-plan-c28b778-26-0
+  repository: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18441-execute-prompts-off-session-the-dry-run-shows-what-would-start-credential-in-the-plan-cd62200-26-0
   mode: read-only
   timeout: none
   native_timeout: none

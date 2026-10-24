@@ -1,9 +1,9 @@
 ---
 type: proof
 change: run-works-inside-a-harness
-head: 1d1753a514fec9814da90e8d9bbde3ce64155a07
-recorded: 2026-10-22
-transcript: fa51d8e853fe360c1a22cdae909bbab6e559833a8a3eabfd74ae48c9b68eb7c0
+head: 650f94b8b33299a38d21157d849aa7ca92e9c71d
+recorded: 2026-10-24
+transcript: 0b19e5907789f21cb977b4832c6e230e26f93b2fb2d2c038b38227c2fb4e20d2
 scenes:
 - scenario: execute-prompts-off-session#the-child-harness-starts-free-of-the-parent-harness-s-session/desktop-session-starts-a-proxied-claude-route
   kind: check
