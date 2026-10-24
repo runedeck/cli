@@ -117,7 +117,21 @@ fn fixture() -> Option<Fixture> {
         .output()
         .expect("jj git init");
     assert!(output.status.success(), "jj git init failed");
+    write_change(&fixture);
+    fixture.run_jj(&["commit", "-m", "the change"]);
 
+    fixture
+        .rune()
+        .args(["proof", "run", CHANGE, "--source"])
+        .arg(&fixture.root)
+        .assert()
+        .success();
+    fixture.run_jj(&["commit", "-m", "the proof"]);
+    Some(fixture)
+}
+
+/// The change with one scenario and its proof README, its scene filled.
+fn write_change(fixture: &Fixture) {
     let change = fixture.root.join("docs/changes").join(CHANGE);
     fs::create_dir_all(change.join("specs/sample-capability-one")).expect("change dir");
     fs::write(
@@ -142,16 +156,79 @@ fn fixture() -> Option<Fixture> {
         "```console\n$ rune --version\nrune [..] built [..]\n```",
     );
     fs::write(&readme, text).expect("fill");
-    fixture.run_jj(&["commit", "-m", "the change"]);
+}
 
+/// git with no global or system configuration, so a developer's signing
+/// or hook settings stay out of the test.
+fn git(root: &Path, args: &[&str]) -> String {
+    let output = Process::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Model One")
+        .env("GIT_AUTHOR_EMAIL", "model-one@example.com")
+        .env("GIT_COMMITTER_NAME", "Model One")
+        .env("GIT_COMMITTER_EMAIL", "model-one@example.com")
+        .output()
+        .expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn plain_git_inside_a_jj_repository_records_and_checks_by_git() {
+    if !tool_present("jj", "--version") || !tool_present("git", "--version") {
+        eprintln!("skipped: jj or git is not installed");
+        return;
+    }
+    let home = TempDir::new().expect("tempdir");
+    let outer = home.path().join("outer");
+    let config = home.path().join("jj.toml");
+    fs::write(&config, "").expect("jj config");
+    let output = Process::new("jj")
+        .args(["git", "init"])
+        .arg(&outer)
+        .env("JJ_CONFIG", &config)
+        .output()
+        .expect("jj git init");
+    assert!(output.status.success(), "jj git init failed");
+    let fixture = Fixture {
+        _home: home,
+        root: outer.join("inner"),
+        config,
+    };
+    fs::create_dir_all(&fixture.root).expect("inner");
+    git(&fixture.root, &["init", "-q"]);
+    write_change(&fixture);
+    git(&fixture.root, &["add", "-A"]);
+    git(&fixture.root, &["commit", "-q", "-m", "the change"]);
+    let change_commit = git(&fixture.root, &["rev-parse", "HEAD"]);
     fixture
         .rune()
         .args(["proof", "run", CHANGE, "--source"])
         .arg(&fixture.root)
         .assert()
         .success();
-    fixture.run_jj(&["commit", "-m", "the proof"]);
-    Some(fixture)
+    git(&fixture.root, &["add", "-A"]);
+    git(&fixture.root, &["commit", "-q", "-m", "the proof"]);
+
+    // The enclosing jj repository knows none of these commits, so git
+    // records the head, and git has no change id to give.
+    let text = fs::read_to_string(fixture.readme()).expect("readme");
+    let frontmatter = rune::proof::parse(Path::new("README.md"), &text).expect("frontmatter");
+    assert_eq!(frontmatter.head.as_deref(), Some(change_commit.as_str()));
+    assert_eq!(frontmatter.head_change, None);
+    assert!(frontmatter.head_tree.is_some());
+    fixture
+        .check()
+        .success()
+        .stdout(predicate::str::contains("transcript and head hold"));
 }
 
 #[test]

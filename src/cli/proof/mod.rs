@@ -537,6 +537,12 @@ fn vcs(root: &Path, program: &str, args: &[&str]) -> Option<String> {
 /// else its parent. With git, `HEAD`. A repository with neither records
 /// no head.
 fn head_commit(root: &Path) -> (Option<String>, Option<String>) {
+    if !jj_owns(root) {
+        return (
+            vcs(root, "git", &["rev-parse", "HEAD"]).filter(|s| s.len() >= 12),
+            None,
+        );
+    }
     if let Some(answer) = vcs(
         root,
         "jj",
@@ -568,6 +574,20 @@ fn head_commit(root: &Path) -> (Option<String>, Option<String>) {
     )
 }
 
+/// Whether jj owns the repository at `root`. The tool whose root lies
+/// deeper owns it: a plain git repository inside a jj repository is git's,
+/// and the enclosing jj repository knows none of its commits.
+fn jj_owns(root: &Path) -> bool {
+    let Some(jj_root) = vcs(root, "jj", &["root", "--ignore-working-copy"]) else {
+        return false;
+    };
+    let Some(git_root) = vcs(root, "git", &["rev-parse", "--show-toplevel"]) else {
+        return true;
+    };
+    let canonical = |path: &str| fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    canonical(&jj_root).starts_with(canonical(&git_root))
+}
+
 /// Record the head with its change id and tree, so a later signature or
 /// reword of the head commit leaves the proof checkable.
 fn set_head(root: &Path, frontmatter: &mut Frontmatter, head: Option<String>) {
@@ -584,6 +604,9 @@ fn set_head(root: &Path, frontmatter: &mut Frontmatter, head: Option<String>) {
 /// fields existed still finds them. Either is `None` when its tool cannot
 /// answer: a git-only repository has no change id.
 fn head_identity(root: &Path, commit: &str) -> (Option<String>, Option<String>) {
+    if !jj_owns(root) {
+        return (None, git_tree(root, commit));
+    }
     let change = vcs(
         root,
         "jj",
@@ -605,7 +628,12 @@ fn head_identity(root: &Path, commit: &str) -> (Option<String>, Option<String>) 
 /// jj repository that is not colocated answers too.
 fn git_tree(root: &Path, commit: &str) -> Option<String> {
     let spec = format!("{commit}^{{tree}}");
-    let tree = match vcs(root, "jj", &["git", "root", "--ignore-working-copy"]) {
+    let git_dir = if jj_owns(root) {
+        vcs(root, "jj", &["git", "root", "--ignore-working-copy"])
+    } else {
+        None
+    };
+    let tree = match git_dir {
         Some(git_dir) => vcs(
             root,
             "git",
@@ -644,22 +672,35 @@ fn head_holds(root: &Path, frontmatter: &Frontmatter) -> Result<(), String> {
     let Some(head) = frontmatter.head.as_deref() else {
         return Ok(());
     };
+    if !jj_owns(root) {
+        return git_head_holds(root, head);
+    }
     let Some(in_history) = jj_ancestors(root, &format!("commit_id(\"{head}\")")) else {
         return git_head_holds(root, head);
     };
     if !in_history.is_empty() {
         return Ok(());
     }
-    let (change, tree) = match (&frontmatter.head_change, &frontmatter.head_tree) {
-        (Some(change), Some(tree)) => (change.clone(), tree.clone()),
-        _ => match head_identity(root, head) {
-            (Some(change), Some(tree)) => (change, tree),
-            _ => {
-                return Err(format!(
-                    "head {head} no longer resolves, and the proof records no change id and tree to find its rewrite: record the proof again"
-                ));
-            }
-        },
+    let (resolved_change, resolved_tree) = head_identity(root, head);
+    let change = frontmatter.head_change.clone().or(resolved_change);
+    let tree = frontmatter.head_tree.clone().or(resolved_tree);
+    let (Some(change), Some(tree)) = (change, tree) else {
+        // jj knows no rewrite of the head. git may still hold the commit,
+        // as in a repository git wrote to since jj last imported it.
+        if git_head_holds(root, head).is_ok() {
+            return Ok(());
+        }
+        let missing: Vec<&str> = [
+            frontmatter.head_change.is_none().then_some("head_change"),
+            frontmatter.head_tree.is_none().then_some("head_tree"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        return Err(format!(
+            "head {head} no longer resolves, and the proof records no {} to find its rewrite: record the proof again",
+            missing.join(" or ")
+        ));
     };
     let candidates = jj_ancestors(root, &format!("change_id(\"{change}\")")).unwrap_or_default();
     if candidates.is_empty() {
