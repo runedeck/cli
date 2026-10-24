@@ -1,12 +1,13 @@
 //! Integration test for `rune drift --target`: verify a module's assembled
 //! build against where it was deployed, scoped to the module's own files.
+mod support;
 
 use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn scaffold_module(root: &Path) {

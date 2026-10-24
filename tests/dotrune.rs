@@ -11,7 +11,7 @@ use std::path::Path;
 mod support;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn scaffold_producer(root: &Path, name: &str) {

@@ -1,3 +1,4 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
@@ -23,7 +24,7 @@ fn change_fixture() -> tempfile::TempDir {
 }
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").expect("binary")
+    support::rune()
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+mod support;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -26,8 +26,7 @@ fn source(root: &Path, target: &str) {
 }
 
 fn check(cwd: &Path, selected: &Path, success: bool) -> Value {
-    let output = Command::cargo_bin("rune")
-        .unwrap()
+    let output = support::rune()
         .timeout(Duration::from_secs(20))
         .current_dir(cwd)
         .args(["validate", "--skill-layers", "--json", "--source"])

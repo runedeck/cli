@@ -1,12 +1,13 @@
 //! Integration tests for the prune flow: ownership match, quarantine, dry-run,
 //! companion-file sweep, empty-parent walk, and provider-tree parametrization.
+mod support;
 
 use assert_cmd::Command;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 /// Write `module.yaml` with an explicit `repository:` URL so the deployed

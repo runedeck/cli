@@ -27,7 +27,7 @@ fn populated_state() -> tempfile::TempDir {
 }
 
 fn rune(state: &Path) -> Command {
-    let mut command = Command::cargo_bin("rune").unwrap();
+    let mut command = support::rune();
     command.env("RUNE_STATE_DIR", state);
     command
 }

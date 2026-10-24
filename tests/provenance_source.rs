@@ -4,6 +4,7 @@
 //! artifacts they describe. `rune provenance --target <repo|subdir>` walks
 //! those sidecars, resolves each subject back to a repo-relative file, and
 //! recomputes its SHA-256 (plus any in-repo dependency digests).
+mod support;
 
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
@@ -12,7 +13,7 @@ use std::fs;
 use std::path::Path;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn sha256(content: &str) -> String {

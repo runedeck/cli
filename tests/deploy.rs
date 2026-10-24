@@ -1,3 +1,4 @@
+mod support;
 use assert_cmd::Command;
 use rune::services::editing;
 use std::fs;
@@ -7,7 +8,7 @@ const SKILL_VARIANT_BASE: &str = include_str!("fixtures/input/skill-variant-base
 const SKILL_VARIANT_CLAUDE: &str = include_str!("fixtures/input/skill-variant-claude.md");
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 /// Create a minimal module in a temp directory.

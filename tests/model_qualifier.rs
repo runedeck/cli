@@ -3,13 +3,14 @@
 //! Resolution precedence is `user/` > `provider/<model>/` > `provider/` >
 //! base. A file placed in a model qualifier directory must override the base
 //! for the matching provider+model and must not silently disappear.
+mod support;
 
 use assert_cmd::Command;
 use std::fs;
 use std::path::Path;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn scaffold(root: &Path) {

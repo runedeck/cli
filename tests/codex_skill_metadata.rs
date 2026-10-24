@@ -1,3 +1,4 @@
+mod support;
 use assert_cmd::Command;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,8 +31,7 @@ impl Fixture {
     }
 
     fn install(&self) {
-        Command::cargo_bin("rune")
-            .unwrap()
+        support::rune()
             .timeout(Duration::from_secs(60))
             .args([
                 "install",

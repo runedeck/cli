@@ -1,4 +1,5 @@
 //! Integration tests for `rune install` source git freshness checks.
+mod support;
 
 use assert_cmd::Command;
 use std::fs;
@@ -6,7 +7,7 @@ use std::path::Path;
 use std::process::Command as StdCommand;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn git(args: &[&str], cwd: &Path) -> std::process::Output {

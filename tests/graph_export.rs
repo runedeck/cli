@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+mod support;
 use predicates::prelude::*;
 use std::fs;
 
@@ -33,8 +33,7 @@ fn graph_export_emits_the_artifact_graph() {
     )
     .expect("rule");
 
-    Command::cargo_bin("rune")
-        .expect("binary")
+    support::rune()
         .args(["graph", "export", "--source"])
         .arg(dir.path())
         .assert()
@@ -150,8 +149,7 @@ fn lifecycle_deck() -> tempfile::TempDir {
 fn graph_export_reads_the_context_and_the_lifecycle() {
     let dir = lifecycle_deck();
     let root = dir.path();
-    let output = Command::cargo_bin("rune")
-        .expect("binary")
+    let output = support::rune()
         .args(["graph", "export", "--source"])
         .arg(root)
         .output()
@@ -219,8 +217,7 @@ fn graph_export_without_a_context_is_unchanged() {
         "---\ntitle: Example\nstatus: accepted\ncreated: 2026-02-19\n---\n\n# Example\n",
     )
     .expect("record");
-    let output = Command::cargo_bin("rune")
-        .expect("binary")
+    let output = support::rune()
         .args(["graph", "export", "--source"])
         .arg(dir.path())
         .output()
@@ -240,8 +237,7 @@ fn graph_export_without_a_context_is_unchanged() {
     )
     .expect("proposal");
     let turtle = String::from_utf8(
-        Command::cargo_bin("rune")
-            .expect("binary")
+        support::rune()
             .args(["graph", "export", "--source"])
             .arg(dir.path())
             .output()
@@ -285,8 +281,7 @@ fn graph_export_emits_proofs_bound_to_their_transcript() {
     );
     fs::write(proof.join("README.md"), &readme).expect("readme");
 
-    let output = Command::cargo_bin("rune")
-        .expect("binary")
+    let output = support::rune()
         .args(["graph", "export", "--source"])
         .arg(root)
         .assert()
@@ -316,8 +311,7 @@ fn graph_export_emits_proofs_bound_to_their_transcript() {
     assert!(turtle.contains("rune:kind \"unproven\" ;"));
 
     fs::write(proof.join("proof.txt"), "drifted\n").expect("drift");
-    let output = Command::cargo_bin("rune")
-        .expect("binary")
+    let output = support::rune()
         .args(["graph", "export", "--source"])
         .arg(root)
         .assert()
@@ -344,8 +338,7 @@ fn spec_validate_refuses_a_malformed_proof() {
         "---\ntype: proof\nchange: sample-change\nrecorded: 2026-09-24\ntranscript: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\nscenes:\n  - scenario: sample-capability#thing-is-checked/told-to-a-model\n    kind: instruction\n---\n",
     )
     .expect("readme");
-    Command::cargo_bin("rune")
-        .expect("binary")
+    support::rune()
         .args(["spec", "validate", "--source"])
         .arg(root)
         .assert()
@@ -369,8 +362,7 @@ fn spec_validate_refuses_an_undeclared_scenario() {
         "---\ntype: proof\nchange: sample-change\nrecorded: 2026-09-24\ntranscript: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\nscenes:\n  - scenario: sample-capability#thing-is-checked/nobody-wrote-this\n    kind: check\n---\n",
     )
     .expect("readme");
-    Command::cargo_bin("rune")
-        .expect("binary")
+    support::rune()
         .args(["spec", "validate", "--source"])
         .arg(root)
         .assert()

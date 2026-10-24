@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+mod support;
 use rune::skill_readiness;
 use std::fs;
 use std::path::Path;
@@ -11,8 +11,7 @@ fn write(root: &Path, path: &str, content: &str) {
 }
 
 fn install(source: &Path, target: &Path, provider: &str) {
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .timeout(Duration::from_secs(60))
         .args(["install", "--provider", provider, "--source"])
         .arg(source)
@@ -96,8 +95,7 @@ fn installed_companion_leak_blocks_strict_readiness() {
     assert_eq!(finding.line, Some(1));
     assert_eq!(finding.token.as_deref(), Some("AskUserQuestion"));
     assert!(finding.paths[0].ends_with("Question/Workflow.md"));
-    let output = Command::cargo_bin("rune")
-        .unwrap()
+    let output = support::rune()
         .timeout(Duration::from_secs(60))
         .current_dir(source.path())
         .env_clear()

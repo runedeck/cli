@@ -15,7 +15,7 @@ use std::process::Command as StdCommand;
 mod support;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn git(args: &[&str], cwd: &Path) -> std::process::Output {

@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+mod support;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,8 +53,7 @@ impl Fixture {
     }
 
     fn check(&self, source: &Path, success: bool) -> Value {
-        let output = Command::cargo_bin("rune")
-            .unwrap()
+        let output = support::rune()
             .timeout(Duration::from_secs(20))
             .current_dir(self.root.path())
             .args(["validate", "--skill-layers", "--json", "--source"])
@@ -289,8 +288,7 @@ fn model_layer_does_not_inherit_the_harness_variant_body() {
         "---\nmode: append\n---\nKeep the portable procedure.\n",
     );
     fixture.check(&fixture.skill(), true);
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .timeout(Duration::from_secs(30))
         .args(["assemble", "--model", "claude-opus-4-6", "--source"])
         .arg(fixture.root.path())

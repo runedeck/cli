@@ -1,9 +1,10 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn write_valid_module(root: &std::path::Path) {

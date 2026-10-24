@@ -1,6 +1,7 @@
 //! `rune spec glossary`, `rune spec fix`, the term check `rune validate`
 //! runs over decision records and runes when the root has an ontology,
 //! and the archive refusal of a draft term.
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::Path;
@@ -24,7 +25,7 @@ rune:Change a rdfs:Class ;
 const DRAFT_COMMENT: &str = "Draft term. The fixer added it and nobody has defined it yet. Archive refuses a change that links to it.";
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn write_module(root: &Path, rule: &str) {

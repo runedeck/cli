@@ -4,7 +4,7 @@ use std::fs;
 mod support;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn assert_domain_order(output: &[u8]) {

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 mod support;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn fixture_deck() -> PathBuf {

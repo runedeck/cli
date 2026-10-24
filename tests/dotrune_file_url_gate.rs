@@ -1,6 +1,7 @@
 #![cfg(not(feature = "test-file-urls"))]
 
-use assert_cmd::Command;
+mod support;
+
 use predicates::prelude::*;
 
 #[test]
@@ -12,8 +13,7 @@ fn default_binary_rejects_file_git_urls_even_when_escape_env_is_set() {
     )
     .unwrap();
 
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .args(["install", "--source", consumer.path().to_str().unwrap()])
         .env("RUNE_GIT_ALLOW_FILE_URLS", "1")
         .assert()

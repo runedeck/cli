@@ -1,10 +1,11 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 /// A consumer root with one local module source carrying two rules and one

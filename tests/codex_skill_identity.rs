@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+mod support;
 use rune::manifest::{self, bundle::inspect_bundle};
 use rune::skill_readiness::{self, CatalogEntry, NativeEvidence, ObservedAccess, SkillReadiness};
 use std::collections::BTreeMap;
@@ -50,8 +50,7 @@ impl Fixture {
         self.install_with(&[]);
     }
     fn install_with(&self, extra_args: &[&str]) {
-        Command::cargo_bin("rune")
-            .unwrap()
+        support::rune()
             .args([
                 "install",
                 "--provider",
@@ -289,8 +288,7 @@ fn no_prune_install_remains_unverified_until_complete_install() {
     fixture.install();
     fixture.install_with(&["--no-prune"]);
     let check = || {
-        let output = Command::cargo_bin("rune")
-            .unwrap()
+        let output = support::rune()
             .current_dir(fixture.source.path())
             .args([
                 "doctor",
@@ -428,8 +426,7 @@ fn native_catalog_and_cwd_alias_share_one_inventory_path() {
         "errors": [],
         "raw_transcript_sha256": "fixture"
     })).unwrap().as_bytes());
-    let output = Command::cargo_bin("rune")
-        .unwrap()
+    let output = support::rune()
         .current_dir(fixture.source.path())
         .args([
             "doctor",
@@ -570,8 +567,7 @@ fn modified_doctor_finding_overrides_zero_exit() {
     let fixture = Fixture::new();
     fixture.install();
     write(&fixture.skill().join("scripts/helper.py"), b"changed\n");
-    let output = Command::cargo_bin("rune")
-        .unwrap()
+    let output = support::rune()
         .current_dir(fixture.source.path())
         .args([
             "doctor",
@@ -728,8 +724,7 @@ fn current_source_changes_invalidate_deployed_selection() {
     let fixture = Fixture::new();
     fixture.install();
     let check = || {
-        let output = Command::cargo_bin("rune")
-            .unwrap()
+        let output = support::rune()
             .current_dir(fixture.source.path())
             .args([
                 "doctor",
@@ -842,8 +837,7 @@ fn second_install_is_identity_stable() {
 // --- Doctor stays read-only; repair is the write path. Both keep #59 semantics. ---
 
 fn doctor_json(fixture: &Fixture, extra: &[&str]) -> (bool, serde_json::Value) {
-    let assert = Command::cargo_bin("rune")
-        .unwrap()
+    let assert = support::rune()
         .current_dir(fixture.source.path())
         .args([
             "doctor",
@@ -884,8 +878,7 @@ fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 fn doctor_rejects_the_removed_repair_flag() {
     let fixture = Fixture::new();
     fixture.install();
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .current_dir(fixture.source.path())
         .args([
             "doctor",
@@ -968,8 +961,7 @@ fn doctor_is_read_only_and_repair_restores_after_a_real_deployment() {
     );
 
     // Dry run plans both writes and changes nothing.
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .current_dir(fixture.source.path())
         .args([
             "repair",
@@ -988,8 +980,7 @@ fn doctor_is_read_only_and_repair_restores_after_a_real_deployment() {
     );
 
     // Repair restores from the digest-matching build and quarantines the orphan.
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .current_dir(fixture.source.path())
         .args([
             "repair",
@@ -1017,8 +1008,7 @@ fn repair_never_overwrites_a_user_edit() {
     let edited = fixture.skill().join("Workflow.md");
     write(&edited, b"user edit\n");
 
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .current_dir(fixture.source.path())
         .args([
             "repair",
@@ -1050,8 +1040,7 @@ fn adopt_doctor_and_provenance_accept_a_real_deployment_snapshot() {
 
     // The deployed-file scan resolves sidecars from deployed files and never
     // reads the snapshot; a real #59 target verifies clean.
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .args([
             "provenance",
             "--target",
@@ -1064,8 +1053,7 @@ fn adopt_doctor_and_provenance_accept_a_real_deployment_snapshot() {
     // the adopt scanner walks `.agents/.provenance/` and meets the snapshot.
     // It must pass through the deploy validator, not the sidecar parser.
     write(&root.join("module.yaml"), b"name: deployed\n");
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
         .assert()
         .success();
@@ -1074,16 +1062,14 @@ fn adopt_doctor_and_provenance_accept_a_real_deployment_snapshot() {
     let mut record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     record["source"]["digest"] = serde_json::Value::String("abc".into());
     fs::write(&snapshot, serde_json::to_vec(&record).unwrap()).unwrap();
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
         .assert()
         .failure()
         .stdout(predicates::str::contains("invalid source snapshot"));
 
     fs::write(&snapshot, b"{torn").unwrap();
-    Command::cargo_bin("rune")
-        .unwrap()
+    support::rune()
         .args(["adopt", "doctor", "--root", root.to_str().unwrap()])
         .assert()
         .failure()
@@ -1095,8 +1081,7 @@ fn skill_readiness_runs_before_the_first_deployment() {
     let fixture = Fixture::new();
     // No install: the target has no .manifest. Readiness must still report,
     // and the missing manifest is not a fatal doctor error.
-    let assert = Command::cargo_bin("rune")
-        .unwrap()
+    let assert = support::rune()
         .current_dir(fixture.source.path())
         .args([
             "doctor",

@@ -2,6 +2,8 @@
 //! binary, a scratch HOME, and a scratch state directory. Each test is one
 //! scenario a review proved with a script against the earlier code.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
@@ -45,18 +47,14 @@ impl Scene {
         path.display().to_string()
     }
 
-    /// `rune` with the scratch HOME and state, and none of the owner's
+    /// `rune` with the scene's HOME and state, and none of the owner's
     /// directory variables.
     fn rune(&self) -> Command {
-        let mut command = Command::cargo_bin("rune").unwrap();
+        let mut command = support::rune();
         command
             .env("HOME", self.home())
+            .env("XDG_CONFIG_HOME", self.home().join(".config"))
             .env("RUNE_STATE_DIR", self.state())
-            .env_remove("XDG_STATE_HOME")
-            .env_remove("XDG_CONFIG_HOME")
-            .env_remove("CLAUDE_CONFIG_DIR")
-            .env_remove("CLAUDE_PROJECT_DIR")
-            .env_remove("GROK_SESSION_ID")
             .current_dir(self.root.path());
         command
     }
@@ -202,11 +200,10 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
     std::fs::copy(assert_cmd::cargo::cargo_bin("rune"), &copy).unwrap();
     let mut second = Command::new(&copy);
-    second
+    support::isolate(&mut second)
         .env("HOME", scene.home())
+        .env("XDG_CONFIG_HOME", scene.home().join(".config"))
         .env("RUNE_STATE_DIR", scene.state())
-        .env_remove("XDG_STATE_HOME")
-        .env_remove("XDG_CONFIG_HOME")
         .args(["hook", "install"])
         .assert()
         .success();
