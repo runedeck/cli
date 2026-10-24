@@ -23,7 +23,7 @@
 ## 4. Verification
 
 - [x] 4.1 Astra on the proposal, the two delta specs, and `adr.md` before code, dispositions in `design.md`
-- [x] 4.2 `rune proof scaffold dispatcher-records-every-hook-execution`, 26 of 27 scenarios recorded with `rune proof run` against fixtures. `disk-blocks-the-writer` stays unproven in the cast and is covered by a unit test with an injected stalled writer. The live record is no proof input
+- [x] 4.2 `rune proof scaffold dispatcher-records-every-hook-execution`, 28 of 28 scenarios recorded with `rune proof run` against fixtures. `disk-blocks-the-writer` blocks the writer on a FIFO with no reader at the month's record file. `proof-scene-reads-the-record` runs a nested proof whose scene lists the record without a state dir. The live record is no proof input
 - [ ] 4.3 Astra and Grok on the code after group 3, dispositions in `design.md`
 - [ ] 4.4 `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features`, `prek run --all-files` and `--stage pre-push` in an isolated clone, `rune spec validate dispatcher-records-every-hook-execution`, receipt, `rune sign queue`
 

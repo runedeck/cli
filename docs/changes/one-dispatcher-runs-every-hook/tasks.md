@@ -36,3 +36,11 @@
 - [ ] 6.2 Astra and Grok on the code after group 4
 - [ ] 6.3 `rune proof scaffold one-dispatcher-runs-every-hook`, every scenario recorded, the cast page in the workshop, GIFs of a Claude session and a Codex session with the hooks live, the sign brief before the key touch
 - [ ] 6.4 CLI-0020 amended, ASSEMBLY-0005 amended, CHANGELOG entries, issue 69 closed by the merge
+
+## 7. Review fixes, round two
+
+- [x] 7.1 The registration: the plan and the manifest by absolute paths, a guarded registration that denies when its plan lacks the event, and a bridge plan with the events of both installs while the tables change
+- [x] 7.2 Install: a failed hook step fails `rune install`, old files kept and restored by rename with a failed restore named, unique staging names, and one lock per directory by its canonical path
+- [x] 7.3 Install: an empty handler list takes rune's entries back, Codex trust read where adoption puts the entry, a predecessor adopted only from a command that runs it alone, and no hook installed from a proof scene with the runner's HOME
+- [x] 7.4 Tests: every integration test runs rune with a scratch HOME, config, and state, and a guard test fails when one sees the real HOME
+- [x] 7.5 Proof: every scenario of the closure recorded with `rune proof run`, 49 of 49, `guards-hold-under-failure` and `install-respects-owner-tables` included
