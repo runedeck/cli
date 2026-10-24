@@ -238,29 +238,71 @@ fn adapters_on(plan: &Plan, harness: Harness, event: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The registration patterns install adopts: the legacy dispatcher on an
-/// event rune registers, and a tool's own entry where the plan runs the
-/// adapter that replaces it on the same harness and native event.
-fn adoption(command: &str, adapters: &[String]) -> Option<&'static str> {
-    let trimmed = command.trim();
-    if trimmed.contains("/.sd/hook ") || trimmed.starts_with("sd hook ") {
-        return Some(LEGACY);
+/// A predecessor install finds in a hook's command, by what replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Predecessor {
+    /// The command runs the predecessor and nothing else: install may
+    /// remove it.
+    Alone(&'static str),
+    /// The command runs the predecessor with other commands: it stays,
+    /// and the owner splits it by hand.
+    Compound(&'static str),
+}
+
+/// The characters that join, redirect, or substitute commands. A command
+/// line without them runs one program.
+const OPERATORS: &[char] = &[';', '&', '|', '<', '>', '(', ')', '$', '`', '\n', '\r'];
+
+/// The predecessor in a hook's command: the legacy dispatcher, or a tool
+/// whose adapter the plan runs on the same harness and native event. Only
+/// a command that runs the predecessor alone is install's to remove.
+fn predecessor(command: &str, adapters: &[String]) -> Option<Predecessor> {
+    if !command.contains(OPERATORS) {
+        return predecessor_run(&words(command), adapters).map(Predecessor::Alone);
     }
-    let tail = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    command
+        .split(OPERATORS)
+        .find_map(|part| predecessor_run(&words(part), adapters))
+        .map(Predecessor::Compound)
+}
+
+/// What one simple command runs, by its words: `[sh] PATH/.sd/hook EVENT`
+/// or `sd hook EVENT` for the legacy dispatcher, else the program of a
+/// tool the plan replaces here.
+fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str> {
+    let name = |word: &String| {
+        Path::new(word)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let args = match words.first().map(String::as_str) {
+        Some("sh" | "bash" | "zsh") => &words[1..],
+        _ => words,
+    };
+    match args {
+        [program, _event, ..] if program.ends_with("/.sd/hook") => return Some(LEGACY),
+        [program, hook, _event, ..] if name(program) == "sd" && hook == "hook" => {
+            return Some(LEGACY);
+        }
+        _ => {}
+    }
+    let program = name(words.first()?);
+    let second = words.get(1).map(String::as_str);
     let runs = |adapter: &str| adapters.iter().any(|a| a == adapter);
-    if runs("dcg") && (trimmed == "dcg" || tail == "dcg" || tail.starts_with("dcg ")) {
+    if runs("dcg") && program == "dcg" {
         return Some("dcg");
     }
-    if runs("git-ai") && trimmed.contains("git-ai checkpoint") {
+    if runs("git-ai") && program == "git-ai" && second == Some("checkpoint") {
         return Some("git-ai");
     }
-    if runs("author-identity") && tail.starts_with("claude-agent-identity") {
+    if runs("author-identity") && program.starts_with("claude-agent-identity") {
         return Some("author-identity");
     }
-    if runs("tmux-status") && tail.starts_with("claude-tmux-status") {
+    if runs("tmux-status") && program.starts_with("claude-tmux-status") {
         return Some("tmux-status");
     }
-    if runs("rtk") && (trimmed.starts_with("rtk hook") || tail.starts_with("rtk hook")) {
+    if runs("rtk") && program == "rtk" && second == Some("hook") {
         return Some("rtk");
     }
     None
@@ -626,26 +668,38 @@ impl Event<'_> {
     }
 
     /// One hook that is not rune's: adopted when a handler on this event
-    /// replaces it, else kept as foreign. Returns whether it stays.
+    /// replaces it and the command runs nothing else, else kept as
+    /// foreign. Returns whether it stays.
     fn foreign(&self, command: &str, next: &mut HarnessManifest, report: &mut Report) -> bool {
         let (harness, name) = (self.harness, self.name);
-        let by = adoption(command, &self.adapters);
-        if by == Some(LEGACY) && self.want.is_none() {
-            // The legacy dispatcher still serves this event: no rune
-            // entry takes its place, so it stays.
-            report.warnings.push(format!(
-                "{harness}: {name} keeps the legacy `{command}`, because no handler subscribes to {name}; move what it runs into a handler, then remove it by hand"
-            ));
-        } else if by.is_some() && !self.adopt {
-            report.trust.push(format!(
-                "{harness}: {name} keeps `{command}` until {harness} trusts the rune entry that replaces it"
-            ));
-        } else if let Some(by) = by {
-            next.adopted.push(self.record(command, Some(by)));
-            report
-                .adopted
-                .push((harness, name.to_string(), command.to_string()));
-            return false;
+        match predecessor(command, &self.adapters) {
+            Some(Predecessor::Alone(LEGACY) | Predecessor::Compound(LEGACY))
+                if self.want.is_none() =>
+            {
+                // The legacy dispatcher still serves this event: no rune
+                // entry takes its place, so it stays.
+                report.warnings.push(format!(
+                    "{harness}: {name} keeps the legacy `{command}`, because no handler subscribes to {name}; move what it runs into a handler, then remove it by hand"
+                ));
+            }
+            Some(Predecessor::Compound(by)) => {
+                report.warnings.push(format!(
+                    "{harness}: {name} keeps `{command}`, because it runs {by} with other commands; split it by hand, and the next install takes the {by} part"
+                ));
+            }
+            Some(Predecessor::Alone(_)) if !self.adopt => {
+                report.trust.push(format!(
+                    "{harness}: {name} keeps `{command}` until {harness} trusts the rune entry that replaces it"
+                ));
+            }
+            Some(Predecessor::Alone(by)) => {
+                next.adopted.push(self.record(command, Some(by)));
+                report
+                    .adopted
+                    .push((harness, name.to_string(), command.to_string()));
+                return false;
+            }
+            None => {}
         }
         next.foreign.push(self.record(command, None));
         report
@@ -846,17 +900,25 @@ fn legacy_codex_toml(
         else {
             continue;
         };
-        let by = adoption(command, &adapters_on(plan, Harness::Codex, &event));
-        if by == Some(LEGACY) && !registered.contains_key(&event) {
+        let found = predecessor(command, &adapters_on(plan, Harness::Codex, &event));
+        let (by, alone) = match found {
+            Some(Predecessor::Alone(by)) => (by, true),
+            Some(Predecessor::Compound(by)) => (by, false),
+            None => continue,
+        };
+        if by == LEGACY && !registered.contains_key(&event) {
             continue;
         }
-        if let Some(by) = by {
-            report.legacy_toml.push(format!(
-                "{}:{}: `{command}` is now the {by} handler; remove it from config.toml by hand, rune does not rewrite that file",
-                path.display(),
-                index + 1
-            ));
-        }
+        let what = if alone {
+            format!("is now the {by} handler; remove it from config.toml")
+        } else {
+            format!("runs {by} with other commands; split it in config.toml")
+        };
+        report.legacy_toml.push(format!(
+            "{}:{}: `{command}` {what} by hand, rune does not rewrite that file",
+            path.display(),
+            index + 1
+        ));
     }
 }
 
@@ -1285,6 +1347,78 @@ mod tests {
         );
         assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
         assert!(report.warnings[0].contains("legacy"));
+    }
+
+    #[test]
+    fn only_a_command_that_runs_the_predecessor_alone_is_adopted() {
+        let adapters = vec!["dcg".to_string(), "rtk".to_string()];
+        let of = |command: &str| predecessor(command, &adapters);
+        assert_eq!(
+            of("sh ~/.sd/hook PreToolUse"),
+            Some(Predecessor::Alone(LEGACY))
+        );
+        assert_eq!(
+            of("/Users/x/.sd/hook Stop"),
+            Some(Predecessor::Alone(LEGACY))
+        );
+        assert_eq!(of("sd hook Stop"), Some(Predecessor::Alone(LEGACY)));
+        assert_eq!(
+            of("/Users/x/.local/bin/dcg"),
+            Some(Predecessor::Alone("dcg"))
+        );
+        assert_eq!(of("rtk hook claude"), Some(Predecessor::Alone("rtk")));
+        assert_eq!(
+            of("sh ~/.sd/hook PreToolUse && /owner/check-policy"),
+            Some(Predecessor::Compound(LEGACY))
+        );
+        assert_eq!(
+            of("dcg && /owner/check"),
+            Some(Predecessor::Compound("dcg"))
+        );
+        assert_eq!(
+            of("/owner/check; rtk hook claude"),
+            Some(Predecessor::Compound("rtk"))
+        );
+        assert_eq!(of("dcg > /tmp/dcg.log"), Some(Predecessor::Compound("dcg")));
+        assert_eq!(of("cat ~/.sd/hook"), None);
+        assert_eq!(of("/owner/dcg-wrapper"), None);
+        assert_eq!(of("/owner/my-guard"), None);
+    }
+
+    #[test]
+    fn a_compound_legacy_command_stays_and_is_named_for_a_hand_split() {
+        let home = tempfile::tempdir().unwrap();
+        let compound = "sh ~/.sd/hook PreToolUse && /owner/check-policy";
+        let path = settings(
+            home.path(),
+            &json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": compound}]}]}})
+                .to_string(),
+        );
+        let manifest = home.path().join("state").join("manifest.json");
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            table["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            compound
+        );
+        assert!(report.adopted.is_empty(), "{report:?}");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains(compound) && w.contains("split it by hand")),
+            "{:?}",
+            report.warnings
+        );
     }
 
     #[test]

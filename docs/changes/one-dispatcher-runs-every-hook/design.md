@@ -75,6 +75,8 @@ A table that is a symbolic link, such as a `settings.json` the dotfiles keep, is
 
 The dotfiles render `~/.claude/settings.json` from a template. Release 1 turns that template into a chezmoi `modify_` script that takes the live file's `hooks` key as is, so rune's entries survive `chezmoi apply`, and declares no hook of its own. Legacy `sh ~/.sd/hook` entries are adopted by the first install, then the `dot_sd/hooks/` tree and the dispatcher go.
 
+Install adopts a predecessor only from a command that runs it alone. It reads the command's words with shell quoting. The legacy shapes are `[sh|bash|zsh] PATH/.sd/hook EVENT` and `sd hook EVENT`, and a tool is the program's file name. A command with `;`, `&`, `|`, `<`, `>`, `(`, `)`, `$`, a backtick, or a line break joins, redirects, or substitutes commands. Such a command, for example `sh ~/.sd/hook PreToolUse && /owner/check-policy`, stays whole. Install warns that it runs the predecessor with other commands, and the owner splits it by hand.
+
 ## Codex trust
 
 Codex binds trust to the hook's hash. An entry rune writes is inactive until the owner accepts it in the harness (`/hooks`). The install prints that step, `--check` reports an untrusted rune entry, and the legacy Codex registration is adopted only once the rune entry is trusted, so no event goes unguarded in between.

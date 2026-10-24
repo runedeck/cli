@@ -63,12 +63,17 @@ When the config declares no handler and an earlier install left a plan or an own
 
 ### Requirement: The Legacy Dispatcher Goes Where Rune Takes Over
 
-Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan registers for that harness. On any other event install MUST keep the entry and warn that no handler takes its place.
+Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan registers for that harness. On any other event install MUST keep the entry and warn that no handler takes its place. Install MUST adopt a predecessor, legacy or a tool's own, only from a command that runs it alone. A command that joins it with other commands MUST stay whole, and install MUST warn that the owner splits it by hand.
 
 #### Scenario: Turn wrap on Stop
 
 - **WHEN** `Stop` holds `sh ~/.sd/hook Stop` and no handler subscribes to `turn.finish`
 - **THEN** the entry stays, and the install output warns that no handler takes its place
+
+#### Scenario: Legacy dispatcher joined with an owner's check
+
+- **WHEN** `PreToolUse` holds `sh ~/.sd/hook PreToolUse && /owner/check-policy` and a handler subscribes to `tool.before`
+- **THEN** the command stays whole, and the install output warns that it runs the legacy dispatcher with other commands
 
 ### Requirement: A Tool's Entry Goes Where Its Adapter Runs
 
