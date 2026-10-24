@@ -41,3 +41,12 @@ Install MUST judge rune's command by the hash of its own registration, the group
 
 - **WHEN** the owner added a command to rune's `PreToolUse` group and the plan then drops `tool.before`
 - **THEN** the group keeps the owner's command and loses rune's
+
+### Requirement: The Legacy Dispatcher Goes Where Rune Takes Over
+
+Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan registers for that harness. On any other event install MUST keep the entry and warn that no handler takes its place.
+
+#### Scenario: Turn wrap on Stop
+
+- **WHEN** `Stop` holds `sh ~/.sd/hook Stop` and no handler subscribes to `turn.finish`
+- **THEN** the entry stays, and the install output warns that no handler takes its place
