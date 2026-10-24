@@ -26,6 +26,8 @@ change: review-changes-with-proofs
 
 # Review and proof share one closure over the specification graph
 
+The proof format in this decision (the trycmd console fence, the frontmatter record, and "no dependency joins") is replaced by "Proofs share one format, one record, and one view" in the change proofs-share-one-format. The shared closure stands.
+
 ## Context and Problem Statement
 
 The owner reviews the closure of a change: its proposal, delta specs, records, ideas, and proofs, at their real paths, in one directory any tool opens. The deck built that directory by hand with `jj workspace add` and `jj sparse set` and rejected three alternatives: a bridge into one review tool, a directory of symlinks, and copies. Proofs are recorded by a bash driver the owner rejected as the runner, and the graph exporter mints every scenario as `<capability>#<requirement-slug>/<scenario-slug>` but knows no proofs, so acceptance cannot check them. Two commands are asked for, `rune review` and `rune proof`, and the question is whether they are one design or two.

@@ -108,6 +108,8 @@ fn scaffold(root: &Path, change: &str) -> Result<i32, Error> {
         kind: "proof".to_string(),
         change: change.to_string(),
         head: None,
+        head_change: None,
+        head_tree: None,
         recorded: today(),
         transcript: sha256(b""),
         scenes: closure
@@ -226,7 +228,7 @@ fn run(root: &Path, proof: &Proof, pause: f64) -> Result<i32, Error> {
     cast.write(&proof.dir.join("proof.cast"))?;
     frontmatter.transcript = sha256(transcript.as_bytes());
     frontmatter.recorded = today();
-    frontmatter.head = head;
+    set_head(root, &mut frontmatter, head);
     write_readme(&proof.readme, &frontmatter, body)?;
     let proven = frontmatter
         .scenes
@@ -244,7 +246,8 @@ fn run(root: &Path, proof: &Proof, pause: f64) -> Result<i32, Error> {
 
 /// Verify a proof without running it: the transcript hashes to the
 /// record, every proven scene has a section whose kind and command lines
-/// match the README, and the head is an ancestor of the current commit.
+/// match the README, and the head, or a signed or reworded rewrite of it,
+/// is an ancestor of the current commit.
 fn check(root: &Path, proof: &Proof) -> i32 {
     let mut problems = Vec::new();
     match proof::transcript_digest(&proof.dir) {
@@ -314,16 +317,8 @@ fn check(root: &Path, proof: &Proof) -> i32 {
             ));
         }
     }
-    if let Some(head) = &proof.frontmatter.head {
-        match is_ancestor(root, head) {
-            Some(true) => {}
-            Some(false) => problems.push(format!(
-                "head {head} is not an ancestor of the current commit"
-            )),
-            None => problems.push(format!(
-                "head {head} cannot be checked: neither jj nor git answered"
-            )),
-        }
+    if let Err(problem) = head_holds(root, &proof.frontmatter) {
+        problems.push(problem);
     }
     if problems.is_empty() {
         println!("{}: transcript and head hold", proof.readme.display());
@@ -403,7 +398,7 @@ fn record_instruction(root: &Path, proof: &Proof, key: &str) -> Result<i32, Erro
     let mut frontmatter = proof.frontmatter.clone();
     frontmatter.transcript = sha256(transcript.as_bytes());
     frontmatter.recorded = today();
-    frontmatter.head = head;
+    set_head(root, &mut frontmatter, head);
     write_readme(&proof.readme, &frontmatter, body)?;
     println!("{key} ... instruction recorded through {model}");
     Ok(0)
@@ -573,11 +568,23 @@ fn head_commit(root: &Path) -> (Option<String>, Option<String>) {
     )
 }
 
-/// Whether `head` is an ancestor of the current commit, by jj then git.
-/// `None` when neither tool can answer, which the check reports rather
-/// than passing.
-fn is_ancestor(root: &Path, head: &str) -> Option<bool> {
-    if let Some(answer) = vcs(
+/// Record the head with its change id and tree, so a later signature or
+/// reword of the head commit leaves the proof checkable.
+fn set_head(root: &Path, frontmatter: &mut Frontmatter, head: Option<String>) {
+    let (change, tree) = head
+        .as_deref()
+        .map_or((None, None), |commit| head_identity(root, commit));
+    frontmatter.head = head;
+    frontmatter.head_change = change;
+    frontmatter.head_tree = tree;
+}
+
+/// The jj change id and the git tree id of `commit`. jj resolves a commit
+/// it hid after a rewrite by its full id, so a proof recorded before these
+/// fields existed still finds them. Either is `None` when its tool cannot
+/// answer: a git-only repository has no change id.
+fn head_identity(root: &Path, commit: &str) -> (Option<String>, Option<String>) {
+    let change = vcs(
         root,
         "jj",
         &[
@@ -585,22 +592,109 @@ fn is_ancestor(root: &Path, head: &str) -> Option<bool> {
             "--no-graph",
             "--ignore-working-copy",
             "-r",
-            &format!("{head} & ::@"),
+            &format!("commit_id(\"{commit}\")"),
             "-T",
-            "commit_id",
+            "change_id",
         ],
-    ) {
-        return Some(!answer.is_empty());
+    )
+    .filter(|id| !id.is_empty());
+    (change, git_tree(root, commit))
+}
+
+/// The git tree id of `commit`, read from the git directory jj names, so a
+/// jj repository that is not colocated answers too.
+fn git_tree(root: &Path, commit: &str) -> Option<String> {
+    let spec = format!("{commit}^{{tree}}");
+    let tree = match vcs(root, "jj", &["git", "root", "--ignore-working-copy"]) {
+        Some(git_dir) => vcs(
+            root,
+            "git",
+            &["--git-dir", &git_dir, "rev-parse", "--verify", "-q", &spec],
+        ),
+        None => vcs(root, "git", &["rev-parse", "--verify", "-q", &spec]),
+    };
+    tree.filter(|id| id.len() >= 40)
+}
+
+/// The commits of `revset` that are ancestors of the working copy. `None`
+/// when jj cannot answer, as in a git-only repository.
+fn jj_ancestors(root: &Path, revset: &str) -> Option<Vec<String>> {
+    vcs(
+        root,
+        "jj",
+        &[
+            "log",
+            "--no-graph",
+            "--ignore-working-copy",
+            "-r",
+            &format!("({revset}) & ::@"),
+            "-T",
+            "commit_id ++ \"\\n\"",
+        ],
+    )
+    .map(|answer| answer.lines().map(str::to_string).collect())
+}
+
+/// Whether the recorded head still stands in the current history. A
+/// signature or a reworded description rewrites the commit id and keeps
+/// the change id and the tree, so the head holds when an ancestor of the
+/// current commit has both. An edit of the content changes the tree and
+/// fails. `Err` carries the problem the check reports.
+fn head_holds(root: &Path, frontmatter: &Frontmatter) -> Result<(), String> {
+    let Some(head) = frontmatter.head.as_deref() else {
+        return Ok(());
+    };
+    let Some(in_history) = jj_ancestors(root, &format!("commit_id(\"{head}\")")) else {
+        return git_head_holds(root, head);
+    };
+    if !in_history.is_empty() {
+        return Ok(());
     }
-    let output = Command::new("git")
+    let (change, tree) = match (&frontmatter.head_change, &frontmatter.head_tree) {
+        (Some(change), Some(tree)) => (change.clone(), tree.clone()),
+        _ => match head_identity(root, head) {
+            (Some(change), Some(tree)) => (change, tree),
+            _ => {
+                return Err(format!(
+                    "head {head} no longer resolves, and the proof records no change id and tree to find its rewrite: record the proof again"
+                ));
+            }
+        },
+    };
+    let candidates = jj_ancestors(root, &format!("change_id(\"{change}\")")).unwrap_or_default();
+    if candidates.is_empty() {
+        return Err(format!(
+            "head {head} (change {change}) is not in the history of the current commit"
+        ));
+    }
+    if candidates
+        .iter()
+        .any(|commit| git_tree(root, commit).as_deref() == Some(tree.as_str()))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "head {head} was rewritten with other content: change {change} is in the history of the current commit, but none of its commits has tree {tree}"
+    ))
+}
+
+/// The git answer for a repository without jj: commit ancestry only,
+/// because git keeps no change id that survives a rewrite.
+fn git_head_holds(root: &Path, head: &str) -> Result<(), String> {
+    let code = Command::new("git")
         .args(["merge-base", "--is-ancestor", head, "HEAD"])
         .current_dir(root)
         .output()
-        .ok()?;
-    match output.status.code() {
-        Some(0) => Some(true),
-        Some(1) => Some(false),
-        _ => None,
+        .ok()
+        .and_then(|output| output.status.code());
+    match code {
+        Some(0) => Ok(()),
+        Some(1) => Err(format!(
+            "head {head} is not an ancestor of the current commit"
+        )),
+        _ => Err(format!(
+            "head {head} cannot be checked: neither jj nor git answered"
+        )),
     }
 }
 
@@ -649,6 +743,8 @@ mod tests {
             kind: "proof".into(),
             change: "x-y-z".into(),
             head: Some("0123456789abcdef".into()),
+            head_change: Some("zumnyrlsrptknrlzssvuwtrkrknxrqno".into()),
+            head_tree: Some("eae7fed3edf21984aa5c12b24805fb708b27c436".into()),
             recorded: "2026-09-24".into(),
             transcript: sha256(b""),
             scenes: vec![SceneRecord {

@@ -68,6 +68,13 @@ pub struct Frontmatter {
     /// The commit the scenes ran against, written by `rune proof run`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
+    /// The jj change id of `head`. A signature or a reworded description
+    /// rewrites the commit id and keeps the change id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_change: Option<String>,
+    /// The git tree id of `head`, its content, which a signature keeps too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_tree: Option<String>,
     pub recorded: String,
     /// sha256 of `proof.txt` beside the README, lowercase hex.
     pub transcript: String,
@@ -149,6 +156,26 @@ pub fn parse(path: &Path, text: &str) -> Result<Frontmatter, ProofError> {
         && (head.len() < 12 || !is_hex(head, head.len()))
     {
         return Err(fail("head", format!("`{head}` is not a commit id")));
+    }
+    if let Some(change) = frontmatter.head_change.as_mut() {
+        *change = change.to_ascii_lowercase();
+    }
+    // jj spells a change id in the sixteen letters k to z.
+    if let Some(change) = &frontmatter.head_change
+        && (change.len() < 12 || !change.bytes().all(|b| (b'k'..=b'z').contains(&b)))
+    {
+        return Err(fail(
+            "head_change",
+            format!("`{change}` is not a jj change id"),
+        ));
+    }
+    if let Some(tree) = frontmatter.head_tree.as_mut() {
+        *tree = tree.to_ascii_lowercase();
+    }
+    if let Some(tree) = &frontmatter.head_tree
+        && (tree.len() < 40 || !is_hex(tree, tree.len()))
+    {
+        return Err(fail("head_tree", format!("`{tree}` is not a tree id")));
     }
     for scene in &frontmatter.scenes {
         if !is_scenario_key(&scene.scenario) {
@@ -368,6 +395,38 @@ mod tests {
         let text = GOOD.replace("    kind: check\n", "    kind: check\n    model: x\n");
         let error = parse(Path::new("README.md"), &text).unwrap_err();
         assert_eq!(error.field, "cap#req-slug/scn-slug");
+    }
+
+    #[test]
+    fn a_malformed_change_id_or_tree_names_its_field() {
+        let with = |change: &str, tree: &str| {
+            GOOD.replace(
+                "recorded: 2026-09-24\n",
+                &format!("head_change: {change}\nhead_tree: {tree}\nrecorded: 2026-09-24\n"),
+            )
+        };
+        let tree = "eae7fed3edf21984aa5c12b24805fb708b27c436";
+        let fm = parse(
+            Path::new("r"),
+            &with("ZUMNYRLSRPTKNRLZSSVUWTRKRKNXRQNO", tree),
+        )
+        .expect("valid");
+        assert_eq!(
+            fm.head_change.as_deref(),
+            Some("zumnyrlsrptknrlzssvuwtrkrknxrqno")
+        );
+        assert_eq!(
+            parse(Path::new("r"), &with("0123456789abcdef", tree))
+                .unwrap_err()
+                .field,
+            "head_change"
+        );
+        assert_eq!(
+            parse(Path::new("r"), &with("zumnyrlsrptknrlz", "eae7fed3"))
+                .unwrap_err()
+                .field,
+            "head_tree"
+        );
     }
 
     #[test]
