@@ -76,12 +76,17 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 
 ### Requirement: One Install Prints One Result
 
-`rune install --json` MUST print one JSON document, with the hook report under its `hooks` key. Without `--json`, the hook report MUST be printed as lines a person reads.
+`rune install --json` MUST print one JSON document, with the hook report under its `hooks` key. Without `--json`, the hook report MUST be printed as lines a person reads. When the hook step fails, `rune install` MUST exit non-zero and list the failure under `errors`, because the guards the config asks for are not in place.
 
 #### Scenario: Install with hooks as JSON
 
 - **WHEN** the user config declares a handler and `rune install --json` runs
 - **THEN** stdout parses as one JSON document whose `hooks` lists the events written
+
+#### Scenario: Hook step fails
+
+- **WHEN** the Codex `hooks.json` is not JSON and `rune install --json` runs
+- **THEN** the install exits non-zero, and the document's `errors` says the hook tables were not written
 
 ### Requirement: A Proof Scene Installs No Hook Into The Live HOME
 

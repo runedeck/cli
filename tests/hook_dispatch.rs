@@ -222,11 +222,8 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
     );
 }
 
-#[test]
-fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
-    let scene = Scene::new();
-    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
-    scene.config(DCG_GUARD);
+/// `rune install --json` of a one-rule module into a scratch target.
+fn install_module(scene: &Scene) -> std::process::Output {
     let source = scene.path("module");
     std::fs::create_dir_all(source.join("rules")).unwrap();
     std::fs::write(
@@ -238,7 +235,7 @@ fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
     std::fs::write(source.join("rules/Fixture.md"), "a rule\n").unwrap();
     let target = scene.path("target");
     std::fs::create_dir_all(&target).unwrap();
-    let output = scene
+    scene
         .rune()
         .args([
             "install",
@@ -249,7 +246,34 @@ fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
             "--json",
         ])
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn a_failed_hook_install_fails_rune_install() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".codex")).unwrap();
+    std::fs::write(scene.home().join(".codex/hooks.json"), "{ not json").unwrap();
+    scene.config(DCG_GUARD);
+    let output = install_module(&scene);
+    assert!(!output.status.success(), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        document["errors"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|line| line
+                .as_str()
+                .is_some_and(|l| l.contains("hook tables not written")))),
+        "{document}"
+    );
+}
+
+#[test]
+fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    let output = install_module(&scene);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),

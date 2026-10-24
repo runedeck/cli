@@ -77,13 +77,19 @@ pub fn execute(
     }
     // The harness hook tables follow the user config, not the deck: one
     // dispatcher entry per subscribed event, foreign entries kept. The
-    // report joins this result, so `--json` prints one document.
+    // report joins this result, so `--json` prints one document. A hook
+    // install that fails is an error of the install: the guards the
+    // config asks for are not in place.
     if fire_events && !dry_run {
         match crate::cli::hook::install_report(false, false) {
             Ok(Some(report)) => result.hooks = Some(report.summary()),
             Ok(None) => {}
-            Err(error) => result
+            // A proof scene with the live HOME installs its deck and no hook.
+            Err(error) if error.code() == crate::cli::hook::LIVE_HOME_IN_PROOF => result
                 .warnings
+                .push(format!("hook tables not written: {error}")),
+            Err(error) => result
+                .errors
                 .push(format!("hook tables not written: {error}")),
         }
     }
