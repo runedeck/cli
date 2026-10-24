@@ -95,14 +95,24 @@ pub(super) fn parse(text: &str) -> Vec<Command> {
     reader.commands
 }
 
+/// The word being read.
+struct Pending {
+    value: String,
+    /// Where it started in the line.
+    start: usize,
+    /// How many characters of the value came before its first quoted
+    /// one, or `None` when no part of it was quoted. `FOO="1"` is an
+    /// assignment because its name and `=` come before the quote.
+    plain: Option<usize>,
+}
+
 struct Reader {
     chars: Vec<char>,
     at: usize,
     commands: Vec<Command>,
     current: Command,
-    /// The word being read: its value, where it started, and whether any
-    /// part of it was quoted.
-    word: Option<(String, usize, bool)>,
+    /// The word being read.
+    word: Option<Pending>,
     /// A redirection operator waiting for its target word.
     redirect: Option<String>,
     /// Here-document delimiters to skip at the next newline: the word and
@@ -118,17 +128,23 @@ impl Reader {
     }
 
     fn push(&mut self, c: char, quoted: bool) {
-        let at = self.at;
-        let word = self.word.get_or_insert_with(|| (String::new(), at, false));
-        word.0.push(c);
-        word.2 |= quoted;
+        self.open_word(quoted);
+        if let Some(word) = self.word.as_mut() {
+            word.value.push(c);
+        }
     }
 
     /// Start a word at the current position without adding to it.
     fn open_word(&mut self, quoted: bool) {
         let at = self.at;
-        let word = self.word.get_or_insert_with(|| (String::new(), at, false));
-        word.2 |= quoted;
+        let word = self.word.get_or_insert_with(|| Pending {
+            value: String::new(),
+            start: at,
+            plain: None,
+        });
+        if quoted && word.plain.is_none() {
+            word.plain = Some(word.value.chars().count());
+        }
     }
 
     fn run(&mut self) {
@@ -148,11 +164,7 @@ impl Reader {
                 '\'' => self.single_quoted(),
                 '"' => self.double_quoted(),
                 '\\' => self.escaped(),
-                '$' if self.peek(1) == Some('\'') => {
-                    self.push('$', true);
-                    self.at += 1;
-                    self.single_quoted();
-                }
+                '$' if self.peek(1) == Some('\'') => self.ansi_c_quoted(),
                 '$' | '<' | '>' if self.peek(1) == Some('(') => self.substitution(2, ')'),
                 '$' if self.peek(1) == Some('{') => self.balanced_into_word('{', '}'),
                 '`' => self.backtick(),
@@ -215,10 +227,13 @@ impl Reader {
     /// A word of digits right before `>` or `<` is a descriptor number.
     fn take_descriptor(&mut self) -> String {
         match &self.word {
-            Some((value, start, false))
-                if !value.is_empty()
-                    && value.bytes().all(|b| b.is_ascii_digit())
-                    && *start + value.chars().count() == self.at =>
+            Some(Pending {
+                value,
+                start,
+                plain: None,
+            }) if !value.is_empty()
+                && value.bytes().all(|b| b.is_ascii_digit())
+                && *start + value.chars().count() == self.at =>
             {
                 let digits = value.clone();
                 self.word = None;
@@ -268,6 +283,33 @@ impl Reader {
                 return;
             }
             self.push(c, true);
+        }
+    }
+
+    /// `$'…'`: a backslash escapes the character after it, a quote
+    /// included, so the string ends at the first quote no backslash
+    /// escapes. `$'a\'b' > f` is one word and a redirection.
+    fn ansi_c_quoted(&mut self) {
+        self.open_word(true);
+        self.at += 2;
+        while let Some(c) = self.peek(0) {
+            self.at += 1;
+            match c {
+                '\'' => return,
+                '\\' => {
+                    if let Some(next) = self.peek(0) {
+                        self.at += 1;
+                        let value = match next {
+                            'n' => '\n',
+                            't' => '\t',
+                            'r' => '\r',
+                            other => other,
+                        };
+                        self.push(value, true);
+                    }
+                }
+                _ => self.push(c, true),
+            }
         }
     }
 
@@ -342,11 +384,21 @@ impl Reader {
         self.at = end + 1;
     }
 
+    /// `${…}`: kept in the word as written. A command, arithmetic, or
+    /// backtick substitution inside it, such as the default in
+    /// `${X:-$(id)}`, runs like any other and is recorded.
     fn balanced_into_word(&mut self, open: char, close: char) {
         let end = self.balanced_end(self.at + 2, open, close);
         let source: String = self.chars[self.at..(end + 1).min(self.chars.len())]
             .iter()
             .collect();
+        let inner: String = self.chars
+            [(self.at + 2).min(self.chars.len())..end.min(self.chars.len())]
+            .iter()
+            .collect();
+        for nested in parse(&inner) {
+            self.current.substitutions.extend(nested.substitutions);
+        }
         for c in source.chars() {
             self.push(c, true);
         }
@@ -361,6 +413,15 @@ impl Reader {
         while at < self.chars.len() {
             match self.chars[at] {
                 '\\' => at += 1,
+                '$' if self.chars.get(at + 1) == Some(&'\'') => {
+                    at += 2;
+                    while at < self.chars.len() && self.chars[at] != '\'' {
+                        if self.chars[at] == '\\' {
+                            at += 1;
+                        }
+                        at += 1;
+                    }
+                }
                 '\'' => {
                     at += 1;
                     while at < self.chars.len() && self.chars[at] != '\'' {
@@ -422,9 +483,15 @@ impl Reader {
     }
 
     fn finish_word(&mut self) {
-        let Some((value, start, quoted)) = self.word.take() else {
+        let Some(Pending {
+            value,
+            start,
+            plain,
+        }) = self.word.take()
+        else {
             return;
         };
+        let quoted = plain.is_some();
         let raw: String = self.chars[start..self.at].iter().collect();
         if let Some(op) = self.redirect.take() {
             if op.starts_with("<<") && !op.starts_with("<<<") {
@@ -433,13 +500,18 @@ impl Reader {
             self.current.redirects.push(Redirect { op, target: value });
             return;
         }
+        // An assignment's name and `=` are unquoted; its value may be
+        // quoted, as in `FOO="1"`.
+        if self.current.words.is_empty() && is_assignment(&value) {
+            let name = value.split('=').next().unwrap_or_default().chars().count();
+            if plain.is_none_or(|plain| name < plain) {
+                self.current.assignments.push(Word { value, raw });
+                return;
+            }
+        }
         if !quoted && self.current.words.is_empty() {
             if value == "{" {
                 self.depth += 1;
-                return;
-            }
-            if is_assignment(&value) {
-                self.current.assignments.push(Word { value, raw });
                 return;
             }
             let keyword = self.current.assignments.is_empty();

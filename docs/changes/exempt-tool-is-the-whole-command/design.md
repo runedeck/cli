@@ -12,7 +12,7 @@ A line runs outside the sandbox when every simple command matches an exempt patt
 
 ## Structure
 
-- `sandbox_guard/shell.rs`: `parse(line) -> Vec<Command>`. A command has `assignments`, `words`, `redirects`, `substitutions`, `grouped`, and `joiner`. Here-document bodies and comments are skipped.
+- `sandbox_guard/shell.rs`: `parse(line) -> Vec<Command>`. A command has `assignments`, `words`, `redirects`, `substitutions`, `grouped`, and `joiner`. Here-document bodies and comments are skipped. A `$'…'` string ends at its first quote that no backslash escapes, so `gh api $'a\'b' > f` keeps its redirection. An assignment may quote its value (`FOO="1" jj log`) but not its name. A command, arithmetic, or backtick substitution inside `${…}`, such as `${X:-$(id)}`, counts like any other.
 - `sandbox_guard/mod.rs`: `Exemptions` (patterns in the `excludedCommands` form), `exemptions_from(files)`, `judge(line, disable, exemptions)`, and the adapter `guard(payload, args)`.
 - Wrapper words that are looked through to find the tool: `command`, `builtin`, `exec`, `nohup`, `time`, `env`, `sudo`, `nice`, `rtk`. Shells whose `-c` script is read: `sh`, `bash`, `zsh`, `dash`, `ksh`.
 - `encode.rs`: Claude `PreToolUse` carries `additionalContext`. The hooks reference documents it as a "String added to Claude's context alongside the tool result" (read 2026-10-22). Before this change, the encoder reported that context as not expressible.

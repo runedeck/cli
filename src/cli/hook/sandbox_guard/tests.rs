@@ -109,6 +109,65 @@ fn the_reader_finds_assignments_redirections_and_substitutions() {
 }
 
 #[test]
+fn an_ansi_c_string_ends_at_its_first_unescaped_quote() {
+    let commands = parse(r"gh api $'a\'b' > /tmp/out");
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].values(), ["gh", "api", "a'b"]);
+    assert_eq!(commands[0].redirects.len(), 1, "{commands:?}");
+    assert_eq!(commands[0].redirects[0].target, "/tmp/out");
+    let commands = parse(r"jj log $'one\ntwo' && rm -rf x");
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].words[2].value, "one\ntwo");
+}
+
+#[test]
+fn an_assignment_may_quote_its_value_but_not_its_name() {
+    for line in [r#"FOO="1" jj log"#, "FOO='1' jj log", "FOO=$(id) jj log"] {
+        let commands = parse(line);
+        assert_eq!(commands[0].assignments.len(), 1, "{line}: {commands:?}");
+        assert_eq!(commands[0].values(), ["jj", "log"], "{line}");
+    }
+    let commands = parse(r#""FOO=1" jj log"#);
+    assert_eq!(commands[0].assignments.len(), 0);
+    let commands = parse(r"FOO\=1 jj log");
+    assert_eq!(commands[0].assignments.len(), 0);
+}
+
+#[test]
+fn a_substitution_inside_a_parameter_expansion_is_found() {
+    let commands = parse(r#"jj log "${X:-$(cat brief.md)}""#);
+    assert_eq!(commands[0].substitutions, ["$(cat brief.md)"]);
+    let commands = parse("gh api ${X:-`id`} ${Y:-$((1 + 2))}");
+    assert_eq!(commands[0].substitutions, ["`id`", "$((1 + 2))"]);
+    let commands = parse("gh api ${X:-plain}");
+    assert_eq!(commands[0].substitutions.len(), 0);
+}
+
+#[test]
+fn the_reader_findings_reach_the_verdict() {
+    let gh = Exemptions::new(["gh *"]);
+    for (line, disable) in [
+        ("gh api x > /tmp/out", false),
+        (r"gh api $'a\'b' > /tmp/out", false),
+        (r"gh api $'a\'b' > /tmp/out", true),
+        ("gh api $(id)", true),
+        ("gh api ${X:-$(id)}", true),
+        ("gh api ${X:-$(id)}", false),
+    ] {
+        assert_eq!(
+            judge(line, disable, &gh).effect,
+            Effect::Deny,
+            "{line} (disable {disable})"
+        );
+    }
+    let jj = Exemptions::new(["jj *"]);
+    for line in [r#"FOO="1" jj log"#, "FOO='1' jj log"] {
+        let reason = judge(line, false, &jj).reason.unwrap_or_default();
+        assert!(reason.contains("the assignment"), "{line}: {reason}");
+    }
+}
+
+#[test]
 fn the_reader_skips_heredoc_bodies_and_comments() {
     let commands = parse("cat > f <<'EOF'\njj log && rm -rf x\nEOF\njj st # && rm y\n");
     let heads: Vec<&str> = commands.iter().map(|c| c.words[0].value.as_str()).collect();
