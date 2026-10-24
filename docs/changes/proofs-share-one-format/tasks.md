@@ -16,7 +16,7 @@
 ## 3. Command scenes
 
 - [ ] 3.1 scrut 0.4.3 joins as a pinned dependency. The adapter splits sections with pulldown-cmark and refuses a README whose block boundaries differ from scrut's parser
-- [ ] 3.2 Checkout of head at a stable cache path (jj workspace, else git worktree), removed after the run. Allowlisted environment, `RUNE_PROOF_ROOT`, `RUNE_SCENE_DIR`, scrut's variables with `COLUMNS=80`, `NO_COLOR=1`
+- [ ] 3.2 Checkout of head at a stable cache path (jj workspace, else git worktree), removed after the run. Allowlisted environment, `RUNE_PROOF_ROOT`, `RUNE_SCENE_DIR`, scrut's variables with `COLUMNS=80`, `NO_COLOR=1`. Keep today's isolation: a fresh `RUNE_STATE_DIR` for each chain with `XDG_STATE_HOME` removed, and the `RUNE_PROOF_SCENE` marker (runner process id and HOME), so `rune install` inside a scene skips the hook step and reports `hooks.skipped`
 - [ ] 3.3 One chain in document order, Teardown always, `--scene` replay without recording, `needs` checks with the skip reason
 - [ ] 3.4 Transcripts through scrut's Markdown generator, scene folders, `files/`, the line diff on a failure
 - [ ] 3.5 `rune proof scaffold` writes Setup, the scenario sections, and Teardown

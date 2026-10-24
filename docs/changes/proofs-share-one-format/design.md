@@ -109,6 +109,7 @@ Every other requirement is a property of these commands. Command and diagnostic 
 - `src/view.rs`: `ProofView`, its `Display`, and the CTRF structs. `src/cli/dashboard/`: the `/proofs` route with asciinema-player pinned.
 - `src/cli/graph/lifecycle.rs`: proves edges from the check status.
 - `src/cli/proof/cast.rs` stays and reads scrut's results.
+- The scene isolation in `runner.rs` moves into the adapter. Each chain gets a fresh `RUNE_STATE_DIR` with `XDG_STATE_HOME` removed, and `RUNE_PROOF_SCENE` names the marker file (runner process id and HOME) that makes `rune install` skip its hook step. The state directory is per chain, not per scene, because scenes share state.
 - Retired: `src/cli/proof/fence.rs` (539 lines on main of 24 October), `matcher.rs` (152), most of `runner.rs` (490), `docs/proofs/driver.sh`, `cast.py`, every `record.sh`.
 
 ## Spike findings
