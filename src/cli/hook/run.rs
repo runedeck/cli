@@ -105,6 +105,18 @@ pub(crate) fn no_plan(
     dispatcher_failure(harness, native_event, &event, why)
 }
 
+/// The time a handler that outlived its timeout gets between SIGTERM and
+/// SIGKILL. A guard that ignores SIGTERM must not hold the answer past the
+/// harness deadline, so the grace is near zero.
+pub(crate) const HANDLER_GRACE: Duration = Duration::from_millis(10);
+
+/// What stopping a timed-out handler costs on top of its timeout: the poll
+/// that notices the deadline, the grace, the kill, and the drain of its
+/// pipes, each rounded up to the supervisor's 25 ms poll, with room to
+/// spare. The event budget pays it, so the answer leaves before the
+/// harness deadline even when the last handler runs to its timeout.
+pub(crate) const STOP_ALLOWANCE: Duration = Duration::from_millis(150);
+
 /// What spawning a handler yields: its exit code, stdout, stderr.
 pub(crate) type Spawned = Result<(Option<i32>, String, String), String>;
 
@@ -148,6 +160,7 @@ impl Runner {
                 request.args = args;
                 request.stdin = Some(stdin.to_vec());
                 request.timeout = Some(timeout);
+                request.termination_grace = HANDLER_GRACE;
                 request.env = env.to_vec();
                 request.current_dir = cwd.cloned();
                 match run_process_request(&request) {
@@ -199,7 +212,8 @@ pub(crate) fn dispatch(
     for handler in &event.handlers {
         let remaining = budget
             .saturating_sub(started.elapsed())
-            .saturating_sub(reserve);
+            .saturating_sub(reserve)
+            .saturating_sub(STOP_ALLOWANCE);
         let handler_started = Instant::now();
         let outcome = if remaining.is_zero() {
             Err(budget_spent(

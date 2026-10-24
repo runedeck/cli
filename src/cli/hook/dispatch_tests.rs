@@ -180,7 +180,7 @@ fn a_guard_timeout_denies_and_a_linter_crash_warns() {
 #[test]
 fn a_spent_budget_fails_the_pending_guard_without_spawning_it() {
     let plan = plan(
-        "events:\n  tool.before: {budget_ms: 60}\nhandlers:\n  - id: slow\n    exec: [slow]\n    events: [tool.before]\n    order: 10\n    timeout_ms: 5000\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
+        "events:\n  tool.before: {budget_ms: 260}\nhandlers:\n  - id: slow\n    exec: [slow]\n    events: [tool.before]\n    order: 10\n    timeout_ms: 5000\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
     );
     let (runner, seen) = runner(HashMap::from([
         (
@@ -531,6 +531,39 @@ fn a_result_that_fails_under_warn_lets_the_call_proceed() {
     assert!(answer.stderr[0].contains("quiet failed: printed nothing"));
 }
 
+#[test]
+fn a_handler_timeout_leaves_the_stop_allowance_inside_the_budget() {
+    let plan = plan(
+        "events:\n  tool.before: {budget_ms: 1000}\nhandlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    timeout_ms: 5000\n    on_failure: deny\n",
+    );
+    let given = Rc::new(RefCell::new(Duration::ZERO));
+    let seen = Rc::clone(&given);
+    let runner = Runner {
+        record_dir: None,
+        record_error: None,
+        spawn: Box::new(move |_, _, timeout, _, _| {
+            *seen.borrow_mut() = timeout;
+            Ok((Some(0), "{}".to_string(), String::new()))
+        }),
+    };
+    let _ = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    let ceiling = Duration::from_millis(1000)
+        .saturating_sub(Duration::from_millis(50))
+        .saturating_sub(super::run::STOP_ALLOWANCE);
+    let timeout = *given.borrow();
+    assert!(timeout <= ceiling, "{timeout:?} > {ceiling:?}");
+    assert!(
+        timeout + Duration::from_millis(20) >= ceiling,
+        "{timeout:?}"
+    );
+}
+
 // --------------------------------------------- a plan that does not load ----
 
 #[test]
@@ -645,7 +678,7 @@ fn two_hooks_on_one_event_leave_two_records_in_order_with_the_answer() {
 fn a_budget_spent_before_a_hook_records_the_budget_failure() {
     let temp = tempfile::tempdir().unwrap();
     let plan = plan(
-        "events:\n  tool.before: {budget_ms: 60}\nhandlers:\n  - id: slow\n    exec: [slow]\n    events: [tool.before]\n    order: 10\n    timeout_ms: 5000\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
+        "events:\n  tool.before: {budget_ms: 260}\nhandlers:\n  - id: slow\n    exec: [slow]\n    events: [tool.before]\n    order: 10\n    timeout_ms: 5000\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
     );
     let runner = recording_runner(
         HashMap::from([

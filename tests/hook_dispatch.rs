@@ -121,6 +121,39 @@ fn denying_guard(scene: &Scene) {
     ));
 }
 
+// ---------------------------------------------------- the event deadline ----
+
+#[cfg(unix)]
+#[test]
+fn a_guard_that_ignores_sigterm_is_denied_inside_the_harness_deadline() {
+    let scene = Scene::new();
+    let slow = scene.handler("slow", "trap '' TERM; cat > /dev/null; sleep 20");
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: guard\n      exec: [sh, {slow}]\n      events: [tool.before]\n      timeout_ms: 2500\n      on_failure: deny\n"
+    ));
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.rune().args(["hook", "install"]).assert().success();
+    let settings: Value = serde_json::from_str(
+        &std::fs::read_to_string(scene.home().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = &settings["hooks"]["PreToolUse"][0]["hooks"][0];
+    let deadline = std::time::Duration::from_secs(entry["timeout"].as_u64().unwrap());
+    assert_eq!(entry["onFailure"], "block", "{entry}");
+    let started = std::time::Instant::now();
+    let answer = dispatch(
+        scene.rune(),
+        &CLAUDE_PRE,
+        &claude_bash(scene.root.path(), "rm -rf /tmp/x"),
+    );
+    let took = started.elapsed();
+    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
+    assert!(
+        took < deadline,
+        "the answer took {took:?}, past the {deadline:?} the harness waits"
+    );
+}
+
 // ------------------------------------------- the plan that does not load ----
 
 #[test]

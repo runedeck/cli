@@ -65,7 +65,7 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: Dispatcher Failures Follow The Strongest Policy
 
-When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. Install writes the plan's path and that policy into each registration, so a plan that is missing, truncated, or under another state directory still gets the strongest policy. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
+When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. Install writes the plan's path and that policy into each registration, so a plan that is missing, truncated, or under another state directory still gets the strongest policy. A guarded Claude registration also sets `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
 
 #### Scenario: Payload names another event on a guarded gate
 
@@ -84,12 +84,17 @@ When the dispatcher itself cannot run the handlers, because the payload's event 
 
 ### Requirement: Handlers Run In Order And Fail By Policy
 
-Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. A denial outranks every other effect, whichever handler came first. An effect the event does not take, such as `continue_turn` outside `turn.finish`, is a failed result. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve. A handler fails when it exits non-zero, times out, cannot start because the budget is spent, prints nothing, or prints anything but one JSON result in the rune result shape. A field that shape does not know, such as a harness's own `hookSpecificOutput`, is a failed result. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
+Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. A denial outranks every other effect, whichever handler came first. An effect the event does not take, such as `continue_turn` outside `turn.finish`, is a failed result. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve and the time it takes to stop a handler. A handler past its timeout gets a grace of a few milliseconds before the kill, so the answer leaves before the harness deadline. A handler fails when it exits non-zero, times out, cannot start because the budget is spent, prints nothing, or prints anything but one JSON result in the rune result shape. A field that shape does not know, such as a harness's own `hookSpecificOutput`, is a failed result. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
 
 #### Scenario: Guard times out
 
 - **WHEN** dcg, policy `deny`, exceeds its timeout on `tool.before`
 - **THEN** the tool call is denied with a reason naming the timeout
+
+#### Scenario: Guard ignores the stop signal
+
+- **WHEN** dcg, policy `deny`, ignores SIGTERM and runs past its timeout on `tool.before`
+- **THEN** the denial reaches stdout before the timeout rendered in the harness table
 
 #### Scenario: Linter crashes
 

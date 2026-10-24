@@ -17,9 +17,10 @@ check argument against the payload's event name
 normalize -> HandlerPayload v1
         |
 for handler in plan[H][event], serial, ordered:
-    deadline = min(handler.timeout, remaining - reserve); none left -> failure by policy, no spawn
+    deadline = min(handler.timeout, remaining - reserve - 150 ms stop allowance)
+    none left -> failure by policy, no spawn
     spawn exec, payload on stdin, RUNE_HARNESS RUNE_EVENT RUNE_HANDLER_ID RUNE_REMAINING_MS
-    kill the process group on expiry
+    on expiry: SIGTERM, 10 ms grace, SIGKILL to the process group
     parse one JSON Result (unknown fields refused, v must be 1); empty stdout or anything
     else is failure by policy (warn: log; deny: Result deny)
     a replacement input from a `rewrites: true` handler becomes the effective input
@@ -52,7 +53,9 @@ encode Result for H and N -> stdout JSON, exit 0
 
 ## The registration
 
-Each rendered entry is `rune hook run --harness H --native-event N --plan PATH`, plus `--on-failure deny` when a handler of that event resolves to `deny` and the harness can block it. The plan path is absolute, so a harness that starts the dispatcher without `RUNE_STATE_DIR` or with another `XDG_STATE_HOME` reads the plan install wrote. The policy in the registration is what a missing or truncated plan falls back to. The dispatcher does not compile the config in that case, because the compiled plan stays its only source of handlers (review hit 17 below).
+Each rendered entry is `rune hook run --harness H --native-event N --plan PATH`, plus `--on-failure deny` when a handler of that event resolves to `deny` and the harness can block it. The plan path is absolute, so a harness that starts the dispatcher without `RUNE_STATE_DIR` or with another `XDG_STATE_HOME` reads the plan install wrote. The policy in the registration is what a missing or truncated plan falls back to. A guarded Claude entry also carries `"onFailure": "block"`. The [Claude Code hooks reference][CCHOOKS] (read 2026-10-24) says the field arrived in v2.1.295 and that a failure then "does what exit code 2 does on that event". It covers a hook that cannot start, exits other than 0 or 2, times out, or prints invalid JSON, and it has no effect on `Stop`. The owner's Claude Code is 2.1.309. Codex documents no such field, so its entries carry none.
+
+The stop allowance is 150 ms: the 25 ms poll that notices the deadline, the 10 ms grace, the group kill, and the drain of the pipes, each rounded up to the next poll. With the defaults a `tool.before` handler gets at most 2800 ms of the 3000 ms budget, and its denial leaves before Claude's 3 s timeout even when the handler ignores SIGTERM. The dispatcher does not compile the config in that case, because the compiled plan stays its only source of handlers (review hit 17 below).
 
 ## Ownership of the Claude table
 
@@ -103,3 +106,5 @@ Astra on the specification (`gpt-6-astra`, clean state, 22 hits, 2026-09-27):
 | 20 manifest lists only owned entries | fixed: foreign inventory required |
 | 21 Grok decoder scoped out of release 1 | fixed: decoders for every harness in release 1, registration for Claude and Codex |
 | 22 option 2 dismissed by an impossibility claim | fixed: the record states the cost |
+
+[CCHOOKS]: https://code.claude.com/docs/en/hooks

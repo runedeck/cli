@@ -161,7 +161,9 @@ fn hash_value(value: &Value) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-/// The entry rune writes for one event.
+/// The entry rune writes for one event. On a guarded Claude event the
+/// entry also asks Claude to block when the dispatcher itself fails or
+/// overruns its timeout (`onFailure`, Claude Code 2.1.295 and later).
 fn rendered(
     rune: &str,
     harness: Harness,
@@ -170,13 +172,16 @@ fn rendered(
     plan: &str,
 ) -> Value {
     let timeout = planned.budget_ms.div_ceil(1_000).max(1);
-    json!({
-        "hooks": [{
-            "type": "command",
-            "command": dispatcher(rune, harness, event, plan, guarded(harness, planned)),
-            "timeout": timeout,
-        }]
-    })
+    let guarded = guarded(harness, planned);
+    let mut hook = json!({
+        "type": "command",
+        "command": dispatcher(rune, harness, event, plan, guarded),
+        "timeout": timeout,
+    });
+    if guarded && harness == Harness::Claude {
+        hook["onFailure"] = json!("block");
+    }
+    json!({ "hooks": [hook] })
 }
 
 pub(crate) fn manifest_path() -> Result<PathBuf, Error> {
@@ -684,6 +689,44 @@ mod tests {
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(table["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 2);
         assert!(table["hooks"].get("PreToolUse").is_none());
+    }
+
+    #[test]
+    fn a_guarded_claude_entry_blocks_when_the_dispatcher_fails() {
+        let home = tempfile::tempdir().unwrap();
+        let path = settings(home.path(), "{}");
+        let manifest = home.path().join("state").join("manifest.json");
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            table["hooks"]["PreToolUse"][0]["hooks"][0]["onFailure"],
+            "block"
+        );
+        assert!(
+            table["hooks"]["SessionEnd"][0]["hooks"][0]
+                .get("onFailure")
+                .is_none(),
+            "no guard on a passive event"
+        );
+        let codex: Value = serde_json::from_str(
+            &fs::read_to_string(home.path().join(".codex/hooks.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            codex["hooks"]["PreToolUse"][0]["hooks"][0]
+                .get("onFailure")
+                .is_none(),
+            "codex has no such field"
+        );
     }
 
     #[test]
