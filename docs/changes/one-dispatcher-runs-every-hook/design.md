@@ -79,6 +79,8 @@ Codex binds trust to the hook's hash. An entry rune writes is inactive until the
 
 `codex_trust.rs` checks that trust the way Codex does. The [Codex hooks reference][CODEXHOOKS] says Codex records trust against the hook's current hash and runs no untrusted non-managed hook. Codex keeps it in the user `config.toml` as `[hooks.state."<hooks.json path>:<event label>:<group>:<handler>"] trusted_hash`. The hash is `sha256:` over the sorted JSON of `event_name`, the group's `matcher`, and the one handler's `type`, `command`, `timeout`, and `async` (`hook_hash` in [Codex's discovery code][CODEXDISCOVERY], read 2026-10-24). A recomputation matched the hash Codex stored for the owner's dcg entry. Install first reconciles an event with every predecessor kept, finds the rune entry's position, and reads its trust there. Only a trusted entry lets the predecessors go. A Codex group that adoption or removal empties stays as `{"hooks": []}` while a later group follows, because Codex keys trust by position ([codex#49399][CODEX49399]). A predecessor that shares a group with other hooks still moves the hooks after it, and their trust has to be renewed.
 
+The Codex encoder sends `permissionDecision: "allow"` beside `updatedInput`. The Codex hooks reference says "Return `updatedInput` only with `permissionDecision: "allow"`", so without it the rewrite is reported as an error and dropped. The reference does not say whether that `allow` also skips Codex's own approval for the call. The encoder keeps it. The only rewriter is rtk, which the owner keeps in every mode, and the plan validator puts every rewriter before the guards, so the guards judge the rewritten call.
+
 ## Order of work
 
 1. Config, events, plan, `rune hook list`.

@@ -213,6 +213,9 @@ fn encode_codex(
             );
         }
         (Some(Canonical::ToolBefore), Effect::Pass) => {
+            // Codex takes `updatedInput` only with `allow` and reports any
+            // other shape as an error (hooks reference, read 2026-10-24).
+            // The guards ran on the rewritten input before this answer.
             if let Some(input) = &result.input {
                 answer.stdout = Some(
                     json!({"hookSpecificOutput": {"hookEventName": native, "permissionDecision": "allow", "updatedInput": input}})
