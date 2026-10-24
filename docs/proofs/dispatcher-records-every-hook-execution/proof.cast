@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1792821229,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
+{"version":2,"width":100,"height":30,"timestamp":1792822598,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
 [0.0,"o","\r\n\u001b[1;36m── dispatcher-records-every-hook-execution · 13 scenes ─────────────────────────────────────────────\u001b[0m\r\n"]
 [1.2,"o","\r\n\u001b[2m┌───────────────────────────────────┐\u001b[0m\r\n\u001b[2m│\u001b[0m \u001b[1m1/28 · Two hooks run on one event\u001b[0m \u001b[2m│\u001b[0m\r\n\u001b[2m└───────────────────────────────────┘\u001b[0m\r\n\u001b[35mcheck\u001b[0m  \u001b[2mthe hook dispatcher records every hook execution\u001b[0m\r\n"]
 [2.4,"o","\u001b[1;32m❯\u001b[0m "]

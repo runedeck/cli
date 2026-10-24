@@ -1,7 +1,7 @@
 ---
 type: proof
 change: dispatcher-records-every-hook-execution
-head: f95d10ae6915d1a1afe98c42da0a74bea62d7085
+head: 441961fd47288b14606017289c29b073a65ee64c
 recorded: 2026-10-24
 transcript: 60ddb4c6156a3d845e866c3c750f42b52818f802beb68bea35644b98e5229b75
 scenes:
