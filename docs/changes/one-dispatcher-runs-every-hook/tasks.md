@@ -55,6 +55,7 @@
 ## 9. Review fixes, round four
 
 - [x] 9.1 Install: each registration names its own plan generation, written before the tables and never rewritten, and the bridge and its two-step transaction are gone
-- [x] 9.2 Install: after the tables and the manifest, every generation no table names is deleted, and the manifest lists the generations the registrations name
+- [x] 9.2 Install: after the tables and the manifest, install reads the tables again to find the generations no table names, and the manifest lists the generations the registrations name
 - [x] 9.3 Tests: an old registration keeps its plan when an observer reuses a guard's id, a rewriter runs after a guard, or the event turns passive
 - [x] 9.4 Proof: scenes for a failed and a successful install over an old registration, and the scenes that read the single plan file read the generations
+- [x] 9.5 Install: a generation no table names stays 14 days from the time the manifest records, so a session that loaded the old hooks keeps its plan, and a failed install writes nothing after its generations
