@@ -191,6 +191,40 @@ fn install_writes_through_a_linked_settings_file_and_keeps_its_mode_and_order() 
     assert!(json_at(&dotfiles)["hooks"]["PreToolUse"].is_array());
 }
 
+#[cfg(unix)]
+#[test]
+fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    scene.rune().args(["hook", "install"]).assert().success();
+    let copy = scene.path("second/rune");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::copy(assert_cmd::cargo::cargo_bin("rune"), &copy).unwrap();
+    let mut second = Command::new(&copy);
+    second
+        .env("HOME", scene.home())
+        .env("RUNE_STATE_DIR", scene.state())
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .args(["hook", "install"])
+        .assert()
+        .success();
+    let settings = json_at(&claude_settings(&scene));
+    let commands: Vec<String> = settings["hooks"]["PreToolUse"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+        .map(|h| h["command"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    assert!(
+        commands[0].contains("/second/rune hook run"),
+        "{commands:?}"
+    );
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]

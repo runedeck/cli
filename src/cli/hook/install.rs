@@ -120,10 +120,67 @@ fn guarded(harness: Harness, event: &PlannedEvent) -> bool {
             .any(|h| h.on_failure == OnFailure::Deny)
 }
 
-fn is_owned(command: &str, rune_names: &[&str]) -> bool {
-    rune_names
-        .iter()
-        .any(|name| command.starts_with(&format!("{name} hook run --harness ")))
+/// The words of a command line with their quotes removed: enough of the
+/// shell to read back what `shell_quote` wrote.
+fn words(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut started = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            Some('"') if c == '\\' => word.extend(chars.next()),
+            Some(_) => word.push(c),
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                started = true;
+            }
+            None if c == '\\' => {
+                word.extend(chars.next());
+                started = true;
+            }
+            None if c.is_whitespace() => {
+                if started {
+                    out.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            None => {
+                word.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        out.push(word);
+    }
+    out
+}
+
+/// The harness and native event a rune dispatcher command serves. Any
+/// path to a binary named `rune` counts, so an install from a second
+/// build path still finds the first one's entry.
+fn dispatcher_of(command: &str) -> Option<(String, String)> {
+    let words = words(command);
+    let program = Path::new(words.first()?);
+    if program.file_name()? != "rune" || words.get(1)? != "hook" || words.get(2)? != "run" {
+        return None;
+    }
+    let value = |flag: &str| {
+        words
+            .iter()
+            .position(|w| w == flag)
+            .and_then(|at| words.get(at + 1))
+            .cloned()
+    };
+    Some((value("--harness")?, value("--native-event")?))
+}
+
+/// Whether a command is rune's dispatcher for this harness's table.
+fn is_owned(command: &str, harness: Harness) -> bool {
+    dispatcher_of(command).is_some_and(|(of, _)| of == harness.as_str())
 }
 
 /// The registration patterns install adopts: the legacy dispatcher always,
@@ -300,7 +357,6 @@ pub(crate) fn prepare(
     let mut report = Report::default();
     let mut manifest = read_manifest(manifest_path);
     manifest.version = 1;
-    let rune_names: Vec<&str> = vec![rune, "rune"];
     let plan_ids: Vec<String> = plan
         .harnesses
         .values()
@@ -375,9 +431,8 @@ pub(crate) fn prepare(
                             .collect()
                     })
                     .unwrap_or_default();
-                let mine = commands.iter().any(|c| is_owned(c, &rune_names));
+                let mine = commands.iter().any(|c| is_owned(c, harness));
                 if mine {
-                    owned_seen = true;
                     let Some(want) = wanted.get(&name) else {
                         // rune wrote it, rune no longer wants it.
                         changed = true;
@@ -390,10 +445,19 @@ pub(crate) fn prepare(
                         .owned
                         .iter()
                         .any(|r| r.event == name && r.hash.as_deref() == Some(hash.as_str()));
-                    if hash == want_hash {
+                    if owned_seen && (known || hash == want_hash) {
+                        // A second rune entry on the event, such as one an
+                        // install from another build path left: one stays.
+                        changed = true;
+                        report
+                            .written
+                            .push((harness, format!("{name} duplicate removed")));
+                    } else if hash == want_hash {
+                        owned_seen = true;
                         kept.push(group);
                         report.unchanged.push((harness, name.clone()));
                     } else if known {
+                        owned_seen = true;
                         kept.push(want.clone());
                         changed = true;
                         report.written.push((harness, name.clone()));
@@ -740,6 +804,93 @@ mod tests {
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(table["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 2);
         assert!(table["hooks"].get("PreToolUse").is_none());
+    }
+
+    #[test]
+    fn any_rune_binary_on_any_path_is_rune_s_dispatcher() {
+        let of = |c: &str| dispatcher_of(c).map(|(h, e)| format!("{h}:{e}"));
+        assert_eq!(
+            of("/old/build/rune hook run --harness claude --native-event PreToolUse"),
+            Some("claude:PreToolUse".to_string())
+        );
+        assert_eq!(
+            of(
+                "'/opt/my rune/rune' hook run --harness codex --native-event Stop --plan '/s p/plan.json' --on-failure deny"
+            ),
+            Some("codex:Stop".to_string())
+        );
+        assert_eq!(
+            of("rune hook run --harness claude --native-event SessionEnd"),
+            Some("claude:SessionEnd".to_string())
+        );
+        assert_eq!(
+            of("/x/rune-dev hook run --harness claude --native-event Stop"),
+            None
+        );
+        assert_eq!(of("/x/rune hook list"), None);
+        assert!(!is_owned(
+            "/x/rune hook run --harness codex --native-event Stop",
+            Harness::Claude
+        ));
+    }
+
+    #[test]
+    fn an_install_from_another_build_path_replaces_the_first_one_s_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let path = settings(home.path(), "{}");
+        let manifest = home.path().join("state").join("manifest.json");
+        apply(
+            &plan(),
+            home.path(),
+            "/a/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        apply(
+            &plan(),
+            home.path(),
+            "/b/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let commands: Vec<&str> = table["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["hooks"].as_array().unwrap())
+            .map(|h| h["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(commands.len(), 1, "{commands:?}");
+        assert!(commands[0].starts_with("/b/rune hook run"), "{commands:?}");
+        // Two rune entries on one event, as the earlier code left them,
+        // shrink to one.
+        let doubled = fs::read_to_string(&path).unwrap();
+        let mut value: Value = serde_json::from_str(&doubled).unwrap();
+        let group = value["hooks"]["PreToolUse"][0].clone();
+        value["hooks"]["PreToolUse"]
+            .as_array_mut()
+            .unwrap()
+            .push(group);
+        fs::write(&path, value.to_string()).unwrap();
+        apply(
+            &plan(),
+            home.path(),
+            "/b/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(table["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
     }
 
     #[test]

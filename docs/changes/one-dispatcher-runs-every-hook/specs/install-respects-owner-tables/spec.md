@@ -23,3 +23,12 @@ When a table is a symbolic link, install MUST write the file the link points to 
 
 - **WHEN** `~/.claude/settings.json` links to a mode 0600 file in a dotfiles directory and `rune install` runs
 - **THEN** the link remains, the linked file holds the rune entries with mode 0600, and its top-level keys keep their order
+
+### Requirement: Any Rune Dispatcher Entry Is Rune's
+
+Install MUST count an entry as rune's when its command runs a binary named `rune`, from any path, with `hook run` for the table's harness. Each event MUST then hold one rune entry: install replaces a known rune entry with the one it renders and removes any other known one.
+
+#### Scenario: Install from a second build path
+
+- **WHEN** rune was installed from one build path and `rune install` runs from another
+- **THEN** each subscribed event holds one rune entry, and it names the second path

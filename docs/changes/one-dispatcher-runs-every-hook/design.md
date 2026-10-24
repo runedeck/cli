@@ -57,6 +57,8 @@ Each rendered entry is `rune hook run --harness H --native-event N --plan PATH`,
 
 The stop allowance is 150 ms: the 25 ms poll that notices the deadline, the 10 ms grace, the group kill, and the drain of the pipes, each rounded up to the next poll. With the defaults a `tool.before` handler gets at most 2800 ms of the 3000 ms budget, and its denial leaves before Claude's 3 s timeout even when the handler ignores SIGTERM. The dispatcher does not compile the config in that case, because the compiled plan stays its only source of handlers (review hit 17 below).
 
+An entry is rune's when its command, read with shell quoting, starts with a binary named `rune` on any path, then `hook run`, and names the table's harness after `--harness`. So an install from a second build path finds the first one's entry. A known entry is replaced with the one this install renders, and a second known entry on the same event is removed, so each event keeps one dispatcher.
+
 ## The dispatcher log
 
 `hooks/run.log` under the state directory gets one block per event: the time, the harness, the native event, `tool NAME`, and one `ID EFFECT` or `ID failed KIND` line per hook. The command, the file, and every reason stay out of it, because a command line can carry a credential and a guard often quotes the line it refused. The hook record holds the rest without text. The file is created with mode 0600, and at 256 KiB it moves to `run.log.1`, so at most two generations remain.
