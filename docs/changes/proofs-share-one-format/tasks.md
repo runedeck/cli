@@ -2,10 +2,10 @@
 
 ## 1. Spike
 
-- [ ] 1.1 The owner installs the scrut 0.4.3 binary and a pinned tui-test release binary on the host, and records both versions and digests in the design
+- [x] 1.1 The owner installs the scrut 0.4.3 binary and a pinned tui-test release binary on the host, and records both versions and digests in the design
 - [x] 1.2 scrut library: rune's frontmatter keys are ignored, heredocs work in `>` continuation lines, combined output keeps the order of stdout and stderr, `* (glob*)` matches as used, `cd` persists between blocks, the chain stops at the first failure, the library sets none of the binary's variables, and the parser, executor, and Markdown generator are public
-- [ ] 1.3 tui-test against Claude Code on one mods live scene: the recording format version, no-break spaces under `--regex`, `submit` reads as typed input, the daemon's environment for `claude`, the ready marker, the trust dialog, and `--strict-mcp-config` with `--plugin-dir`
-- [ ] 1.4 Write the spike's findings into the design. If scrut fails, stop and bring the ADR's option 1 back to the owner
+- [x] 1.3 tui-test against Claude Code on one mods live scene: the recording format version, no-break spaces under `--regex`, `submit` reads as typed input, the daemon's environment for `claude`, the ready marker, the trust dialog, and `--strict-mcp-config` with `--plugin-dir`
+- [x] 1.4 Write the spike's findings into `spike.md`. If scrut fails, stop and bring the ADR's option 1 back to the owner
 
 ## 2. Records
 
@@ -40,7 +40,7 @@
 
 ## 6. Live scenes and judging
 
-- [ ] 6.1 Screen steps: the probe session, the daemon outside the chain, `record start` and `record stop` around each scene's screen steps, screen text
+- [ ] 6.1 Screen steps: the probe session, the daemon outside the chain and under the chain's allowlisted environment (`spike.md` shows a harness session's token reaching the program otherwise), the startup marker, `record start` and `record stop` around each scene's screen steps, screen text
 - [ ] 6.2 Model prompts through `rune run` from Setup alone, on request only
 - [ ] 6.3 `rune proof judge`: the `proof.models` trusted list, the other-vendor rule, answer-only mode, every input in the prompt, the raw reply and the judgment
 - [ ] 6.4 `rune proof approve`: the review loop after `cargo insta review`, accept, reject, overrule, refusal without a terminal

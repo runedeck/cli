@@ -18,7 +18,7 @@ README.md (Setup, scenes, Teardown; a live scene adds "### On screen")
    rune proof check [--rerun] ─▶ text │ CTRF JSON (panes, CI) │ dashboard /proofs
 ```
 
-The alternative was to grow the console fence grammar with shared state, regex lines, and screen steps. It lost because the parser and matcher would grow to cover what scrut and tui-test already do, and the grammar would stay one that only rune reads. The ADR records the full comparison. `migration.md` holds the plan for every existing proof and the converter's rules.
+The alternative was to grow the console fence grammar with shared state, regex lines, and screen steps. It lost because the parser and matcher would grow to cover what scrut and tui-test already do, and the grammar would stay one that only rune reads. The ADR records the full comparison. `migration.md` holds the plan for every existing proof and the converter's rules, and `spike.md` holds what the scrut and tui-test spike found.
 
 ## Format
 
@@ -36,7 +36,7 @@ The body uses scrut's Markdown format [SCRUT-MD]. A ` ```scrut ` block holds one
 
 Frontmatter: `type: proof`, `change`, `scenes[] {scenario, kind, model, needs}`, `inputs`, `tools`, `env`, and scrut's `defaults`. `kind` is `check`, `new`, `run`, `instruction`, `live`, or `unproven`. `needs` holds `host` or `harness:<profile>`. `inputs` are hashed repository paths outside `fixtures/`. `tools` are programs whose `--version` goes into the record. `env` names inherited variables, and rune records their names only. `head`, `recorded`, and `transcript` leave the frontmatter, because the record holds them.
 
-Screen blocks call tui-test [TUITEST-CLI]: `run --cols C --rows R --cwd DIR PROGRAM`, `submit`, `type`, `key press`, `expect text TEXT [--not] [--regex] --timeout MS`, `wait idle`, `text`, `close`. rune wraps each screen part in `record start <scene>/screen.cast` and `record stop`, and sets `TUI_TEST_SESSION` to `proof-<change>`. A tui-test block ends with `* (glob*)`, because its success output is not documented. The proof runner pins the key screen lines with glob lines, and the judge reads the whole screen.
+Screen blocks call tui-test [TUITEST-CLI]: `run --cols C --rows R --cwd DIR PROGRAM`, `submit`, `type`, `key press`, `expect text TEXT [--not] [--regex] --timeout MS`, `wait idle`, `text`, `close`. rune wraps each screen part in `record start <scene>/screen.cast` and `record stop`, and sets `TUI_TEST_SESSION` to `proof-<change>`. Only `run` and `record stop` print on success (a JSON object), so only their blocks end with `* (glob*)`. `submit`, `type`, `key press`, `expect`, and `wait` print nothing. The proof runner pins the key screen lines with glob lines, and the judge reads the whole screen.
 
 ## Files
 
@@ -112,22 +112,11 @@ Every other requirement is a property of these commands. Command and diagnostic 
 - The scene isolation in `runner.rs` moves into the adapter. Each chain gets a fresh `RUNE_STATE_DIR` with `XDG_STATE_HOME` removed, and `RUNE_PROOF_SCENE` names the marker file (runner process id and HOME) that makes `rune install` skip its hook step. The state directory is per chain, not per scene, because scenes share state.
 - Retired: `src/cli/proof/fence.rs` (539 lines on main of 24 October), `matcher.rs` (152), most of `runner.rs` (490), `docs/proofs/driver.sh`, `cast.py`, every `record.sh`.
 
-## Spike findings
-
-scrut 0.4.3 was built from crates.io on 22 October 2026 with `cargo install --locked scrut --version 0.4.3` (binary sha256 `3f9205f7188b09b189393c4f0e822a3d4fd6509d4ab8558b0f01d87d0604665c`). Its `--version` prints a build timestamp, a bug that 0.5.0 fixes. A proof-shaped document ran under `scrut test` and showed:
-
-- rune's frontmatter keys are ignored, and `defaults.output_stream: combined` applies to every block.
-- `cd` and exported variables persist between blocks. A heredoc works in `>` continuation lines. Combined output keeps the order of stdout and stderr. `* (glob*)` matches zero or more lines. `[1]` matches an exit code.
-- The test title is the nearest heading, so a block's title is its scenario key.
-- The chain stops at the first failure only with `defaults.fail_fast: true`, and later blocks are reported as skipped. The proof runner sets it.
-- The binary sets `TESTDIR`, `TMPDIR`, `LANG=C`, `LC_ALL=C`, `TZ=GMT`, and `COLUMNS=80` in `src/bin/utils/environment.rs`. The library sets none of them, so the adapter sets the same values, including `COLUMNS=80`, so `scrut test` on a README gives the same output.
-- `scrut update` rewrites expected output and keeps headings and prose, so `MarkdownUpdateGenerator` writes transcripts.
-- The library exposes `MarkdownParser`, `StatefulExecutor`, `MarkdownTestCaseGenerator`, and `MarkdownUpdateGenerator`. No config struct denies unknown fields.
-
 ## Risks
 
 - scrut is young: 84 stars, and 0.5 breaks the library interface while crates.io holds 0.4.3. The spike in task group 1 checks every assumption. If it fails, option 1 of the ADR keeps this record and view.
-- tui-test's recording format version, its no-break space matching, and the environment its daemon gives to `claude` are unverified. The spike checks them on one live scene of mods.
+- tui-test is at 0.1.1, so its command line may change. The version and digest pinned in `spike.md` guard against a silent change, and its findings list what the proofs depend on.
+- The startup marker depends on Claude Code's prompt placeholder. When a release drops it, the marker moves to the next stable prompt text.
 - A dropped line in the record can turn failed into proven. Signed commits and the merge seal guard the file.
 - A pending scene fails CI, so a change with live scenes cannot merge before the owner approves. That is the owner's decision of 22 October 2026.
 
