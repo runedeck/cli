@@ -30,6 +30,8 @@ extend-ignore-re = ["[A-Z]{2} ?-->", "--> ?[A-Z]{2}", "[A-Z]{2}\\[", "\"fpr\"", 
 ratatui = "ratatui"
 tre = "tre"
 unparseable = "unparseable"
+# The in-toto bundle specification names its files with the .intoto.jsonl suffix.
+intoto = "intoto"
 
 # Reference-style link labels in adopted decision records. ASSEMBLY-0012 is
 # upstream prose under a sealed digest and cannot be reworded here.
