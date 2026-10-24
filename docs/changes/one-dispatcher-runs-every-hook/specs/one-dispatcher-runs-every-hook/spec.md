@@ -79,7 +79,7 @@ When the dispatcher itself cannot run the handlers, because the payload's event 
 
 ### Requirement: Handlers Run In Order And Fail By Policy
 
-Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve. A handler that exits non-zero, times out, prints anything but one JSON result, or cannot start because the budget is spent, fails: under `warn` the action proceeds and the failure is logged; under `deny` the dispatcher answers `deny`.
+Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. A denial outranks every other effect, whichever handler came first. An effect the event does not take, such as `continue_turn` outside `turn.finish`, is a failed result. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve. A handler that exits non-zero, times out, prints anything but one JSON result, or cannot start because the budget is spent, fails: under `warn` the action proceeds and the failure is logged; under `deny` the dispatcher answers `deny`.
 
 #### Scenario: Guard times out
 
@@ -90,6 +90,11 @@ Within one event the dispatcher MUST run handlers serially by `order`, then id. 
 
 - **WHEN** lint-on-write, policy `warn`, exits 3 on `tool.after`
 - **THEN** the edit stands, the failure is logged, and the next handler runs
+
+#### Scenario: Continuation before a guard
+
+- **WHEN** a handler returns `continue_turn` on `tool.before` and dcg, ordered after it, returns `deny`
+- **THEN** the tool call is denied with dcg's reason, and the continuation is reported as a failed result
 
 #### Scenario: Budget spent before the guard
 

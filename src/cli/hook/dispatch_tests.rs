@@ -309,6 +309,100 @@ fn an_unknown_registration_runs_nothing() {
     assert!(seen.borrow().is_empty());
 }
 
+// ------------------------------------------------- effects and precedence ----
+
+fn decision(answer: &super::encode::Answer) -> Value {
+    serde_json::from_str::<Value>(answer.stdout.as_deref().unwrap_or("{}")).unwrap()
+        ["hookSpecificOutput"]["permissionDecision"]
+        .clone()
+}
+
+#[test]
+fn a_continue_turn_before_a_guard_cannot_hide_its_denial() {
+    let plan = plan(
+        "handlers:\n  - id: steer\n    exec: [steer]\n    events: [tool.before]\n    order: 10\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
+    );
+    let (runner, seen) = runner(HashMap::from([
+        ("steer".to_string(), fake(r#"{"effect":"continue_turn"}"#)),
+        (
+            "guard".to_string(),
+            fake(r#"{"effect":"deny","reason":"guard says no"}"#),
+        ),
+    ]));
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("rm -rf /tmp/x")),
+        &runner,
+    );
+    assert_eq!(decision(&answer), "deny", "{answer:?}");
+    assert!(answer.stdout.unwrap().contains("guard says no"));
+    assert!(
+        answer
+            .stderr
+            .iter()
+            .any(|l| l.contains("steer failed") && l.contains("only turn.finish")),
+        "{:?}",
+        answer.stderr
+    );
+    assert_eq!(seen.borrow().len(), 2);
+}
+
+#[test]
+fn a_crashed_deny_guard_after_a_continue_turn_still_denies() {
+    let plan = plan(
+        "handlers:\n  - id: steer\n    exec: [steer]\n    events: [tool.before]\n    order: 10\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n",
+    );
+    let (runner, _) = runner(HashMap::from([
+        ("steer".to_string(), fake(r#"{"effect":"continue_turn"}"#)),
+        (
+            "guard".to_string(),
+            Fake {
+                stdout: String::new(),
+                code: 3,
+                sleep_ms: 0,
+            },
+        ),
+    ]));
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("rm -rf /tmp/x")),
+        &runner,
+    );
+    assert_eq!(decision(&answer), "deny", "{answer:?}");
+    assert!(answer.stdout.unwrap().contains("guard failed: exited 3"));
+}
+
+#[test]
+fn a_denial_outranks_an_earlier_continue_turn_on_a_turn_end() {
+    let plan = plan(
+        "handlers:\n  - id: more\n    exec: [more]\n    events: [turn.finish]\n    order: 10\n  - id: stop-guard\n    exec: [stop-guard]\n    events: [turn.finish]\n    order: 20\n",
+    );
+    let (runner, seen) = runner(HashMap::from([
+        (
+            "more".to_string(),
+            fake(r#"{"effect":"continue_turn","reason":"keep going"}"#),
+        ),
+        (
+            "stop-guard".to_string(),
+            fake(r#"{"effect":"deny","reason":"the tree is dirty"}"#),
+        ),
+    ]));
+    let raw = json!({"hook_event_name": "Stop", "session_id": "s", "cwd": "/"});
+    let answer = dispatch(&plan, Harness::Claude, "Stop", Ok(raw), &runner);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["decision"], "block");
+    assert_eq!(out["reason"], "the tree is dirty");
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "a continuation does not end the gate"
+    );
+}
+
 // ------------------------------------------------------------ the record ----
 
 fn recording_runner(fakes: HashMap<String, Fake>, dir: &std::path::Path) -> Runner {

@@ -10,7 +10,7 @@ use std::io::Read as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use rune::hooks::{Harness, Mode, OnFailure, Plan, PlannedEvent, PlannedHandler};
+use rune::hooks::{Canonical, Harness, Mode, OnFailure, Plan, PlannedEvent, PlannedHandler};
 use serde_json::Value;
 
 use super::encode::{Answer, Effect, HandlerResult, encode};
@@ -166,6 +166,7 @@ pub(crate) fn dispatch(
         } else {
             let timeout = Duration::from_millis(handler.timeout_ms).min(remaining);
             run_handler(handler, &payload, timeout, runner)
+                .and_then(|result| admit_result(result, handler, event))
         };
         let mut line = record_line(
             harness,
@@ -246,11 +247,40 @@ fn merge(
     if mode == Mode::Passive {
         return;
     }
-    if result.effect != Effect::Pass && merged.effect == Effect::Pass {
+    // A denial outranks every other effect, whichever handler ran first.
+    let replaces = match result.effect {
+        Effect::Deny => merged.effect != Effect::Deny,
+        Effect::ContinueTurn => merged.effect == Effect::Pass,
+        Effect::Pass => false,
+    };
+    if replaces {
         merged.effect = result.effect;
         merged.reason = result.reason;
     }
     merged.context.extend(result.context);
+}
+
+/// A result whose effect the event does not take fails like any other
+/// bad result: `continue_turn` means something on a turn end only.
+fn admit_result(
+    result: HandlerResult,
+    handler: &PlannedHandler,
+    event: &PlannedEvent,
+) -> Result<HandlerResult, Failure> {
+    if result.effect == Effect::ContinueTurn && event.canonical != Some(Canonical::TurnFinish) {
+        return Err(Failure {
+            why: format!(
+                "returned continue_turn, which only turn.finish takes, on {}",
+                event
+                    .canonical
+                    .map_or("a native extension", Canonical::as_str)
+            ),
+            policy: handler.on_failure,
+            kind: "result",
+            exit_status: Some(0),
+        });
+    }
+    Ok(result)
 }
 
 /// Spawn one handler with the payload on stdin and parse its one result.
@@ -494,7 +524,7 @@ fn apply_failure(
             failure.why
         )),
         OnFailure::Deny if can_deny => {
-            if merged.effect == Effect::Pass {
+            if merged.effect != Effect::Deny {
                 merged.effect = Effect::Deny;
                 merged.reason = Some(format!("{hook} failed: {}", failure.why));
             }
