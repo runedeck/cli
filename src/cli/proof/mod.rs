@@ -298,7 +298,7 @@ fn check(root: &Path, proof: &Proof) -> i32 {
                 line.starts_with("$ ")
                     || line.starts_with("> ")
                     || line.starts_with("< ")
-                    || line.starts_with("# ")
+                    || fence::comment(line).is_some()
                     || *line == "<"
             })
             .collect();

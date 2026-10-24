@@ -33,7 +33,7 @@ error: the following required arguments were not provided:
 ## sample-capability-one#thing-holds/comment-explains
 
 ```console
-# the shell prints what it is given
+$# the shell prints what it is given
 $ printf 'one\n'
 one
 ```

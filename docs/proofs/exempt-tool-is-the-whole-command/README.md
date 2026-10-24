@@ -44,7 +44,7 @@ sandbox-guard: `jj` already runs outside the sandbox as written, so dangerouslyD
 ## exempt-tool-is-the-whole-command#a-sandbox-off-request-for-an-exempt-command-is-refused/sandbox-off-request-for-a-build
 
 ```console
-# cargo is not exempt, so the owner decides the request: no answer at all, the call passes
+$# cargo is not exempt, so the owner decides the request: no answer at all, the call passes
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cargo build --release","dangerouslyDisableSandbox":true}}
@@ -127,7 +127,7 @@ sandbox-guard: this command line joins separate commands with `&&`, `||`, or `;`
 ## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/test-output-through-a-pipe
 
 ```console
-# no answer at all: the call passes with no advice
+$# no answer at all: the call passes with no advice
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cargo test | tail -40"}}
@@ -136,7 +136,7 @@ $ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreT
 ## exempt-tool-is-the-whole-command#the-exempt-list-is-the-harness-s-own/patterns-from-the-settings
 
 ```console
-# no arguments: the guard reads the harness settings, which exempt `gh *`
+$# no arguments: the guard reads the harness settings, which exempt `gh *`
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-settings" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ sh -c 'CLAUDE_CONFIG_DIR="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-settings/on" CLAUDE_PROJECT_DIR="$PWD" RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cd /x && gh pr list"}}
@@ -148,7 +148,7 @@ sandbox-guard: the sandbox lets an exempt tool run outside it only when the tool
 ## exempt-tool-is-the-whole-command#the-exempt-list-is-the-harness-s-own/sandbox-turned-off
 
 ```console
-# the same settings with the sandbox off exempt nothing, so only the advice remains
+$# the same settings with the sandbox off exempt nothing, so only the advice remains
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-settings" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ sh -c 'CLAUDE_CONFIG_DIR="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-settings/off" CLAUDE_PROJECT_DIR="$PWD" RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cd /x && gh pr list"}}

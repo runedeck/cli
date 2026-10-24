@@ -17,7 +17,7 @@ scenes:
 ```console
 $ rune --version
 rune [..] built [..]
-# a comment with no command after it
+$# a comment with no command after it
 ```
 
 ## sample-capability-one#thing-holds/missing-tag-fails

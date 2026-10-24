@@ -64,7 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add the `.rune` key `ontology: <source>`: `rune install` copies that source's ontology to `ontology/rune.ttl` with a manifest and a sidecar, so `rune spec validate` reads the deck's terms there.
 - Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.
 - Pace and frame the cast of `rune proof run` for a reader: a rule per capability, a boxed title and kind line per scene, typed commands, a tick or cross per step, `--pause` between scenes, a tally.
-- Read `# text` lines in a console fence as comments: dim in the cast, recorded in the transcript with the command lines, compared by `--check`.
+- Read `$# text` lines in a console fence as comments: dim in the cast, recorded in the transcript, compared by `--check`. A line that starts with `#` stays output.
 - Write one hook record per hook the dispatcher runs or fails to start to `hooks/record/YYYY-MM.jsonl` under the state dir, after the answer is encoded, bounded by the dispatcher's reserve.
 - Accept `metrics` in a hook result: identifier keys, integer values, at most 4096 bytes, copied into the record or dropped with one stderr line.
 - Report `rules` and `cause` from the `lint-on-write` adapter as hook metrics, counted from the lines it reports.

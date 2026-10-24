@@ -38,7 +38,7 @@ A proof has two readers. The transcript binds the claim and is read by `rune pro
 
 ## Decision Outcome
 
-Option 2. The cast MUST be paced for a reader: a fixed pause after each scene (`--pause`, default 3 s), a shorter one after a header or a comment, and each command typed word by word behind a prompt. Each scene MUST open with a boxed `N/T · title` and a kind line naming the requirement, each capability with a rule naming it and its scene count, and the cast MUST close with a tally. Each step MUST end with one tick that names the exit status and the match, or a red cross with the reason. A fence comment `# text` MUST show dim and italic before its command and MUST be part of the transcript. The transcript stays the record. The cast's offsets are a reading aid and never evidence of duration.
+Option 2. The cast MUST be paced for a reader: a fixed pause after each scene (`--pause`, default 3 s), a shorter one after a header or a comment, and each command typed word by word behind a prompt. Each scene MUST open with a boxed `N/T · title` and a kind line naming the requirement, each capability with a rule naming it and its scene count, and the cast MUST close with a tally. Each step MUST end with one tick that names the exit status and the match, or a red cross with the reason. A fence comment `$# text` MUST show dim and italic before its command and MUST be part of the transcript. The `$#` prefix is fence grammar like the `$` of a command, so a heading that starts with `#` in a command's output stays output. The transcript stays the record. The cast's offsets are a reading aid and never evidence of duration.
 
 Option 1 keeps the reader out. Option 3 splits the layout from the run and lets a page play a cast that differs from the transcript.
 

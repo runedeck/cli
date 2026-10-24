@@ -86,7 +86,7 @@ $ python3 -
 ## dispatcher-records-every-hook-execution#the-hook-dispatcher-records-every-hook-execution/executions-cross-a-month-boundary
 
 ```console
-# Two transcripts whose hook outcomes fall in September and October land in two monthly files.
+$# Two transcripts whose hook outcomes fall in September and October land in two monthly files.
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-store" store'
 $ RUNE_STATE_DIR=state rune hook record import --harness claude store
 read 2 transcript(s) under store: 4 record(s) added, 0 already held, into state/hooks/record
@@ -240,7 +240,7 @@ cap: 4096 over: None
 ## dispatcher-records-every-hook-execution#the-lint-hook-reports-its-rules/file-holds-one-em-dash-one-semicolon-one-misspelled-word
 
 ```console
-# The real lint hook over a real file; rumdl, typos, and Vale run under the global prose layer.
+$# The real lint hook over a real file; rumdl, typos, and Vale run under the global prose layer.
 $ sh -c 'printf "# Probe\n\nThis line carries an em dash — one semicolon; and the word refernce.\n" > a.md'
 $ sh -c 'printf "%s" "{\"v\":1,\"harness\":\"claude\",\"event\":\"tool.after\",\"native_event\":\"PostToolUse\",\"cwd\":\".\",\"tool\":{\"name\":\"Write\",\"id\":\"toolu_9\",\"input\":{\"file_path\":\"a.md\"}}}" | rune hook adapter lint-on-write > result.json'
 $ python3 -
@@ -328,7 +328,7 @@ repeat denials of a file already denied in the same session: 2, with the same ca
 
 ```console
 $ sh -c 'mkdir -p state/hooks/record && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-lines/2026-10.jsonl" state/hooks/record/'
-# From the 14th on, MD036, MD013, and Core.NoEmDash each caused one denial: the name decides.
+$# From the 14th on, MD036, MD013, and Core.NoEmDash each caused one denial: the name decides.
 $ sh -c 'RUNE_STATE_DIR=state rune hook record stats --top 1 --since 2026-10-14 | grep -A1 "^rule"'
 rule	findings	cause	sole cause	advice
 Core.NoEmDash	1	1	0	0
@@ -340,7 +340,7 @@ Core.NoEmDash	1	1	0	0
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-store" store'
 $ RUNE_STATE_DIR=state rune hook record import --harness claude store
 read 2 transcript(s) under store: 4 record(s) added, 0 already held, into state/hooks/record
-# The checkpoint skips the bytes already read, so nothing is even offered again.
+$# The checkpoint skips the bytes already read, so nothing is even offered again.
 $ RUNE_STATE_DIR=state rune hook record import --harness claude store
 read 2 transcript(s) under store: 0 record(s) added, 0 already held, into state/hooks/record
 $ sh -c 'grep -c "refernce" state/hooks/record/*.jsonl | sed "s/.*://" | sort -u; grep -c "quick brown fox" state/hooks/record/*.jsonl | sed "s/.*://" | sort -u'

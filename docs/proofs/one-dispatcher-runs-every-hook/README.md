@@ -104,14 +104,14 @@ $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/passive-deny" RUNE_STATE_DI
 ## one-dispatcher-runs-every-hook#canonical-events-map-to-each-harness/event-the-harness-lacks
 
 ```console
-# the plan names the events antigravity lacks
+$# the plan names the events antigravity lacks
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" RUNE_STATE_DIR=state rune hook list | grep antigravity'
 antigravity  (decoded, not registered by this release)
 unsupported: antigravity has no session.end for session-capture, turn-checkpoint, tmux-status
 unsupported: antigravity has no prompt.before for turn-checkpoint, tmux-status
 unsupported: antigravity has no compact.before for session-capture
 unsupported: antigravity has no notification for tmux-status
-# install writes the Claude and Codex tables and no antigravity file
+$# install writes the Claude and Codex tables and no antigravity file
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && ls -a home | sort'
 .
 ..
@@ -126,7 +126,7 @@ $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/h
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep PreCompact'
 claude: PreCompact registered
 codex: PreCompact registered
-# one PreCompact registration, and it is the dispatcher
+$# one PreCompact registration, and it is the dispatcher
 $ jq -c '[(.hooks.PreCompact | length), [.hooks.PreCompact[].hooks[].command | select(endswith("rune hook run --harness claude --native-event PreCompact"))] | length]' home/.claude/settings.json
 [1,1]
 ```
@@ -134,13 +134,13 @@ $ jq -c '[(.hooks.PreCompact | length), [.hooks.PreCompact[].hooks[].command | s
 ## one-dispatcher-runs-every-hook#canonical-events-map-to-each-harness/session-end-budget-on-codex
 
 ```console
-# the config asks 5000 ms for session.end; the plan clamps it per harness
+$# the config asks 5000 ms for session.end; the plan clamps it per harness
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/budget" RUNE_STATE_DIR=state rune hook list | awk "/^[a-z]/ {h=\$1} /SessionEnd/ {print h, \$1, \$4}"'
 claude SessionEnd 1500ms
 codex SessionEnd 3000ms
 gemini SessionEnd 5000ms
 grok SessionEnd 5000ms
-# the rendered Codex entry carries the clamped cap in seconds
+$# the rendered Codex entry carries the clamped cap in seconds
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/budget" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq -c "[.hooks.SessionEnd[0].hooks[0].timeout]" home/.codex/hooks.json home/.claude/settings.json'
 [3]
 [2]
@@ -152,7 +152,7 @@ $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/budget" home && HOME="$PWD
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ RUNE_STATE_DIR=state rune hook run --harness grok --native-event PreToolUse
 < {"hookEventName":"pre_tool_use","sessionId":"g1","cwd":".","toolName":"Bash","toolInput":{"command":"ls"},"toolUseId":"t1"}
-# the handler reads the normalized keys; raw keeps Grok's own
+$# the handler reads the normalized keys; raw keeps Grok's own
 $ jq -c '{tool: .tool.name, session: .session_id, event: .event, raw_keys: (.raw | keys)}' dcg.json
 {"tool":"Bash","session":"g1","event":"tool.before","raw_keys":["cwd","hookEventName","sessionId","toolInput","toolName","toolUseId"]}
 ```
@@ -259,7 +259,7 @@ claude: PreToolUse adopted `/Users/x/.git-ai/bin/git-ai checkpoint claude --hook
 claude: Notification keeps foreign `cmux hooks claude Notification`
 $ jq -c '[.hooks.PreToolUse[].hooks[].command, .hooks.Notification[0].hooks[0].command, .model]' home/.claude/settings.json
 ["[..]rune hook run --harness claude --native-event PreToolUse","cmux hooks claude Notification","opus"]
-# one dispatcher entry per subscribed event, none on the foreign one
+$# one dispatcher entry per subscribed event, none on the foreign one
 $ jq -c '[.hooks | to_entries[] | {(.key): ([.value[].hooks[].command | select(contains("rune hook run"))] | length)}] | add' home/.claude/settings.json
 {"Notification":0,"PostToolUse":1,"PreToolUse":1,"SessionEnd":1}
 $ jq -c '.harnesses.claude | {owned: [.owned[].event], foreign: [.foreign[].command], adopted: (.adopted | length)}' state/hooks/manifest.json
@@ -274,7 +274,7 @@ $ sh -c 'jq ".hooks.PreToolUse[0].hooks[0].timeout = 99" home/.claude/settings.j
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
 [..]home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
-# both tables are byte for byte what they were before the refused install
+$# both tables are byte for byte what they were before the refused install
 $ sh -c 'cmp home/.claude/settings.json before.json && cmp home/.codex/hooks.json before-codex.json && echo unchanged'
 unchanged
 ```
@@ -328,7 +328,7 @@ unlisted@codex.noreply.nexus.local
 ```console
 $ sh -c 'for r in a b; do git init -q -b main $r && (cd $r && JJ_CONFIG= jj git init --colocate >/dev/null 2>&1 && cp "$RUNE_PROOF_ROOT/tests/fixtures/hooks/roster/authors.yaml" .); done'
 $ sh -c 'cd a && printf "%s" "{\"v\":1,\"harness\":\"claude\",\"event\":\"session.start\",\"native_event\":\"SessionStart\",\"cwd\":\".\",\"model\":\"claude-fable-5-1\"}" | XDG_CONFIG_HOME="$PWD/../xdg" rune hook adapter author-identity >/dev/null'
-# the write into a left b without a repository author
+$# the write into a left b without a repository author
 $ sh -c 'cd b && XDG_CONFIG_HOME="$PWD/../xdg" jj config list --repo user 2>/dev/null | wc -l | tr -d " "'
 0
 $ sh -c 'cd b && printf "%s" "{\"v\":1,\"harness\":\"codex\",\"event\":\"session.start\",\"native_event\":\"SessionStart\",\"cwd\":\".\",\"model\":\"gpt-6-astra\"}" | XDG_CONFIG_HOME="$PWD/../xdg" rune hook adapter author-identity >/dev/null'

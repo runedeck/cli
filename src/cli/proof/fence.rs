@@ -48,9 +48,9 @@ pub struct Step {
     pub stdin: Option<String>,
     /// Expected output with `[..]` and `...` elisions, without a trailing newline.
     pub expected: String,
-    /// The `# `, `$ `, `> `, and `< ` lines as written, for the transcript.
+    /// The `$# `, `$ `, `> `, and `< ` lines as written, for the transcript.
     pub command_lines: Vec<String>,
-    /// The `# text` comments above the command, for the cast.
+    /// The `$# text` comments above the command, for the cast.
     pub comments: Vec<String>,
 }
 
@@ -152,6 +152,20 @@ pub fn scenes(body: &str) -> Result<Vec<Scene>, FenceError> {
 
 /// Parse the steps of one fence starting at `start` (the line after the
 /// opening). Returns the steps and the index after the closing fence.
+/// The prefix of a fence comment. Like the `$ ` of a command it is fence
+/// grammar, so no line of expected output can start with it, and a line
+/// that starts with `#`, such as a printed heading, stays output.
+pub(crate) const COMMENT: &str = "$# ";
+
+/// The text of a comment line, or `None` for any other line. A bare `$#`
+/// is an empty comment.
+pub(crate) fn comment(line: &str) -> Option<&str> {
+    if line == "$#" {
+        return Some("");
+    }
+    line.strip_prefix(COMMENT)
+}
+
 fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError> {
     let mut steps = Vec::new();
     let mut i = start;
@@ -164,12 +178,12 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             if !comments.is_empty() {
                 return Err(error(
                     comment_line,
-                    "a comment `# text` comes before the command it explains",
+                    "a comment `$# text` comes before the command it explains",
                 ));
             }
             return Ok((steps, i + 1));
         }
-        if let Some(text) = line.strip_prefix("# ") {
+        if let Some(text) = comment(line) {
             if comments.is_empty() {
                 comment_line = i + 1;
             }
@@ -191,8 +205,10 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             return Err(error(i + 1, format!("expected `$ command`, got `{line}`")));
         };
         let command_start = i + 1;
-        let mut command_lines: Vec<String> =
-            comments.iter().map(|text| format!("# {text}")).collect();
+        let mut command_lines: Vec<String> = comments
+            .iter()
+            .map(|text| format!("{COMMENT}{text}"))
+            .collect();
         command_lines.push(line.to_string());
         let comments_here = std::mem::take(&mut comments);
         let mut command_text = raw.trim().to_string();
@@ -216,11 +232,12 @@ fn fence(lines: &[&str], start: usize) -> Result<(Vec<Step>, usize), FenceError>
             i += 1;
         }
         let mut expected = String::new();
-        // A `# ` line ends the expected output: it is the next command's
-        // comment. An output line that starts so is written `[..]`.
+        // A `$ ` command or a `$# ` comment ends the expected output: both
+        // are fence grammar. A line that starts with `#` is output, so a
+        // heading a command prints is compared literally.
         while i < lines.len()
             && !lines[i].starts_with("$ ")
-            && !lines[i].starts_with("# ")
+            && comment(lines[i]).is_none()
             && !lines[i].trim_start().starts_with("```")
         {
             expected.push_str(lines[i]);
@@ -366,7 +383,7 @@ mod tests {
 
     #[test]
     fn a_comment_belongs_to_the_command_below_it() {
-        let body = "## cap#req/one\n\n```console\n# the guard refuses the delete\n$ rune hook run\n< {\"a\":1}\n# next\n$ true\n```\n";
+        let body = "## cap#req/one\n\n```console\n$# the guard refuses the delete\n$ rune hook run\n< {\"a\":1}\n$# next\n$ true\n```\n";
         let scenes = scenes(body).expect("parse");
         let steps = &scenes[0].steps;
         assert_eq!(
@@ -376,19 +393,35 @@ mod tests {
         assert_eq!(
             steps[0].command_lines,
             vec![
-                "# the guard refuses the delete",
+                "$# the guard refuses the delete",
                 "$ rune hook run",
                 "< {\"a\":1}"
             ]
         );
         assert_eq!(steps[0].expected, "");
         assert_eq!(steps[1].comments, vec!["next".to_string()]);
-        assert_eq!(steps[1].command_lines, vec!["# next", "$ true"]);
+        assert_eq!(steps[1].command_lines, vec!["$# next", "$ true"]);
+    }
+
+    #[test]
+    fn a_printed_heading_stays_output() {
+        // The three proofs on main that expect a heading: a glossary page,
+        // a scratch README, and a line edited by hand.
+        let body = "## cap#req/one\n\n```console\n$ cat glossary.md\n# Glossary\n\nGenerated from the ontology.\n# change\n$ cat note\n# edited by hand\n$# the next command\n$ true\n```\n";
+        let scenes = scenes(body).expect("parse");
+        let steps = &scenes[0].steps;
+        assert_eq!(
+            steps[0].expected,
+            "# Glossary\n\nGenerated from the ontology.\n# change"
+        );
+        assert_eq!(steps[1].expected, "# edited by hand");
+        assert_eq!(steps[1].comments, Vec::<String>::new());
+        assert_eq!(steps[2].comments, vec!["the next command".to_string()]);
     }
 
     #[test]
     fn a_comment_with_no_command_after_it_is_an_error() {
-        let body = "## cap#req/one\n\n```console\n$ true\n# dangling\n```\n";
+        let body = "## cap#req/one\n\n```console\n$ true\n$# dangling\n```\n";
         let error = scenes(body).unwrap_err();
         assert_eq!(error.line, 5);
         assert!(error.message.contains("before the command it explains"));

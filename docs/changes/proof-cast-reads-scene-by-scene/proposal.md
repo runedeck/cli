@@ -14,7 +14,7 @@ decisions: ["A proof cast is paced and framed for a reader"]
 
 - The cast `rune proof run` writes is paced for a reader, not by the clock: a fixed pause after each scene (`--pause`, default 3 s), a shorter one after a header or a comment. Each command is typed word by word behind a prompt.
 - Each scene opens with a boxed `N/T · title` and a kind line that names the requirement. Each capability opens with a rule that carries its name and scene count. The cast closes with a tally.
-- A fence line `# text` before a command is a comment. The cast shows it dim and italic, and the transcript records it with the command lines.
+- A fence line `$# text` before a command is a comment. A line that starts with `#` stays output, so a printed heading is compared literally. The cast shows it dim and italic, and the transcript records it with the command lines.
 - Each step ends with one tick that names the exit status and that the output matched; a failed step ends with a red cross and the first line of the reason.
 - The transcript `proof.txt` and its digest change only by the comment lines a README adds.
 

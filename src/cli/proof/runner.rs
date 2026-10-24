@@ -120,7 +120,7 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
             command_lines: step
                 .command_lines
                 .iter()
-                .filter(|line| !line.starts_with("# "))
+                .filter(|line| super::fence::comment(line).is_none())
                 .cloned()
                 .collect(),
             output: text.clone(),
@@ -204,7 +204,7 @@ fn working_directory(
             command_lines: first
                 .command_lines
                 .iter()
-                .filter(|line| !line.starts_with("# "))
+                .filter(|line| super::fence::comment(line).is_none())
                 .cloned()
                 .collect(),
             output: String::new(),

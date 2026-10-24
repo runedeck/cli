@@ -24,7 +24,7 @@ One scene per scenario, in closure order. The scenes copy a proof fixture under 
 ## proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/scenes-are-paced-for-a-reader
 
 ```console
-# three scenes whose commands finish within a millisecond, default pause
+$# three scenes whose commands finish within a millisecond, default pause
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/paced" repo && rune proof run sample-change-one --source repo >/dev/null'
 $ python3 -
 < import json
@@ -42,7 +42,7 @@ seconds shared by two scenes: 0
 ## proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/owner-shortens-the-pause
 
 ```console
-# the same proof at --pause 0.5 and at the default; the box gap shrinks by 2.5 s
+$# the same proof at --pause 0.5 and at the default; the box gap shrinks by 2.5 s
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/paced" slow && cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/paced" fast && rune proof run sample-change-one --source slow >/dev/null && rune proof run sample-change-one --pause 0.5 --source fast >/dev/null'
 $ python3 -
 < import json
@@ -61,7 +61,7 @@ fast gap under three seconds: True
 ## proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/failed-step-shows-its-reason-in-the-cast
 
 ```console
-# the first scene expects rune 0.5.0 and the run is newer
+$# the first scene expects rune 0.5.0 and the run is newer
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/mismatch" repo && rune proof run sample-change-one --source repo'
 ? 1
 sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:
@@ -85,7 +85,7 @@ rune --version
 ## proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/comment-before-a-command
 
 ```console
-# the third scene of the fixture carries a comment above its command
+$# the third scene of the fixture carries a comment above its command
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/paced" repo && rune proof run sample-change-one --source repo >/dev/null'
 $ grep -n -B1 -A1 '^# the shell' repo/docs/proofs/sample-change-one/proof.txt
 [..]-kind: check

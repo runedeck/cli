@@ -27,12 +27,17 @@ The run MUST write `proof.cast` on a presentation timeline rather than the clock
 
 ### Requirement: A Fence Comment Explains The Step
 
-A line `# text` inside a console fence, before a command, MUST be a comment: the runner shows it dim and italic in the cast before the command it precedes, records it in the transcript with that command's lines, and `--check` compares it like a command line. A comment after a command's input lines belongs to the next command. A comment with no command after it is a fence error that names the line.
+A line `$# text` inside a console fence, before a command, MUST be a comment: the cast shows it dim and italic before that command, the transcript records it with the command's lines, and `--check` compares it like a command line. Like the `$` of a command, `$#` is fence grammar, so a line that starts with `#` stays output and a printed heading is compared literally. A comment after a command's output belongs to the next command. A comment with no command after it is a fence error that names the line.
 
 #### Scenario: Comment before a command
 
-- **WHEN** a fence holds `# the guard refuses rm -rf` above `$ rune hook run --harness claude --native-event PreToolUse`
+- **WHEN** a fence holds `$# the guard refuses rm -rf` above `$ rune hook run --harness claude --native-event PreToolUse`
 - **THEN** the cast shows the comment dim before the typed command and `proof.txt` holds the comment line above the command line
+
+#### Scenario: Heading in a command's output
+
+- **WHEN** a command prints `# Glossary` and the fence expects `# Glossary` as its output
+- **THEN** the scene compares the heading literally, and the line is no comment
 
 #### Scenario: Comment with no command
 
