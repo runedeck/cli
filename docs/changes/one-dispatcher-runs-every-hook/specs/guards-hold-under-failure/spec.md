@@ -35,7 +35,7 @@ The dispatcher MUST keep back from each event budget the time it takes to stop a
 
 ### Requirement: The Registration Carries The Plan And The Policy
 
-Install MUST write the absolute path of the registration's plan generation into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, or loads and names no handler for the registered event, MUST answer with that policy. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
+Install MUST write the absolute path of the registration's plan generation into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, holds bytes other than the digest in its file name, or loads and names no handler for the registered event, MUST answer with that policy. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
 
 #### Scenario: Plan under another state directory
 
@@ -52,9 +52,14 @@ Install MUST write the absolute path of the registration's plan generation into 
 - **WHEN** a registration with the `deny` policy fires `PreToolUse` and the plan it names loads but has no `PreToolUse` handler
 - **THEN** the dispatcher denies the call and says that the plan names no handler for the event
 
+#### Scenario: Generation edited after install
+
+- **WHEN** an edit clears the handlers in the generation that a registration with the `deny` policy names, and the file is still a valid plan
+- **THEN** the dispatcher denies the call and says the generation changed after install, and `rune hook install --check` names the file
+
 ### Requirement: A Registration Reads The Plan Generation It Was Installed With
 
-Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. A registration of the old tables MUST read its old plan unchanged during the install and for 14 days after the tables stop naming its generation. The manifest MUST record when the tables stopped naming each generation. Install MUST delete a generation only when no table names it and that recorded time is 14 days old.
+Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. When the tables stop naming a generation, the manifest MUST record the time and the install count, and MUST drop that record whenever a table names the generation again. Install MUST delete a generation only when no table names it, its record is 14 days old, and two more installs have run.
 
 #### Scenario: Install fails after the new generations
 
@@ -68,8 +73,27 @@ Each registration MUST name its own plan generation: the plan for its harness an
 
 #### Scenario: Generation unnamed for 15 days
 
-- **WHEN** the manifest records that the tables stopped naming one generation 15 days ago and another 13 days ago, and install runs
-- **THEN** install deletes the first generation and keeps the second with its recorded time
+- **WHEN** the manifest records that the tables stopped naming one generation 15 days ago and another 13 days ago, and two installs run
+- **THEN** the first install keeps both, and the second deletes the first generation and keeps the second with its recorded time
+
+#### Scenario: Stale record of a named generation
+
+- **WHEN** the manifest holds a record 15 days old for the generation a table names, and the next install changes that event's plan
+- **THEN** the old generation stays, and its record starts at that install
+
+### Requirement: A Trusted Codex Entry Stays Until Codex Trusts Its Replacement
+
+On Codex, a changed plan MUST NOT replace a rune entry that Codex trusts, because Codex skips a hook it does not trust. Install MUST keep the trusted entry, add the new one in a group of its own after it, and name the trust step. `rune hook install --check` MUST fail until Codex trusts the new entry. The next install after that MUST remove the earlier entry and leave its group empty, so the new entry keeps its position.
+
+#### Scenario: Changed plan on a trusted rune entry
+
+- **WHEN** Codex trusts rune's `PreToolUse` entry and a changed plan gives the event a new generation
+- **THEN** the trusted entry stays, the new entry gets a group of its own after it, and `rune hook install --check` exits non-zero
+
+#### Scenario: Replacement trusted
+
+- **WHEN** the owner then trusts the new entry in `/hooks` and `rune install` runs again
+- **THEN** the earlier entry goes, its group stays empty, and the new entry keeps its position
 
 ### Requirement: The Dispatcher Log Holds No Text
 

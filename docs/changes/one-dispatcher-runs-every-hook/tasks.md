@@ -59,3 +59,10 @@
 - [x] 9.3 Tests: an old registration keeps its plan when an observer reuses a guard's id, a rewriter runs after a guard, or the event turns passive
 - [x] 9.4 Proof: scenes for a failed and a successful install over an old registration, and the scenes that read the single plan file read the generations
 - [x] 9.5 Install: a generation no table names stays 14 days from the time the manifest records, so a session that loaded the old hooks keeps its plan, and a failed install writes nothing after its generations
+
+## 10. Review fixes, round five
+
+- [x] 10.1 Codex: a changed plan keeps rune's earlier entry that Codex trusts, adds the new one in a group of its own, and fails `--check` until Codex trusts it, and the next install then removes the earlier one
+- [x] 10.2 Dispatcher: a generation whose bytes do not hash to the digest in its name does not load, so the registration's failure policy answers, and `--check` names the file
+- [x] 10.3 Install: the retired records are reconciled before publication, a generation goes only after 14 days and two more installs, and the manifest counts its installs
+- [x] 10.4 Install: the lock is std's file lock on a file in each directory, so it holds on Windows too

@@ -8,7 +8,7 @@ How `rune install` changes the harness hook tables the owner also edits: all at 
 
 ### Requirement: Install Writes Every File Or None
 
-Install MUST read every harness table and find every conflict before it writes anything. It MUST write the new plan generations first, then the tables and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave.
+Install MUST read every harness table and find every conflict before it writes anything. It MUST write the new plan generations first, then the tables and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave on any platform rune is released for, from the first generation written to the last one deleted.
 
 #### Scenario: Unreadable Codex table
 
@@ -36,7 +36,7 @@ When a table is a symbolic link, install MUST write the file the link points to 
 
 ### Requirement: Any Rune Dispatcher Entry Is Rune's
 
-Install MUST count an entry as rune's when its command runs a binary named `rune`, from any path, with `hook run` for the table's harness. Each event MUST then hold one rune entry: install replaces a known rune entry with the one it renders and removes any other known one.
+Install MUST count an entry as rune's when its command runs a binary named `rune`, from any path, with `hook run` for the table's harness. Each event MUST then hold one rune entry: install replaces a known rune entry with the one it renders and removes any other known one. The one exception is a Codex event whose earlier rune entry waits for Codex to trust its replacement.
 
 #### Scenario: Install from a second build path
 
