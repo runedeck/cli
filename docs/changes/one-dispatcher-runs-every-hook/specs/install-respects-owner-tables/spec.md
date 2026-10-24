@@ -52,6 +52,15 @@ Install MUST judge rune's command by the hash of its own registration, the group
 - **WHEN** the owner added a command to rune's `PreToolUse` group and the plan then drops `tool.before`
 - **THEN** the group keeps the owner's command and loses rune's
 
+### Requirement: No Handler Left Takes Rune's Entries Back
+
+When the config declares no handler and an earlier install left a plan or an owned entry, install MUST reconcile an empty plan: it removes rune's commands, keeps every foreign one, and writes a plan with no event. `rune hook install --check` MUST count rune's remaining entries as drift until that install runs.
+
+#### Scenario: Owner empties the handlers
+
+- **WHEN** an install registered dcg, the owner then sets `hooks.handlers` to an empty list, and `Stop` holds the owner's own hook
+- **THEN** `rune hook install --check` exits non-zero, and after `rune hook install` the tables hold no rune entry and `Stop` keeps the owner's hook
+
 ### Requirement: The Legacy Dispatcher Goes Where Rune Takes Over
 
 Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan registers for that harness. On any other event install MUST keep the entry and warn that no handler takes its place.

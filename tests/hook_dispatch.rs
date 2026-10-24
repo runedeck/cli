@@ -222,6 +222,40 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
     );
 }
 
+#[test]
+fn emptying_the_handlers_takes_rune_s_entries_back_and_keeps_the_owner_s() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    std::fs::write(
+        claude_settings(&scene),
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/owner/stop"}]}]}}"#,
+    )
+    .unwrap();
+    scene.config(DCG_GUARD);
+    scene.rune().args(["hook", "install"]).assert().success();
+    scene.config("hooks:\n  handlers: []\n");
+    let check = scene
+        .rune()
+        .args(["hook", "install", "--check"])
+        .output()
+        .unwrap();
+    assert!(!check.status.success(), "the old registrations are drift");
+    scene.rune().args(["hook", "install"]).assert().success();
+    let settings = json_at(&claude_settings(&scene));
+    assert!(settings["hooks"].get("PreToolUse").is_none(), "{settings}");
+    assert_eq!(
+        settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "/owner/stop"
+    );
+    let plan = json_at(&scene.state().join("hooks/plan.json"));
+    assert_eq!(plan["harnesses"], serde_json::json!({}), "{plan}");
+    scene
+        .rune()
+        .args(["hook", "install", "--check"])
+        .assert()
+        .success();
+}
+
 /// `rune install --json` of a one-rule module into a scratch target.
 fn install_module(scene: &Scene) -> std::process::Output {
     let source = scene.path("module");

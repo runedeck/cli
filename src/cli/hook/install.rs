@@ -304,6 +304,14 @@ pub(crate) fn manifest_path() -> Result<PathBuf, Error> {
         .join("manifest.json"))
 }
 
+/// Whether an earlier install recorded an entry rune owns.
+pub(crate) fn has_owned(manifest_path: &Path) -> bool {
+    read_manifest(manifest_path)
+        .harnesses
+        .values()
+        .any(|harness| !harness.owned.is_empty())
+}
+
 fn read_manifest(path: &Path) -> Manifest {
     fs::read_to_string(path)
         .ok()

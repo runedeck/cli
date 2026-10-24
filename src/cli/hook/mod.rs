@@ -123,7 +123,8 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
 
 /// Render the plan into the harness tables, or check them, and return
 /// what happened without printing it: `rune install` folds it into its
-/// own result. `None` when the config declares no handler.
+/// own result. `None` when the config declares no handler and no earlier
+/// install left anything to take back.
 pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<install::Report>, Error> {
     let home = dirs::home_dir()
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
@@ -138,14 +139,24 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         .with_code(LIVE_HOME_IN_PROOF));
     }
     let config = ontology::load()?;
-    if config.hooks.handlers.is_empty() {
-        return Ok(None);
-    }
-    let plan = compile(&config.hooks)?;
-    let rune = std::env::current_exe()
-        .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
     let plan_path = plan::path()?;
     let manifest_path = install::manifest_path()?;
+    // With no handler left, an earlier install still has entries and a
+    // plan to take back: reconcile an empty plan, which removes rune's
+    // own commands and keeps every foreign one.
+    let plan = if config.hooks.handlers.is_empty() {
+        if !plan_path.exists() && !install::has_owned(&manifest_path) {
+            return Ok(None);
+        }
+        Plan {
+            version: 1,
+            ..Plan::default()
+        }
+    } else {
+        compile(&config.hooks)?
+    };
+    let rune = std::env::current_exe()
+        .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
     // One install at a time reads and writes this set of files.
     let mut targets = vec![plan_path.clone(), manifest_path.clone()];
     targets.extend(install::table_files(&home)?);
