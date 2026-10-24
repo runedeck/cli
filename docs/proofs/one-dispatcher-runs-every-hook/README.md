@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: 2dfcf2881c29f5996b78d058498982376be760ee
+head: 9a2be4b9fc696ec3144422b0ffd67eca800615fc
 recorded: 2026-10-24
-transcript: 7f3dda184308986e04669b2641a918465cd4cb8a7cbf27dd2dc8e9f9ae0117e6
+transcript: b71c7751af9d47e51421d36d23d505ab3dc48f98403d9b746b15665a92ac7f52
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check

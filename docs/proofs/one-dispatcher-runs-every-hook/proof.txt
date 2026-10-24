@@ -205,7 +205,7 @@ $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse 
 kind: check
 $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event SessionEnd
 < {"hook_event_name":"SessionEnd","session_id":"s1","cwd":"."}
-  rune hook: no compiled hook plan at /private/tmp/claude-501/rune-proof-70676-one-dispatcher-runs-every-hook-dispatcher-failures-follow-the-strongest-policy-plan-missing-on-a-passive-event-28090600-57-0/state/hooks/plan.json: run `rune install` (No such file or directory (os error 2)); proceeding
+  rune hook: no compiled hook plan at /private/tmp/claude-501/rune-proof-55673-one-dispatcher-runs-every-hook-dispatcher-failures-follow-the-strongest-policy-plan-missing-on-a-passive-event-3348efd0-57-0/state/hooks/plan.json: run `rune install` (No such file or directory (os error 2)); proceeding
 
 ## one-dispatcher-runs-every-hook#handlers-run-in-order-and-fail-by-policy/guard-times-out
 kind: check
@@ -268,7 +268,7 @@ $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD
   claude: PreToolUse adopted `/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin`
   claude: Notification keeps foreign `cmux hooks claude Notification`
 $ jq -c '[.hooks.PreToolUse[].hooks[].command, .hooks.Notification[0].hooks[0].command, .model]' home/.claude/settings.json
-  ["/Users/N4M3Z/Developer/runedeck/cli/.workspaces/hooks-060/target/debug/rune hook run --harness claude --native-event PreToolUse --plan /private/tmp/claude-501/rune-proof-70676-one-dispatcher-runs-every-hook-install-owns-its-entries-and-nothing-else-foreign-entries-survive-17fa9c60-91-0/state/hooks/plans/709f2d984f0ee73e559192cb9d051ad318a344f57d0ae5ce75b2da7fc980d14c.json --on-failure deny","cmux hooks claude Notification","opus"]
+  ["/Users/N4M3Z/Developer/runedeck/cli/.workspaces/hooks-060/target/debug/rune hook run --harness claude --native-event PreToolUse --plan /private/tmp/claude-501/rune-proof-55673-one-dispatcher-runs-every-hook-install-owns-its-entries-and-nothing-else-foreign-entries-survive-22bcfd78-91-0/state/hooks/plans/709f2d984f0ee73e559192cb9d051ad318a344f57d0ae5ce75b2da7fc980d14c.json --on-failure deny","cmux hooks claude Notification","opus"]
 $# one dispatcher entry per subscribed event, none on the foreign one
 $ jq -c '[.hooks | to_entries[] | {(.key): ([.value[].hooks[].command | select(contains("rune hook run"))] | length)}] | add' home/.claude/settings.json
   {"PreToolUse":1,"Notification":0,"PostToolUse":1,"SessionEnd":1}
@@ -280,7 +280,7 @@ kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
 $ sh -c 'jq ".hooks.PreToolUse[0].hooks[0].timeout = 99" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json && cp -f home/.claude/settings.json before.json && cp -f home/.codex/hooks.json before-codex.json'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: /private/tmp/claude-501/rune-proof-70676-one-dispatcher-runs-every-hook-install-owns-its-entries-and-nothing-else-owned-entry-edited-by-hand-1a73d5d8-98-0/home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
+  fatal: /private/tmp/claude-501/rune-proof-55673-one-dispatcher-runs-every-hook-install-owns-its-entries-and-nothing-else-owned-entry-edited-by-hand-28954840-98-0/home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
 $# both tables are byte for byte what they were before the refused install
 $ sh -c 'cmp home/.claude/settings.json before.json && cmp home/.codex/hooks.json before-codex.json && echo unchanged'
   unchanged
@@ -297,10 +297,10 @@ $ jq -c '.harnesses.claude.adopted[] | select(.by == "git-ai") | .event' state/h
 ## one-dispatcher-runs-every-hook#install-adopts-predecessors-and-migrates-legacy-entries/legacy-dispatcher-in-the-codex-config
 kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^legacy\|^trust: codex: the rune entry for PreToolUse"'
-  legacy: /private/tmp/claude-501/rune-proof-70676-one-dispatcher-runs-every-hook-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-22fd69a8-111-0/home/.codex/config.toml:7: `sh /Users/x/.sd/hook PreToolUse` is now the legacy sd hook handler; remove it from config.toml by hand, rune does not rewrite that file
+  legacy: /private/tmp/claude-501/rune-proof-55673-one-dispatcher-runs-every-hook-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-2e02f9f8-111-0/home/.codex/config.toml:7: `sh /Users/x/.sd/hook PreToolUse` is now the legacy sd hook handler; remove it from config.toml by hand, rune does not rewrite that file
   trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
 $ jq -r '.hooks.PreToolUse[0].hooks[0].command' home/.codex/hooks.json
-  /Users/N4M3Z/Developer/runedeck/cli/.workspaces/hooks-060/target/debug/rune hook run --harness codex --native-event PreToolUse --plan /private/tmp/claude-501/rune-proof-70676-one-dispatcher-runs-every-hook-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-22fd69a8-111-0/state/hooks/plans/80a23bbe221c64a3e4884d105cd85b615cf75a7da2731d30e3d9806ae7cca15b.json --on-failure deny
+  /Users/N4M3Z/Developer/runedeck/cli/.workspaces/hooks-060/target/debug/rune hook run --harness codex --native-event PreToolUse --plan /private/tmp/claude-501/rune-proof-55673-one-dispatcher-runs-every-hook-install-adopts-predecessors-and-migrates-legacy-entries-legacy-dispatcher-in-the-codex-config-2e02f9f8-111-0/state/hooks/plans/80a23bbe221c64a3e4884d105cd85b615cf75a7da2731d30e3d9806ae7cca15b.json --on-failure deny
 
 ## checkout-carries-its-author-identity#identity-binds-to-the-checkout/listed-model-at-session-start
 kind: check
@@ -399,10 +399,10 @@ $ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.jso
 $# the file is still a valid plan, but not the bytes its name is the digest of, so the registration's deny answers
 $ sh -c 'HOME="$PWD/home" sh -c "$(cat guard.cmd)" | jq -r .hookSpecificOutput.permissionDecision'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
-  rune hook: /private/tmp/claude-501/rune-proof-70676-guards-hold-under-failure-the-registration-carries-the-plan-and-the-policy-generation-edited-after-install-1a7d5f40-168-0/state/hooks/plans/3f4dfc10ca6f091d98c56a6731ed39eb21231f4cb782d49122e21c6a2dc8da16.json does not hold the plan its name is the digest of: it changed after install; run `rune install`; denied
+  rune hook: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-the-registration-carries-the-plan-and-the-policy-generation-edited-after-install-105993d0-168-0/state/hooks/plans/3f4dfc10ca6f091d98c56a6731ed39eb21231f4cb782d49122e21c6a2dc8da16.json does not hold the plan its name is the digest of: it changed after install; run `rune install`; denied
   deny
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "changed after install"'
-  drift: the plan generation /private/tmp/claude-501/rune-proof-70676-guards-hold-under-failure-the-registration-carries-the-plan-and-the-policy-generation-edited-after-install-1a7d5f40-168-0/state/hooks/plans/3f4dfc10ca6f091d98c56a6731ed39eb21231f4cb782d49122e21c6a2dc8da16.json was changed after install; run `rune hook install`
+  drift: the plan generation /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-the-registration-carries-the-plan-and-the-policy-generation-edited-after-install-105993d0-168-0/state/hooks/plans/3f4dfc10ca6f091d98c56a6731ed39eb21231f4cb782d49122e21c6a2dc8da16.json was changed after install; run `rune hook install`
 
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
 kind: check
@@ -413,11 +413,11 @@ $# the config gives dcg's id to an observer, and the manifest's directory turns 
 $ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && chmod 555 state/hooks'
 $# the install writes the observer's generation, then fails to stage the manifest
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: /private/tmp/claude-501/rune-proof-70676-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-fails-after-the-new-generations-20c2b800-175-0/state/hooks/.manifest.json.rune-new-72264-18e16e94f05576a0-4: Permission denied (os error 13)
+  fatal: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-fails-after-the-new-generations-15fa5ba8-175-0/state/hooks/.manifest.json.rune-new-56609-18e171785d501e50-4: Permission denied (os error 13)
 $# the old registration still denies, from its generation's old bytes, and warns that the config moved on
 $ sh -c 'chmod 755 state/hooks && HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
-  rune hook: /private/tmp/claude-501/rune-proof-70676-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-fails-after-the-new-generations-20c2b800-175-0/home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+  rune hook: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-fails-after-the-new-generations-15fa5ba8-175-0/home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
   no rm -rf
 $ sh -c 'cmp "$(cat old.plan)" old.json && echo the old generation is unchanged'
   the old generation is unchanged
@@ -438,7 +438,7 @@ $ sh -c 'new=$(jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settin
 $# the session's old registration still denies from the old generation
 $ sh -c 'HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
-  rune hook: /private/tmp/claude-501/rune-proof-70676-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-replaces-the-tables-2b17d088-185-0/home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+  rune hook: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-a-registration-reads-the-plan-generation-it-was-installed-with-install-replaces-the-tables-1f4c9e78-185-0/home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
   no rm -rf
 $# the manifest records when the tables stopped naming the old generation
 $ sh -c 'jq -r --arg old "$(cat old.plan)" ".retired[] | select(.generation == \$old) | .since" state/hooks/manifest.json | grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$"'
@@ -448,8 +448,8 @@ $ sh -c 'jq -r --arg old "$(cat old.plan)" ".retired[] | select(.generation == \
 kind: check
 $# dcg guards tool.before, then an observer takes its id, so the tables stop naming the guard's generations
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago
-$ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
+$# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago, and installs found both unnamed on 13 days up to yesterday
+$ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate) | .retired[].days = 13 | .retired[].last_day = ((now - 86400) | strftime(\"%Y-%m-%d\"))" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
 $ sh -c 'jq -r ".retired[0].generation" state/hooks/manifest.json > first && jq -r ".retired[1].generation" state/hooks/manifest.json > second && jq -r ".retired[1].since" state/hooks/manifest.json > second.since'
 $# one more install keeps both, because two installs must follow the one that retired them
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && test -f "$(cat first)" && test -f "$(cat second)" && echo both stay after one more install'
@@ -458,6 +458,16 @@ $# after a second install, the first generation is gone, and the second stays wi
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
 $ sh -c 'test ! -e "$(cat first)" && test -f "$(cat second)" && jq -r --arg g "$(cat second)" ".retired[] | select(.generation == \$g) | .since" state/hooks/manifest.json | cmp - second.since && echo the first went, the second stays'
   the first went, the second stays
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/clock-set-forward-before-two-installs
+kind: check
+$# dcg guards tool.before, then an observer takes its id, so the tables stop naming the guard's generations today
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# a clock correction leaves the records 20 days old
+$ sh -c 'jq "(.retired[].since) |= ((now - 20 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json && jq -r ".retired[0].generation" state/hooks/manifest.json > first'
+$# two installs on the same day keep every generation, because installs found them unnamed on one day only
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && test -f "$(cat first)" && jq -c "[.installs, ([.retired[].days] | unique)]" state/hooks/manifest.json'
+  [4,[1]]
 
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/stale-record-of-a-named-generation
 kind: check
@@ -497,6 +507,28 @@ $ jq -c '.hooks.PreToolUse | [.[0], (.[1].hooks | length)]' home/.codex/hooks.js
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; ! grep -q "^drift:.*PreToolUse" check.out && echo no PreToolUse drift'
   no PreToolUse drift
 
+## guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/earlier-entry-before-a-trusted-guard
+kind: check
+$# rune guards Codex's PreToolUse, and the owner adds a guard to rune's group, after rune's entry
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq ".hooks.PreToolUse[0].hooks += [{type: \"command\", command: \"/owner/guard\"}]" home/.codex/hooks.json > edited.json && mv edited.json home/.codex/hooks.json && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the owner trusts both, a changed plan adds a new rune entry beside them, and the owner trusts that one too
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use /owner/guard && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use last'
+$# removing rune's earlier entry would move the guard from handler 2 to handler 1, so the entry stays
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*PreToolUse"'
+  codex: PreToolUse keeps foreign `/owner/guard`
+  trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune install`
+$ jq -c '[.hooks.PreToolUse[] | [.hooks[].command | if contains("rune hook run") then "rune" else . end]]' home/.codex/hooks.json
+  [["rune","/owner/guard"],["rune"]]
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "^drift:.*would move"'
+  drift: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-a-removal-never-moves-a-trusted-codex-hook-earlier-entry-before-a-trusted-guard-18270778-230-0/home/.codex/hooks.json: removing rune's earlier entry from PreToolUse would move `/owner/guard`, which codex trusts where it stands
+
+## guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/untrusted-hook-in-rune-s-group
+kind: check
+$# rune guards Codex's PreToolUse, the owner adds a guard to rune's group, and trusts only rune's entry
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && jq ".hooks.PreToolUse[0].hooks += [{type: \"command\", command: \"/owner/guard\"}]" home/.codex/hooks.json > edited.json && mv edited.json home/.codex/hooks.json && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "^drift:.*/owner/guard"'
+  drift: /private/tmp/claude-501/rune-proof-55673-guards-hold-under-failure-a-removal-never-moves-a-trusted-codex-hook-untrusted-hook-in-rune-s-group-26bafe48-238-0/home/.codex/hooks.json: `/owner/guard` on PreToolUse at group 1 handler 2 is not trusted yet in codex
+
 ## guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
 kind: check
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/quoting-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
@@ -516,7 +548,7 @@ $ sh -c '! grep -q -e sk-live -e curl -e refused state/hooks/run.log && echo no 
 kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && printf "{ not json" > home/.codex/hooks.json && cp -f home/.claude/settings.json before.json'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-install-writes-every-file-or-none-unreadable-codex-table-2ab4e838-231-0/home/.codex/hooks.json is not JSON: key must be a string at line 1 column 3
+  fatal: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-install-writes-every-file-or-none-unreadable-codex-table-30ed5c30-250-0/home/.codex/hooks.json is not JSON: key must be a string at line 1 column 3
 $# the Claude table is byte for byte what it was, and no plan generation or manifest was written
 $ sh -c 'cmp home/.claude/settings.json before.json && test -z "$(ls -A state/hooks/plans 2>/dev/null)" && test ! -e state/hooks/manifest.json && echo unchanged'
   unchanged
@@ -531,7 +563,7 @@ $ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home-plus/.config/rune/con
 $# a directory takes the manifest's place, so the step's last replacement fails after both tables were replaced
 $ sh -c 'mv state/hooks/manifest.json manifest.saved && mkdir -p state/hooks/manifest.json/inside'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-install-writes-every-file-or-none-replace-fails-after-a-read-only-file-was-replaced-2dacd348-237-0/state/hooks/manifest.json: cannot keep the old file to put it back: the source path is neither a regular file nor a symlink to a regular file
+  fatal: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-install-writes-every-file-or-none-replace-fails-after-a-read-only-file-was-replaced-33415e50-256-0/state/hooks/manifest.json: cannot keep the old file to put it back: the source path is neither a regular file nor a symlink to a regular file
 $# both tables have their old bytes, the Claude table its old mode, no table gained SessionStart, and every old generation is still there
 $ sh -c 'cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && test -z "$(ls state/hooks/plans | comm -23 plans.before -)" && ls -l home/.claude/settings.json | cut -c1-10'
   -r--r--r--
@@ -639,7 +671,7 @@ $ jq -c '[.hooks.PreToolUse[].hooks[].command | contains("bin/dcg")]' home/.code
   [true,false]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep "^drift:.*PreToolUse" check.out'
   exit 1
-  drift: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-a-codex-predecessor-waits-for-trust-untrusted-rune-entry-365b67c0-300-0/home/.codex/hooks.json: the rune entry for PreToolUse is not trusted yet in codex
+  drift: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-a-codex-predecessor-waits-for-trust-untrusted-rune-entry-1b9cec88-319-0/home/.codex/hooks.json: the rune entry for PreToolUse is not trusted yet in codex
 
 ## install-respects-owner-tables#a-codex-predecessor-waits-for-trust/rune-entry-trusted
 kind: check
@@ -667,7 +699,8 @@ $ jq -c '[.hooks.PreToolUse[].hooks[].command | contains("bin/dcg")]' home/.code
   [true,false]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep "^drift:.*PreToolUse" check.out'
   exit 1
-  drift: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-a-codex-predecessor-waits-for-trust-predecessor-before-rune-in-one-group-a6725a0-315-0/home/.codex/hooks.json: the rune entry for PreToolUse would move when the entries it replaces go
+  drift: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-a-codex-predecessor-waits-for-trust-predecessor-before-rune-in-one-group-250c8ee0-334-0/home/.codex/hooks.json: `/Users/x/.local/bin/dcg` on PreToolUse at group 1 handler 1 is not trusted yet in codex
+  drift: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-a-codex-predecessor-waits-for-trust-predecessor-before-rune-in-one-group-250c8ee0-334-0/home/.codex/hooks.json: the rune entry for PreToolUse would move when the entries it replaces go
 
 ## install-respects-owner-tables#one-install-prints-one-result/install-with-hooks-as-json
 kind: check
@@ -681,13 +714,13 @@ kind: check
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/install-module" module && mkdir -p home/.codex target && printf "{ not json" > home/.codex/hooks.json && cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home/.config" home/.config'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune install --source module --target target --json > out.json 2>/dev/null; echo "exit $?"; jq -r ".errors[]" out.json'
   exit 1
-  hook tables not written: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-one-install-prints-one-result-hook-step-fails-3ae3f168-328-0/home/.codex/hooks.json is not JSON: key must be a string at line 1 column 3
+  hook tables not written: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-one-install-prints-one-result-hook-step-fails-4646b90-347-0/home/.codex/hooks.json is not JSON: key must be a string at line 1 column 3
 
 ## install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/scene-installs-with-the-runner-s-home
 kind: check
 $# a marker with this shell's process id and the scene's HOME stands in for the runner's, so the scene's HOME counts as the runner's own
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && cp -f home/.claude/settings.json before.json && printf "%s\n%s\n" "$$" "$PWD/home" > marker && RUNE_PROOF_SCENE="$PWD/marker" HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
-  fatal: a proof scene runs with the runner's HOME /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-a-proof-scene-installs-no-hook-into-the-live-home-scene-installs-with-the-runner-s-home-23845c88-333-0/home, so it installs no hook there; give the scene a HOME of its own
+  fatal: a proof scene runs with the runner's HOME /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-a-proof-scene-installs-no-hook-into-the-live-home-scene-installs-with-the-runner-s-home-2dbbd320-352-0/home, so it installs no hook there; give the scene a HOME of its own
 $ sh -c 'cmp home/.claude/settings.json before.json && test ! -e home/.codex/hooks.json && test ! -e state/hooks && echo nothing written'
   nothing written
 
@@ -695,7 +728,7 @@ $ sh -c 'cmp home/.claude/settings.json before.json && test ! -e home/.codex/hoo
 kind: check
 $# the same stand-in marker, and a deck install
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/install-module" module && cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && mkdir -p target && printf "%s\n%s\n" "$$" "$PWD/home" > marker && RUNE_PROOF_SCENE="$PWD/marker" HOME="$PWD/home" RUNE_STATE_DIR=state rune install --source module --target target --json 2>/dev/null | jq -r ".hooks.skipped, (.installed | length > 0)"'
-  a proof scene runs with the runner's HOME /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-a-proof-scene-installs-no-hook-into-the-live-home-deck-install-in-a-scene-with-the-runner-s-home-2616cf08-338-0/home, so it installs no hook there; give the scene a HOME of its own
+  a proof scene runs with the runner's HOME /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-a-proof-scene-installs-no-hook-into-the-live-home-deck-install-in-a-scene-with-the-runner-s-home-2f3af910-357-0/home, so it installs no hook there; give the scene a HOME of its own
   true
 $ sh -c 'cmp home/.claude/settings.json "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables/.claude/settings.json" && test ! -e home/.codex/hooks.json && echo no table changed'
   no table changed
@@ -715,5 +748,5 @@ $ sh -c 'jq ".hooks.Stop = [{hooks: [{type: \"command\", command: \"/new/unknown
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep unknown-hook check.out'
   exit 1
   claude: Stop keeps foreign `/new/unknown-hook`
-  drift: /private/tmp/claude-501/rune-proof-70676-install-respects-owner-tables-the-manifest-remembers-the-last-install-new-foreign-entry-2cfef778-348-0/home/.claude/settings.json: foreign `/new/unknown-hook` on Stop is new since the last install
+  drift: /private/tmp/claude-501/rune-proof-55673-install-respects-owner-tables-the-manifest-remembers-the-last-install-new-foreign-entry-2685d4e8-367-0/home/.claude/settings.json: foreign `/new/unknown-hook` on Stop is new since the last install
 
