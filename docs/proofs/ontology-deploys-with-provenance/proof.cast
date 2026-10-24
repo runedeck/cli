@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1792826210,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
+{"version":2,"width":100,"height":30,"timestamp":1792827532,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
 [0.0,"o","\r\n\u001b[1;36m── ontology-deploys-with-provenance · 5 scenes ─────────────────────────────────────────────────────\u001b[0m\r\n"]
 [1.2,"o","\r\n\u001b[2m┌──────────────────────────────────┐\u001b[0m\r\n\u001b[2m│\u001b[0m \u001b[1m1/5 · Key names an absent source\u001b[0m \u001b[2m│\u001b[0m\r\n\u001b[2m└──────────────────────────────────┘\u001b[0m\r\n\u001b[35mcheck\u001b[0m  \u001b[2mconsumer names its ontology source\u001b[0m\r\n"]
 [2.4,"o","\u001b[1;32m❯\u001b[0m "]
@@ -119,7 +119,7 @@
 [17.26,"o"," "]
 [17.26,"o","consumer/ontology/.provenance/rune.ttl.yaml'"]
 [17.32,"o","\r\n"]
-[17.47,"o","  - name: ontology/rune.ttl\r\n        source: /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-install-deploys-the-ontology-with-provenance-consumer-cites-a-deck-term-2dd26c48-8-0/deck\r\n      - uri: ontology/rune.ttl\r\n"]
+[17.47,"o","  - name: ontology/rune.ttl\r\n        source: /private/tmp/claude-501/rune-proof-80992-ontology-deploys-with-provenance-install-deploys-the-ontology-with-provenance-consumer-cites-a-deck-term-1351f410-8-0/deck\r\n      - uri: ontology/rune.ttl\r\n"]
 [17.87,"o","\u001b[32m✓\u001b[0m \u001b[2mexit 0 · output matches\u001b[0m\r\n"]
 [18.27,"o","\u001b[1;32m❯\u001b[0m "]
 [18.27,"o","rune"]
@@ -244,7 +244,7 @@
 [36.5,"o"," "]
 [36.5,"o","consumer"]
 [36.56,"o","\r\n"]
-[36.71,"o","fatal: .rune: ontology 'deck' names source 'deck' at /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-source-without-an-ontology-file-is-refused-source-carries-no-ontology-file-3449d188-26-0/deck, which has no ontology file at ontology/rune.ttl\r\n"]
+[36.71,"o","fatal: .rune: ontology 'deck' names source 'deck' at /private/tmp/claude-501/rune-proof-80992-ontology-deploys-with-provenance-source-without-an-ontology-file-is-refused-source-carries-no-ontology-file-1554b568-26-0/deck, which has no ontology file at ontology/rune.ttl\r\n"]
 [37.11,"o","\u001b[32m✓\u001b[0m \u001b[2mexit 2 as expected · output matches\u001b[0m\r\n"]
 [37.51,"o","\u001b[1;32m❯\u001b[0m "]
 [37.51,"o","sh"]
@@ -358,7 +358,7 @@
 [49.4,"o"," "]
 [49.4,"o","consumer"]
 [49.46,"o","\r\n"]
-[49.61,"o","\r\n ontology\r\n   ┌ ontology/rune.ttl (source: /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-deployed-copy-reports-drift-copy-edited-by-hand-b540640-32-0/deck)\r\n   │  frontmatter  ✓\r\n   │  body         ⚡ drifted\r\n   └\r\n   1 identical hidden — --all shows them\r\n\r\n ✓ 1 identical  ⚡ 1 drifted\r\n\r\n"]
+[49.61,"o","\r\n ontology\r\n   ┌ ontology/rune.ttl (source: /private/tmp/claude-501/rune-proof-80992-ontology-deploys-with-provenance-deployed-copy-reports-drift-copy-edited-by-hand-2790f3b8-32-0/deck)\r\n   │  frontmatter  ✓\r\n   │  body         ⚡ drifted\r\n   └\r\n   1 identical hidden — --all shows them\r\n\r\n ✓ 1 identical  ⚡ 1 drifted\r\n\r\n"]
 [50.01,"o","\u001b[32m✓\u001b[0m \u001b[2mexit 1 as expected · output matches\u001b[0m\r\n"]
 [50.41,"o","\u001b[1;32m❯\u001b[0m "]
 [50.41,"o","sh"]

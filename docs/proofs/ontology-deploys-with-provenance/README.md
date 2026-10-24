@@ -1,9 +1,9 @@
 ---
 type: proof
 change: ontology-deploys-with-provenance
-head: a96297d142515ff6a9ff468b937cd4c1e2bfae7f
+head: 4dfd454f1f13572aae1fd6278571f39a1d1586a7
 recorded: 2026-10-24
-transcript: 84d2d711da7ac830e42d890e4d754e129490e7acf4cd9fe5a57b1885581fce5c
+transcript: bce6f73164cb6e7960072155525c1f7931876db5646ede4ba2a1d847baf82ac0
 scenes:
 - scenario: ontology-deploys-with-provenance#consumer-names-its-ontology-source/key-names-an-absent-source
   kind: check
