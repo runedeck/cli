@@ -193,13 +193,19 @@ fn abort(done: &[(PathBuf, Option<PathBuf>)], error: Error) -> Error {
 /// a second install lock the directory the first one went on to create.
 /// Each directory is locked once by its canonical path: a second lock on
 /// it through another name would wait for the first forever. The lock is
+/// std's file lock on `LOCK_FILE` in the directory, `flock` on Unix and
+/// `LockFileEx` on Windows, so it holds on every shipped target. It is
 /// advisory: only rune takes it. Only a writing install takes it.
 pub(crate) struct Lock {
-    /// The locks, released when the value drops. Only a test reads them.
-    #[cfg(unix)]
+    /// The locked files, released when the value drops. Only a test reads
+    /// them.
     #[cfg_attr(not(test), allow(dead_code))]
-    held: Vec<nix::fcntl::Flock<File>>,
+    held: Vec<File>,
 }
+
+/// The file in each locked directory that holds the lock. It stays empty,
+/// and a later install locks it again.
+pub(crate) const LOCK_FILE: &str = ".rune-install.lock";
 
 impl Lock {
     /// Lock the directory of every target.
@@ -222,24 +228,21 @@ impl Lock {
         }
         dirs.sort();
         dirs.dedup();
-        #[cfg(unix)]
-        {
-            use nix::fcntl::{Flock, FlockArg};
-            let mut held = Vec::new();
-            for dir in dirs {
-                let handle = File::open(&dir).map_err(|e| io(&dir, &e))?;
-                let lock = Flock::lock(handle, FlockArg::LockExclusive).map_err(|(_, errno)| {
-                    Error::io(format!("{}: cannot lock: {errno}", dir.display()))
-                })?;
-                held.push(lock);
-            }
-            Ok(Self { held })
+        let mut held = Vec::new();
+        for dir in dirs {
+            let path = dir.join(LOCK_FILE);
+            let file = File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .map_err(|e| io(&path, &e))?;
+            file.lock()
+                .map_err(|e| Error::io(format!("{}: cannot lock: {e}", path.display())))?;
+            held.push(file);
         }
-        #[cfg(not(unix))]
-        {
-            let _ = dirs;
-            Ok(Self {})
-        }
+        Ok(Self { held })
     }
 }
 
@@ -260,7 +263,7 @@ mod tests {
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.contains(".rune-"))
+            .filter(|name| name.contains(".rune-") && name != LOCK_FILE)
             .collect()
     }
 
@@ -339,7 +342,6 @@ mod tests {
         assert_eq!(leftovers(dir.path()), Vec::<String>::new());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_second_install_waits_although_the_first_created_the_directories() {
         let dir = tempfile::tempdir().unwrap();

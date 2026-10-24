@@ -161,8 +161,13 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     // One install at a time reads and writes this set of files. A check
     // or a dry run writes nothing and creates no directory, so it reads
     // without the lock.
-    let mut dirs = vec![generations.clone()];
-    dirs.extend(manifest_path.parent().map(Path::to_path_buf));
+    // The generations live under the manifest's directory, so its lock
+    // covers them, from the first generation written to the last deleted.
+    let mut dirs: Vec<std::path::PathBuf> = manifest_path
+        .parent()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
     dirs.extend(
         install::table_files(&home)?
             .iter()
