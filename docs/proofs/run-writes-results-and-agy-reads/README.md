@@ -1,12 +1,12 @@
 ---
 type: proof
 change: run-writes-results-and-agy-reads
-head: d9d9de72c6afc113945995fbb428915993589a26
-recorded: 2026-10-22
-transcript: 55be48989064ca8c9bd8d7822a71af3a51c8083ce984c18d38d5b3a1c50c9f8e
+head: 650f94b8b33299a38d21157d849aa7ca92e9c71d
+recorded: 2026-10-24
+transcript: 5d692d61295c8b78e3d7d7e960ed5b9c2b65f9bea9b60c2c35957c91aed2dd8e
 scenes:
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/council-seat-writes-its-answer-to-a-file
-  kind: unproven
+  kind: check
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/failed-run-still-writes-its-result
   kind: check
 - scenario: execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/output-path-in-a-protected-place-is-refused
@@ -24,7 +24,7 @@ scenes:
 - scenario: execute-prompts-off-session#a-read-only-agy-run-is-refused/agy-council-seat-in-read-only-mode
   kind: check
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/clean-grok-run-uses-an-api-key-from-the-environment
-  kind: unproven
+  kind: check
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/grok-echoes-its-key
   kind: unproven
 - scenario: execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/owner-s-grok-configuration-is-malformed

@@ -1,26 +1,33 @@
+## execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/council-seat-writes-its-answer-to-a-file
+kind: check
+$ rune --json run sol@codex "Reply with exactly two words: seat ready" --output seat.json
+  {"exit_code":0,"kind":"success","ok":true,"output":"/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-writes-its-result-to-a-file-on-request-council-seat-writes-its-answer-to-a-file-19fe8a80-1-0/seat.json"}
+$ cat seat.json
+  {"artifacts":[],"clean":false,"completion_tokens":6.0,"duration_ms":3819,"exit_code":0,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@codex","requested_route":"sol@codex","resolved_binary":"codex-proxy","resolved_model":"gpt-6.1-sol","resolved_route":"codex","session_name":null,"session_name_flag":null,"text":"seat ready","tool":"codex","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":6.0,"total_tokens":null},"warnings":[],"workspace":null}
+
 ## execute-prompts-off-session#the-runner-writes-its-result-to-a-file-on-request/failed-run-still-writes-its-result
 kind: check
 $ sh -c 'printf "%s\n" "#!/bin/sh" "echo partial answer" "echo still working >&2" "sleep 5" > slow-claude && chmod 755 slow-claude'
 $ rune --json run sol@claude --binary ./slow-claude --timeout 1s "x" --output seat.json
-  {"exit_code":124,"kind":"timeout","ok":false,"output":"/private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-writes-its-result-to-a-file-on-request-failed-run-still-writes-its-result-2fcb5a00-4-0/seat.json"}
+  {"exit_code":124,"kind":"timeout","ok":false,"output":"/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-writes-its-result-to-a-file-on-request-failed-run-still-writes-its-result-116e47c0-5-0/seat.json"}
 $ cat seat.json
   {"details":{"harness_errors":[],"stderr_tail":"still working","stdout_tail":"partial answer","timeout_ms":1000},"exit_code":124,"hint":null,"kind":"timeout","ok":false,"tool":"claude","workspace":null}
 
 ## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/output-path-in-a-protected-place-is-refused
 kind: check
 $ sh -c 'rune run sol@claude x --output ~/.claude/settings.json'
-  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp/claude-501), the temporary directory (/private/tmp)
+  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the temporary directory (/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T), the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp)
 $ mkdir .git
 $ rune run sol@claude x --output .git/hook.json
-  fatal: output file /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-343693c0-9-0/.git/hook.json lies under the hidden folder .git inside /private/tmp/claude-501
+  fatal: output file /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-189365a8-10-0/.git/hook.json lies under the hidden folder .git inside /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T
 $ sh -c 'printf "{}\n" > real.json && ln -s real.json link.json'
 $ rune run sol@claude x --output link.json
-  fatal: output file /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-343693c0-9-0/link.json is a symlink, and the runner replaces only a regular file
+  fatal: output file /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-writes-its-result-file-only-in-permitted-places-output-path-in-a-protected-place-is-refused-189365a8-10-0/link.json is a symlink, and the runner replaces only a regular file
 
 ## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/caller-names-a-protected-folder-as-the-repository
 kind: check
 $ sh -c 'rune run sol@claude x --repo ~/.claude --output ~/.claude/settings.json'
-  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp/claude-501), the temporary directory (/private/tmp)
+  fatal: output file /Users/N4M3Z/.claude/settings.json is outside every permitted place: the temporary directory (/private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T), the rune state directory (/Users/N4M3Z/.local/state/rune), the temporary directory (/private/tmp)
 
 ## execute-prompts-off-session#the-runner-writes-its-result-file-only-in-permitted-places/argument-error-with-an-output-file
 kind: check
@@ -36,8 +43,8 @@ kind: check
 $ mkdir out
 $ sh -c 'printf "%s\n" "#!/bin/sh" "mv out out.old" "mkdir out" "echo planted > out/seat.json" "echo real answer" > mover && chmod 755 mover'
 $ rune --json run sol@claude --binary ./mover "x" --output out/seat.json
-  error: cannot write result file /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-folder-moved-during-the-run-3a3b0738-23-0/out/seat.json: the file at that path is not the file the runner wrote (the folder moved during the run)
-  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":161,"exit_code":125,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./mover","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
+  error: cannot write result file /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-folder-moved-during-the-run-205e7020-24-0/out/seat.json: the file at that path is not the file the runner wrote (the folder moved during the run)
+  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":139,"exit_code":125,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./mover","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
 $ cat out/seat.json
   planted
 
@@ -45,23 +52,23 @@ $ cat out/seat.json
 kind: check
 $ sh -c 'printf "%s\n" "#!/bin/sh" "echo first answer" > one && printf "%s\n" "#!/bin/sh" "echo second answer" > two && chmod 755 one two'
 $ rune run sol@claude --binary ./one "x" --output seat.txt
-  output: /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-a4f1d48-29-0/seat.txt
+  output: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-2b365508-30-0/seat.txt
 $ cat seat.txt
   first answer
 $ rune run sol@claude --binary ./two "x" --output seat.txt
-  output: /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-a4f1d48-29-0/seat.txt
+  output: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-output-file-already-exists-2b365508-30-0/seat.txt
 $ cat seat.txt
   second answer
 $ ls -l seat.txt
-  -rw-------@ 1 N4M3Z  wheel  14 Oct 22 23:26 seat.txt
+  -rw-------@ 1 N4M3Z  staff  14 Oct 24 02:46 seat.txt
 
 ## execute-prompts-off-session#the-runner-replaces-the-result-file-in-one-step/result-file-cannot-be-written
 kind: check
 $ mkdir out
 $ sh -c 'printf "%s\n" "#!/bin/sh" "chmod 555 out" "echo real answer" > locker && chmod 755 locker'
 $ rune --json run sol@claude --binary ./locker "x" --output out/seat.json
-  error: cannot write result file /private/tmp/claude-501/rune-proof-25236-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-result-file-cannot-be-written-234c8b78-37-0/out/seat.json: Permission denied (os error 13)
-  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":165,"exit_code":125,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./locker","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
+  error: cannot write result file /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-the-runner-replaces-the-result-file-in-one-step-result-file-cannot-be-written-61962d8-38-0/out/seat.json: Permission denied (os error 13)
+  {"artifacts":[],"clean":false,"completion_tokens":null,"duration_ms":147,"exit_code":125,"kind":"success","model":"gpt-6.1-sol","ok":true,"requested_provider":"sol@claude","requested_route":"sol@claude","resolved_binary":"./locker","resolved_model":"gpt-6.1-sol","resolved_route":"claude","session_name":null,"session_name_flag":"--name","text":"real answer","tool":"claude","usage":{"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"input_tokens":null,"output_tokens":null,"total_tokens":null},"warnings":[],"workspace":null}
 $ chmod 755 out
 $ ls out
 
@@ -71,4 +78,68 @@ $ rune run gemini@agy "Review this repository"
   fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
 $ rune run gemini@agy --mode read-only "Review this repository"
   fatal: agy cannot enforce read-only access, because it writes files in plan mode and ignores deny rules: use --mode workspace-write, which runs agy in its own jj workspace
+
+## execute-prompts-off-session#a-clean-grok-run-keeps-only-the-model-key-map/clean-grok-run-uses-an-api-key-from-the-environment
+kind: check
+$ rune run grok@grok --clean --dry-run "Reply with exactly two words: grok ready"
+  tool: grok
+  model: grok
+  model_id: grok-4.7
+  model_context: 500000
+  model_source: config
+  argv: /Users/N4M3Z/.grok/bin/grok --cwd /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-a-clean-grok-run-keeps-only-the-model-key-map-clean-grok-run-uses-an-api-key-from-the-environment-12096e80-49-0 --prompt-file <scratch>/prompt.txt --output-format json --no-memory --sandbox read-only --permission-mode dontAsk --tools Read,Glob,Grep --deny Write(**) --deny Edit(**) --deny Bash(**) -m grok-4.7 --system-prompt-override=Follow only the current user prompt. Do not use user rules, project rules, skills, memory, plugins, or prior sessions.
+  env:
+    GROK_CODE_XAI_API_KEY=<redacted>
+    GROK_MODELS_BASE_URL=http://127.0.0.1:8317/v1
+    HARNESS_REAL_BIN_DIR=/Users/N4M3Z/.grok/bin
+    HOME=<clean-state>
+  env_removed:
+    CLAUDECODE
+    CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_ACCOUNT_UUID
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_CODE_DESKTOP_APP_VERSION
+    CLAUDE_CODE_DISABLE_CRON
+    CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+    CLAUDE_CODE_EAGER_FLUSH
+    CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES
+    CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL
+    CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_HOST_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDE_CODE_OAUTH_SCOPES
+    CLAUDE_CODE_ORGANIZATION_UUID
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_SIMPLE
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_TERMINAL_MCP_TOOLS
+    CLAUDE_CODE_TMUX_TRUECOLOR
+    CLAUDE_CODE_USER_EMAIL
+    CLAUDE_EFFORT
+    CLAUDE_PID
+    CLAUDE_PREVIEW_CLASSIFIER_FLOOR
+    CLAUDE_TMPDIR
+  base_url: http://127.0.0.1:8317/v1
+  wrap:
+  pre:
+  warnings:
+    automated grok execution owns --sandbox; the profile value <redacted> is dropped
+  stdin: none
+  repository: /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/rune-proof-18207-execute-prompts-off-session-a-clean-grok-run-keeps-only-the-model-key-map-clean-grok-run-uses-an-api-key-from-the-environment-12096e80-49-0
+  mode: read-only
+  timeout: none
+  native_timeout: none
+  session_name: none
+  session_name_flag: none
+  artifacts_dir: none
+  clean_config_keys: model.grok-3-mini.env_key, model.grok-3-mini-fast.env_key, model.grok-4.20-0309-non-reasoning.env_key, model.grok-4.20-0309-reasoning.env_key, model.grok-4.20-multi-agent-0309.env_key, model.grok-4.3.env_key, model.grok-4.5.env_key, model.grok-build-0.1.env_key, model.grok-composer-2.5-fast.env_key
+  workspace: none
+$ rune run grok@grok --clean "Reply with exactly two words: grok ready"
+  warning: automated grok execution owns --sandbox; the profile value <redacted> is dropped
+  grok ready
 
