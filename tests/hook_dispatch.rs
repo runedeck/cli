@@ -372,6 +372,15 @@ fn a_relative_state_directory_registers_an_absolute_plan_path() {
     let plan = words[words.iter().position(|w| *w == "--plan").unwrap() + 1];
     assert!(Path::new(plan).is_absolute(), "{rendered}");
     assert!(Path::new(plan).is_file(), "{rendered}");
+    // The second install finds the state directory under two names, the
+    // relative one and the absolute one, and still takes its lock once.
+    let mut again = scene.rune();
+    again
+        .env("RUNE_STATE_DIR", "state")
+        .args(["hook", "install"])
+        .timeout(std::time::Duration::from_secs(30))
+        .assert()
+        .success();
 }
 
 // ------------------------------------------------------------- adapters ----

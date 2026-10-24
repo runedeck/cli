@@ -340,10 +340,13 @@ fn rendered(
     json!({ "hooks": [hook] })
 }
 
+/// The manifest's path, made absolute like the plan's, because
+/// `RUNE_STATE_DIR` may be relative.
 pub(crate) fn manifest_path() -> Result<PathBuf, Error> {
-    Ok(crate::cli::state::dir()?
+    let path = crate::cli::state::dir()?
         .join("hooks")
-        .join("manifest.json"))
+        .join("manifest.json");
+    std::path::absolute(&path).map_err(|error| Error::io(format!("{}: {error}", path.display())))
 }
 
 /// Whether an earlier install recorded an entry rune owns.

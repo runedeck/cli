@@ -172,10 +172,14 @@ pub(crate) fn publish(files: &[Staged]) -> Result<(), Error> {
 /// An exclusive lock on the directories of a set of targets, held while
 /// one install reads and writes them, so two installs never interleave.
 /// A directory that does not exist yet is locked through its nearest
-/// existing ancestor. The lock is advisory: only rune takes it.
+/// existing ancestor. Each directory is locked once by its canonical
+/// path: a second lock on it through another name would wait for the
+/// first forever. The lock is advisory: only rune takes it.
 pub(crate) struct Lock {
+    /// The locks, released when the value drops. Only a test reads them.
     #[cfg(unix)]
-    _held: Vec<nix::fcntl::Flock<File>>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    held: Vec<nix::fcntl::Flock<File>>,
 }
 
 impl Lock {
@@ -183,11 +187,9 @@ impl Lock {
         let mut dirs: Vec<PathBuf> = targets
             .iter()
             .filter_map(|target| {
-                target
-                    .parent()?
-                    .ancestors()
-                    .find(|dir| dir.is_dir())
-                    .map(Path::to_path_buf)
+                let target = std::path::absolute(target).ok()?;
+                let dir = target.parent()?.ancestors().find(|dir| dir.is_dir())?;
+                Some(fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
             })
             .collect();
         dirs.sort();
@@ -203,7 +205,7 @@ impl Lock {
                 })?;
                 held.push(lock);
             }
-            Ok(Self { _held: held })
+            Ok(Self { held })
         }
         #[cfg(not(unix))]
         {
@@ -307,5 +309,28 @@ mod tests {
         }
         assert!(fs::read_to_string(&target).unwrap().starts_with("writer "));
         assert_eq!(leftovers(dir.path()), Vec::<String>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_named_two_ways_is_locked_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let targets = vec![real.join("plan.json"), link.join("manifest.json")];
+        // A second lock on one directory would wait forever, so the
+        // acquire runs on a thread the test gives five seconds.
+        let (sent, got) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let lock = Lock::acquire(&targets).map(|lock| lock.held.len());
+            let _ = sent.send(lock);
+        });
+        let held = got
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the lock waited on itself")
+            .unwrap();
+        assert_eq!(held, 1);
     }
 }
