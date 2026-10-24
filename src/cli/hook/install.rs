@@ -191,34 +191,44 @@ fn is_owned(command: &str, harness: Harness) -> bool {
 /// What adopts the legacy `sd hook` dispatcher.
 const LEGACY: &str = "legacy sd hook";
 
+/// The built-in adapters the plan runs on one harness's native event:
+/// each handler whose resolved executable is `rune-hook-<name>`.
+fn adapters_on(plan: &Plan, harness: Harness, event: &str) -> Vec<String> {
+    plan.event(harness, event)
+        .map(|planned| {
+            planned
+                .handlers
+                .iter()
+                .filter_map(|h| h.exec.first()?.strip_prefix("rune-hook-"))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The registration patterns install adopts: the legacy dispatcher on an
-/// event rune registers, a tool's own entry when the plan carries the
-/// adapter that replaces it.
-fn adoption(command: &str, plan_ids: &[String]) -> Option<&'static str> {
+/// event rune registers, and a tool's own entry where the plan runs the
+/// adapter that replaces it on the same harness and native event.
+fn adoption(command: &str, adapters: &[String]) -> Option<&'static str> {
     let trimmed = command.trim();
     if trimmed.contains("/.sd/hook ") || trimmed.starts_with("sd hook ") {
         return Some(LEGACY);
     }
     let tail = trimmed.rsplit('/').next().unwrap_or(trimmed);
-    if plan_ids.iter().any(|id| id == "dcg")
-        && (trimmed == "dcg" || tail == "dcg" || tail.starts_with("dcg "))
-    {
+    let runs = |adapter: &str| adapters.iter().any(|a| a == adapter);
+    if runs("dcg") && (trimmed == "dcg" || tail == "dcg" || tail.starts_with("dcg ")) {
         return Some("dcg");
     }
-    if plan_ids.iter().any(|id| id == "git-ai") && trimmed.contains("git-ai checkpoint") {
+    if runs("git-ai") && trimmed.contains("git-ai checkpoint") {
         return Some("git-ai");
     }
-    if plan_ids.iter().any(|id| id == "author-identity")
-        && tail.starts_with("claude-agent-identity")
-    {
+    if runs("author-identity") && tail.starts_with("claude-agent-identity") {
         return Some("author-identity");
     }
-    if plan_ids.iter().any(|id| id == "tmux-status") && tail.starts_with("claude-tmux-status") {
+    if runs("tmux-status") && tail.starts_with("claude-tmux-status") {
         return Some("tmux-status");
     }
-    if plan_ids.iter().any(|id| id == "rtk")
-        && (trimmed.starts_with("rtk hook") || tail.starts_with("rtk hook"))
-    {
+    if runs("rtk") && (trimmed.starts_with("rtk hook") || tail.starts_with("rtk hook")) {
         return Some("rtk");
     }
     None
@@ -338,12 +348,6 @@ pub(crate) fn prepare(
     let mut report = Report::default();
     let mut manifest = read_manifest(manifest_path);
     manifest.version = 1;
-    let plan_ids: Vec<String> = plan
-        .harnesses
-        .values()
-        .flat_map(|events| events.values())
-        .flat_map(|event| event.handlers.iter().map(|h| h.id.clone()))
-        .collect();
     for gap in &plan.unsupported {
         if Harness::REGISTERED.contains(&gap.harness) {
             report.unsupported.push(format!(
@@ -397,7 +401,7 @@ pub(crate) fn prepare(
                 path: &path,
                 want: wanted.get(name),
                 previous: &previous,
-                plan_ids: &plan_ids,
+                adapters: adapters_on(plan, harness, name),
             };
             let kept = event.reconcile(entries, &mut next, &mut report)?;
             if kept.changed {
@@ -406,7 +410,7 @@ pub(crate) fn prepare(
             }
         }
         if harness == Harness::Codex {
-            legacy_codex_toml(home, &plan_ids, &wanted, &mut report);
+            legacy_codex_toml(home, plan, &wanted, &mut report);
             if !wanted.is_empty() {
                 report.trust.push(
                     "codex binds trust to each hook's hash: run `/hooks` in codex and accept the rune entries, or they stay inactive"
@@ -452,7 +456,8 @@ struct Event<'a> {
     /// The entry the plan wants here, or `None` when it wants none.
     want: Option<&'a Value>,
     previous: &'a HarnessManifest,
-    plan_ids: &'a [String],
+    /// The built-in adapters the plan runs on this harness and event.
+    adapters: Vec<String>,
 }
 
 /// An event's groups after install, and whether they differ from before.
@@ -484,11 +489,35 @@ impl Event<'_> {
         .with_code("hooks.conflict")
     }
 
+    /// One hook that is not rune's: adopted when a handler on this event
+    /// replaces it, else kept as foreign. Returns whether it stays.
+    fn foreign(&self, command: &str, next: &mut HarnessManifest, report: &mut Report) -> bool {
+        let (harness, name) = (self.harness, self.name);
+        let by = adoption(command, &self.adapters);
+        if by == Some(LEGACY) && self.want.is_none() {
+            // The legacy dispatcher still serves this event: no rune
+            // entry takes its place, so it stays.
+            report.warnings.push(format!(
+                "{harness}: {name} keeps the legacy `{command}`, because no handler subscribes to {name}; move what it runs into a handler, then remove it by hand"
+            ));
+        } else if let Some(by) = by {
+            next.adopted.push(self.record(command, Some(by)));
+            report
+                .adopted
+                .push((harness, name.to_string(), command.to_string()));
+            return false;
+        }
+        next.foreign.push(self.record(command, None));
+        report
+            .foreign
+            .push((harness, name.to_string(), command.to_string()));
+        true
+    }
+
     /// Every group of the event, hook by hook. Rune's own command is
     /// checked against its hash and kept, replaced, or removed alone, so
     /// a hook the owner added to the same group stays. Every other hook
     /// is adopted when a handler replaces it, else kept as foreign.
-    #[allow(clippy::too_many_lines)]
     fn reconcile(
         &self,
         entries: Vec<Value>,
@@ -514,24 +543,10 @@ impl Event<'_> {
                     .unwrap_or_default()
                     .to_string();
                 if !is_owned(&command, harness) {
-                    let by = adoption(&command, self.plan_ids);
-                    if by == Some(LEGACY) && self.want.is_none() {
-                        // The legacy dispatcher still serves this event:
-                        // no rune entry takes its place, so it stays.
-                        report.warnings.push(format!(
-                            "{harness}: {name} keeps the legacy `{command}`, because no handler subscribes to {name}; move what it runs into a handler, then remove it by hand"
-                        ));
-                        next.foreign.push(self.record(&command, None));
-                        report.foreign.push((harness, name.to_string(), command));
+                    if self.foreign(&command, next, report) {
                         remaining.push(hook);
-                    } else if let Some(by) = by {
-                        next.adopted.push(self.record(&command, Some(by)));
-                        report.adopted.push((harness, name.to_string(), command));
-                        changed = true;
                     } else {
-                        next.foreign.push(self.record(&command, None));
-                        report.foreign.push((harness, name.to_string(), command));
-                        remaining.push(hook);
+                        changed = true;
                     }
                     continue;
                 }
@@ -612,7 +627,7 @@ impl Event<'_> {
 /// names the legacy lines instead of rewriting the file.
 fn legacy_codex_toml(
     home: &Path,
-    plan_ids: &[String],
+    plan: &Plan,
     registered: &BTreeMap<String, Value>,
     report: &mut Report,
 ) {
@@ -641,7 +656,7 @@ fn legacy_codex_toml(
         else {
             continue;
         };
-        let by = adoption(command, plan_ids);
+        let by = adoption(command, &adapters_on(plan, Harness::Codex, &event));
         if by == Some(LEGACY) && !registered.contains_key(&event) {
             continue;
         }
@@ -1080,6 +1095,56 @@ mod tests {
         );
         assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
         assert!(report.warnings[0].contains("legacy"));
+    }
+
+    #[test]
+    fn a_predecessor_is_adopted_only_where_its_adapter_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let claude = settings(home.path(), "{}");
+        let codex = home.path().join(".codex").join("hooks.json");
+        fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        let dcg = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]}]}}"#;
+        fs::write(&claude, dcg).unwrap();
+        fs::write(&codex, dcg).unwrap();
+        // A handler named dcg on Claude only, and another adapter named dcg
+        // nowhere: the id decides nothing, the executable on the event does.
+        let claude_only: Plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: dcg\n    exec: [rune-hook-dcg]\n    events: [claude:PreToolUse]\n  - id: lint\n    exec: [rune-hook-lint-on-write]\n    events: [tool.after]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let manifest = home.path().join("state").join("manifest.json");
+        let report = apply(
+            &claude_only,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let commands = |path: &Path, event: &str| -> Vec<String> {
+            let table: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            table["hooks"][event]
+                .as_array()
+                .map(|groups| {
+                    groups
+                        .iter()
+                        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                        .map(|h| h["command"].as_str().unwrap().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(
+            !commands(&claude, "PreToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()),
+            "{report:?}"
+        );
+        assert!(commands(&claude, "PostToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()));
+        assert!(commands(&codex, "PreToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()));
+        assert_eq!(report.adopted.len(), 1, "{report:?}");
     }
 
     #[test]

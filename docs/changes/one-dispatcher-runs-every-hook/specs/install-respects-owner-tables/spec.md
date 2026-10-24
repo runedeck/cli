@@ -50,3 +50,12 @@ Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan regi
 
 - **WHEN** `Stop` holds `sh ~/.sd/hook Stop` and no handler subscribes to `turn.finish`
 - **THEN** the entry stays, and the install output warns that no handler takes its place
+
+### Requirement: A Tool's Entry Goes Where Its Adapter Runs
+
+Install MUST adopt a tool's own entry, such as dcg's, only on a harness and native event where the plan runs the built-in adapter that replaces that tool. A handler's id MUST NOT decide it.
+
+#### Scenario: dcg replaced on Claude only
+
+- **WHEN** a handler runs `rune-hook-dcg` on `claude:PreToolUse` only, and both Claude and Codex hold a dcg entry on `PreToolUse`
+- **THEN** install adopts Claude's dcg entry and keeps Codex's
