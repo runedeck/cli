@@ -121,6 +121,46 @@ fn denying_guard(scene: &Scene) {
     ));
 }
 
+// -------------------------------------------------------------- install ----
+
+const DCG_GUARD: &str = "hooks:\n  handlers:\n    - id: dcg\n      exec: [rune-hook-dcg]\n      events: [tool.before]\n      on_failure: deny\n";
+
+fn claude_settings(scene: &Scene) -> PathBuf {
+    scene.home().join(".claude/settings.json")
+}
+
+fn json_at(path: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn an_unreadable_codex_table_stops_the_install_before_anything_is_written() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    std::fs::create_dir_all(scene.home().join(".codex")).unwrap();
+    let dcg = scene.home().join(".local/bin/dcg").display().to_string();
+    let before = format!(
+        r#"{{"hooks":{{"PreToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":"{dcg}"}}]}}]}}}}"#
+    );
+    std::fs::write(claude_settings(&scene), &before).unwrap();
+    std::fs::write(scene.home().join(".codex/hooks.json"), "{ not json").unwrap();
+    scene.config(DCG_GUARD);
+    let output = scene.rune().args(["hook", "install"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("hooks.json is not JSON"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(claude_settings(&scene)).unwrap(),
+        before,
+        "the Claude table is untouched"
+    );
+    assert!(!scene.state().join("hooks/manifest.json").exists());
+    assert!(!scene.state().join("hooks/plan.json").exists());
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]

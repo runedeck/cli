@@ -61,6 +61,10 @@ The stop allowance is 150 ms: the 25 ms poll that notices the deadline, the 10 m
 
 `hooks/run.log` under the state directory gets one block per event: the time, the harness, the native event, `tool NAME`, and one `ID EFFECT` or `ID failed KIND` line per hook. The command, the file, and every reason stay out of it, because a command line can carry a credential and a guard often quotes the line it refused. The hook record holds the rest without text. The file is created with mode 0600, and at 256 KiB it moves to `run.log.1`, so at most two generations remain.
 
+## Install as one step
+
+`install::prepare` reads the manifest and every registered harness table and computes the new tables without writing. A hand-edited owned entry or an unreadable table stops it there. `publish` then stages the plan, each changed table, and the manifest beside their targets and renames them in that order. When a rename fails, the targets already replaced get their old bytes back and a target that did not exist is removed again. The plan goes first because a registration for an event the old plan lacks only reports that no handler subscribes, while a table without its plan would point at nothing.
+
 ## Ownership of the Claude table
 
 The dotfiles render `~/.claude/settings.json` from a template. Release 1 turns that template into a chezmoi `modify_` script that takes the live file's `hooks` key as is, so rune's entries survive `chezmoi apply`, and declares no hook of its own. Legacy `sh ~/.sd/hook` entries are adopted by the first install, then the `dot_sd/hooks/` tree and the dispatcher go.

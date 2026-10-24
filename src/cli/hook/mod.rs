@@ -15,6 +15,7 @@ pub(crate) mod import_claude;
 pub(crate) mod install;
 pub(crate) mod payload;
 pub(crate) mod plan;
+pub(crate) mod publish;
 pub(crate) mod record;
 pub(crate) mod run;
 pub(crate) mod sandbox_guard;
@@ -108,22 +109,33 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
         return Ok(0);
     }
     let plan = compile(&config.hooks)?;
-    if !check && !dry_run {
-        plan::write(&plan)?;
-    }
     let home = dirs::home_dir()
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
     let rune = std::env::current_exe()
         .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
-    let report = install::apply(
+    let plan_path = plan::path()?;
+    // Every table is read and checked before the plan, a table, or the
+    // manifest changes; then all of them are written as one step, the
+    // plan first, so a refused install leaves the old set in place.
+    let prepared = install::prepare(
         &plan,
         &home,
         &rune,
-        &plan::path()?.display().to_string(),
+        &plan_path.display().to_string(),
         &install::manifest_path()?,
         check,
-        dry_run,
     )?;
+    if !check && !dry_run {
+        let mut files = vec![publish::Staged {
+            target: plan_path,
+            text: serde_json::to_string_pretty(&plan)
+                .map_err(|error| Error::io(error.to_string()))?,
+            new_mode: None,
+        }];
+        files.extend(prepared.files);
+        publish::publish(&files)?;
+    }
+    let report = prepared.report;
     if json {
         println!(
             "{}",

@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::publish::Staged;
+
 /// One entry of a harness table as rune records it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Recorded {
@@ -226,22 +228,26 @@ fn read_table(path: &Path) -> Result<Map<String, Value>, Error> {
     }
 }
 
-fn write_table(path: &Path, table: &Map<String, Value>) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| Error::io(error.to_string()))?;
-    }
+/// A table as the file holds it: pretty JSON and a final newline.
+fn table_text(table: &Map<String, Value>) -> Result<String, Error> {
     let text = serde_json::to_string_pretty(&Value::Object(table.clone()))
         .map_err(|error| Error::io(error.to_string()))?;
-    let staged = path.with_extension("json.new");
-    fs::write(&staged, format!("{text}\n")).map_err(|error| Error::io(error.to_string()))?;
-    fs::rename(&staged, path).map_err(|error| Error::io(error.to_string()))?;
-    Ok(())
+    Ok(format!("{text}\n"))
+}
+
+/// What an install found, and the files it would write: the changed
+/// tables, then the manifest. Nothing is written while it is computed.
+#[derive(Debug)]
+pub(crate) struct Prepared {
+    pub report: Report,
+    pub files: Vec<Staged>,
 }
 
 /// Install or check the tables of every registered harness under `home`.
-/// `rune` is the dispatcher's own path as the tables will call it. One
-/// pass over every event of every registered harness: long, and linear.
-#[allow(clippy::too_many_lines)]
+/// Every table is read and every conflict found before anything is
+/// written, then the tables and the manifest are written as one step.
+/// The command adds the plan to the same step; the tests call this.
+#[cfg(test)]
 pub(crate) fn apply(
     plan: &Plan,
     home: &Path,
@@ -251,6 +257,27 @@ pub(crate) fn apply(
     check: bool,
     dry_run: bool,
 ) -> Result<Report, Error> {
+    let prepared = prepare(plan, home, rune, plan_path, manifest_path, check)?;
+    if !check && !dry_run {
+        super::publish::publish(&prepared.files)?;
+    }
+    Ok(prepared.report)
+}
+
+/// Read every table, find every conflict, and compute what install would
+/// write. `rune` is the dispatcher's own path as the tables will call it.
+/// One pass over every event of every registered harness: long, and
+/// linear.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn prepare(
+    plan: &Plan,
+    home: &Path,
+    rune: &str,
+    plan_path: &str,
+    manifest_path: &Path,
+    check: bool,
+) -> Result<Prepared, Error> {
+    let mut files: Vec<Staged> = Vec::new();
     let mut report = Report::default();
     let mut manifest = read_manifest(manifest_path);
     manifest.version = 1;
@@ -452,22 +479,26 @@ pub(crate) fn apply(
             }
             continue;
         }
-        if changed && !dry_run {
+        if changed {
             table.insert("hooks".into(), Value::Object(hooks));
-            write_table(&path, &table)?;
+            files.push(Staged {
+                target: path.clone(),
+                text: table_text(&table)?,
+                new_mode: Some(0o600),
+            });
         }
         manifest.harnesses.insert(harness, next);
     }
-    if !check && !dry_run {
-        if let Some(parent) = manifest_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| Error::io(error.to_string()))?;
-        }
+    if !check {
         let text = serde_json::to_string_pretty(&manifest)
             .map_err(|error| Error::io(error.to_string()))?;
-        fs::write(manifest_path, format!("{text}\n"))
-            .map_err(|error| Error::io(error.to_string()))?;
+        files.push(Staged {
+            target: manifest_path.to_path_buf(),
+            text: format!("{text}\n"),
+            new_mode: Some(0o600),
+        });
     }
-    Ok(report)
+    Ok(Prepared { report, files })
 }
 
 /// Codex also reads `[[hooks.<Event>]]` from `config.toml`. That file is
