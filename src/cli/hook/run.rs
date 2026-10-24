@@ -186,7 +186,15 @@ pub(crate) fn dispatch(
                         native_event,
                         harness,
                         &handler.id,
-                        result.effect,
+                        &format!("{:?}", result.effect),
+                    ));
+                }
+                if event.mode == Mode::Passive && result.input.is_some() {
+                    stderr.push(passive_note(
+                        native_event,
+                        harness,
+                        &handler.id,
+                        "replacement input",
                     ));
                 }
                 merge(&mut payload, &mut merged, result, event.mode);
@@ -238,14 +246,15 @@ fn merge(
     result: HandlerResult,
     mode: Mode,
 ) {
+    // A passive event steers nothing, a replacement input included.
+    if mode == Mode::Passive {
+        return;
+    }
     if let Some(input) = result.input {
         if let Some(tool) = payload.tool.as_mut() {
             tool.input = input.clone();
         }
         merged.input = Some(input);
-    }
-    if mode == Mode::Passive {
-        return;
     }
     // A denial outranks every other effect, whichever handler ran first.
     let replaces = match result.effect {
@@ -267,18 +276,26 @@ fn admit_result(
     handler: &PlannedHandler,
     event: &PlannedEvent,
 ) -> Result<HandlerResult, Failure> {
+    let refuse = |why: String| Failure {
+        why,
+        policy: handler.on_failure,
+        kind: "result",
+        exit_status: Some(0),
+    };
     if result.effect == Effect::ContinueTurn && event.canonical != Some(Canonical::TurnFinish) {
-        return Err(Failure {
-            why: format!(
-                "returned continue_turn, which only turn.finish takes, on {}",
-                event
-                    .canonical
-                    .map_or("a native extension", Canonical::as_str)
-            ),
-            policy: handler.on_failure,
-            kind: "result",
-            exit_status: Some(0),
-        });
+        return Err(refuse(format!(
+            "returned continue_turn, which only turn.finish takes, on {}",
+            event
+                .canonical
+                .map_or("a native extension", Canonical::as_str)
+        )));
+    }
+    // The plan orders only declared rewriters before the guards, so a
+    // replacement from any other handler could reach the harness unjudged.
+    if result.input.is_some() && !handler.rewrites {
+        return Err(refuse(
+            "returned a replacement input but does not declare `rewrites: true`".to_string(),
+        ));
     }
     Ok(result)
 }
@@ -561,9 +578,9 @@ fn budget_spent(native_event: &str, budget_ms: u64, policy: OnFailure) -> Failur
 }
 
 /// A steering result on a passive event is logged and never applied.
-fn passive_note(native_event: &str, harness: Harness, hook: &str, effect: Effect) -> String {
+fn passive_note(native_event: &str, harness: Harness, hook: &str, what: &str) -> String {
     format!(
-        "rune hook: {native_event} is passive on {harness}; {hook}'s {effect:?} is logged, not applied"
+        "rune hook: {native_event} is passive on {harness}; {hook}'s {what} is logged, not applied"
     )
 }
 

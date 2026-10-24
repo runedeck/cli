@@ -103,7 +103,7 @@ Within one event the dispatcher MUST run handlers serially by `order`, then id. 
 
 ### Requirement: Rewriters Precede Guards
 
-A handler that may return a replacement input MUST be ordered before every `deny` handler on the same event, so a guard judges the input the harness will execute. The plan validator rejects the other order. Each later handler receives the effective input, and `raw` always holds the harness's original.
+A handler that may return a replacement input MUST declare `rewrites: true` and MUST be ordered before every `deny` handler on the same event, so a guard judges the input the harness will execute. The plan validator checks the order per harness and native event, with the failure policy each harness resolves, and rejects the other order. A replacement from a handler that does not declare `rewrites: true` is a failed result under that handler's policy. A passive event applies no replacement. Each later handler receives the effective input, and `raw` always holds the harness's original.
 
 #### Scenario: Guard sees the rewritten command
 
@@ -114,6 +114,11 @@ A handler that may return a replacement input MUST be ordered before every `deny
 
 - **WHEN** rtk has order 20 and dcg has order 10 on `tool.before`
 - **THEN** `rune hook list` exits non-zero and names both handlers
+
+#### Scenario: Replacement from an undeclared rewriter
+
+- **WHEN** a handler without `rewrites: true` returns a replacement input on `tool.before` after dcg passed the call
+- **THEN** the harness receives no replacement, and the handler's failure is reported under its policy
 
 ### Requirement: Install Owns Its Entries And Nothing Else
 

@@ -683,17 +683,32 @@ impl Hooks {
             }
             let policy = handler.on_failure.unwrap_or(self.defaults.on_failure);
             for event in &handler.events {
-                if let Subscription::Canonical(canonical) = event {
-                    let mode = self
-                        .events
-                        .get(canonical)
-                        .and_then(|e| e.mode)
-                        .unwrap_or_else(|| canonical.mode());
-                    if policy == OnFailure::Deny && mode != Mode::Gate {
+                let mode = self.mode_of(event);
+                if policy == OnFailure::Deny && mode != Mode::Gate {
+                    errors.push(fault(
+                        "on_failure",
+                        format!(
+                            "`deny` needs a gate event, and `{event}` is {}",
+                            mode.as_str()
+                        ),
+                    ));
+                }
+            }
+            // An override's policy is checked on the events that harness has.
+            let mut overridden: Vec<(&Harness, &HandlerOverride)> =
+                handler.per_harness.iter().collect();
+            overridden.sort_by_key(|(harness, _)| **harness);
+            for (harness, over) in overridden {
+                if over.on_failure != Some(OnFailure::Deny) || policy == OnFailure::Deny {
+                    continue;
+                }
+                for event in &handler.events {
+                    let mode = self.mode_of(event);
+                    if mode != Mode::Gate && Self::native_name(event, *harness).is_some() {
                         errors.push(fault(
-                            "on_failure",
+                            &format!("per_harness.{harness}.on_failure"),
                             format!(
-                                "`deny` needs a gate event, and `{canonical}` is {}",
+                                "`deny` needs a gate event, and `{event}` is {} on {harness}",
                                 mode.as_str()
                             ),
                         ));
@@ -720,38 +735,98 @@ impl Hooks {
         errors
     }
 
+    /// The mode an event runs in: the config's, else the canonical default.
+    /// A native extension is passive.
+    fn mode_of(&self, event: &Subscription) -> Mode {
+        match event {
+            Subscription::Canonical(canonical) => self
+                .events
+                .get(canonical)
+                .and_then(|e| e.mode)
+                .unwrap_or_else(|| canonical.mode()),
+            Subscription::Native { .. } => Mode::Passive,
+        }
+    }
+
+    /// The native event a subscription names on one harness, if it has one.
+    fn native_name(event: &Subscription, harness: Harness) -> Option<String> {
+        match event {
+            Subscription::Canonical(canonical) => {
+                canonical.native(harness).map(|n| n.name.to_string())
+            }
+            Subscription::Native { harness: h, name } => (*h == harness).then(|| name.clone()),
+        }
+    }
+
+    /// The failure policy a handler resolves to on one harness.
+    fn policy_on(&self, handler: &Handler, harness: Harness) -> OnFailure {
+        handler
+            .per_harness
+            .get(&harness)
+            .and_then(|o| o.on_failure)
+            .or(handler.on_failure)
+            .unwrap_or(self.defaults.on_failure)
+    }
+
     /// A rewriter ordered after a `deny` handler on the same event lets a
-    /// guard approve an input the harness will not execute.
+    /// guard approve an input the harness will not execute. The check runs
+    /// per harness and native event, on the policy each harness resolves,
+    /// so an override that makes a guard `deny` on one harness counts there.
     fn rewriter_order_errors(&self) -> Vec<HooksError> {
-        let mut errors = Vec::new();
-        for event in Canonical::ALL {
-            let mut subscribed: Vec<&Handler> = self
-                .handlers
-                .iter()
-                .filter(|h| h.events.contains(&Subscription::Canonical(event)))
-                .collect();
-            subscribed.sort_by_key(|h| (h.order.unwrap_or(self.defaults.order), h.id.clone()));
-            let mut first_guard: Option<&Handler> = None;
-            for handler in subscribed {
-                let policy = handler.on_failure.unwrap_or(self.defaults.on_failure);
-                if handler.rewrites
-                    && let Some(guard) = first_guard
-                {
-                    errors.push(HooksError {
-                        handler: Some(handler.id.clone()),
-                        field: "order".to_string(),
-                        message: format!(
-                            "rewrites `{event}` after the guard `{}`; a rewriter runs before every deny handler",
-                            guard.id
-                        ),
-                    });
+        let mut found: BTreeMap<(String, String, String), Vec<Harness>> = BTreeMap::new();
+        let mut present: BTreeMap<String, Vec<Harness>> = BTreeMap::new();
+        for harness in Harness::ALL {
+            let mut by_event: BTreeMap<String, (String, Vec<&Handler>)> = BTreeMap::new();
+            for handler in &self.handlers {
+                for event in &handler.events {
+                    if let Some(native) = Self::native_name(event, harness) {
+                        by_event
+                            .entry(native)
+                            .or_insert_with(|| (event.to_string(), Vec::new()))
+                            .1
+                            .push(handler);
+                    }
                 }
-                if policy == OnFailure::Deny && first_guard.is_none() {
-                    first_guard = Some(handler);
+            }
+            for (label, mut subscribed) in by_event.into_values() {
+                present.entry(label.clone()).or_default().push(harness);
+                subscribed.sort_by_key(|h| (h.order.unwrap_or(self.defaults.order), h.id.clone()));
+                let mut first_guard: Option<&Handler> = None;
+                for handler in subscribed {
+                    if handler.rewrites
+                        && let Some(guard) = first_guard
+                    {
+                        found
+                            .entry((handler.id.clone(), guard.id.clone(), label.clone()))
+                            .or_default()
+                            .push(harness);
+                    }
+                    if first_guard.is_none() && self.policy_on(handler, harness) == OnFailure::Deny
+                    {
+                        first_guard = Some(handler);
+                    }
                 }
             }
         }
-        errors
+        found
+            .into_iter()
+            .map(|((rewriter, guard, event), harnesses)| {
+                let everywhere = present.get(&event).is_some_and(|all| *all == harnesses);
+                let scope = if everywhere {
+                    String::new()
+                } else {
+                    let names: Vec<&str> = harnesses.iter().map(|h| h.as_str()).collect();
+                    format!(" on {}", names.join(", "))
+                };
+                HooksError {
+                    handler: Some(rewriter),
+                    field: "order".to_string(),
+                    message: format!(
+                        "rewrites `{event}` after the guard `{guard}`{scope}; a rewriter runs before every deny handler"
+                    ),
+                }
+            })
+            .collect()
     }
 
     /// Compile the plan for every harness. Fails on a validation fault.
@@ -1046,6 +1121,50 @@ handlers:
             "{text:?}"
         );
         assert!(hooks.compile().is_err());
+    }
+
+    #[test]
+    fn a_guard_that_denies_on_one_harness_orders_its_rewriters_there() {
+        let hooks: Hooks = serde_yaml::from_str(
+            r"
+handlers:
+  - id: guard
+    exec: [guard]
+    events: [tool.before]
+    order: 10
+    per_harness:
+      claude: {on_failure: deny}
+  - id: rw
+    exec: [rw]
+    events: [tool.before]
+    order: 20
+    rewrites: true
+",
+        )
+        .unwrap();
+        let text: Vec<String> = hooks.validate().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "hooks.handlers[rw].order: rewrites `tool.before` after the guard `guard` on claude; a rewriter runs before every deny handler"
+            ],
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn a_deny_override_on_a_passive_event_names_the_harness() {
+        let hooks: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n    per_harness:\n      codex: {on_failure: deny}\n",
+        )
+        .unwrap();
+        let text: Vec<String> = hooks.validate().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "hooks.handlers[cap].per_harness.codex.on_failure: `deny` needs a gate event, and `session.end` is passive on codex"
+            ]
+        );
     }
 
     #[test]

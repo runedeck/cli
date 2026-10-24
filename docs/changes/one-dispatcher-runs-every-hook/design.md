@@ -20,8 +20,10 @@ for handler in plan[H][event], serial, ordered:
     spawn exec, payload on stdin, RUNE_HARNESS RUNE_EVENT RUNE_HANDLER_ID RUNE_REMAINING_MS
     kill the process group on expiry
     parse one JSON Result; anything else is failure by policy (warn: log; deny: Result deny)
-    a replacement input becomes the effective input for the handlers after it
-    gate: stop on deny   collect: merge context in order, keep a deny   passive: ignore effects
+    a replacement input from a `rewrites: true` handler becomes the effective input
+    for the handlers after it; from any other handler it is a failure by policy
+    continue_turn outside turn.finish is a failure by policy; a deny outranks every effect
+    gate: stop on deny   collect: merge context in order, keep a deny   passive: ignore effects and input
         |
 dispatcher failure (mismatch, decode, plan) -> strongest policy among subscribed handlers
 encode Result for H and N -> stdout JSON, exit 0
@@ -29,7 +31,7 @@ encode Result for H and N -> stdout JSON, exit 0
 
 ## Modules
 
-- `src/cli/hook/config.rs`: `HooksConfig { defaults, events, handlers }` from the `hooks:` key of the user config. `Handler { id, exec, events, order, timeout_ms, on_failure, requires, per_harness, rewrites, adopts }`. Validation names the field: empty events, unknown event or capability, `deny` on a non-gate event, a rewriter after a guard.
+- `src/cli/hook/config.rs`: `HooksConfig { defaults, events, handlers }` from the `hooks:` key of the user config. `Handler { id, exec, events, order, timeout_ms, on_failure, requires, per_harness, rewrites, adopts }`. Validation names the field: empty events, unknown event or capability, `deny` on a non-gate event (a `per_harness` override included), a rewriter after a guard. The rewriter check runs per harness and native event on the policy each harness resolves, so a guard that is `deny` on one harness only orders the rewriters there.
 - `src/cli/hook/plan.rs`: the compiled plan per harness and event, with clamped timeouts. `rune hook list` and `--events` print it.
 - `src/cli/hook/events.rs`: `Canonical` (eight), `native(harness)`, `mode`, `default_budget`, `cap(harness)`. Extensions as `Extension { harness, name }`.
 - `src/cli/hook/payload.rs`: decoders for Claude, Codex, Grok, Gemini, Antigravity into `HandlerPayload`, `raw` kept. Release 1 registers Claude and Codex; the others decode for the tests and the later change.
