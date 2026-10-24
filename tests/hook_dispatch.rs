@@ -289,23 +289,63 @@ fn install_module_with(scene: &Scene, env: &[(&str, PathBuf)]) -> std::process::
         .unwrap()
 }
 
+/// A proof runner's scene marker: the runner's process id and HOME. This
+/// test process stands in for the runner, so the marker is live.
+fn scene_marker(scene: &Scene, pid: u32, home: &Path) -> PathBuf {
+    let marker = scene.path("scene-marker");
+    std::fs::write(&marker, format!("{pid}\n{}\n", home.display())).unwrap();
+    marker
+}
+
 #[test]
-fn rune_install_in_a_proof_scene_with_the_live_home_skips_the_hooks_in_silence() {
+fn rune_install_in_a_proof_scene_with_the_runner_s_home_reports_the_hooks_skipped() {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
     scene.config(DCG_GUARD);
-    let output = install_module_with(&scene, &[("RUNE_PROOF_LIVE_HOME", scene.home())]);
+    let marker = scene_marker(&scene, std::process::id(), &scene.home());
+    let output = install_module_with(&scene, &[("RUNE_PROOF_SCENE", marker)]);
     assert!(output.status.success(), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
-        document.get("hooks").is_none_or(Value::is_null),
-        "{document}"
-    );
-    assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("hook tables"),
+        document["hooks"]["skipped"]
+            .as_str()
+            .is_some_and(|why| why.contains("a proof scene runs with the runner's HOME")),
         "{document}"
     );
     assert!(!claude_settings(&scene).exists(), "no table was written");
+}
+
+#[test]
+fn a_stale_or_bare_proof_marker_skips_nothing() {
+    // The variable of the old marker, a marker file that is gone, and a
+    // marker whose runner has exited are no proof scene: install runs.
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    let dead = gone.id();
+    gone.wait().unwrap();
+    for case in ["old variable", "missing file", "exited runner"] {
+        let scene = Scene::new();
+        std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+        scene.config(DCG_GUARD);
+        let env: Vec<(&str, PathBuf)> = match case {
+            "old variable" => vec![("RUNE_PROOF_LIVE_HOME", scene.home())],
+            "missing file" => vec![("RUNE_PROOF_SCENE", scene.path("no-such-marker"))],
+            _ => vec![(
+                "RUNE_PROOF_SCENE",
+                scene_marker(&scene, dead, &scene.home()),
+            )],
+        };
+        let output = install_module_with(&scene, &env);
+        assert!(output.status.success(), "{case}: {output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            document["hooks"].get("skipped").is_none(),
+            "{case}: {document}"
+        );
+        assert!(
+            claude_settings(&scene).exists(),
+            "{case}: the table was written"
+        );
+    }
 }
 
 #[test]
@@ -350,27 +390,30 @@ fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
 }
 
 #[test]
-fn a_proof_scene_with_the_live_home_installs_no_hook() {
+fn a_proof_scene_with_the_runner_s_home_installs_no_hook() {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
     scene.config(DCG_GUARD);
+    let marker = scene_marker(&scene, std::process::id(), &scene.home());
     let mut command = scene.rune();
     command
-        .env("RUNE_PROOF_LIVE_HOME", scene.home())
+        .env("RUNE_PROOF_SCENE", &marker)
         .args(["hook", "install"]);
     let output = command.output().unwrap();
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("a proof scene runs with the live HOME"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a proof scene runs with the runner's HOME"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!claude_settings(&scene).exists(), "no table was written");
     assert!(!scene.state().join("hooks/plan.json").exists());
     // A scene that names a HOME of its own installs as usual.
+    let marker = scene_marker(&scene, std::process::id(), &scene.path("elsewhere"));
     let mut command = scene.rune();
     command
-        .env("RUNE_PROOF_LIVE_HOME", scene.path("elsewhere"))
+        .env("RUNE_PROOF_SCENE", &marker)
         .args(["hook", "install"])
         .assert()
         .success();

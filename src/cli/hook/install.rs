@@ -72,6 +72,7 @@ impl Report {
     /// The report as `rune install` and `rune hook install --json` carry it.
     pub(crate) fn summary(&self) -> rune::result::HookSummary {
         rune::result::HookSummary {
+            skipped: None,
             written: self
                 .written
                 .iter()

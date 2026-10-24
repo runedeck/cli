@@ -84,10 +84,15 @@ pub fn execute(
         match crate::cli::hook::install_report(false, false) {
             Ok(Some(report)) => result.hooks = Some(report.summary()),
             Ok(None) => {}
-            // A proof scene with the live HOME installs its deck and no
-            // hook, and says nothing: the runner's hook config would put a
-            // line into the transcript that only this machine prints.
-            Err(error) if error.code() == crate::cli::hook::LIVE_HOME_IN_PROOF => {}
+            // A proof scene with the runner's HOME installs its deck and no
+            // hook, and the result says so. The check comes before the
+            // config is read, so every machine prints the same line.
+            Err(error) if error.code() == crate::cli::hook::LIVE_HOME_IN_PROOF => {
+                result.hooks = Some(rune::result::HookSummary {
+                    skipped: Some(error.to_string()),
+                    ..rune::result::HookSummary::default()
+                });
+            }
             Err(error) => result
                 .errors
                 .push(format!("hook tables not written: {error}")),

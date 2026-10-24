@@ -119,12 +119,22 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 
 ### Requirement: A Proof Scene Installs No Hook Into The Live HOME
 
-The proof runner MUST name its own HOME to each scene. A hook install a scene starts with that HOME MUST write nothing: `rune hook install` fails and names the HOME. `rune install` deploys its deck and skips the hook step without a line about it, so the transcript holds nothing that only the runner's machine prints. A scene that names a HOME of its own installs as usual.
+The proof runner MUST give each scene a marker that names the runner's process and HOME, and MUST remove it when the scene ends. A hook install that finds a live marker for its HOME MUST write nothing: `rune hook install` fails and names the HOME, and `rune install` deploys its deck and reports the hook step as skipped with the reason. A marker whose file is gone or whose runner has exited MUST count for nothing. A scene that names a HOME of its own installs as usual.
 
 #### Scenario: Scene installs with the runner's HOME
 
 - **WHEN** a proof scene runs `rune hook install` without a HOME of its own
 - **THEN** the command fails, and no harness table, plan, or manifest changes
+
+#### Scenario: Deck install in a scene with the runner's HOME
+
+- **WHEN** a proof scene runs `rune install` without a HOME of its own
+- **THEN** the deck deploys, the hook report says skipped and why, and no harness table changes
+
+#### Scenario: Marker outside a proof
+
+- **WHEN** a shell carries a scene marker whose runner has exited, and the owner runs `rune install`
+- **THEN** the hook tables are installed as usual
 
 ### Requirement: The Manifest Remembers The Last Install
 

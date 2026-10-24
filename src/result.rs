@@ -16,8 +16,12 @@ pub struct ActionResult {
 /// The hook tables after an install: `harness:event` for what was
 /// written, `harness:event:command` for what was adopted or kept, and one
 /// line for each gap, legacy entry, drift, trust step, and warning.
+/// `skipped` holds the reason when the install left the tables alone on
+/// purpose, such as a proof scene that kept the runner's HOME.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct HookSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
     pub written: Vec<String>,
     pub adopted: Vec<String>,
     pub foreign: Vec<String>,
@@ -33,6 +37,7 @@ impl HookSummary {
     /// out: they are kept as they were.
     pub fn lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        lines.extend(self.skipped.iter().map(|why| format!("skipped: {why}")));
         lines.extend(self.written.iter().map(|w| format!("registered {w}")));
         lines.extend(self.adopted.iter().map(|a| format!("adopted {a}")));
         for (label, list) in [
@@ -136,6 +141,15 @@ mod tests {
         assert_eq!(
             result.hooks.unwrap().lines(),
             ["registered claude:PreToolUse", "trust: codex: run /hooks"]
+        );
+        let skipped = HookSummary {
+            skipped: Some("a proof scene".to_string()),
+            ..HookSummary::default()
+        };
+        assert_eq!(skipped.lines(), ["skipped: a proof scene"]);
+        assert_eq!(
+            serde_json::to_value(&skipped).unwrap()["skipped"],
+            "a proof scene"
         );
     }
 

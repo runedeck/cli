@@ -5,8 +5,10 @@
 //! `RUNE_PROOF_ROOT` names the repository for a scene that runs through
 //! `sh -c` and needs a fixture. `RUNE_STATE_DIR` names a fresh state
 //! directory for the scene unless the scene names its own, so no live
-//! record reaches a proof. `RUNE_PROOF_LIVE_HOME` names the runner's HOME,
-//! where a scene installs no hook. A step's `< ` lines reach it as a file on
+//! record reaches a proof. `RUNE_PROOF_SCENE` names a marker file with the
+//! runner's process id and HOME, where a scene installs no hook. The marker
+//! lives in the capture directory and goes with it when the scene ends,
+//! so no shell outside the scene can carry a live one. A step's `< ` lines reach it as a file on
 //! standard input. Capture files live outside the scene's
 //! directory and are read through the handle the runner holds, so a
 //! command cannot rewrite what it printed.
@@ -98,6 +100,12 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
             return run;
         }
     };
+    if let Err(message) = write_marker(&capture_dir) {
+        let _ = fs::remove_dir_all(&capture_dir);
+        let _ = fs::remove_dir_all(&state_dir);
+        run.failure = Some(message);
+        return run;
+    }
     let (cwd, steps, cleanup) =
         match working_directory(scene, root, &mut run.section, &mut run.steps) {
             Ok(v) => v,
@@ -170,6 +178,26 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
     }
     run.passed = passed;
     run
+}
+
+/// The scene marker's path inside the capture directory.
+fn marker(capture_dir: &Path) -> PathBuf {
+    capture_dir.join("scene")
+}
+
+/// Write the scene marker: this runner's process id and HOME, one per
+/// line, in a file nobody else made.
+fn write_marker(capture_dir: &Path) -> Result<(), String> {
+    use std::io::Write as _;
+    let home = dirs::home_dir()
+        .map(|home| home.display().to_string())
+        .unwrap_or_default();
+    File::options()
+        .write(true)
+        .create_new(true)
+        .open(marker(capture_dir))
+        .and_then(|mut file| writeln!(file, "{}\n{home}", std::process::id()))
+        .map_err(|error| format!("cannot write the scene marker: {error}"))
 }
 
 /// The directory a scene runs in, the steps left to run, and the temporary
@@ -296,7 +324,7 @@ fn execute(
     }
     // The isolated state directory comes before the scene's own
     // variables, so a scene may name a fixture state. The scene's
-    // variables come before `PATH`, the root, and the live HOME, so a
+    // variables come before `PATH`, the root, and the scene marker, so a
     // fence token can never replace those three. A scene keeps the
     // runner's HOME for the tools that need it, such as a harness login,
     // and rune installs no hook there from a scene: the registrations
@@ -311,11 +339,8 @@ fn execute(
         .env("NO_COLOR", "1")
         .env("COLUMNS", "100")
         .env("PATH", path)
-        .env("RUNE_PROOF_ROOT", root);
-    if let Some(home) = std::env::var_os("HOME") {
-        command.env("RUNE_PROOF_LIVE_HOME", home);
-    }
-    command
+        .env("RUNE_PROOF_ROOT", root)
+        .env(crate::cli::hook::PROOF_SCENE_VAR, marker(capture_dir))
         .stdin(stdin)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -409,16 +434,24 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_knows_the_live_home_and_has_its_own_state() {
-        let Some(home) = std::env::var_os("HOME") else {
+    fn a_scene_has_a_marker_while_it_runs_and_its_own_state() {
+        let Some(home) = dirs::home_dir() else {
             return;
         };
-        let home = home.to_string_lossy().into_owned();
+        let (home, pid) = (home.display(), std::process::id());
         let s = scene(&format!(
-            "$ sh -c 'printf \"%s\\n\" \"$RUNE_PROOF_LIVE_HOME\"; test \"$RUNE_STATE_DIR\" != \"$HOME/.local/state/rune\" && echo own-state'\n{home}\nown-state"
+            "$ sh -c 'echo \"$RUNE_PROOF_SCENE\"; cat \"$RUNE_PROOF_SCENE\"; test \"$RUNE_STATE_DIR\" != \"$HOME/.local/state/rune\" && echo own-state'\n[..]/scene\n{pid}\n{home}\nown-state"
         ));
         let run = run_scene(&s, &root());
         assert!(run.passed, "{:?}", run.failure);
+        // The marker goes with the scene, so nothing outside it can use it.
+        let marker = run
+            .section
+            .lines()
+            .map(str::trim)
+            .find(|line| line.ends_with("/scene"))
+            .expect("the scene printed its marker");
+        assert!(!Path::new(marker).exists(), "{marker}");
     }
 
     #[test]

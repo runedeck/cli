@@ -132,7 +132,7 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         return Err(Error::new(
             ErrorKind::Config,
             format!(
-                "a proof scene runs with the live HOME {}, so it installs no hook there; give the scene a HOME of its own",
+                "a proof scene runs with the runner's HOME {}, so it installs no hook there; give the scene a HOME of its own",
                 home.display()
             ),
         )
@@ -204,15 +204,46 @@ fn plan_text(plan: &Plan) -> Result<String, Error> {
 }
 
 /// The error code of a hook install a proof scene started with the live
-/// HOME. `rune install` skips its hook step on it.
+/// HOME. `rune install` reports its hook step as skipped on it.
 pub(crate) const LIVE_HOME_IN_PROOF: &str = "hooks.live_home_in_proof";
 
-/// Whether this process is a proof scene that kept the runner's HOME.
-/// The proof runner names its own HOME in `RUNE_PROOF_LIVE_HOME`. A scene
-/// that installs hooks there would leave the live registrations pointing
-/// at the scene's plan, which the runner deletes afterwards.
+/// The variable the proof runner sets for a scene's commands. It names a
+/// file in the runner's own capture directory that holds the runner's
+/// process id and HOME, one per line. The runner removes the file when
+/// the scene ends.
+pub(crate) const PROOF_SCENE_VAR: &str = "RUNE_PROOF_SCENE";
+
+/// The runner's HOME when this process runs inside a proof scene: the
+/// marker file exists, and the runner that wrote it still runs. A shell
+/// outside a proof has no marker, and a marker it inherited names a file
+/// that is gone or a runner that has exited, so it counts for nothing.
+pub(crate) fn proof_scene_home() -> Option<std::path::PathBuf> {
+    let marker = std::env::var_os(PROOF_SCENE_VAR)?;
+    let text = std::fs::read_to_string(marker).ok()?;
+    let mut lines = text.lines();
+    let pid: i32 = lines.next()?.trim().parse().ok().filter(|pid| *pid > 0)?;
+    let home = lines.next()?;
+    runner_runs(pid).then(|| std::path::PathBuf::from(home))
+}
+
+#[cfg(unix)]
+fn runner_runs(pid: i32) -> bool {
+    use nix::errno::Errno;
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+    matches!(kill(Pid::from_raw(pid), None), Ok(()) | Err(Errno::EPERM))
+}
+
+#[cfg(not(unix))]
+fn runner_runs(_pid: i32) -> bool {
+    true
+}
+
+/// Whether this process is a proof scene that kept the runner's HOME. A
+/// scene that installs hooks there would leave the live registrations
+/// pointing at the scene's plan, which the runner deletes afterwards.
 pub(crate) fn live_home_in_proof(home: &std::path::Path) -> bool {
-    std::env::var_os("RUNE_PROOF_LIVE_HOME").is_some_and(|live| std::path::Path::new(&live) == home)
+    proof_scene_home().is_some_and(|live| live == home)
 }
 
 /// Compile the config, turning every fault into one error that names it.
