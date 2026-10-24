@@ -158,8 +158,12 @@ fn adoption(command: &str, plan_ids: &[String]) -> Option<&'static str> {
     None
 }
 
+/// The hash of a registration over its keys in sorted order, so the key
+/// order a table keeps never reads as a hand edit.
 fn hash_value(value: &Value) -> String {
-    let text = serde_json::to_string(value).unwrap_or_default();
+    let mut sorted = value.clone();
+    sorted.sort_all_objects();
+    let text = serde_json::to_string(&sorted).unwrap_or_default();
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
@@ -204,6 +208,21 @@ fn table_path(home: &Path, harness: Harness) -> PathBuf {
         Harness::Claude => home.join(".claude").join("settings.json"),
         Harness::Codex => home.join(".codex").join("hooks.json"),
         _ => home.join(format!(".{harness}")).join("hooks.json"),
+    }
+}
+
+/// The file a table path names: the target of a symbolic link, so the
+/// write lands in the owner's file and the link stays a link.
+fn resolved(path: &Path) -> Result<PathBuf, Error> {
+    if path.is_symlink() {
+        fs::canonicalize(path).map_err(|error| {
+            Error::io(format!(
+                "{} is a link rune cannot follow: {error}",
+                path.display()
+            ))
+        })
+    } else {
+        Ok(path.to_path_buf())
     }
 }
 
@@ -300,7 +319,8 @@ pub(crate) fn prepare(
     }
     for harness in Harness::REGISTERED {
         let path = table_path(home, harness);
-        let mut table = read_table(&path)?;
+        let file = resolved(&path)?;
+        let mut table = read_table(&file)?;
         let previous = manifest
             .harnesses
             .get(&harness)
@@ -482,7 +502,7 @@ pub(crate) fn prepare(
         if changed {
             table.insert("hooks".into(), Value::Object(hooks));
             files.push(Staged {
-                target: path.clone(),
+                target: file.clone(),
                 text: table_text(&table)?,
                 new_mode: Some(0o600),
             });

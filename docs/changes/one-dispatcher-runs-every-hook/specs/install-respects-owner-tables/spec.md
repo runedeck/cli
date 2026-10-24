@@ -14,3 +14,12 @@ Install MUST read every harness table and find every conflict before it writes t
 
 - **WHEN** the Codex `hooks.json` is not JSON and `rune install` runs
 - **THEN** the install exits non-zero and names the file, and the Claude table, the plan, and the manifest are unchanged
+
+### Requirement: Install Writes Through The Owner's File
+
+When a table is a symbolic link, install MUST write the file the link points to and leave the link in place. A table install rewrites MUST keep its permission bits and the order of its keys.
+
+#### Scenario: Settings kept in a dotfiles directory
+
+- **WHEN** `~/.claude/settings.json` links to a mode 0600 file in a dotfiles directory and `rune install` runs
+- **THEN** the link remains, the linked file holds the rune entries with mode 0600, and its top-level keys keep their order

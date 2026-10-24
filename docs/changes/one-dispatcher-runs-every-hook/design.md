@@ -65,6 +65,8 @@ The stop allowance is 150 ms: the 25 ms poll that notices the deadline, the 10 m
 
 `install::prepare` reads the manifest and every registered harness table and computes the new tables without writing. A hand-edited owned entry or an unreadable table stops it there. `publish` then stages the plan, each changed table, and the manifest beside their targets and renames them in that order. When a rename fails, the targets already replaced get their old bytes back and a target that did not exist is removed again. The plan goes first because a registration for an event the old plan lacks only reports that no handler subscribes, while a table without its plan would point at nothing.
 
+A table that is a symbolic link, such as a `settings.json` the dotfiles keep, is resolved first, and the file it points to is the one staged and replaced, so the link survives. A replaced file keeps its permission bits, and a new table is created with mode 0600. `serde_json` runs with `preserve_order`, so the owner's key order survives the rewrite. Registration hashes are taken over the entry with its keys sorted, so a key order change alone is no conflict, and the hashes in a manifest written before `preserve_order` still match.
+
 ## Ownership of the Claude table
 
 The dotfiles render `~/.claude/settings.json` from a template. Release 1 turns that template into a chezmoi `modify_` script that takes the live file's `hooks` key as is, so rune's entries survive `chezmoi apply`, and declares no hook of its own. Legacy `sh ~/.sd/hook` entries are adopted by the first install, then the `dot_sd/hooks/` tree and the dispatcher go.

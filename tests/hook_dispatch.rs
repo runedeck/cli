@@ -161,6 +161,36 @@ fn an_unreadable_codex_table_stops_the_install_before_anything_is_written() {
     assert!(!scene.state().join("hooks/plan.json").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn install_writes_through_a_linked_settings_file_and_keeps_its_mode_and_order() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let scene = Scene::new();
+    let dotfiles = scene.home().join("dotfiles/claude-settings.json");
+    std::fs::create_dir_all(dotfiles.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    std::fs::write(
+        &dotfiles,
+        r#"{"permissions": {"allow": ["Bash(git status)"]}, "model": "opus", "env": {"API_TOKEN": "x"}}"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&dotfiles, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::os::unix::fs::symlink(&dotfiles, claude_settings(&scene)).unwrap();
+    scene.config(DCG_GUARD);
+    scene.rune().args(["hook", "install"]).assert().success();
+    let link = claude_settings(&scene);
+    assert!(link.is_symlink(), "the link stays a link");
+    let mode = std::fs::metadata(&dotfiles).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let text = std::fs::read_to_string(&dotfiles).unwrap();
+    let order: Vec<usize> = ["\"permissions\"", "\"model\"", "\"env\"", "\"hooks\""]
+        .iter()
+        .map(|key| text.find(key).unwrap_or(usize::MAX))
+        .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{text}");
+    assert!(json_at(&dotfiles)["hooks"]["PreToolUse"].is_array());
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]
