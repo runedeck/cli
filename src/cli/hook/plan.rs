@@ -33,6 +33,21 @@ pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
     Ok(path)
 }
 
+/// The plan for the moment between publishing the plan and the tables:
+/// the new plan plus every event the old plan has and the new one drops.
+/// A registration of either install finds its event in it, so no guarded
+/// event falls to its registration's fallback while the tables change.
+pub(crate) fn bridge(old: &Plan, new: &Plan) -> Plan {
+    let mut bridge = new.clone();
+    for (harness, events) in &old.harnesses {
+        let target = bridge.harnesses.entry(*harness).or_default();
+        for (name, event) in events {
+            target.entry(name.clone()).or_insert_with(|| event.clone());
+        }
+    }
+    bridge
+}
+
 /// The plan at `path`, and a warning when the user config is newer than
 /// it. The registration names the path install wrote, so a harness that
 /// runs the dispatcher with another state directory reads the same plan.
@@ -70,4 +85,29 @@ fn newer_config(plan: &PathBuf) -> Option<PathBuf> {
         .and_then(|m| m.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH);
     (config_time > plan_time).then_some(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune::hooks::{Harness, Hooks};
+
+    fn plan(yaml: &str) -> Plan {
+        serde_yaml::from_str::<Hooks>(yaml)
+            .unwrap()
+            .compile()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_bridge_keeps_every_event_of_both_plans() {
+        let old = plan(
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n",
+        );
+        let new = plan("handlers:\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n");
+        let both = bridge(&old, &new);
+        assert!(both.event(Harness::Claude, "PreToolUse").is_some());
+        assert!(both.event(Harness::Claude, "SessionEnd").is_some());
+        assert_eq!(bridge(&new, &new), new, "no dropped event, no bridge");
+    }
 }

@@ -53,6 +53,19 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
         None => plan::path().and_then(|path| plan::read_at(&path)),
     };
     let answer = match loaded {
+        // A plan that loads but names no handler for the registered event
+        // is as good as none: a guarded registration still denies.
+        Ok((plan, _))
+            if plan.event(harness, native_event).is_none() && policy == OnFailure::Deny =>
+        {
+            no_plan(
+                harness,
+                native_event,
+                policy,
+                &format!("the plan names no handler for {native_event} on {harness}"),
+                log_dir().as_deref(),
+            )
+        }
         Ok((plan, warning)) => {
             if let Some(warning) = warning {
                 eprintln!("rune hook: {warning}");

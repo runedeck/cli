@@ -157,16 +157,34 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         check,
     )?;
     if !check && !dry_run {
+        // While the tables change, the plan on disk serves the old
+        // registrations and the new ones: the bridge first, then the new
+        // plan once every table is written.
+        let previous = plan::read_at(&plan_path).ok().map(|(old, _)| old);
+        let bridge = previous
+            .as_ref()
+            .map(|old| plan::bridge(old, &plan))
+            .filter(|bridge| *bridge != plan);
         let mut files = vec![publish::Staged {
-            target: plan_path,
-            text: serde_json::to_string_pretty(&plan)
-                .map_err(|error| Error::io(error.to_string()))?,
+            target: plan_path.clone(),
+            text: plan_text(bridge.as_ref().unwrap_or(&plan))?,
             new_mode: None,
         }];
         files.extend(prepared.files);
         publish::publish(&files)?;
+        if bridge.is_some() {
+            publish::publish(&[publish::Staged {
+                target: plan_path,
+                text: plan_text(&plan)?,
+                new_mode: None,
+            }])?;
+        }
     }
     Ok(Some(prepared.report))
+}
+
+fn plan_text(plan: &Plan) -> Result<String, Error> {
+    serde_json::to_string_pretty(plan).map_err(|error| Error::io(error.to_string()))
 }
 
 /// The error code of a hook install a proof scene started with the live

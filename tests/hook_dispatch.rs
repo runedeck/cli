@@ -464,6 +464,37 @@ fn a_truncated_plan_denies_under_a_deny_registration() {
 }
 
 #[test]
+fn a_valid_plan_without_the_registered_event_follows_the_registration() {
+    let scene = Scene::new();
+    let capture = scene.handler("capture", "cat > /dev/null; printf '{}'");
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: capture\n      exec: [sh, {capture}]\n      events: [session.end]\n"
+    ));
+    scene.write_plan();
+    let plan = scene.state().join("hooks/plan.json").display().to_string();
+    let payload = claude_bash(scene.root.path(), "rm -rf /tmp/x");
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &plan, "--on-failure", "deny"]);
+    let answer = dispatch(scene.rune(), &args, &payload);
+    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
+    assert!(
+        answer.stderr.contains("names no handler for PreToolUse"),
+        "{}",
+        answer.stderr
+    );
+    // An unguarded registration still proceeds and says why.
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &plan]);
+    let answer = dispatch(scene.rune(), &args, &payload);
+    assert_eq!(answer.stdout, "");
+    assert!(
+        answer.stderr.contains("no handler subscribes"),
+        "{}",
+        answer.stderr
+    );
+}
+
+#[test]
 fn an_inherited_grok_variable_does_not_switch_the_guard_off() {
     let scene = Scene::new();
     denying_guard(&scene);
