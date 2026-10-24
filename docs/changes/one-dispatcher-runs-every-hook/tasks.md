@@ -66,3 +66,10 @@
 - [x] 10.2 Dispatcher: a generation whose bytes do not hash to the digest in its name does not load, so the registration's failure policy answers, and `--check` names the file
 - [x] 10.3 Install: the retired records are reconciled before publication, a generation goes only after 14 days and two more installs, and the manifest counts its installs
 - [x] 10.4 Install: the lock is std's file lock on a file in each directory, so it holds on Windows too
+
+## 11. Review fixes, round six
+
+- [x] 11.1 Install: before the tables change, the old manifest drops the record of every generation the old or the new tables name, so a killed install can only delay a deletion
+- [x] 11.2 Codex: a removal that would move a hook Codex trusts waits, the output names the step, and `--check` checks every hook in the groups install touches
+- [x] 11.3 Install: a generation goes only after installs on 14 different days have found it unnamed, so a clock set forward cannot end the window
+- [x] 11.4 Install: a staged file whose write fails is removed at once

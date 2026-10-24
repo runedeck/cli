@@ -8,7 +8,7 @@ How `rune install` changes the harness hook tables the owner also edits: all at 
 
 ### Requirement: Install Writes Every File Or None
 
-Install MUST read every harness table and find every conflict before it writes anything. It MUST write the new plan generations first, then the tables and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave on any platform rune is released for, from the first generation written to the last one deleted.
+Install MUST read every harness table and find every conflict before it writes anything. It MUST write the new plan generations first, then the tables and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends. A partly written staged file MUST be removed. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave on any released platform.
 
 #### Scenario: Unreadable Codex table
 

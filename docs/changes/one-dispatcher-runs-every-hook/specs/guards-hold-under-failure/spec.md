@@ -59,7 +59,7 @@ Install MUST write the absolute path of the registration's plan generation into 
 
 ### Requirement: A Registration Reads The Plan Generation It Was Installed With
 
-Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. When the tables stop naming a generation, the manifest MUST record the time and the install count, and MUST drop that record whenever a table names the generation again. Install MUST delete a generation only when no table names it, its record is 14 days old, and two more installs have run.
+Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. When the tables stop naming a generation, the manifest MUST record the time and install count, and MUST drop that record before a table names the generation again. Install MUST delete a generation only when no table names it, its record is 14 days old, two more installs have run, and installs on 14 days have found it unnamed.
 
 #### Scenario: Install fails after the new generations
 
@@ -73,8 +73,13 @@ Each registration MUST name its own plan generation: the plan for its harness an
 
 #### Scenario: Generation unnamed for 15 days
 
-- **WHEN** the manifest records that the tables stopped naming one generation 15 days ago and another 13 days ago, and two installs run
+- **WHEN** the tables stopped naming one generation 15 days ago and another 13 days ago, installs saw both unnamed on 13 days, and two installs run
 - **THEN** the first install keeps both, and the second deletes the first generation and keeps the second with its recorded time
+
+#### Scenario: Clock set forward before two installs
+
+- **WHEN** a generation's record says 20 days, as after a clock correction, and two installs run on one day
+- **THEN** the generation stays, because installs found it unnamed on one day only
 
 #### Scenario: Stale record of a named generation
 
@@ -94,6 +99,20 @@ On Codex, a changed plan MUST NOT replace a rune entry that Codex trusts, becaus
 
 - **WHEN** the owner then trusts the new entry in `/hooks` and `rune install` runs again
 - **THEN** the earlier entry goes, its group stays empty, and the new entry keeps its position
+
+### Requirement: A Removal Never Moves A Trusted Codex Hook
+
+On Codex, install MUST NOT remove a hook when the removal would move a hook Codex trusts to a lower handler of its group, because Codex keys trust by position. Install MUST keep that hook and name the step that frees it. `rune hook install --check` MUST fail while such a removal waits, and for every hook Codex does not trust in a group that holds a rune entry or loses a hook.
+
+#### Scenario: Earlier entry before a trusted guard
+
+- **WHEN** rune's earlier Codex entry and a guard Codex trusts share a group, and the owner has trusted the new rune entry
+- **THEN** the earlier entry stays, the output names the step, and `rune hook install --check` exits non-zero
+
+#### Scenario: Untrusted hook in rune's group
+
+- **WHEN** the owner adds a guard to rune's Codex group and has not trusted it
+- **THEN** `rune hook install --check` names the guard and its position
 
 ### Requirement: The Dispatcher Log Holds No Text
 
