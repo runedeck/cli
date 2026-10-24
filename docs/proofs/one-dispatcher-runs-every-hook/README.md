@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: f9f6177f4f1d93130b1fdf028e64b1fd0c6e6d9e
+head: f48385166ffc0c863f1c2d8137ec7a4e0de17c11
 recorded: 2026-10-24
-transcript: 1b6a0b841d7a5293060b701cbbacde5f166a6560f45a8445ee3c7dd9cfe7732c
+transcript: e62e3b56f79f3bcb4e59ce1e9ac3cdcde50c7b835c25a1804ee7c2f688f73e4f
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -67,11 +67,19 @@ scenes:
   kind: check
 - scenario: guards-hold-under-failure#the-registration-carries-the-plan-and-the-policy/plan-without-the-guarded-event
   kind: check
+- scenario: guards-hold-under-failure#the-registration-carries-the-plan-and-the-policy/generation-edited-after-install
+  kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
   kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
   kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/generation-unnamed-for-15-days
+  kind: check
+- scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/stale-record-of-a-named-generation
+  kind: check
+- scenario: guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/changed-plan-on-a-trusted-rune-entry
+  kind: check
+- scenario: guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/replacement-trusted
   kind: check
 - scenario: guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
   kind: check
@@ -499,6 +507,21 @@ $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse 
 rune hook: the plan names no handler for PreToolUse on claude; denied
 ```
 
+## guards-hold-under-failure#the-registration-carries-the-plan-and-the-policy/generation-edited-after-install
+
+```console
+$# dcg guards tool.before, and an edit then clears the handlers in the generation its registration names
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json > guard.cmd && sed -n "s/.* --plan \([^ ]*\) .*/\1/p" guard.cmd > guard.plan && jq ".harnesses.claude.PreToolUse.handlers = []" "$(cat guard.plan)" > edited.json && mv edited.json "$(cat guard.plan)"'
+$# the file is still a valid plan, but not the bytes its name is the digest of, so the registration's deny answers
+$ sh -c 'HOME="$PWD/home" sh -c "$(cat guard.cmd)" | jq -r .hookSpecificOutput.permissionDecision'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
+rune hook: [..] does not hold the plan its name is the digest of: it changed after install; run `rune install`; denied
+deny
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "changed after install"'
+drift: the plan generation [..] was changed after install; run `rune hook install`
+```
+
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
 
 ```console
@@ -552,10 +575,58 @@ $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/h
 $# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago
 $ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
 $ sh -c 'jq -r ".retired[0].generation" state/hooks/manifest.json > first && jq -r ".retired[1].generation" state/hooks/manifest.json > second && jq -r ".retired[1].since" state/hooks/manifest.json > second.since'
+$# one more install keeps both, because two installs must follow the one that retired them
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && test -f "$(cat first)" && test -f "$(cat second)" && echo both stay after one more install'
+both stay after one more install
+$# after a second install, the first generation is gone, and the second stays with its recorded time
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the first generation is gone, and the second stays with its recorded time
 $ sh -c 'test ! -e "$(cat first)" && test -f "$(cat second)" && jq -r --arg g "$(cat second)" ".retired[] | select(.generation == \$g) | .since" state/hooks/manifest.json | cmp - second.since && echo the first went, the second stays'
 the first went, the second stays
+```
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/stale-record-of-a-named-generation
+
+```console
+$# dcg guards tool.before, and the manifest holds a 15-day-old record for the generation its table names, as an install that stopped before its cleanup leaves it
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\) .*/\1/p" > old.plan && jq --arg g "$(cat old.plan)" ".retired += [{generation: \$g, since: ((now - 15 * 86400) | floor | todate), install: 0}]" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
+$# the config gives dcg's id to an observer, and the install succeeds
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the old generation stays, and its record starts at this install, this hour
+$ sh -c 'test -f "$(cat old.plan)" && jq -c --arg g "$(cat old.plan)" "[.installs, (.retired[] | select(.generation == \$g) | .install, (.since > ((now - 3600) | floor | todate)))]" state/hooks/manifest.json'
+[2,2,true]
+```
+
+## guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/changed-plan-on-a-trusted-rune-entry
+
+```console
+$# rune guards Codex's PreToolUse with dcg, and the owner trusts the entry in /hooks, here written to config.toml the way Codex writes it
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use'
+$# an observer takes dcg's id, so the event gets a new generation, and its entry a new command Codex does not trust
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*PreToolUse"'
+codex: PreToolUse registered
+trust: codex: PreToolUse keeps rune's earlier entry, which codex trusts, until codex trusts the new one at group 2 handler 1
+trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+$# the trusted entry still stands first, and the new one has a group of its own
+$ jq -c '[.hooks.PreToolUse[] | [.hooks[].command | contains("rune hook run")]]' home/.codex/hooks.json
+[[true],[true]]
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check >/dev/null'
+? 1
+```
+
+## guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/replacement-trusted
+
+```console
+$# a trusted rune entry on Codex's PreToolUse, then a changed plan, so the new entry stands beside it
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.codex && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the owner trusts the new entry, and the next install removes the earlier one
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/hooks/trust-codex.sh" "$PWD/home" PreToolUse pre_tool_use last && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*PreToolUse"'
+codex: PreToolUse earlier entry removed
+$# the earlier entry's group stays empty, so the new entry keeps the position Codex trusts
+$ jq -c '.hooks.PreToolUse | [.[0], (.[1].hooks | length)]' home/.codex/hooks.json
+[{"hooks":[]},1]
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; ! grep -q "^drift:.*PreToolUse" check.out && echo no PreToolUse drift'
+no PreToolUse drift
 ```
 
 ## guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
@@ -606,7 +677,7 @@ $ sh -c 'cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.j
 $ jq -c '[.hooks | has("SessionStart")]' home/.claude/settings.json home/.codex/hooks.json
 [false]
 [false]
-$ sh -c '! ls -a state/hooks state/hooks/plans home/.claude home/.codex | grep -q rune- && echo no staged or kept file'
+$ sh -c '! ls -a state/hooks state/hooks/plans home/.claude home/.codex | grep -q -e .rune-new- -e .rune-old- && echo no staged or kept file'
 no staged or kept file
 ```
 
@@ -620,7 +691,7 @@ both installs exited 0
 $# one dispatcher entry per subscribed event, and nothing staged is left beside a table
 $ jq -c '[.hooks | to_entries[] | {(.key): ([.value[].hooks[].command | select(contains("rune hook run"))] | length)}] | add' home/.claude/settings.json
 {"PreToolUse":1,"Notification":0,"PostToolUse":1,"SessionEnd":1}
-$ sh -c '! ls -a home/.claude home/.codex state/hooks | grep -q rune- && echo no staged file left'
+$ sh -c '! ls -a home/.claude home/.codex state/hooks | grep -q -e .rune-new- -e .rune-old- && echo no staged file left'
 no staged file left
 ```
 
