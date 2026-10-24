@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: 0e349b6ad5a92bb077ff51f5a93cc8bbcd359423
+head: 20d20a4ef8cccb9bd4dcd7d54c236ab8f802e4b7
 recorded: 2026-10-24
-transcript: 913fa73cfe4cfcf82789d5625d42d5854328ac429cca89b7080da9340a94ea1b
+transcript: e7aa8a566c0be0b1da2b019360a0c4451de83b04c47707f70366e4789a17d491
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -70,6 +70,8 @@ scenes:
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
   kind: check
 - scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
+  kind: check
+- scenario: guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/generation-unnamed-for-15-days
   kind: check
 - scenario: guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
   kind: check
@@ -500,9 +502,9 @@ rune hook: the plan names no handler for PreToolUse on claude; denied
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-fails-after-the-new-generations
 
 ```console
-$# dcg guards tool.before with the deny policy, and its registration and generation stay aside
+$# dcg guards tool.before with the deny policy, and its registration, its generation, and the manifest stay aside
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json > old.cmd && sed -n "s/.* --plan \([^ ]*\) .*/\1/p" old.cmd > old.plan && cp -f "$(cat old.plan)" old.json'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json > old.cmd && sed -n "s/.* --plan \([^ ]*\) .*/\1/p" old.cmd > old.plan && cp -f "$(cat old.plan)" old.json && cp -f state/hooks/manifest.json manifest.before'
 $# the config gives dcg's id to an observer, and the manifest's directory turns read-only
 $ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && chmod 555 state/hooks'
 $# the install writes the observer's generation, then fails to stage the manifest
@@ -516,24 +518,44 @@ rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; ru
 no rm -rf
 $ sh -c 'cmp "$(cat old.plan)" old.json && echo the old generation is unchanged'
 the old generation is unchanged
-$# the observer's generation went with the failed install
-$ sh -c 'for f in state/hooks/plans/*.json; do grep -rqF "${f##*/}" home || echo "no table names $f"; done; echo every generation left is named'
-every generation left is named
+$# the failed install wrote nothing more, so the manifest is unchanged
+$ sh -c 'cmp state/hooks/manifest.json manifest.before && echo the manifest is unchanged'
+the manifest is unchanged
 ```
 
 ## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/install-replaces-the-tables
 
 ```console
-$# dcg guards tool.before with the deny policy
+$# dcg guards tool.before with the deny policy, and its registration stays aside, as a running session holds it
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\) .*/\1/p" > old.plan'
+$ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json > old.cmd && sed -n "s/.* --plan \([^ ]*\) .*/\1/p" old.cmd > old.plan'
 $# the config gives dcg's id to an observer, and the install succeeds
 $ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the registration names a new generation, and the old one is gone
-$ sh -c 'new=$(jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\).*/\1/p"); test "$new" != "$(cat old.plan)" && test -f "$new" && test ! -e "$(cat old.plan)" && echo a new generation, and the old one is gone'
-a new generation, and the old one is gone
-$ sh -c 'for f in state/hooks/plans/*.json; do grep -rqF "${f##*/}" home || echo "no table names $f"; done; echo every generation left is named'
-every generation left is named
+$# the registration names a new generation
+$ sh -c 'new=$(jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.json | sed -n "s/.* --plan \([^ ]*\).*/\1/p"); test "$new" != "$(cat old.plan)" && test -f "$new" && echo a new generation'
+a new generation
+$# the session's old registration still denies from the old generation
+$ sh -c 'HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
+rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+no rm -rf
+$# the manifest records when the tables stopped naming the old generation
+$ sh -c 'jq -r --arg old "$(cat old.plan)" ".retired[] | select(.generation == \$old) | .since" state/hooks/manifest.json | grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$"'
+1
+```
+
+## guards-hold-under-failure#a-registration-reads-the-plan-generation-it-was-installed-with/generation-unnamed-for-15-days
+
+```console
+$# dcg guards tool.before, then an observer takes its id, so the tables stop naming the guard's generations
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/dcg-observer/.config/rune/config.yaml" home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the manifest says the tables stopped naming one generation 15 days ago and another 13 days ago
+$ sh -c 'jq ".retired[0].since = ((now - 15 * 86400) | floor | todate) | .retired[1].since = ((now - 13 * 86400) | floor | todate)" state/hooks/manifest.json > edited.json && mv edited.json state/hooks/manifest.json'
+$ sh -c 'jq -r ".retired[0].generation" state/hooks/manifest.json > first && jq -r ".retired[1].generation" state/hooks/manifest.json > second && jq -r ".retired[1].since" state/hooks/manifest.json > second.since'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
+$# the first generation is gone, and the second stays with its recorded time
+$ sh -c 'test ! -e "$(cat first)" && test -f "$(cat second)" && jq -r --arg g "$(cat second)" ".retired[] | select(.generation == \$g) | .since" state/hooks/manifest.json | cmp - second.since && echo the first went, the second stays'
+the first went, the second stays
 ```
 
 ## guards-hold-under-failure#the-dispatcher-log-holds-no-text/command-that-carries-a-token
@@ -578,8 +600,8 @@ $ sh -c 'mv state/hooks/manifest.json manifest.saved && mkdir -p state/hooks/man
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
 [..]state/hooks/manifest.json: cannot keep the old file to put it back: [..]
-$# both tables have their old bytes, the Claude table its old mode, no table gained SessionStart, and the generations are the old ones
-$ sh -c 'cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && ls state/hooks/plans | cmp - plans.before && ls -l home/.claude/settings.json | cut -c1-10'
+$# both tables have their old bytes, the Claude table its old mode, no table gained SessionStart, and every old generation is still there
+$ sh -c 'cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && test -z "$(ls state/hooks/plans | comm -23 plans.before -)" && ls -l home/.claude/settings.json | cut -c1-10'
 -r--r--r--
 $ jq -c '[.hooks | has("SessionStart")]' home/.claude/settings.json home/.codex/hooks.json
 [false]
@@ -647,11 +669,11 @@ $# the owner empties the handler list, and the old registrations are drift
 $ sh -c 'printf "hooks:\n  handlers: []\n" > home/.config/rune/config.yaml && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check >/dev/null'
 ? 1
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# no rune entry is left, the owner's Stop hook is, and no plan generation is
+$# no rune entry is left, the owner's Stop hook is, and the manifest records every generation as no longer named
 $ jq -c '[([.hooks[][] | .hooks[].command | select(contains("rune hook run"))] | length), .hooks.Stop[0].hooks[0].command]' home/.claude/settings.json
 [0,"/owner/stop"]
-$ sh -c 'test -z "$(ls -A state/hooks/plans)" && echo no plan generation left'
-no plan generation left
+$ sh -c 'test "$(ls state/hooks/plans | wc -l)" -eq "$(jq ".retired | length" state/hooks/manifest.json)" && jq -c "[(.generations | length), (.retired | length > 0)]" state/hooks/manifest.json'
+[0,true]
 ```
 
 ## install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/turn-wrap-on-stop
