@@ -125,13 +125,23 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
 /// what happened without printing it: `rune install` folds it into its
 /// own result. `None` when the config declares no handler.
 pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<install::Report>, Error> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
+    if live_home_in_proof(&home) {
+        return Err(Error::new(
+            ErrorKind::Config,
+            format!(
+                "a proof scene runs with the live HOME {}, so it installs no hook there; give the scene a HOME of its own",
+                home.display()
+            ),
+        )
+        .with_code(LIVE_HOME_IN_PROOF));
+    }
     let config = ontology::load()?;
     if config.hooks.handlers.is_empty() {
         return Ok(None);
     }
     let plan = compile(&config.hooks)?;
-    let home = dirs::home_dir()
-        .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
     let rune = std::env::current_exe()
         .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
     let plan_path = plan::path()?;
@@ -157,6 +167,18 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         publish::publish(&files)?;
     }
     Ok(Some(prepared.report))
+}
+
+/// The error code of a hook install a proof scene started with the live
+/// HOME. `rune install` skips its hook step on it.
+pub(crate) const LIVE_HOME_IN_PROOF: &str = "hooks.live_home_in_proof";
+
+/// Whether this process is a proof scene that kept the runner's HOME.
+/// The proof runner names its own HOME in `RUNE_PROOF_LIVE_HOME`. A scene
+/// that installs hooks there would leave the live registrations pointing
+/// at the scene's plan, which the runner deletes afterwards.
+pub(crate) fn live_home_in_proof(home: &std::path::Path) -> bool {
+    std::env::var_os("RUNE_PROOF_LIVE_HOME").is_some_and(|live| std::path::Path::new(&live) == home)
 }
 
 /// Compile the config, turning every fault into one error that names it.

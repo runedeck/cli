@@ -266,6 +266,34 @@ fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
     );
 }
 
+#[test]
+fn a_proof_scene_with_the_live_home_installs_no_hook() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    let mut command = scene.rune();
+    command
+        .env("RUNE_PROOF_LIVE_HOME", scene.home())
+        .args(["hook", "install"]);
+    let output = command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("a proof scene runs with the live HOME"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!claude_settings(&scene).exists(), "no table was written");
+    assert!(!scene.state().join("hooks/plan.json").exists());
+    // A scene that names a HOME of its own installs as usual.
+    let mut command = scene.rune();
+    command
+        .env("RUNE_PROOF_LIVE_HOME", scene.path("elsewhere"))
+        .args(["hook", "install"])
+        .assert()
+        .success();
+    assert!(claude_settings(&scene).exists());
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]

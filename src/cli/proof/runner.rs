@@ -5,7 +5,8 @@
 //! `RUNE_PROOF_ROOT` names the repository for a scene that runs through
 //! `sh -c` and needs a fixture. `RUNE_STATE_DIR` names a fresh state
 //! directory for the scene unless the scene names its own, so no live
-//! record reaches a proof. A step's `< ` lines reach it as a file on
+//! record reaches a proof. `RUNE_PROOF_LIVE_HOME` names the runner's HOME,
+//! where a scene installs no hook. A step's `< ` lines reach it as a file on
 //! standard input. Capture files live outside the scene's
 //! directory and are read through the handle the runner holds, so a
 //! command cannot rewrite what it printed.
@@ -295,8 +296,11 @@ fn execute(
     }
     // The isolated state directory comes before the scene's own
     // variables, so a scene may name a fixture state. The scene's
-    // variables come before `PATH` and the root, so a fence token can
-    // never replace those two.
+    // variables come before `PATH`, the root, and the live HOME, so a
+    // fence token can never replace those three. A scene keeps the
+    // runner's HOME for the tools that need it, such as a harness login,
+    // and rune installs no hook there from a scene: the registrations
+    // would point at a plan the runner deletes.
     let mut command = Command::new(&program);
     command
         .args(&step.argv[1..])
@@ -307,7 +311,11 @@ fn execute(
         .env("NO_COLOR", "1")
         .env("COLUMNS", "100")
         .env("PATH", path)
-        .env("RUNE_PROOF_ROOT", root)
+        .env("RUNE_PROOF_ROOT", root);
+    if let Some(home) = std::env::var_os("HOME") {
+        command.env("RUNE_PROOF_LIVE_HOME", home);
+    }
+    command
         .stdin(stdin)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -398,6 +406,19 @@ mod tests {
         let s = scene("$ printf 'a\\n'\nb");
         let run = run_scene(&s, &root());
         assert!(run.failure.unwrap().contains("- b"));
+    }
+
+    #[test]
+    fn a_scene_knows_the_live_home_and_has_its_own_state() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let home = home.to_string_lossy().into_owned();
+        let s = scene(&format!(
+            "$ sh -c 'printf \"%s\\n\" \"$RUNE_PROOF_LIVE_HOME\"; test \"$RUNE_STATE_DIR\" != \"$HOME/.local/state/rune\" && echo own-state'\n{home}\nown-state"
+        ));
+        let run = run_scene(&s, &root());
+        assert!(run.passed, "{:?}", run.failure);
     }
 
     #[test]

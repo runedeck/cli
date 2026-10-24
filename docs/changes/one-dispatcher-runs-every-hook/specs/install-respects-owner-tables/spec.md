@@ -83,6 +83,15 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 - **WHEN** the user config declares a handler and `rune install --json` runs
 - **THEN** stdout parses as one JSON document whose `hooks` lists the events written
 
+### Requirement: A Proof Scene Installs No Hook Into The Live HOME
+
+The proof runner MUST name its own HOME to each scene. A hook install a scene starts with that HOME MUST write nothing: `rune hook install` fails and names the HOME, and `rune install` deploys its deck and skips the hook step with a warning. A scene that names a HOME of its own installs as usual.
+
+#### Scenario: Scene installs with the runner's HOME
+
+- **WHEN** a proof scene runs `rune hook install` without a HOME of its own
+- **THEN** the command fails, and no harness table, plan, or manifest changes
+
 ### Requirement: The Manifest Remembers The Last Install
 
 A later install MUST carry every adopted entry forward in the manifest, so the record of what install removed survives. `rune install --check` MUST count a foreign entry the manifest does not list as drift.
