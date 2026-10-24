@@ -70,7 +70,22 @@ fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
 /// Stage one file beside its target in a file this run creates, with the
 /// target's mode when it has one, else the file's own.
 fn stage(file: &Staged) -> Result<PathBuf, Error> {
-    use std::io::Write as _;
+    stage_with(file, |out, staged| {
+        use std::io::Write as _;
+        out.write_all(file.text.as_bytes())?;
+        if let Some(mode) = mode_of(&file.target).or(file.new_mode) {
+            set_mode(staged, mode)?;
+        }
+        Ok(())
+    })
+}
+
+/// Create the staged file and let `write` fill it. A file `write` fails
+/// to finish is removed again, so no partial file stays beside a target.
+fn stage_with(
+    file: &Staged,
+    write: impl FnOnce(&mut File, &Path) -> std::io::Result<()>,
+) -> Result<PathBuf, Error> {
     if let Some(parent) = file.target.parent() {
         fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
     }
@@ -80,10 +95,10 @@ fn stage(file: &Staged) -> Result<PathBuf, Error> {
         .create_new(true)
         .open(&staged)
         .map_err(|e| io(&staged, &e))?;
-    out.write_all(file.text.as_bytes())
-        .map_err(|e| io(&staged, &e))?;
-    if let Some(mode) = mode_of(&file.target).or(file.new_mode) {
-        set_mode(&staged, mode).map_err(|e| io(&staged, &e))?;
+    if let Err(error) = write(&mut out, &staged) {
+        drop(out);
+        let _ = fs::remove_file(&staged);
+        return Err(io(&staged, &error));
     }
     Ok(staged)
 }
@@ -306,6 +321,20 @@ mod tests {
         assert_eq!(fs::read_to_string(&first).unwrap(), "first-old");
         assert!(!second.exists(), "a file that did not exist is gone again");
         assert!(blocked.join("inside").is_dir());
+        assert_eq!(leftovers(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_stage_that_fails_to_write_leaves_no_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("settings.json");
+        let error = stage_with(&staged(target, "new"), |out, _| {
+            use std::io::Write as _;
+            out.write_all(b"half")?;
+            Err(std::io::Error::other("the disk is full"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("the disk is full"), "{error}");
         assert_eq!(leftovers(dir.path()), Vec::<String>::new());
     }
 
