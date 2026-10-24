@@ -138,6 +138,24 @@ fn an_ansi_c_string_decodes_its_escapes() {
 }
 
 #[test]
+fn a_nul_ends_an_ansi_c_string_as_bash_ends_it() {
+    // Bash 5.3.20 prints `jj` for each of the first three and `ac` for
+    // the last (tried 2026-10-24).
+    for line in [
+        r"$'jj\0suffix' log > out",
+        r"$'jj\x00suffix' log > out",
+        r"$'jj\u0000x' log > out",
+    ] {
+        let commands = parse(line);
+        assert_eq!(commands[0].values(), ["jj", "log"], "{line}");
+        assert_eq!(commands[0].redirects.len(), 1, "{line}");
+        let jj = Exemptions::new(["jj *"]);
+        assert_eq!(judge(line, false, &jj).effect, Effect::Deny, "{line}");
+    }
+    assert_eq!(parse(r"x $'a\0b'c")[0].values(), ["x", "ac"]);
+}
+
+#[test]
 fn a_parameter_operand_hides_no_substitution_behind_quotes_or_a_hash() {
     for line in [
         r#"jj log "${X:-'$(printf probe)'}""#,

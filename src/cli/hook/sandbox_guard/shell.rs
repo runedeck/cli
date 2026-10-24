@@ -290,7 +290,9 @@ impl Reader {
     /// included, so the string ends at the first quote no backslash
     /// escapes. `$'a\'b' > f` is one word and a redirection. The escapes
     /// decode as Bash decodes them, so `$'\x6a\x6a'` is `jj`. Bytes that
-    /// are no UTF-8 become U+FFFD, a name no pattern matches.
+    /// are no UTF-8 become U+FFFD, a name no pattern matches. A NUL ends
+    /// the string as it does in Bash: `$'jj\0suffix'` is `jj`, and the
+    /// reader still reads on to the closing quote.
     fn ansi_c_quoted(&mut self) {
         self.open_word(true);
         self.at += 2;
@@ -302,6 +304,9 @@ impl Reader {
                 '\\' => self.ansi_c_escape(&mut bytes),
                 _ => bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
             }
+        }
+        if let Some(nul) = bytes.iter().position(|&byte| byte == 0) {
+            bytes.truncate(nul);
         }
         for c in String::from_utf8_lossy(&bytes).chars() {
             self.push(c, true);
