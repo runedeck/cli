@@ -46,7 +46,11 @@ clap_complete_nushell = "4"
 
 # serialization
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# raw_value: a harness table rune rewrites keeps every member it does not
+# change as written, in the owner's order. preserve_order would do that
+# too, but it lets HashMap order into every serde_json::Value the crate
+# prints, so the config reference and other output stop being stable.
+serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 schemars = "1"
 toml = "0.8"

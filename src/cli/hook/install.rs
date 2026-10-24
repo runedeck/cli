@@ -14,10 +14,11 @@ use std::path::{Path, PathBuf};
 use rune::error::{Error, ErrorKind};
 use rune::hooks::{Harness, Mode, OnFailure, Plan, PlannedEvent};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::publish::Staged;
+use super::table::Table;
 
 /// One entry of a harness table as rune records it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,34 +292,6 @@ fn resolved(path: &Path) -> Result<PathBuf, Error> {
     }
 }
 
-fn read_table(path: &Path) -> Result<Map<String, Value>, Error> {
-    if !path.exists() {
-        return Ok(Map::new());
-    }
-    let text = fs::read_to_string(path)
-        .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
-    let value: Value = serde_json::from_str(&text).map_err(|error| {
-        Error::new(
-            ErrorKind::Parse,
-            format!("{} is not JSON: {error}", path.display()),
-        )
-    })?;
-    match value {
-        Value::Object(map) => Ok(map),
-        _ => Err(Error::new(
-            ErrorKind::Parse,
-            format!("{} is not a JSON object", path.display()),
-        )),
-    }
-}
-
-/// A table as the file holds it: pretty JSON and a final newline.
-fn table_text(table: &Map<String, Value>) -> Result<String, Error> {
-    let text = serde_json::to_string_pretty(&Value::Object(table.clone()))
-        .map_err(|error| Error::io(error.to_string()))?;
-    Ok(format!("{text}\n"))
-}
-
 /// What an install found, and the files it would write: the changed
 /// tables, then the manifest. Nothing is written while it is computed.
 #[derive(Debug)]
@@ -384,7 +357,7 @@ pub(crate) fn prepare(
     for harness in Harness::REGISTERED {
         let path = table_path(home, harness);
         let file = resolved(&path)?;
-        let mut table = read_table(&file)?;
+        let table = Table::read(&file)?;
         let previous = manifest
             .harnesses
             .get(&harness)
@@ -392,11 +365,7 @@ pub(crate) fn prepare(
             .unwrap_or_default();
         let mut next = HarnessManifest::default();
         let mut changed = false;
-        let mut hooks: Map<String, Value> = table
-            .get("hooks")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
+        let mut rewritten: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let wanted: BTreeMap<String, Value> = plan
             .harnesses
             .get(&harness)
@@ -412,33 +381,28 @@ pub(crate) fn prepare(
                     .collect()
             })
             .unwrap_or_default();
-        // Every event the table already has, plus every event rune wants.
-        let mut names: Vec<String> = hooks.keys().cloned().collect();
+        // Every event the table already has, in its order, plus every
+        // event rune wants.
+        let mut names: Vec<String> = table.event_names();
         for name in wanted.keys() {
             if !names.contains(name) {
                 names.push(name.clone());
             }
         }
-        for name in names {
-            let entries: Vec<Value> = hooks
-                .get(&name)
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+        for name in &names {
+            let entries = table.groups(name);
             let event = Event {
                 harness,
-                name: &name,
+                name,
                 path: &path,
-                want: wanted.get(&name),
+                want: wanted.get(name),
                 previous: &previous,
                 plan_ids: &plan_ids,
             };
             let kept = event.reconcile(entries, &mut next, &mut report)?;
-            changed |= kept.changed;
-            if kept.groups.is_empty() {
-                hooks.remove(&name);
-            } else {
-                hooks.insert(name, Value::Array(kept.groups));
+            if kept.changed {
+                changed = true;
+                rewritten.insert(name.clone(), kept.groups);
             }
         }
         if harness == Harness::Codex {
@@ -459,10 +423,9 @@ pub(crate) fn prepare(
             continue;
         }
         if changed {
-            table.insert("hooks".into(), Value::Object(hooks));
             files.push(Staged {
                 target: file.clone(),
-                text: table_text(&table)?,
+                text: table.render(&names, &rewritten),
                 new_mode: Some(0o600),
             });
         }
