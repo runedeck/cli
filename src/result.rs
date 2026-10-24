@@ -7,6 +7,45 @@ pub struct ActionResult {
     pub pruned: Vec<PrunedFile>,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+    /// What the install did to the harness hook tables, when the user
+    /// config declares hooks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HookSummary>,
+}
+
+/// The hook tables after an install: `harness:event` for what was
+/// written, `harness:event:command` for what was adopted or kept, and one
+/// line for each gap, legacy entry, drift, trust step, and warning.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct HookSummary {
+    pub written: Vec<String>,
+    pub adopted: Vec<String>,
+    pub foreign: Vec<String>,
+    pub unsupported: Vec<String>,
+    pub legacy: Vec<String>,
+    pub drift: Vec<String>,
+    pub trust: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl HookSummary {
+    /// The lines a person reads after an install. Foreign entries stay
+    /// out: they are kept as they were.
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        lines.extend(self.written.iter().map(|w| format!("registered {w}")));
+        lines.extend(self.adopted.iter().map(|a| format!("adopted {a}")));
+        for (label, list) in [
+            ("unsupported", &self.unsupported),
+            ("legacy", &self.legacy),
+            ("drift", &self.drift),
+            ("trust", &self.trust),
+            ("warning", &self.warnings),
+        ] {
+            lines.extend(list.iter().map(|line| format!("{label}: {line}")));
+        }
+        lines
+    }
 }
 
 impl ActionResult {
@@ -80,6 +119,24 @@ mod tests {
         let from_default = ActionResult::default();
         assert_eq!(from_new.installed.len(), from_default.installed.len());
         assert_eq!(from_new.errors.len(), from_default.errors.len());
+    }
+
+    #[test]
+    fn the_hook_summary_appears_only_when_hooks_ran() {
+        let mut result = ActionResult::new();
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(json.get("hooks").is_none());
+        result.hooks = Some(HookSummary {
+            written: vec!["claude:PreToolUse".to_string()],
+            trust: vec!["codex: run /hooks".to_string()],
+            ..HookSummary::default()
+        });
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["hooks"]["written"][0], "claude:PreToolUse");
+        assert_eq!(
+            result.hooks.unwrap().lines(),
+            ["registered claude:PreToolUse", "trust: codex: run /hooks"]
+        );
     }
 
     #[test]

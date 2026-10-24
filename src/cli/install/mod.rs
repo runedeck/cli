@@ -76,10 +76,12 @@ pub fn execute(
         );
     }
     // The harness hook tables follow the user config, not the deck: one
-    // dispatcher entry per subscribed event, foreign entries kept.
+    // dispatcher entry per subscribed event, foreign entries kept. The
+    // report joins this result, so `--json` prints one document.
     if fire_events && !dry_run {
-        match crate::cli::hook::install_tables(false, false, true) {
-            Ok(_) => {}
+        match crate::cli::hook::install_report(false, false) {
+            Ok(Some(report)) => result.hooks = Some(report.summary()),
+            Ok(None) => {}
             Err(error) => result
                 .warnings
                 .push(format!("hook tables not written: {error}")),

@@ -15,10 +15,26 @@ pub fn print(result: &ActionResult, json_output: bool, verb: &str, verbose: bool
 
     println!();
     print_providers(&grouped, result, verbose);
+    print_hooks(result);
     print_warnings(result);
     print_errors(result);
     print_summary(result, verb);
     println!();
+}
+
+/// The hook tables' lines, when the install touched them.
+fn print_hooks(result: &ActionResult) {
+    let Some(hooks) = &result.hooks else {
+        return;
+    };
+    let lines = hooks.lines();
+    if lines.is_empty() {
+        return;
+    }
+    println!("   hooks");
+    for line in lines {
+        println!("     {line}");
+    }
 }
 
 fn print_warnings(result: &ActionResult) {

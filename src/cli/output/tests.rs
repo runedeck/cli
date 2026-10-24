@@ -60,6 +60,7 @@ fn group_by_provider_groups_installed_files() {
         pruned: Vec::new(),
         warnings: Vec::new(),
         errors: Vec::new(),
+        hooks: None,
     };
 
     let groups = group_by_provider(&result);
@@ -80,6 +81,7 @@ fn group_by_provider_includes_skipped_files() {
         pruned: Vec::new(),
         warnings: Vec::new(),
         errors: Vec::new(),
+        hooks: None,
     };
 
     let groups = group_by_provider(&result);
@@ -97,6 +99,7 @@ fn group_by_provider_includes_pruned_files() {
         }],
         warnings: Vec::new(),
         errors: Vec::new(),
+        hooks: None,
     };
 
     let groups = group_by_provider(&result);

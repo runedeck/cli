@@ -74,6 +74,15 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 - **WHEN** the owner trusted the rune entry in `/hooks` and `rune install` runs again
 - **THEN** dcg is adopted, its group stays as an empty group, and the rune entry keeps its position
 
+### Requirement: One Install Prints One Result
+
+`rune install --json` MUST print one JSON document, with the hook report under its `hooks` key. Without `--json`, the hook report MUST be printed as lines a person reads.
+
+#### Scenario: Install with hooks as JSON
+
+- **WHEN** the user config declares a handler and `rune install --json` runs
+- **THEN** stdout parses as one JSON document whose `hooks` lists the events written
+
 ### Requirement: The Manifest Remembers The Last Install
 
 A later install MUST carry every adopted entry forward in the manifest, so the record of what install removed survives. `rune install --check` MUST count a foreign entry the manifest does not list as drift.

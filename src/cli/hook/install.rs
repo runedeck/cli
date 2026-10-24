@@ -69,6 +69,32 @@ pub(crate) struct Report {
 }
 
 impl Report {
+    /// The report as `rune install` and `rune hook install --json` carry it.
+    pub(crate) fn summary(&self) -> rune::result::HookSummary {
+        rune::result::HookSummary {
+            written: self
+                .written
+                .iter()
+                .map(|(h, e)| format!("{h}:{e}"))
+                .collect(),
+            adopted: self
+                .adopted
+                .iter()
+                .map(|(h, e, c)| format!("{h}:{e}:{c}"))
+                .collect(),
+            foreign: self
+                .foreign
+                .iter()
+                .map(|(h, e, c)| format!("{h}:{e}:{c}"))
+                .collect(),
+            unsupported: self.unsupported.clone(),
+            legacy: self.legacy_toml.clone(),
+            drift: self.drift.clone(),
+            trust: self.trust.clone(),
+            warnings: self.warnings.clone(),
+        }
+    }
+
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
         for (harness, event) in &self.written {

@@ -225,6 +225,50 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
     );
 }
 
+#[test]
+fn rune_install_json_prints_one_document_with_the_hook_report_inside() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    let source = scene.path("module");
+    std::fs::create_dir_all(source.join("rules")).unwrap();
+    std::fs::write(
+        source.join("module.yaml"),
+        "name: hook-json-fixture\nversion: 0.1.0\ndescription: hook json fixture\nevents: []\n",
+    )
+    .unwrap();
+    std::fs::write(source.join("defaults.yaml"), "").unwrap();
+    std::fs::write(source.join("rules/Fixture.md"), "a rule\n").unwrap();
+    let target = scene.path("target");
+    std::fs::create_dir_all(&target).unwrap();
+    let output = scene
+        .rune()
+        .args([
+            "install",
+            "--source",
+            source.to_str().unwrap(),
+            "--target",
+            target.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|error| panic!("not one JSON document ({error}): {stdout}"));
+    assert!(
+        document["hooks"]["written"]
+            .as_array()
+            .is_some_and(|w| w.iter().any(|e| e == "claude:PreToolUse")),
+        "{document}"
+    );
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]

@@ -100,15 +100,34 @@ pub fn list(events: bool, write: bool, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
-/// Render the plan into the harness tables, or check them (`--check`).
-/// Called by `rune hook install` and, after a deploy, by `rune install`.
+/// `rune hook install`: render the plan into the harness tables, or check
+/// them (`--check`), and print what happened.
 pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Error> {
-    let config = ontology::load()?;
-    if config.hooks.handlers.is_empty() {
+    let Some(report) = install_report(check, dry_run)? else {
         if !json {
             println!("no handlers declared under hooks: in the rune config; nothing to register");
         }
         return Ok(0);
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&report.summary())
+                .map_err(|error| Error::io(error.to_string()))?
+        );
+    } else {
+        print!("{}", report.render());
+    }
+    Ok(i32::from(check && !report.drift.is_empty()))
+}
+
+/// Render the plan into the harness tables, or check them, and return
+/// what happened without printing it: `rune install` folds it into its
+/// own result. `None` when the config declares no handler.
+pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<install::Report>, Error> {
+    let config = ontology::load()?;
+    if config.hooks.handlers.is_empty() {
+        return Ok(None);
     }
     let plan = compile(&config.hooks)?;
     let home = dirs::home_dir()
@@ -137,24 +156,7 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
         files.extend(prepared.files);
         publish::publish(&files)?;
     }
-    let report = prepared.report;
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "written": report.written.iter().map(|(h, e)| format!("{h}:{e}")).collect::<Vec<_>>(),
-                "adopted": report.adopted.iter().map(|(h, e, c)| format!("{h}:{e}:{c}")).collect::<Vec<_>>(),
-                "foreign": report.foreign.iter().map(|(h, e, c)| format!("{h}:{e}:{c}")).collect::<Vec<_>>(),
-                "unsupported": report.unsupported,
-                "legacy": report.legacy_toml,
-                "drift": report.drift,
-                "trust": report.trust,
-            })
-        );
-    } else {
-        print!("{}", report.render());
-    }
-    Ok(i32::from(check && !report.drift.is_empty()))
+    Ok(Some(prepared.report))
 }
 
 /// Compile the config, turning every fault into one error that names it.
