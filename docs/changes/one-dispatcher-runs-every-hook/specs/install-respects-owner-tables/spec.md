@@ -32,3 +32,12 @@ Install MUST count an entry as rune's when its command runs a binary named `rune
 
 - **WHEN** rune was installed from one build path and `rune install` runs from another
 - **THEN** each subscribed event holds one rune entry, and it names the second path
+
+### Requirement: Install Removes Only Rune's Command
+
+Install MUST judge rune's command by the hash of its own registration, the group's fields with that command alone. When the plan drops an event, install MUST remove rune's command only after that check, and keep every other hook of the group. A hook the owner added to rune's group is no hand edit.
+
+#### Scenario: Owner's hook beside rune's
+
+- **WHEN** the owner added a command to rune's `PreToolUse` group and the plan then drops `tool.before`
+- **THEN** the group keeps the owner's command and loses rune's

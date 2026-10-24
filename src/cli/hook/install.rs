@@ -417,133 +417,20 @@ pub(crate) fn prepare(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            let mut kept: Vec<Value> = Vec::new();
-            let mut owned_seen = false;
-            for group in entries {
-                let commands: Vec<String> = group
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .map(|list| {
-                        list.iter()
-                            .filter_map(|h| {
-                                h.get("command").and_then(Value::as_str).map(str::to_string)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let mine = commands.iter().any(|c| is_owned(c, harness));
-                if mine {
-                    let Some(want) = wanted.get(&name) else {
-                        // rune wrote it, rune no longer wants it.
-                        changed = true;
-                        report.written.push((harness, format!("{name} removed")));
-                        continue;
-                    };
-                    let hash = hash_value(&group);
-                    let want_hash = hash_value(want);
-                    let known = previous
-                        .owned
-                        .iter()
-                        .any(|r| r.event == name && r.hash.as_deref() == Some(hash.as_str()));
-                    if owned_seen && (known || hash == want_hash) {
-                        // A second rune entry on the event, such as one an
-                        // install from another build path left: one stays.
-                        changed = true;
-                        report
-                            .written
-                            .push((harness, format!("{name} duplicate removed")));
-                    } else if hash == want_hash {
-                        owned_seen = true;
-                        kept.push(group);
-                        report.unchanged.push((harness, name.clone()));
-                    } else if known {
-                        owned_seen = true;
-                        kept.push(want.clone());
-                        changed = true;
-                        report.written.push((harness, name.clone()));
-                    } else {
-                        return Err(Error::new(
-                            ErrorKind::Config,
-                            format!(
-                                "{}: the rune entry for {name} was changed by hand; restore it or remove it, then install again",
-                                path.display()
-                            ),
-                        )
-                        .with_code("hooks.conflict"));
-                    }
-                    continue;
-                }
-                // A foreign group: adopt the commands rune replaces, keep the rest.
-                let mut remaining = group.clone();
-                let mut list: Vec<Value> = remaining
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let before = list.len();
-                list.retain(|h| {
-                    let command = h.get("command").and_then(Value::as_str).unwrap_or_default();
-                    if let Some(by) = adoption(command, &plan_ids) {
-                        next.adopted.push(Recorded {
-                            event: name.clone(),
-                            command: command.to_string(),
-                            hash: None,
-                            by: Some(by.to_string()),
-                            source: Some(path.display().to_string()),
-                        });
-                        report
-                            .adopted
-                            .push((harness, name.clone(), command.to_string()));
-                        return false;
-                    }
-                    {
-                        {
-                            next.foreign.push(Recorded {
-                                event: name.clone(),
-                                command: command.to_string(),
-                                hash: None,
-                                by: None,
-                                source: Some(path.display().to_string()),
-                            });
-                            report
-                                .foreign
-                                .push((harness, name.clone(), command.to_string()));
-                            true
-                        }
-                    }
-                });
-                if list.len() != before {
-                    changed = true;
-                }
-                if list.is_empty() {
-                    continue;
-                }
-                if let Some(map) = remaining.as_object_mut() {
-                    map.insert("hooks".into(), Value::Array(list));
-                }
-                kept.push(remaining);
-            }
-            if let Some(want) = wanted.get(&name) {
-                if !owned_seen {
-                    kept.push(want.clone());
-                    changed = true;
-                    report.written.push((harness, name.clone()));
-                }
-                next.owned.push(Recorded {
-                    event: name.clone(),
-                    command: want["hooks"][0]["command"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                    hash: Some(hash_value(want)),
-                    by: None,
-                    source: None,
-                });
-            }
-            if kept.is_empty() {
+            let event = Event {
+                harness,
+                name: &name,
+                path: &path,
+                want: wanted.get(&name),
+                previous: &previous,
+                plan_ids: &plan_ids,
+            };
+            let kept = event.reconcile(entries, &mut next, &mut report)?;
+            changed |= kept.changed;
+            if kept.groups.is_empty() {
                 hooks.remove(&name);
             } else {
-                hooks.insert(name, Value::Array(kept));
+                hooks.insert(name, Value::Array(kept.groups));
             }
         }
         if harness == Harness::Codex {
@@ -583,6 +470,159 @@ pub(crate) fn prepare(
         });
     }
     Ok(Prepared { report, files })
+}
+
+/// One native event of one harness table, as install reconciles it.
+struct Event<'a> {
+    harness: Harness,
+    name: &'a str,
+    /// The table path as the owner names it, for messages.
+    path: &'a Path,
+    /// The entry the plan wants here, or `None` when it wants none.
+    want: Option<&'a Value>,
+    previous: &'a HarnessManifest,
+    plan_ids: &'a [String],
+}
+
+/// An event's groups after install, and whether they differ from before.
+struct Reconciled {
+    groups: Vec<Value>,
+    changed: bool,
+}
+
+impl Event<'_> {
+    fn record(&self, command: &str, by: Option<&str>) -> Recorded {
+        Recorded {
+            event: self.name.to_string(),
+            command: command.to_string(),
+            hash: None,
+            by: by.map(str::to_string),
+            source: Some(self.path.display().to_string()),
+        }
+    }
+
+    fn conflict(&self) -> Error {
+        Error::new(
+            ErrorKind::Config,
+            format!(
+                "{}: the rune entry for {} was changed by hand; restore it or remove it, then install again",
+                self.path.display(),
+                self.name
+            ),
+        )
+        .with_code("hooks.conflict")
+    }
+
+    /// Every group of the event, hook by hook. Rune's own command is
+    /// checked against its hash and kept, replaced, or removed alone, so
+    /// a hook the owner added to the same group stays. Every other hook
+    /// is adopted when a handler replaces it, else kept as foreign.
+    fn reconcile(
+        &self,
+        entries: Vec<Value>,
+        next: &mut HarnessManifest,
+        report: &mut Report,
+    ) -> Result<Reconciled, Error> {
+        let (harness, name) = (self.harness, self.name);
+        let want_hash = self.want.map(hash_value);
+        let mut groups: Vec<Value> = Vec::new();
+        let mut changed = false;
+        let mut placed = false;
+        for group in entries {
+            let list: Vec<Value> = group
+                .get("hooks")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut remaining: Vec<Value> = Vec::new();
+            for hook in list {
+                let command = hook
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if !is_owned(&command, harness) {
+                    if let Some(by) = adoption(&command, self.plan_ids) {
+                        next.adopted.push(self.record(&command, Some(by)));
+                        report.adopted.push((harness, name.to_string(), command));
+                        changed = true;
+                    } else {
+                        next.foreign.push(self.record(&command, None));
+                        report.foreign.push((harness, name.to_string(), command));
+                        remaining.push(hook);
+                    }
+                    continue;
+                }
+                // Rune's registration: the group's own fields with this
+                // hook alone, so a sibling the owner added is no edit.
+                let mut registration = group.clone();
+                if let Some(map) = registration.as_object_mut() {
+                    map.insert("hooks".into(), json!([hook.clone()]));
+                }
+                let hash = hash_value(&registration);
+                let known = self
+                    .previous
+                    .owned
+                    .iter()
+                    .any(|r| r.event == name && r.hash.as_deref() == Some(hash.as_str()));
+                let current = want_hash.as_deref() == Some(hash.as_str());
+                match self.want {
+                    Some(_) if placed && (known || current) => {
+                        // A second rune entry, such as one an install from
+                        // another build path left: one stays.
+                        changed = true;
+                        report
+                            .written
+                            .push((harness, format!("{name} duplicate removed")));
+                    }
+                    Some(_) if current => {
+                        placed = true;
+                        remaining.push(hook);
+                        report.unchanged.push((harness, name.to_string()));
+                    }
+                    Some(want) if known => {
+                        placed = true;
+                        remaining.push(want["hooks"][0].clone());
+                        changed = true;
+                        report.written.push((harness, name.to_string()));
+                    }
+                    None if known => {
+                        // Rune wrote it and wants it no more: its command
+                        // goes, the rest of the group stays.
+                        changed = true;
+                        report.written.push((harness, format!("{name} removed")));
+                    }
+                    _ => return Err(self.conflict()),
+                }
+            }
+            if remaining.is_empty() {
+                continue;
+            }
+            let mut group = group;
+            if let Some(map) = group.as_object_mut() {
+                map.insert("hooks".into(), Value::Array(remaining));
+            }
+            groups.push(group);
+        }
+        if let Some(want) = self.want {
+            if !placed {
+                groups.push(want.clone());
+                changed = true;
+                report.written.push((harness, name.to_string()));
+            }
+            next.owned.push(Recorded {
+                event: name.to_string(),
+                command: want["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                hash: want_hash,
+                by: None,
+                source: None,
+            });
+        }
+        Ok(Reconciled { groups, changed })
+    }
 }
 
 /// Codex also reads `[[hooks.<Event>]]` from `config.toml`. That file is
@@ -891,6 +931,102 @@ mod tests {
         .unwrap();
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(table["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_dropped_event_takes_rune_s_command_and_leaves_the_owner_s_beside_it() {
+        let home = tempfile::tempdir().unwrap();
+        let path = settings(home.path(), "{}");
+        let manifest = home.path().join("state").join("manifest.json");
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let mut table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        table["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type": "command", "command": "/owner/my-guard"}));
+        fs::write(&path, table.to_string()).unwrap();
+        // The owner's sibling is no hand edit of rune's entry.
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let capture_only: Plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        apply(
+            &capture_only,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let commands: Vec<&str> = table["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["hooks"].as_array().unwrap())
+            .map(|h| h["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(commands, ["/owner/my-guard"]);
+    }
+
+    #[test]
+    fn a_dropped_event_whose_rune_entry_was_edited_is_a_conflict() {
+        let home = tempfile::tempdir().unwrap();
+        let path = settings(home.path(), "{}");
+        let manifest = home.path().join("state").join("manifest.json");
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let mut table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        table["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = json!(99);
+        fs::write(&path, table.to_string()).unwrap();
+        let capture_only: Plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let error = apply(
+            &capture_only,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("changed by hand"), "{error}");
     }
 
     #[test]
