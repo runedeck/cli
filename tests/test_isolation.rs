@@ -12,50 +12,76 @@ fn real_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-#[test]
-fn a_command_from_the_helper_sees_the_scratch_home() {
-    let output = support::rune()
-        .args(["config", "path"])
-        .output()
-        .expect("rune config path");
+/// The config path a command reports, which lives under its HOME.
+fn config_path(output: &std::process::Output) -> PathBuf {
     assert!(output.status.success(), "{output:?}");
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    assert!(
-        path.starts_with(support::scratch()),
-        "the config lives at {}, outside the scratch HOME {}",
-        path.display(),
-        support::scratch().display()
-    );
-    if let Some(home) = real_home().filter(|home| !support::scratch().starts_with(home)) {
+    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+#[test]
+fn every_helper_command_sees_the_scratch_home() {
+    let outputs = [
+        (
+            "rune",
+            support::rune().args(["config", "path"]).output().unwrap(),
+        ),
+        (
+            "rune_process",
+            support::rune_process()
+                .args(["config", "path"])
+                .output()
+                .unwrap(),
+        ),
+        (
+            "rune_clean",
+            support::rune_clean()
+                .args(["config", "path"])
+                .output()
+                .unwrap(),
+        ),
+    ];
+    for (helper, output) in outputs {
+        let path = config_path(&output);
         assert!(
-            !path.starts_with(&home),
-            "a test saw the real HOME {}",
-            home.display()
+            path.starts_with(support::scratch()),
+            "{helper}: the config lives at {}, outside the scratch HOME {}",
+            path.display(),
+            support::scratch().display()
         );
+        if let Some(home) = real_home().filter(|home| !support::scratch().starts_with(home)) {
+            assert!(
+                !path.starts_with(&home),
+                "{helper}: a test saw the real HOME {}",
+                home.display()
+            );
+        }
     }
 }
 
-/// Every test file that starts the rune binary builds it through
-/// `support::rune()`, or names its own HOME.
+/// Each way to start rune, or to empty the environment of a command, is
+/// checked at its place: outside `tests/support/`, no test file builds the
+/// binary itself or clears an environment, so every invocation goes
+/// through a helper that isolates it last.
 #[test]
-fn every_test_file_isolates_the_rune_it_starts() {
+fn no_test_file_starts_rune_outside_the_support_module() {
+    const STARTS: &[&str] = &["cargo_bin(", "CARGO_BIN_EXE_rune", ".env_clear()"];
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut offenders = Vec::new();
     for entry in std::fs::read_dir(&tests).unwrap().flatten() {
         let path = entry.path();
-        if path.extension().is_none_or(|e| e != "rs") {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.extension().is_none_or(|e| e != "rs") || name == "test_isolation.rs" {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
-        let starts_rune =
-            text.contains("cargo_bin(\"rune\")") || text.contains("CARGO_BIN_EXE_rune");
-        if starts_rune && !text.contains("\"HOME\"") {
-            offenders.push(path.file_name().unwrap().to_string_lossy().into_owned());
+        for (number, line) in text.lines().enumerate() {
+            if let Some(start) = STARTS.iter().find(|start| line.contains(*start)) {
+                offenders.push(format!("{name}:{}: {start}", number + 1));
+            }
         }
     }
-    offenders.sort();
     assert!(
         offenders.is_empty(),
-        "these files start rune without support::rune() or a HOME of their own: {offenders:?}"
+        "start rune through support::rune(), rune_process(), or rune_clean(): {offenders:?}"
     );
 }

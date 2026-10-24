@@ -1,10 +1,11 @@
+mod support;
 use assert_cmd::Command;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn write_plugin(home: &Path, name: &str, events: &str, script: &str) {

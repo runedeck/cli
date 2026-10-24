@@ -1,8 +1,9 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn rune(home: &std::path::Path) -> Command {
-    let mut command = Command::cargo_bin("rune").expect("rune binary");
+    let mut command = support::rune();
     command
         .env("HOME", home)
         .env("CLIPROXY_API_KEY", "test-token");
@@ -1390,7 +1391,7 @@ sleep 10
     let binary = provider.to_str().expect("provider path");
 
     let started = Instant::now();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    let child = support::rune_process()
         .env("HOME", home.path())
         .env("CLIPROXY_API_KEY", "test-token")
         .args([
@@ -1487,7 +1488,7 @@ exit 0
     let binary = provider.to_str().expect("provider path");
 
     let started = Instant::now();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    let child = support::rune_process()
         .env("HOME", home.path())
         .env("CLIPROXY_API_KEY", "sk-fake-drain-secret")
         .args([
@@ -2534,7 +2535,7 @@ fn spawn_seat(
     binary: &str,
     seat: &str,
 ) -> std::process::Child {
-    std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    support::rune_process()
         .env("HOME", home)
         .env("CLIPROXY_API_KEY", "test-token")
         .env("XDG_STATE_HOME", state)
@@ -3823,7 +3824,7 @@ fn a_signal_during_a_failed_setup_is_the_outcome() {
     std::fs::remove_file(home.path().join("harness-started")).expect("the first run's marker");
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).expect("chmod");
     let started = Instant::now();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    let child = support::rune_process()
         .env("HOME", home.path())
         .env("CLIPROXY_API_KEY", "test-token")
         .env("XDG_STATE_HOME", state.path())
@@ -4653,7 +4654,7 @@ fn a_sigint_to_the_process_group_during_the_finish_lets_the_finish_complete() {
     );
 
     let started = Instant::now();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    let child = support::rune_process()
         .env("HOME", home.path())
         .env("CLIPROXY_API_KEY", "test-token")
         .env("XDG_STATE_HOME", state.path())

@@ -1,3 +1,4 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
@@ -6,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn git() -> std::process::Command {

@@ -1,13 +1,14 @@
 //! Integration tests for `rune target` binding and the `rune add` fallback.
 //! Each test isolates HOME so the state file lands in a tempdir.
 
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn deck_fixture() -> PathBuf {

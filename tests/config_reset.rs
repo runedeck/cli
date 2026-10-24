@@ -1,10 +1,11 @@
+mod support;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 fn user_config_path(home: &Path) -> PathBuf {

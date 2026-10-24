@@ -1,10 +1,11 @@
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 #[test]

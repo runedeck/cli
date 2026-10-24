@@ -95,10 +95,9 @@ fn installed_companion_leak_blocks_strict_readiness() {
     assert_eq!(finding.line, Some(1));
     assert_eq!(finding.token.as_deref(), Some("AskUserQuestion"));
     assert!(finding.paths[0].ends_with("Question/Workflow.md"));
-    let output = support::rune()
+    let output = support::rune_clean()
         .timeout(Duration::from_secs(60))
         .current_dir(source.path())
-        .env_clear()
         .args(["doctor", "--skill-readiness", "--json", "--target"])
         .arg(target.path())
         .output()

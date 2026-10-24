@@ -1,6 +1,7 @@
 //! The signing queue against a real jj repository with a throwaway gpg key.
 //! Skips when jj or gpg is missing, the way the init tests skip without jj.
 
+mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use sha2::Digest;
@@ -215,7 +216,7 @@ fn rune(fixture: &Fixture) -> Command {
 /// The binary as a plain process, for a signer that must run in the
 /// background while the test acts.
 fn rune_process(fixture: &Fixture) -> Process {
-    let mut command = Process::new(env!("CARGO_BIN_EXE_rune"));
+    let mut command = support::rune_process();
     configure(&mut command, fixture);
     command
 }
@@ -583,8 +584,7 @@ fn queueing_with_json_emits_a_json_object() {
 
 #[test]
 fn the_ceremony_forms_and_the_queue_do_not_mix() {
-    Command::cargo_bin("rune")
-        .expect("binary")
+    support::rune()
         .args(["sign", "next", "--tag", "v1"])
         .assert()
         .failure()
@@ -2021,7 +2021,7 @@ fn verify_runs_on_a_plain_git_checkout() {
         std::env::var("PATH").unwrap_or_default()
     );
     let verify = |reference: &str| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rune"));
+        let mut command = support::rune();
         command
             .env("PATH", &path)
             .env("FAKE_GH_DIR", &ceremony.gh_dir)

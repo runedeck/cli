@@ -198,7 +198,7 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
     scene.rune().args(["hook", "install"]).assert().success();
     let copy = scene.path("second/rune");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
-    std::fs::copy(assert_cmd::cargo::cargo_bin("rune"), &copy).unwrap();
+    std::fs::copy(support::binary(), &copy).unwrap();
     let mut second = Command::new(&copy);
     support::isolate(&mut second)
         .env("HOME", scene.home())

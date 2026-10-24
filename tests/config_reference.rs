@@ -2,10 +2,12 @@
 //! config-struct change without a regenerated reference fails here.
 //! Regenerate with: `rune config reference > docs/config-reference.json`.
 
+mod support;
+
 #[test]
 fn committed_reference_matches_the_binary() {
     let committed = include_str!("../docs/config-reference.json");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rune"))
+    let output = support::rune_process()
         .args(["config", "reference"])
         .env("HOME", env!("CARGO_TARGET_TMPDIR"))
         .output()

@@ -1,8 +1,9 @@
+mod support;
 use assert_cmd::Command;
 use std::collections::BTreeSet;
 
 fn rune() -> Command {
-    Command::cargo_bin("rune").unwrap()
+    support::rune()
 }
 
 #[test]
