@@ -166,7 +166,7 @@ impl Reader {
                 '\\' => self.escaped(),
                 '$' if self.peek(1) == Some('\'') => self.ansi_c_quoted(),
                 '$' | '<' | '>' if self.peek(1) == Some('(') => self.substitution(2, ')'),
-                '$' if self.peek(1) == Some('{') => self.balanced_into_word('{', '}'),
+                '$' if self.peek(1) == Some('{') => self.balanced_into_word(false),
                 '`' => self.backtick(),
                 '|' => {
                     self.finish_word();
@@ -406,7 +406,7 @@ impl Reader {
                     }
                 }
                 '$' if self.peek(1) == Some('(') => self.substitution(2, ')'),
-                '$' if self.peek(1) == Some('{') => self.balanced_into_word('{', '}'),
+                '$' if self.peek(1) == Some('{') => self.balanced_into_word(true),
                 '`' => self.backtick(),
                 _ => {
                     self.push(c, true);
@@ -433,7 +433,7 @@ impl Reader {
     /// `$( )`, `$(( ))`, or `<( )`: recorded as written, and kept in the word.
     fn substitution(&mut self, open_len: usize, close: char) {
         let start = self.at + open_len;
-        let end = self.balanced_end(start, '(', close);
+        let end = self.balanced_end(start, '(', close, false);
         let source: String = self.chars[self.at..(end + 1).min(self.chars.len())]
             .iter()
             .collect();
@@ -462,19 +462,18 @@ impl Reader {
 
     /// `${…}`: kept in the word as written. A command, arithmetic, or
     /// backtick substitution inside it, such as the default in
-    /// `${X:-$(id)}`, runs like any other and is recorded.
-    fn balanced_into_word(&mut self, open: char, close: char) {
-        let end = self.balanced_end(self.at + 2, open, close);
+    /// `${X:-$(id)}`, runs like any other and is recorded. Inside double
+    /// quotes a single quote in it is a plain character, so
+    /// `"${X:-'$(id)'}"` runs `id`.
+    fn balanced_into_word(&mut self, in_double: bool) {
+        let end = self.balanced_end(self.at + 2, '{', '}', in_double);
         let source: String = self.chars[self.at..(end + 1).min(self.chars.len())]
             .iter()
             .collect();
-        let inner: String = self.chars
-            [(self.at + 2).min(self.chars.len())..end.min(self.chars.len())]
-            .iter()
-            .collect();
-        for nested in parse(&inner) {
-            self.current.substitutions.extend(nested.substitutions);
-        }
+        let inner = &self.chars[(self.at + 2).min(self.chars.len())..end.min(self.chars.len())];
+        self.current
+            .substitutions
+            .extend(operand_substitutions(inner));
         for c in source.chars() {
             self.push(c, true);
         }
@@ -482,13 +481,19 @@ impl Reader {
     }
 
     /// The index of the `close` that ends a group opened just before `from`,
-    /// stepping over quotes and nested groups.
-    fn balanced_end(&self, from: usize, open: char, close: char) -> usize {
+    /// stepping over quotes, nested groups, and command substitutions.
+    /// `in_double` is a group inside double quotes, where a single quote
+    /// is a plain character. A `$( )` inside it opens a fresh context.
+    fn balanced_end(&self, from: usize, open: char, close: char, in_double: bool) -> usize {
         let mut depth = 1;
         let mut at = from;
         while at < self.chars.len() {
             match self.chars[at] {
                 '\\' => at += 1,
+                '$' if open != '(' && self.chars.get(at + 1) == Some(&'(') => {
+                    at = self.balanced_end(at + 2, '(', ')', false);
+                }
+                '$' | '\'' if in_double => {}
                 '$' if self.chars.get(at + 1) == Some(&'\'') => {
                     at += 2;
                     while at < self.chars.len() && self.chars[at] != '\'' {
@@ -628,6 +633,51 @@ impl Reader {
         command.joiner = joiner;
         self.commands.push(command);
     }
+}
+
+/// Every `$( )`, `$(( ))`, and backtick substitution in the operand of a
+/// `${…}`, as written. The quotes around the expansion decide whether a
+/// quote in the operand quotes anything, and `#` starts no comment there,
+/// so the reader steps over neither and counts each substitution as one
+/// that runs. Only a backslash escapes the character after it.
+fn operand_substitutions(operand: &[char]) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < operand.len() {
+        match operand[at] {
+            '\\' => at += 2,
+            '$' if operand.get(at + 1) == Some(&'(') => {
+                let mut depth = 0;
+                let mut end = at + 1;
+                while end < operand.len() {
+                    match operand[end] {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    end += 1;
+                }
+                let end = (end + 1).min(operand.len());
+                found.push(operand[at..end].iter().collect());
+                at = end;
+            }
+            '`' => {
+                let end = operand[at + 1..]
+                    .iter()
+                    .position(|&c| c == '`')
+                    .map_or(operand.len(), |n| at + n + 2);
+                found.push(operand[at..end].iter().collect());
+                at = end;
+            }
+            _ => at += 1,
+        }
+    }
+    found
 }
 
 /// `NAME=value`, with a valid shell name.

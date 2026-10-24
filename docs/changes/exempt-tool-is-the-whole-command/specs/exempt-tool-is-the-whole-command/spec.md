@@ -44,13 +44,18 @@ When a line holds an exempt tool and something on the line keeps it inside the s
 
 ### Requirement: A substitution is refused with a way to pass the text
 
-A substitution of any kind keeps an exempt tool inside the sandbox, even when the substitution itself runs an exempt tool. The sandbox guard MUST refuse such a line. The command it gives MUST mark the word that held the substitution, and the reason MUST say to write the text inline or to pass a file through the tool's own file option.
+A substitution of any kind keeps an exempt tool inside the sandbox, even when the substitution itself runs an exempt tool. The sandbox guard MUST refuse such a line. The command it gives MUST mark the word that held the substitution, and the reason MUST say to write the text inline or to pass a file through the tool's own file option. A substitution in the operand of a `${…}` expansion MUST count, whatever quotes or `#` stand in the operand.
 
 #### Scenario: Prompt read through a substitution
 
 - **WHEN** the model runs `rune run sol@claude "$(cat brief.md)"`
 - **THEN** the call is refused
 - **AND** the reason names the substitution, gives `rune run sol@claude TEXT`, and points to `rune run --prompt-file`
+
+#### Scenario: Substitution behind quotes in a default
+
+- **WHEN** the model runs `jj log "${X:-'$(printf probe)'}"`
+- **THEN** the call is refused, because inside double quotes the single quotes are plain characters and the substitution runs
 
 ### Requirement: Other tools are never refused and a chain gets advice
 

@@ -138,6 +138,30 @@ fn an_ansi_c_string_decodes_its_escapes() {
 }
 
 #[test]
+fn a_parameter_operand_hides_no_substitution_behind_quotes_or_a_hash() {
+    for line in [
+        r#"jj log "${X:-'$(printf probe)'}""#,
+        r#"jj log "${X:- # $(printf probe)}""#,
+        "jj log ${X:- # `printf probe`}",
+    ] {
+        let commands = parse(line);
+        assert_eq!(commands.len(), 1, "{line}: {commands:?}");
+        assert_eq!(commands[0].substitutions.len(), 1, "{line}: {commands:?}");
+        assert!(
+            commands[0].substitutions[0].contains("printf probe"),
+            "{line}"
+        );
+        let jj = Exemptions::new(["jj *"]);
+        assert_eq!(judge(line, false, &jj).effect, Effect::Deny, "{line}");
+    }
+    // Inside double quotes a single quote ends nothing, so the first `}`
+    // closes the expansion and the line holds two more commands.
+    let commands = parse(r#"jj log "${X:-'}"; rm -rf x; echo "'}""#);
+    let heads: Vec<&str> = commands.iter().map(|c| c.words[0].value.as_str()).collect();
+    assert_eq!(heads, ["jj", "rm", "echo"]);
+}
+
+#[test]
 fn an_assignment_may_quote_its_value_but_not_its_name() {
     for line in [r#"FOO="1" jj log"#, "FOO='1' jj log", "FOO=$(id) jj log"] {
         let commands = parse(line);
