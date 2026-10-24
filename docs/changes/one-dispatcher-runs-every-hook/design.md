@@ -57,6 +57,10 @@ Each rendered entry is `rune hook run --harness H --native-event N --plan PATH`,
 
 The stop allowance is 150 ms: the 25 ms poll that notices the deadline, the 10 ms grace, the group kill, and the drain of the pipes, each rounded up to the next poll. With the defaults a `tool.before` handler gets at most 2800 ms of the 3000 ms budget, and its denial leaves before Claude's 3 s timeout even when the handler ignores SIGTERM. The dispatcher does not compile the config in that case, because the compiled plan stays its only source of handlers (review hit 17 below).
 
+## The dispatcher log
+
+`hooks/run.log` under the state directory gets one block per event: the time, the harness, the native event, `tool NAME`, and one `ID EFFECT` or `ID failed KIND` line per hook. The command, the file, and every reason stay out of it, because a command line can carry a credential and a guard often quotes the line it refused. The hook record holds the rest without text. The file is created with mode 0600, and at 256 KiB it moves to `run.log.1`, so at most two generations remain.
+
 ## Ownership of the Claude table
 
 The dotfiles render `~/.claude/settings.json` from a template. Release 1 turns that template into a chezmoi `modify_` script that takes the live file's `hooks` key as is, so rune's entries survive `chezmoi apply`, and declares no hook of its own. Legacy `sh ~/.sd/hook` entries are adopted by the first install, then the `dot_sd/hooks/` tree and the dispatcher go.

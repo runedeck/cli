@@ -272,23 +272,6 @@ pub(crate) fn written_paths(tool: &super::payload::ToolPayload) -> Vec<PathBuf> 
         .collect()
 }
 
-/// One line that says what a tool call is about, for the dispatcher log:
-/// the command, the file written, or the first file of a patch.
-pub(crate) fn tool_subject(tool: &super::payload::ToolPayload) -> String {
-    let subject = tool.input["command"]
-        .as_str()
-        .filter(|c| !c.starts_with("*** Begin Patch"))
-        .map(str::to_string)
-        .or_else(|| written_paths(tool).first().map(|p| p.display().to_string()))
-        .unwrap_or_default();
-    let line = subject.lines().next().unwrap_or_default();
-    line.chars()
-        .take(160)
-        .collect::<String>()
-        .trim_end()
-        .to_string()
-}
-
 /// jj repository config, and git config when the checkout is colocated.
 pub(crate) fn write_checkout_identity(
     cwd: &Path,
@@ -998,14 +981,6 @@ mod tests {
             written_paths(&tool),
             vec![PathBuf::from("NOTE.md"), PathBuf::from("docs/a.md")]
         );
-        assert_eq!(tool_subject(&tool), "NOTE.md");
-        let bash = super::super::payload::ToolPayload {
-            name: "Bash".to_string(),
-            id: None,
-            input: json!({"command": "git status\n--short"}),
-            response: None,
-        };
-        assert_eq!(tool_subject(&bash), "git status");
     }
 
     #[test]

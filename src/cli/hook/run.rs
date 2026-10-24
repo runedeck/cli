@@ -59,7 +59,13 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
             }
             dispatch(&plan, harness, native_event, raw, &Runner::real())
         }
-        Err(error) => no_plan(harness, native_event, policy, &error.to_string()),
+        Err(error) => no_plan(
+            harness,
+            native_event,
+            policy,
+            &error.to_string(),
+            log_dir().as_deref(),
+        ),
     };
     if let Some(stdout) = &answer.stdout {
         println!("{stdout}");
@@ -86,6 +92,7 @@ pub(crate) fn no_plan(
     native_event: &str,
     policy: OnFailure,
     why: &str,
+    log_dir: Option<&Path>,
 ) -> Answer {
     let canonical = Canonical::from_native(harness, native_event);
     let event = PlannedEvent {
@@ -102,7 +109,12 @@ pub(crate) fn no_plan(
             rewrites: false,
         }],
     };
-    dispatcher_failure(harness, native_event, &event, why)
+    dispatcher_failure(harness, native_event, &event, why, log_dir)
+}
+
+/// Where the dispatcher log lives: `hooks/` under the state directory.
+fn log_dir() -> Option<PathBuf> {
+    crate::cli::state::dir().ok().map(|dir| dir.join("hooks"))
 }
 
 /// The time a handler that outlived its timeout gets between SIGTERM and
@@ -131,11 +143,14 @@ pub(crate) struct Runner {
     /// Why no record directory could be resolved, reported once per event
     /// that had records to write.
     pub(crate) record_error: Option<String>,
+    /// Where the dispatcher log is written; `None` writes none.
+    pub(crate) log_dir: Option<PathBuf>,
 }
 
 impl Runner {
     pub(crate) fn real() -> Self {
         Self {
+            log_dir: log_dir(),
             record_dir: record::dir().ok(),
             record_error: record::dir().err().map(|e| e.to_string()),
             spawn: Box::new(|handler, stdin, timeout, env, cwd| {
@@ -196,7 +211,7 @@ pub(crate) fn dispatch(
     let Some(event) = plan.event(harness, native_event) else {
         return unregistered(harness, native_event);
     };
-    let raw = match admit(harness, native_event, event, raw) {
+    let raw = match admit(harness, native_event, event, raw, runner.log_dir.as_deref()) {
         Ok(raw) => raw,
         Err(answer) => return answer,
     };
@@ -258,7 +273,7 @@ pub(crate) fn dispatch(
                 merge(&mut payload, &mut merged, result, event.mode);
             }
             Err(failure) => {
-                let _ = writeln!(log, "{} failed: {}", handler.id, failure.why);
+                let _ = writeln!(log, "{} failed {}", handler.id, failure.kind);
                 line.failure = Some(failure.kind.to_string());
                 line.exit_status = failure.exit_status;
                 if failure.kind == "budget" {
@@ -293,7 +308,7 @@ pub(crate) fn dispatch(
         reserve.saturating_sub(own_phase.elapsed()),
     ));
     answer.stderr = stderr;
-    append_log(harness, native_event, &log);
+    append_log(runner.log_dir.as_deref(), harness, native_event, &log);
     answer
 }
 
@@ -453,18 +468,12 @@ fn run_handler(
     Ok(result)
 }
 
-/// The first log line of a tool event: the tool and its subject, so the
-/// log alone tells which call a verdict answered, including one the
-/// harness leaves out of its own transcript.
+/// The first log line of a tool event: the tool's name. The command or
+/// file it acts on stays out, because a command line can carry a token.
 fn log_preamble(payload: &HandlerPayload) -> String {
     let mut log = String::new();
     if let Some(tool) = &payload.tool {
-        let _ = writeln!(
-            log,
-            "tool: {} {}",
-            tool.name,
-            super::adapters::tool_subject(tool)
-        );
+        let _ = writeln!(log, "tool {}", tool.name);
     }
     log
 }
@@ -474,6 +483,7 @@ fn dispatcher_failure(
     native_event: &str,
     event: &PlannedEvent,
     why: &str,
+    log_dir: Option<&Path>,
 ) -> Answer {
     let can_block = event.canonical.is_some_and(|c| c.can_block(harness));
     let guarded = event
@@ -498,25 +508,50 @@ fn dispatcher_failure(
         ),
     );
     append_log(
+        log_dir,
         harness,
         native_event,
-        &format!("dispatcher failure: {why}\n"),
+        if denies {
+            "dispatcher failure denied\n"
+        } else {
+            "dispatcher failure proceeding\n"
+        },
     );
     answer
 }
 
-fn append_log(harness: Harness, native_event: &str, text: &str) {
+/// The size at which `run.log` moves to `run.log.1`, so the log holds two
+/// generations at most.
+pub(crate) const LOG_LIMIT: u64 = 256 * 1024;
+
+/// The dispatcher log, `hooks/run.log` under the state directory: per
+/// event its time, harness, native event, tool name, and each hook's id
+/// with its effect or failure kind. It holds no command, reason, or other
+/// text a hook or the harness wrote, it is readable by the owner alone,
+/// and it rotates at `LOG_LIMIT`.
+fn append_log(dir: Option<&Path>, harness: Harness, native_event: &str, text: &str) {
     use std::io::Write as _;
-    let Ok(dir) = crate::cli::state::dir() else {
+    let Some(dir) = dir else {
         return;
     };
-    let hooks = dir.join("hooks");
-    let _ = std::fs::create_dir_all(&hooks);
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(hooks.join("run.log"))
+    let _ = std::fs::create_dir_all(dir);
+    let path = dir.join("run.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() >= LOG_LIMIT) {
+        let _ = std::fs::rename(&path, dir.join("run.log.1"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.append(true).create(true);
+    #[cfg(unix)]
     {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    if let Ok(mut file) = options.open(&path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
         let _ = write!(
             file,
             "{} {harness} {native_event}\n{text}",
@@ -627,17 +662,10 @@ fn apply_failure(
     }
 }
 
-/// The log lines of one result: the effect and the first reason line.
+/// The log line of one result: the hook and the effect it asked for. The
+/// reason stays out, because a guard often quotes the command it refused.
 fn log_result(log: &mut String, hook: &str, result: &HandlerResult) {
-    let _ = writeln!(log, "{hook} {:?}", result.effect);
-    if let Some(reason) = result.reason.as_deref().filter(|r| !r.is_empty()) {
-        let first = reason.lines().next().unwrap_or_default();
-        let _ = writeln!(
-            log,
-            "reason: {}",
-            first.chars().take(160).collect::<String>()
-        );
-    }
+    let _ = writeln!(log, "{hook} {}", result.effect.word());
 }
 
 /// The failure of a hook the budget left no time for.
@@ -674,8 +702,9 @@ fn admit(
     native_event: &str,
     event: &PlannedEvent,
     raw: Result<Value, String>,
+    log_dir: Option<&Path>,
 ) -> Result<Value, Answer> {
-    let raw = raw.map_err(|why| dispatcher_failure(harness, native_event, event, &why))?;
+    let raw = raw.map_err(|why| dispatcher_failure(harness, native_event, event, &why, log_dir))?;
     if let Some(carried) = payload_event(harness, &raw)
         && !event_matches(harness, &carried, native_event)
     {
@@ -684,6 +713,7 @@ fn admit(
             native_event,
             event,
             &format!("the payload names `{carried}` but the registration is for `{native_event}`"),
+            log_dir,
         ));
     }
     Ok(raw)

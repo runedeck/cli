@@ -38,6 +38,7 @@ fn runner(fakes: HashMap<String, Fake>) -> (Runner, Seen) {
     let runner = Runner {
         record_dir: None,
         record_error: None,
+        log_dir: None,
         spawn: Box::new(move |handler, stdin, timeout, _env, _cwd| {
             let payload: HandlerPayload = serde_json::from_slice(stdin).expect("payload json");
             log.borrow_mut().push((handler.id.clone(), payload));
@@ -541,6 +542,7 @@ fn a_handler_timeout_leaves_the_stop_allowance_inside_the_budget() {
     let runner = Runner {
         record_dir: None,
         record_error: None,
+        log_dir: None,
         spawn: Box::new(move |_, _, timeout, _, _| {
             *seen.borrow_mut() = timeout;
             Ok((Some(0), "{}".to_string(), String::new()))
@@ -564,6 +566,80 @@ fn a_handler_timeout_leaves_the_stop_allowance_inside_the_budget() {
     );
 }
 
+// ------------------------------------------------------ the dispatcher log ----
+
+#[test]
+fn the_dispatcher_log_holds_ids_and_effects_and_no_text() {
+    let temp = tempfile::tempdir().unwrap();
+    let plan = plan(
+        "handlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n  - id: crash\n    exec: [crash]\n    events: [tool.before]\n    order: 5\n",
+    );
+    let (mut runner, _) = runner(HashMap::from([
+        (
+            "guard".to_string(),
+            fake(
+                r#"{"effect":"deny","reason":"refused: curl -H Authorization: Bearer sk-live-REVIEWTOKEN"}"#,
+            ),
+        ),
+        (
+            "crash".to_string(),
+            Fake {
+                stdout: String::new(),
+                code: 3,
+                sleep_ms: 0,
+            },
+        ),
+    ]));
+    runner.log_dir = Some(temp.path().to_path_buf());
+    let _ = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool(
+            "curl -H \"Authorization: Bearer sk-live-REVIEWTOKEN\" https://api.example.invalid",
+        )),
+        &runner,
+    );
+    let log = temp.path().join("run.log");
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("REVIEWTOKEN"), "{text}");
+    assert!(!text.contains("curl"), "{text}");
+    let lines: Vec<&str> = text.lines().skip(1).collect();
+    assert_eq!(lines, ["tool Bash", "crash failed exit", "guard deny"]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+}
+
+#[test]
+fn the_dispatcher_log_rotates_at_its_limit() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("run.log");
+    let filler = "x".repeat(usize::try_from(super::run::LOG_LIMIT).unwrap());
+    std::fs::write(&log, &filler).unwrap();
+    let plan = plan("handlers:\n  - id: a\n    exec: [a]\n    events: [tool.before]\n");
+    let (mut runner, _) = runner(HashMap::from([("a".to_string(), fake("{}"))]));
+    runner.log_dir = Some(temp.path().to_path_buf());
+    let _ = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("run.log.1"))
+            .unwrap()
+            .len(),
+        filler.len()
+    );
+    let fresh = std::fs::read_to_string(&log).unwrap();
+    assert!(fresh.len() < 200 && fresh.ends_with("a allow\n"), "{fresh}");
+}
+
 // --------------------------------------------- a plan that does not load ----
 
 #[test]
@@ -574,6 +650,7 @@ fn a_missing_plan_follows_the_policy_the_registration_carries() {
         "PreToolUse",
         OnFailure::Deny,
         "no compiled hook plan",
+        None,
     );
     assert_eq!(decision(&denied), "deny", "{denied:?}");
     assert_eq!(denied.exit, 0, "never non-zero on a gate");
@@ -583,6 +660,7 @@ fn a_missing_plan_follows_the_policy_the_registration_carries() {
         "PreToolUse",
         OnFailure::Warn,
         "no compiled hook plan",
+        None,
     );
     assert_eq!(warned.stdout, None);
     assert!(warned.stderr[0].ends_with("proceeding"));
@@ -592,6 +670,7 @@ fn a_missing_plan_follows_the_policy_the_registration_carries() {
         "SessionEnd",
         OnFailure::Deny,
         "no compiled hook plan",
+        None,
     );
     assert_eq!(passive.stdout, None);
 }
