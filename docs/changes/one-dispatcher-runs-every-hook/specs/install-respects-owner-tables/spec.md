@@ -60,6 +60,20 @@ Install MUST adopt a tool's own entry, such as dcg's, only on a harness and nati
 - **WHEN** a handler runs `rune-hook-dcg` on `claude:PreToolUse` only, and both Claude and Codex hold a dcg entry on `PreToolUse`
 - **THEN** install adopts Claude's dcg entry and keeps Codex's
 
+### Requirement: A Codex Predecessor Waits For Trust
+
+On Codex, install MUST keep every entry a rune entry replaces until Codex trusts that rune entry at its position. Install MUST leave an emptied Codex group in place as a group with no hook, so no later group moves. `rune install --check` MUST fail while a Codex rune entry is untrusted.
+
+#### Scenario: Untrusted rune entry
+
+- **WHEN** Codex's `PreToolUse` holds dcg and the owner has not trusted the new rune entry
+- **THEN** dcg stays, the output names the trust step, and `rune install --check` exits non-zero
+
+#### Scenario: Rune entry trusted
+
+- **WHEN** the owner trusted the rune entry in `/hooks` and `rune install` runs again
+- **THEN** dcg is adopted, its group stays as an empty group, and the rune entry keeps its position
+
 ### Requirement: The Manifest Remembers The Last Install
 
 A later install MUST carry every adopted entry forward in the manifest, so the record of what install removed survives. `rune install --check` MUST count a foreign entry the manifest does not list as drift.

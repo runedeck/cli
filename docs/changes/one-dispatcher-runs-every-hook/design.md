@@ -77,6 +77,8 @@ The dotfiles render `~/.claude/settings.json` from a template. Release 1 turns t
 
 Codex binds trust to the hook's hash. An entry rune writes is inactive until the owner accepts it in the harness (`/hooks`). The install prints that step, `--check` reports an untrusted rune entry, and the legacy Codex registration is adopted only once the rune entry is trusted, so no event goes unguarded in between.
 
+`codex_trust.rs` checks that trust the way Codex does. The [Codex hooks reference][CODEXHOOKS] says Codex records trust against the hook's current hash and runs no untrusted non-managed hook. Codex keeps it in the user `config.toml` as `[hooks.state."<hooks.json path>:<event label>:<group>:<handler>"] trusted_hash`. The hash is `sha256:` over the sorted JSON of `event_name`, the group's `matcher`, and the one handler's `type`, `command`, `timeout`, and `async` (`hook_hash` in [Codex's discovery code][CODEXDISCOVERY], read 2026-10-24). A recomputation matched the hash Codex stored for the owner's dcg entry. Install first reconciles an event with every predecessor kept, finds the rune entry's position, and reads its trust there. Only a trusted entry lets the predecessors go. A Codex group that adoption or removal empties stays as `{"hooks": []}` while a later group follows, because Codex keys trust by position ([codex#49399][CODEX49399]). A predecessor that shares a group with other hooks still moves the hooks after it, and their trust has to be renewed.
+
 ## Order of work
 
 1. Config, events, plan, `rune hook list`.
@@ -121,3 +123,5 @@ Astra on the specification (`gpt-6-astra`, clean state, 22 hits, 2026-09-27):
 
 [CCHOOKS]: https://code.claude.com/docs/en/hooks
 [CODEXHOOKS]: https://developers.openai.com/codex/hooks
+[CODEXDISCOVERY]: https://github.com/openai/codex/blob/main/codex-rs/hooks/src/engine/discovery.rs
+[CODEX49399]: https://github.com/openai/codex/issues/49399

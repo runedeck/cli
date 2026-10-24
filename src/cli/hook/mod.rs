@@ -9,6 +9,7 @@ use rune::hooks::{Canonical, Harness, Hooks, Plan};
 use rune::ontology;
 
 pub(crate) mod adapters;
+pub(crate) mod codex_trust;
 pub(crate) mod encode;
 pub(crate) mod findings;
 pub(crate) mod import_claude;
