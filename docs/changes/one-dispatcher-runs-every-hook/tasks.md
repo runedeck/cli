@@ -44,3 +44,10 @@
 - [x] 7.3 Install: an empty handler list takes rune's entries back, Codex trust read where adoption puts the entry, a predecessor adopted only from a command that runs it alone, and no hook installed from a proof scene with the runner's HOME
 - [x] 7.4 Tests: every integration test runs rune with a scratch HOME, config, and state, and a guard test fails when one sees the real HOME
 - [x] 7.5 Proof: every scenario of the closure recorded with `rune proof run`, 49 of 49, `guards-hold-under-failure` and `install-respects-owner-tables` included
+
+## 8. Review fixes, round three
+
+- [x] 8.1 Proof scenes: a marker file in the runner's capture directory with its process id and HOME, counted only while the runner runs, and `rune install` reports the hook step as `skipped` with the reason
+- [x] 8.2 Install: each target directory created before it is locked, the bridge keeping every old handler of a shared event, and the bridge and the final plan in one transaction
+- [x] 8.3 Tests: every test starts rune through the support module, and the guard test checks each line that could start it or clear its environment
+- [x] 8.4 Proof: the rollback scene fails during the replacement and checks the error and every restored file, and the marker scenes are recorded

@@ -6,6 +6,7 @@
 - [x] 1.4 The adapter name `sandbox-guard`, and `additionalContext` on Claude `PreToolUse`
 - [x] 1.5 CHANGELOG entry, and the handler in the owner's commented `hooks:` block (dotfiles change `qsomtzmu`)
 - [x] 1.6 The reader decodes the escapes of a `$'…'` string as Bash does, and counts every substitution in a `${…}` operand whatever quotes or `#` stand in it
+- [x] 1.7 A NUL ends a `$'…'` string, as it does in Bash
 
 ## 2. Verification
 
