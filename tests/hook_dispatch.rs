@@ -131,6 +131,52 @@ fn json_at(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
+/// The plan generation a registered command names after `--plan`.
+fn plan_of(command: &str) -> String {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words[words.iter().position(|w| *w == "--plan").unwrap() + 1].to_string()
+}
+
+/// The plan generations under a state directory, sorted.
+fn generations(state: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(state.join("hooks/plans"))
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    found.sort();
+    found
+}
+
+/// Every plan generation the Claude and Codex tables of a scene name.
+fn named_generations(scene: &Scene) -> Vec<PathBuf> {
+    let mut named = Vec::new();
+    for table in [
+        claude_settings(scene),
+        scene.home().join(".codex/hooks.json"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(&table) else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&text).unwrap();
+        for groups in value["hooks"]
+            .as_object()
+            .into_iter()
+            .flat_map(|m| m.values())
+        {
+            for group in groups.as_array().into_iter().flatten() {
+                for hook in group["hooks"].as_array().into_iter().flatten() {
+                    let command = hook["command"].as_str().unwrap_or_default();
+                    if command.contains(" hook run ") {
+                        named.push(PathBuf::from(plan_of(command)));
+                    }
+                }
+            }
+        }
+    }
+    named.sort();
+    named.dedup();
+    named
+}
+
 #[test]
 fn an_unreadable_codex_table_stops_the_install_before_anything_is_written() {
     let scene = Scene::new();
@@ -247,13 +293,83 @@ fn emptying_the_handlers_takes_rune_s_entries_back_and_keeps_the_owner_s() {
         settings["hooks"]["Stop"][0]["hooks"][0]["command"],
         "/owner/stop"
     );
-    let plan = json_at(&scene.state().join("hooks/plan.json"));
-    assert_eq!(plan["harnesses"], serde_json::json!({}), "{plan}");
+    // No registration is left, so no generation is either.
+    assert_eq!(generations(&scene.state()), Vec::<PathBuf>::new());
     scene
         .rune()
         .args(["hook", "install", "--check"])
         .assert()
         .success();
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// The window of an install: the old registration names its own plan
+/// generation, so a new config cannot change what it runs. Here the
+/// install of the new config fails after it wrote its generations, the
+/// window held open, and the old registration still denies with its old
+/// plan. A successful install then leaves exactly the generations the
+/// tables name.
+#[cfg(unix)]
+#[test]
+fn an_old_registration_reads_its_own_generation_until_the_tables_change() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    let guard = scene.handler(
+        "guard",
+        r#"cat > /dev/null; printf '{"effect":"deny","reason":"no rm"}'"#,
+    );
+    let watch = scene.handler("watch", "cat > /dev/null; printf '{}'");
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: dcg\n      exec: [sh, {guard}]\n      events: [tool.before]\n      on_failure: deny\n"
+    ));
+    scene.rune().args(["hook", "install"]).assert().success();
+    let old = json_at(&claude_settings(&scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let old_plan = plan_of(&old);
+    let old_text = std::fs::read_to_string(&old_plan).unwrap();
+    // An observer reuses the guard's id, and the manifest's directory is
+    // read-only, so the install writes its generations, then fails to
+    // stage the manifest.
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: dcg\n      exec: [sh, {watch}]\n      events: [tool.before]\n"
+    ));
+    let hooks = scene.state().join("hooks");
+    set_mode(&hooks, 0o555);
+    let failed = scene.rune().args(["hook", "install"]).output().unwrap();
+    set_mode(&hooks, 0o755);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(!failed.status.success());
+    assert!(stderr.contains(".manifest.json.rune-new-"), "{stderr}");
+    let still = json_at(&claude_settings(&scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(still, old, "the table still holds the old registration");
+    assert_eq!(std::fs::read_to_string(&old_plan).unwrap(), old_text);
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &old_plan, "--on-failure", "deny"]);
+    let answer = dispatch(
+        scene.rune(),
+        &args,
+        &claude_bash(scene.root.path(), "rm -rf /tmp/x"),
+    );
+    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
+    assert_eq!(
+        generations(&scene.state()),
+        named_generations(&scene),
+        "the failed install's generations went"
+    );
+    // The install succeeds: the old generation goes with its registration.
+    scene.rune().args(["hook", "install"]).assert().success();
+    assert!(!Path::new(&old_plan).exists());
+    assert_eq!(generations(&scene.state()), named_generations(&scene));
 }
 
 /// `rune install --json` of a one-rule module into a scratch target.
@@ -514,10 +630,13 @@ fn a_guard_that_ignores_sigterm_is_denied_inside_the_harness_deadline() {
     let entry = &settings["hooks"]["PreToolUse"][0]["hooks"][0];
     let deadline = std::time::Duration::from_secs(entry["timeout"].as_u64().unwrap());
     assert_eq!(entry["onFailure"], "block", "{entry}");
+    let plan = plan_of(entry["command"].as_str().unwrap());
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &plan]);
     let started = std::time::Instant::now();
     let answer = dispatch(
         scene.rune(),
-        &CLAUDE_PRE,
+        &args,
         &claude_bash(scene.root.path(), "rm -rf /tmp/x"),
     );
     let took = started.elapsed();
@@ -639,7 +758,10 @@ fn the_registration_finds_the_plan_under_another_state_directory() {
         .args(["hook", "install"])
         .assert()
         .success();
-    assert!(xdg.join("rune/hooks/plan.json").is_file());
+    assert!(
+        generations(&xdg.join("rune")).len() > 1,
+        "one generation per registration"
+    );
     let settings: Value = serde_json::from_str(
         &std::fs::read_to_string(scene.home().join(".claude/settings.json")).unwrap(),
     )

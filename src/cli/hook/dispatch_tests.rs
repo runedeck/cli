@@ -96,41 +96,102 @@ fn a_denial_on_claude_tool_before_ends_the_gate() {
     assert_eq!(seen.borrow().len(), 1, "the second handler never ran");
 }
 
-/// sol's probe: the old plan guards `PreToolUse` with dcg, and the new
-/// plan keeps `PreToolUse` with an observer and drops `session.end`. The
-/// bridge an install publishes before the tables must still deny.
-#[test]
-fn the_bridge_plan_denies_where_the_old_plan_denied() {
-    let old = plan(
-        "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n",
-    );
-    let new = plan(
-        "handlers:\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 10\n",
-    );
-    let bridge = super::plan::bridge(&old, &new);
-    let decide = |plan: &rune::hooks::Plan| {
-        let (runner, _) = runner(HashMap::from([
-            (
-                "dcg".to_string(),
-                fake(r#"{"effect":"deny","reason":"no rm"}"#),
-            ),
-            ("watch".to_string(), fake("{}")),
-        ]));
-        let answer = dispatch(
-            plan,
-            Harness::Claude,
-            "PreToolUse",
-            Ok(claude_tool("rm -rf /")),
-            &runner,
-        );
-        answer.stdout.map_or(Value::Null, |out| {
-            serde_json::from_str::<Value>(&out).unwrap()["hookSpecificOutput"]["permissionDecision"]
-                .clone()
-        })
+/// What the Claude registration of `PreToolUse` answers for `rm -rf /`
+/// with the plan in `path`: the permission decision, an `updatedInput`
+/// command, or null. The fake handlers answer by their program, so two
+/// handlers with one id but other programs answer apart.
+fn answer_from(path: &std::path::Path) -> (Value, Value) {
+    let (plan, _) = super::plan::read_at(path).unwrap();
+    let runner = Runner {
+        record_dir: None,
+        record_error: None,
+        log_dir: None,
+        spawn: Box::new(|handler, _stdin, _timeout, _env, _cwd| {
+            let stdout = match handler.exec[0].as_str() {
+                "dcg" => r#"{"effect":"deny","reason":"no rm"}"#,
+                "rtk" => r#"{"effect":"pass","input":{"command":"rm -rf / --no-preserve-root"}}"#,
+                _ => "{}",
+            };
+            Ok((Some(0), stdout.to_string(), String::new()))
+        }),
     };
-    assert_eq!(decide(&old), "deny");
-    assert_eq!(decide(&new), Value::Null, "the new plan alone allows");
-    assert_eq!(decide(&bridge), "deny", "the bridge keeps the old guard");
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("rm -rf /")),
+        &runner,
+    );
+    let out = answer.stdout.map_or(Value::Null, |out| {
+        serde_json::from_str::<Value>(&out).unwrap()["hookSpecificOutput"].clone()
+    });
+    (
+        out["permissionDecision"].clone(),
+        out["updatedInput"]["command"].clone(),
+    )
+}
+
+/// The window of an install: the old registration names the old plan's
+/// generation, and the install writes the new plan's generation beside
+/// it before the tables change. The old registration still reads its own
+/// plan, byte for byte, and denies. Returns what the new plan answers.
+fn old_registration_keeps_its_plan(old: &str, new: &str) -> (Value, Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let old = plan(old);
+    let new = plan(new);
+    let first = super::plan::generation(dir.path(), &old, Harness::Claude, "PreToolUse").unwrap();
+    super::plan::write_generation(&first).unwrap();
+    let second = super::plan::generation(dir.path(), &new, Harness::Claude, "PreToolUse").unwrap();
+    super::plan::write_generation(&second).unwrap();
+    assert_ne!(
+        first.path, second.path,
+        "each plan has a generation of its own"
+    );
+    assert_eq!(std::fs::read_to_string(&first.path).unwrap(), first.text);
+    assert_eq!(
+        answer_from(&first.path).0,
+        "deny",
+        "the old registration still denies"
+    );
+    answer_from(&second.path)
+}
+
+const OLD_GUARD: &str = "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 10\n    on_failure: deny\n";
+
+/// sol's first probe: a new observer reuses the old guard's id.
+#[test]
+fn an_observer_that_reuses_a_guard_s_id_leaves_the_old_registration_its_guard() {
+    let (decision, _) = old_registration_keeps_its_plan(
+        OLD_GUARD,
+        "handlers:\n  - id: dcg\n    exec: [watch]\n    events: [tool.before]\n    order: 10\n",
+    );
+    assert_eq!(decision, Value::Null, "the new plan observes and allows");
+}
+
+/// sol's second probe: the new plan swaps the guard for a rewriter, which
+/// would run after the old guard in one merged plan.
+#[test]
+fn a_rewriter_in_the_new_plan_never_runs_after_the_old_guard() {
+    let (decision, rewritten) = old_registration_keeps_its_plan(
+        OLD_GUARD,
+        "handlers:\n  - id: rtk\n    exec: [rtk]\n    events: [tool.before]\n    order: 20\n    rewrites: true\n",
+    );
+    assert_eq!(decision, Value::Null);
+    assert_eq!(
+        rewritten, "rm -rf / --no-preserve-root",
+        "only the new plan rewrites"
+    );
+}
+
+/// sol's third probe: the new plan runs the guard on a passive native
+/// event, where a denial is logged and not applied.
+#[test]
+fn a_passive_event_in_the_new_plan_leaves_the_old_registration_a_gate() {
+    let (decision, _) = old_registration_keeps_its_plan(
+        OLD_GUARD,
+        "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [claude:PreToolUse]\n",
+    );
+    assert_eq!(decision, Value::Null, "a passive event logs the denial");
 }
 
 #[test]

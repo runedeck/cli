@@ -52,6 +52,9 @@ pub(crate) struct Manifest {
     pub version: u32,
     #[serde(default)]
     pub harnesses: BTreeMap<Harness, HarnessManifest>,
+    /// The plan generations the last install's registrations name.
+    #[serde(default)]
+    pub generations: Vec<String>,
 }
 
 /// What one run of the installer found and did.
@@ -404,33 +407,87 @@ pub(crate) fn table_files(home: &Path) -> Result<Vec<PathBuf>, Error> {
         .collect()
 }
 
-/// What an install found, and the files it would write: the changed
-/// tables, then the manifest. Nothing is written while it is computed.
+/// What an install found, and the files it would write: the plan
+/// generations its registrations name, then the changed tables and the
+/// manifest. Nothing is written while it is computed.
 #[derive(Debug)]
 pub(crate) struct Prepared {
     pub report: Report,
+    pub generations: Vec<super::plan::Generation>,
     pub files: Vec<Staged>,
 }
 
 /// Install or check the tables of every registered harness under `home`.
 /// Every table is read and every conflict found before anything is
 /// written, then the tables and the manifest are written as one step.
-/// The command adds the plan to the same step; the tests call this.
+/// The command also writes the generations first and sweeps the ones no
+/// table names after; the tests of the tables call this.
 #[cfg(test)]
 pub(crate) fn apply(
     plan: &Plan,
     home: &Path,
     rune: &str,
-    plan_path: &str,
+    generations: &str,
     manifest_path: &Path,
     check: bool,
     dry_run: bool,
 ) -> Result<Report, Error> {
-    let prepared = prepare(plan, home, rune, plan_path, manifest_path, check)?;
+    let prepared = prepare(
+        plan,
+        home,
+        rune,
+        Path::new(generations),
+        manifest_path,
+        check,
+    )?;
     if !check && !dry_run {
         super::publish::publish(&prepared.files)?;
     }
     Ok(prepared.report)
+}
+
+/// The plan generation a rune registration names after `--plan`.
+fn generation_of(command: &str) -> Option<PathBuf> {
+    dispatcher_of(command)?;
+    let words = words(command);
+    let at = words.iter().position(|word| word == "--plan")?;
+    words.get(at + 1).map(PathBuf::from)
+}
+
+/// Delete every generation in `dir` that no registration in any table
+/// under `home` names, from a fresh read of the tables. Returns the
+/// generations deleted.
+pub(crate) fn sweep_generations(home: &Path, dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(Vec::new());
+    };
+    let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut named = std::collections::BTreeSet::new();
+    for harness in Harness::REGISTERED {
+        let table = Table::read(&resolved(&table_path(home, harness))?)?;
+        for event in table.event_names() {
+            for group in table.groups(&event) {
+                let hooks = group["hooks"].as_array().cloned().unwrap_or_default();
+                for hook in hooks {
+                    if let Some(plan) = generation_of(hook["command"].as_str().unwrap_or_default())
+                    {
+                        named.insert(canonical(&plan));
+                    }
+                }
+            }
+        }
+    }
+    let mut swept = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") || named.contains(&canonical(&path)) {
+            continue;
+        }
+        fs::remove_file(&path)
+            .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
+        swept.push(path);
+    }
+    Ok(swept)
 }
 
 /// Read every table, find every conflict, and compute what install would
@@ -442,11 +499,12 @@ pub(crate) fn prepare(
     plan: &Plan,
     home: &Path,
     rune: &str,
-    plan_path: &str,
+    generations_dir: &Path,
     manifest_path: &Path,
     check: bool,
 ) -> Result<Prepared, Error> {
     let mut files: Vec<Staged> = Vec::new();
+    let mut generations: Vec<super::plan::Generation> = Vec::new();
     let mut report = Report::default();
     let mut manifest = read_manifest(manifest_path);
     manifest.version = 1;
@@ -474,21 +532,20 @@ pub(crate) fn prepare(
         let mut next = HarnessManifest::default();
         let mut changed = false;
         let mut rewritten: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        let wanted: BTreeMap<String, Value> = plan
-            .harnesses
-            .get(&harness)
-            .map(|events| {
-                events
-                    .iter()
-                    .map(|(name, event)| {
-                        (
-                            name.clone(),
-                            rendered(rune, harness, name, event, plan_path),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Each registration names its own generation.
+        let mut wanted: BTreeMap<String, Value> = BTreeMap::new();
+        for (name, event) in plan.harnesses.get(&harness).into_iter().flatten() {
+            let Some(generation) = super::plan::generation(generations_dir, plan, harness, name)
+            else {
+                continue;
+            };
+            let plan_path = generation.path.display().to_string();
+            wanted.insert(
+                name.clone(),
+                rendered(rune, harness, name, event, &plan_path),
+            );
+            generations.push(generation);
+        }
         // Every event the table already has, in its order, plus every
         // event rune wants.
         let mut names: Vec<String> = table.event_names();
@@ -619,6 +676,12 @@ pub(crate) fn prepare(
         manifest.harnesses.insert(harness, next);
     }
     if !check {
+        manifest.generations = generations
+            .iter()
+            .map(|generation| generation.path.display().to_string())
+            .collect();
+        manifest.generations.sort();
+        manifest.generations.dedup();
         let text = serde_json::to_string_pretty(&manifest)
             .map_err(|error| Error::io(error.to_string()))?;
         files.push(Staged {
@@ -627,7 +690,11 @@ pub(crate) fn prepare(
             new_mode: Some(0o600),
         });
     }
-    Ok(Prepared { report, files })
+    Ok(Prepared {
+        report,
+        generations,
+        files,
+    })
 }
 
 /// One native event of one harness table, as install reconciles it.
@@ -954,7 +1021,22 @@ mod tests {
         path
     }
 
-    const PLAN: &str = "/state/hooks/plan.json";
+    /// The directory of plan generations the registrations name.
+    const PLAN: &str = "/state/hooks/plans";
+
+    /// The entry an install renders for one event of `plan`, naming that
+    /// event's generation.
+    fn rendered_for(plan: &Plan, harness: Harness, event: &str) -> Value {
+        let generation =
+            super::super::plan::generation(Path::new(PLAN), plan, harness, event).unwrap();
+        rendered(
+            "/opt/rune",
+            harness,
+            event,
+            plan.event(harness, event).unwrap(),
+            &generation.path.display().to_string(),
+        )
+    }
 
     const LIVE: &str = r#"{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]},{"hooks":[{"type":"command","command":"sh /Users/x/.sd/hook PreToolUse"}]},{"matcher":"*","hooks":[{"type":"command","command":"/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin"}]}],"Notification":[{"hooks":[{"type":"command","command":"cmux hooks claude Notification"}]}]}}"#;
 
@@ -981,12 +1063,16 @@ mod tests {
             .flat_map(|g| g["hooks"].as_array().unwrap())
             .map(|h| h["command"].as_str().unwrap())
             .collect();
+        let rune = rendered_for(&plan(), Harness::Claude, "PreToolUse");
         assert_eq!(
             commands,
-            [
-                "/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plan.json --on-failure deny"
-            ],
+            [rune["hooks"][0]["command"].as_str().unwrap()],
             "dcg, the legacy dispatcher, and git-ai were adopted"
+        );
+        assert!(
+            commands[0].starts_with("/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plans/")
+                && commands[0].ends_with(".json --on-failure deny"),
+            "{commands:?}"
         );
         assert_eq!(
             table["hooks"]["Notification"][0]["hooks"][0]["command"],
@@ -1361,6 +1447,33 @@ mod tests {
     }
 
     #[test]
+    fn the_sweep_keeps_every_generation_a_table_names_and_nothing_else() {
+        let home = tempfile::tempdir().unwrap();
+        let plans = home.path().join("plans");
+        fs::create_dir_all(&plans).unwrap();
+        for name in ["named.json", "orphan.json", "notes.txt"] {
+            fs::write(plans.join(name), "{}").unwrap();
+        }
+        let named = plans.join("named.json");
+        settings(
+            home.path(),
+            &json!({"hooks": {"PreToolUse": [{"hooks": [
+                {"type": "command", "command": format!("/opt/rune hook run --harness claude --native-event PreToolUse --plan {}", named.display())},
+                {"type": "command", "command": format!("/owner/tool --plan {}", plans.join("orphan.json").display())}
+            ]}]}})
+            .to_string(),
+        );
+        let swept = sweep_generations(home.path(), &plans).unwrap();
+        assert_eq!(
+            swept,
+            [plans.join("orphan.json")],
+            "only rune's commands name a generation"
+        );
+        assert!(named.exists());
+        assert!(plans.join("notes.txt").exists());
+    }
+
+    #[test]
     fn a_removed_entry_prints_as_removed() {
         let report = Report {
             written: vec![
@@ -1704,8 +1817,7 @@ mod tests {
         let codex = home.path().join(".codex").join("hooks.json");
         fs::create_dir_all(codex.parent().unwrap()).unwrap();
         let plan = plan();
-        let planned = plan.event(Harness::Codex, "PreToolUse").unwrap();
-        let rune = rendered("/opt/rune", Harness::Codex, "PreToolUse", planned, PLAN);
+        let rune = rendered_for(&plan, Harness::Codex, "PreToolUse");
         let write = |hooks: Vec<Value>| {
             let table = json!({"hooks": {"PreToolUse": [{"hooks": hooks}]}});
             fs::write(&codex, table.to_string()).unwrap();
@@ -1832,7 +1944,7 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(codex.join("hooks.json")).unwrap()).unwrap();
         assert_eq!(
             hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-            "/opt/rune hook run --harness codex --native-event PreToolUse --plan /state/hooks/plan.json --on-failure deny"
+            rendered_for(&plan(), Harness::Codex, "PreToolUse")["hooks"][0]["command"]
         );
         assert!(
             hooks["hooks"].get("Notification").is_none(),

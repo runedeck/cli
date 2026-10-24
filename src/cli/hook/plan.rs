@@ -1,20 +1,26 @@
-//! The compiled plan on disk: `<state>/hooks/plan.json`, written by
-//! `rune install` (and by `rune hook list --write` for a machine that
-//! installs nothing), read by `rune hook run` at the path its registration
-//! names. The dispatcher reads only this file, so a config edit changes
-//! nothing until the next install.
+//! The compiled plan on disk. `rune install` writes one plan generation
+//! per registration: the plan narrowed to that registration's harness and
+//! native event, in `<state>/hooks/plans/<digest>.json`, named by the
+//! digest of its text. The registration names its generation, and no
+//! install rewrites one, so a registration reads the plan it was installed
+//! with until the tables change. `rune hook list --write` writes the whole
+//! plan to `<state>/hooks/plan.json` for a machine that installs nothing,
+//! and `rune hook run` reads that file when no `--plan` names another. The
+//! dispatcher reads only these files, so a config edit changes nothing
+//! until the next install.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use rune::error::{Error, ErrorKind};
-use rune::hooks::Plan;
+use rune::hooks::{Harness, Plan};
+use sha2::{Digest, Sha256};
 
 use crate::cli::state;
 
-/// The plan's path, made absolute against the current directory: the
-/// registration carries it to a harness that runs elsewhere, and
+/// The whole plan's path, made absolute against the current directory:
 /// `RUNE_STATE_DIR` may be relative.
 pub(crate) fn path() -> Result<PathBuf, Error> {
     let path = state::dir()?.join("hooks").join("plan.json");
@@ -33,37 +39,68 @@ pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
     Ok(path)
 }
 
-/// The plan for the moment between publishing the plan and the tables:
-/// the new plan plus every event the old plan has and the new one drops,
-/// and on an event both have, every old handler the new event lacks. A
-/// registration of either install finds its event and every guard it
-/// stood for, so an old guard keeps guarding until the tables change.
-/// The handlers run by their order, and the event takes the smaller of
-/// the two budgets, so the answer beats the timeout of either install's
-/// registration.
-pub(crate) fn bridge(old: &Plan, new: &Plan) -> Plan {
-    let mut bridge = new.clone();
-    for (harness, events) in &old.harnesses {
-        let target = bridge.harnesses.entry(*harness).or_default();
-        for (name, event) in events {
-            let Some(shared) = target.get_mut(name) else {
-                target.insert(name.clone(), event.clone());
-                continue;
-            };
-            let mut added = false;
-            for handler in &event.handlers {
-                if !shared.handlers.iter().any(|h| h.id == handler.id) {
-                    shared.handlers.push(handler.clone());
-                    added = true;
-                }
-            }
-            if added {
-                shared.handlers.sort_by_key(|h| h.order);
-                shared.budget_ms = shared.budget_ms.min(event.budget_ms);
-            }
-        }
+/// The directory of plan generations, absolute: a registration carries a
+/// generation's path to a harness that runs elsewhere.
+pub(crate) fn generations_dir() -> Result<PathBuf, Error> {
+    let dir = state::dir()?.join("hooks").join("plans");
+    std::path::absolute(&dir).map_err(|error| Error::io(format!("{}: {error}", dir.display())))
+}
+
+/// Whether an earlier install left a generation in `dir`.
+pub(crate) fn has_generations(dir: &Path) -> bool {
+    fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+/// One registration's plan: the compiled plan narrowed to one harness and
+/// native event, and the file it lives in, named by the digest of its
+/// text. An event whose plan did not change keeps its file, so its
+/// registration keeps its command and Codex keeps trusting it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Generation {
+    pub path: PathBuf,
+    pub text: String,
+}
+
+/// The generation of the registration of `event` on `harness`, or `None`
+/// when the plan does not subscribe to it.
+pub(crate) fn generation(
+    dir: &Path,
+    plan: &Plan,
+    harness: Harness,
+    event: &str,
+) -> Option<Generation> {
+    let planned = plan.event(harness, event)?.clone();
+    let narrowed = Plan {
+        version: plan.version,
+        harnesses: BTreeMap::from([(harness, BTreeMap::from([(event.to_string(), planned)]))]),
+        ..Plan::default()
+    };
+    let text = serde_json::to_string_pretty(&narrowed).ok()?;
+    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+    Some(Generation {
+        path: dir.join(format!("{digest}.json")),
+        text,
+    })
+}
+
+/// Write a generation unless it is there already. An existing generation
+/// keeps its bytes and only gets a fresh modification time, so the
+/// warning that the config is newer than the plan still means an edit no
+/// install has applied. A file under the name that holds other bytes is
+/// damaged, and is replaced.
+pub(crate) fn write_generation(generation: &Generation) -> Result<(), Error> {
+    if fs::read_to_string(&generation.path).is_ok_and(|text| text == generation.text) {
+        return fs::File::options()
+            .write(true)
+            .open(&generation.path)
+            .and_then(|file| file.set_modified(SystemTime::now()))
+            .map_err(|error| Error::io(format!("{}: {error}", generation.path.display())));
     }
-    bridge
+    super::publish::publish(&[super::publish::Staged {
+        target: generation.path.clone(),
+        text: generation.text.clone(),
+        new_mode: Some(0o600),
+    }])
 }
 
 /// The plan at `path`, and a warning when the user config is newer than
@@ -108,7 +145,7 @@ fn newer_config(plan: &PathBuf) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rune::hooks::{Harness, Hooks};
+    use rune::hooks::Hooks;
 
     fn plan(yaml: &str) -> Plan {
         serde_yaml::from_str::<Hooks>(yaml)
@@ -118,33 +155,45 @@ mod tests {
     }
 
     #[test]
-    fn the_bridge_keeps_every_event_of_both_plans() {
-        let old = plan(
-            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n",
+    fn a_generation_holds_one_event_and_is_named_by_its_content() {
+        let dir = Path::new("/state/hooks/plans");
+        let one = plan(
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n",
         );
-        let new = plan("handlers:\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n");
-        let both = bridge(&old, &new);
-        assert!(both.event(Harness::Claude, "PreToolUse").is_some());
-        assert!(both.event(Harness::Claude, "SessionEnd").is_some());
-        assert_eq!(bridge(&new, &new), new, "no dropped event, no bridge");
+        let first = generation(dir, &one, Harness::Claude, "PreToolUse").unwrap();
+        let read: Plan = serde_json::from_str(&first.text).unwrap();
+        assert!(read.event(Harness::Claude, "PreToolUse").is_some());
+        assert!(read.event(Harness::Claude, "SessionEnd").is_none());
+        assert!(generation(dir, &one, Harness::Claude, "Stop").is_none());
+        // Another event changes; this one's generation, and so its
+        // registration's command, stays the same.
+        let two = plan(
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: cap\n    exec: [cap, --more]\n    events: [session.end]\n",
+        );
+        assert_eq!(
+            generation(dir, &two, Harness::Claude, "PreToolUse"),
+            Some(first)
+        );
+        assert_ne!(
+            generation(dir, &one, Harness::Claude, "SessionEnd"),
+            generation(dir, &two, Harness::Claude, "SessionEnd")
+        );
     }
 
     #[test]
-    fn the_bridge_keeps_an_old_guard_on_an_event_both_plans_have() {
+    fn writing_a_generation_never_changes_another() {
+        let dir = tempfile::tempdir().unwrap();
         let old = plan(
-            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n",
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    on_failure: deny\n",
         );
-        let new = plan(
-            "handlers:\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 10\n",
-        );
-        let both = bridge(&old, &new);
-        let ids: Vec<&str> = both
-            .event(Harness::Claude, "PreToolUse")
-            .unwrap()
-            .handlers
-            .iter()
-            .map(|h| h.id.as_str())
-            .collect();
-        assert_eq!(ids, ["watch", "dcg"]);
+        let new = plan("handlers:\n  - id: dcg\n    exec: [watch]\n    events: [tool.before]\n");
+        let first = generation(dir.path(), &old, Harness::Claude, "PreToolUse").unwrap();
+        let second = generation(dir.path(), &new, Harness::Claude, "PreToolUse").unwrap();
+        write_generation(&first).unwrap();
+        write_generation(&second).unwrap();
+        write_generation(&first).unwrap();
+        assert_ne!(first.path, second.path);
+        assert_eq!(fs::read_to_string(&first.path).unwrap(), first.text);
+        assert_eq!(fs::read_to_string(&second.path).unwrap(), second.text);
     }
 }

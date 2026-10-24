@@ -8,17 +8,17 @@ How `rune install` changes the harness hook tables the owner also edits: all at 
 
 ### Requirement: Install Writes Every File Or None
 
-Install MUST read every harness table and find every conflict before it writes anything. It MUST then write the plan, the tables, and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends, the bridge plan and the final plan included. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave.
+Install MUST read every harness table and find every conflict before it writes anything. It MUST write the new plan generations first, then the tables and the manifest as one step: each file is staged under a name no other run uses, and each old file stays until the step ends. When a replace fails, every replaced file MUST get its old file back, and a file that cannot be put back MUST be named in the error. Two installs MUST NOT interleave.
 
 #### Scenario: Unreadable Codex table
 
 - **WHEN** the Codex `hooks.json` is not JSON and `rune install` runs
-- **THEN** the install exits non-zero and names the file, and the Claude table, the plan, and the manifest are unchanged
+- **THEN** the install exits non-zero and names the file, the Claude table and the manifest are unchanged, and no plan generation is written
 
 #### Scenario: Replace fails after a read-only file was replaced
 
-- **WHEN** the plan is mode 0444 and a later file of the step cannot be replaced
-- **THEN** the plan has its old content again, and no staged or kept file is left beside a target
+- **WHEN** the Claude table is mode 0444 and a later file of the step cannot be replaced
+- **THEN** the Claude table has its old content and mode again, and no staged or kept file is left beside a target
 
 #### Scenario: Two installs at once
 

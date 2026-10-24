@@ -35,7 +35,7 @@ The dispatcher MUST keep back from each event budget the time it takes to stop a
 
 ### Requirement: The Registration Carries The Plan And The Policy
 
-Install MUST write the plan's absolute path into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, or loads and names no handler for the registered event, MUST answer with that policy. While install changes the tables, the plan on disk MUST also hold every event and handler of the old plan, so no old registration loses its guard. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
+Install MUST write the absolute path of the registration's plan generation into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, or loads and names no handler for the registered event, MUST answer with that policy. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
 
 #### Scenario: Plan under another state directory
 
@@ -45,12 +45,26 @@ Install MUST write the plan's absolute path into each registration, and the `den
 #### Scenario: Guarded entry on Claude
 
 - **WHEN** dcg, policy `deny`, subscribes to `tool.before` and install runs
-- **THEN** the Claude `PreToolUse` entry names the plan, carries the `deny` policy, and sets `onFailure: block`
+- **THEN** the Claude `PreToolUse` entry names its plan generation, carries the `deny` policy, and sets `onFailure: block`
 
 #### Scenario: Plan without the guarded event
 
 - **WHEN** a registration with the `deny` policy fires `PreToolUse` and the plan it names loads but has no `PreToolUse` handler
 - **THEN** the dispatcher denies the call and says that the plan names no handler for the event
+
+### Requirement: A Registration Reads The Plan Generation It Was Installed With
+
+Each registration MUST name its own plan generation: the plan for its harness and event, in a file named by the digest of its content. Install MUST NOT rewrite a generation, and MUST write the new generations before the tables. A registration of the old tables MUST then read its old plan unchanged until its table changes, whatever the new plan does with the old handlers. After the tables and the manifest, install MUST read the tables again and delete each generation that no registration names.
+
+#### Scenario: Install fails after the new generations
+
+- **WHEN** dcg, policy `deny`, guards `tool.before`, the config then gives dcg's id to an observer, and the next install fails after it wrote the new generations
+- **THEN** the old Claude registration still denies with dcg's reason, its generation has its old bytes, and every generation left is one a table names
+
+#### Scenario: Install replaces the tables
+
+- **WHEN** dcg, policy `deny`, guards `tool.before`, the config then gives dcg's id to an observer, and the next install succeeds
+- **THEN** the Claude registration names a new generation, the old generation is gone, and every generation left is one a table names
 
 ### Requirement: The Dispatcher Log Holds No Text
 

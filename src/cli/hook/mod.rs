@@ -3,6 +3,7 @@
 //! harness tables live in their own modules of this directory.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use rune::error::{Error, ErrorKind};
 use rune::hooks::{Canonical, Harness, Hooks, Plan};
@@ -139,13 +140,13 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         .with_code(LIVE_HOME_IN_PROOF));
     }
     let config = ontology::load()?;
-    let plan_path = plan::path()?;
+    let generations = plan::generations_dir()?;
     let manifest_path = install::manifest_path()?;
-    // With no handler left, an earlier install still has entries and a
-    // plan to take back: reconcile an empty plan, which removes rune's
-    // own commands and keeps every foreign one.
+    // With no handler left, an earlier install still has entries and
+    // generations to take back: reconcile an empty plan, which removes
+    // rune's own commands and keeps every foreign one.
     let plan = if config.hooks.handlers.is_empty() {
-        if !plan_path.exists() && !install::has_owned(&manifest_path) {
+        if !plan::has_generations(&generations) && !install::has_owned(&manifest_path) {
             return Ok(None);
         }
         Plan {
@@ -160,57 +161,49 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     // One install at a time reads and writes this set of files. A check
     // or a dry run writes nothing and creates no directory, so it reads
     // without the lock.
-    let mut targets = vec![plan_path.clone(), manifest_path.clone()];
-    targets.extend(install::table_files(&home)?);
+    let mut dirs = vec![generations.clone()];
+    dirs.extend(manifest_path.parent().map(Path::to_path_buf));
+    dirs.extend(
+        install::table_files(&home)?
+            .iter()
+            .filter_map(|table| table.parent().map(Path::to_path_buf)),
+    );
     let _lock = if check || dry_run {
         None
     } else {
-        Some(publish::Lock::acquire(&targets)?)
+        Some(publish::Lock::acquire_dirs(&dirs)?)
     };
-    // Every table is read and checked before the plan, a table, or the
-    // manifest changes; then all of them are written as one step, the
-    // plan first, so a refused install leaves the old set in place.
-    let prepared = install::prepare(
-        &plan,
-        &home,
-        &rune,
-        &plan_path.display().to_string(),
-        &manifest_path,
-        check,
-    )?;
-    if !check && !dry_run {
-        // While the tables change, the plan on disk serves the old
-        // registrations and the new ones: the bridge first, then the new
-        // plan once every table is written. Both steps are one
-        // transaction, so a failure in the second puts back the plan,
-        // the tables, and the manifest the first one replaced.
-        let previous = plan::read_at(&plan_path).ok().map(|(old, _)| old);
-        let bridge = previous
-            .as_ref()
-            .map(|old| plan::bridge(old, &plan))
-            .filter(|bridge| *bridge != plan);
-        let mut files = vec![publish::Staged {
-            target: plan_path.clone(),
-            text: plan_text(bridge.as_ref().unwrap_or(&plan))?,
-            new_mode: None,
-        }];
-        files.extend(prepared.files);
-        let mut transaction = publish::Transaction::default();
-        transaction.publish(&files)?;
-        if bridge.is_some() {
-            transaction.publish(&[publish::Staged {
-                target: plan_path,
-                text: plan_text(&plan)?,
-                new_mode: None,
-            }])?;
+    // Every table is read and checked before anything changes.
+    let prepared = install::prepare(&plan, &home, &rune, &generations, &manifest_path, check)?;
+    let mut report = prepared.report;
+    if check {
+        // A registration whose generation is gone falls to its policy.
+        for generation in prepared.generations.iter().filter(|g| !g.path.is_file()) {
+            report.drift.push(format!(
+                "the plan generation {} is missing; run `rune hook install`",
+                generation.path.display()
+            ));
         }
-        transaction.commit();
     }
-    Ok(Some(prepared.report))
-}
-
-fn plan_text(plan: &Plan) -> Result<String, Error> {
-    serde_json::to_string_pretty(plan).map_err(|error| Error::io(error.to_string()))
+    if !check && !dry_run {
+        // The new generations come first. Each is a file of its own that
+        // no install rewrites, so a registration of the old tables reads
+        // the plan it was installed with until the tables change. The
+        // tables and the manifest then change as one step.
+        for generation in &prepared.generations {
+            plan::write_generation(generation)?;
+        }
+        let published = publish::publish(&prepared.files);
+        // A fresh read of the tables names every generation still in use.
+        // Every other one goes, a failed install's new ones included.
+        if let Err(error) = install::sweep_generations(&home, &generations) {
+            report
+                .warnings
+                .push(format!("old plan generations not removed: {error}"));
+        }
+        published?;
+    }
+    Ok(Some(report))
 }
 
 /// The error code of a hook install a proof scene started with the live
