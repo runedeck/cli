@@ -75,6 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse an exempt tool that the line keeps inside the sandbox, such as `cd DIR && jj log`, and name the one command to run, such as `jj -R DIR log`.
 - Advise a Bash line that joins separate commands to split them, and pass every line that holds no exempt tool.
 - Read the exempt patterns from the handler's arguments, else from `sandbox.excludedCommands` while `sandbox.enabled` is on.
+- Adopt `sh ~/.config/just/hook <Event>`, where the dotfiles moved the legacy dispatcher, as the legacy dispatcher on install.
+- Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.

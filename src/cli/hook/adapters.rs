@@ -686,10 +686,16 @@ fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     Ok(HandlerResult::default())
 }
 
-fn sd_script(relative: &str) -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join(".sd").join(relative))
-        .filter(|p| p.is_file())
+/// The turn checkpoint script: the just tree first, where the dotfiles moved
+/// it from `~/.sd`, then the old place for a home not yet applied.
+fn checkpoint_script(home: &Path) -> Option<PathBuf> {
+    [
+        ".config/just/claude/turn/checkpoint",
+        ".sd/claude/turn/checkpoint",
+    ]
+    .into_iter()
+    .map(|relative| home.join(relative))
+    .find(|p| p.is_file())
 }
 
 /// The prompt checkpoint for turn-scoped review, by event.
@@ -700,7 +706,7 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(script) = sd_script("claude/turn/checkpoint") else {
+    let Some(script) = dirs::home_dir().and_then(|home| checkpoint_script(&home)) else {
         return Ok(HandlerResult::default());
     };
     let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
@@ -837,6 +843,22 @@ mod tests {
 
     fn config_home() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn the_checkpoint_script_is_found_in_the_just_tree_first() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(checkpoint_script(home.path()), None);
+        let place = |relative: &str| {
+            let path = home.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            path
+        };
+        let legacy = place(".sd/claude/turn/checkpoint");
+        assert_eq!(checkpoint_script(home.path()), Some(legacy));
+        let just = place(".config/just/claude/turn/checkpoint");
+        assert_eq!(checkpoint_script(home.path()), Some(just));
     }
 
     fn jj_get(dir: &Path, home: &Path, key: &str) -> String {

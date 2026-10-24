@@ -286,9 +286,9 @@ fn predecessor(command: &str, adapters: &[String]) -> Option<Predecessor> {
         .map(Predecessor::Compound)
 }
 
-/// What one simple command runs, by its words: `[sh] PATH/.sd/hook EVENT`
-/// or `sd hook EVENT` for the legacy dispatcher, else the program of a
-/// tool the plan replaces here.
+/// What one simple command runs, by its words: `[sh] PATH/.sd/hook EVENT`,
+/// its successor `[sh] PATH/.config/just/hook EVENT`, or `sd hook EVENT` for
+/// the legacy dispatcher, else the program of a tool the plan replaces here.
 fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str> {
     let name = |word: &String| {
         Path::new(word)
@@ -301,7 +301,11 @@ fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str
         _ => words,
     };
     match args {
-        [program, _event, ..] if program.ends_with("/.sd/hook") => return Some(LEGACY),
+        [program, _event, ..]
+            if program.ends_with("/.sd/hook") || program.ends_with("/.config/just/hook") =>
+        {
+            return Some(LEGACY);
+        }
         [program, hook, _event, ..] if name(program) == "sd" && hook == "hook" => {
             return Some(LEGACY);
         }
@@ -2088,6 +2092,10 @@ mod tests {
             Some(Predecessor::Alone(LEGACY))
         );
         assert_eq!(of("sd hook Stop"), Some(Predecessor::Alone(LEGACY)));
+        assert_eq!(
+            of("sh ~/.config/just/hook Stop"),
+            Some(Predecessor::Alone(LEGACY))
+        );
         assert_eq!(
             of("/Users/x/.local/bin/dcg"),
             Some(Predecessor::Alone("dcg"))

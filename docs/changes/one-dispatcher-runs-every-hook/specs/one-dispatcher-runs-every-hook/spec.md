@@ -136,7 +136,7 @@ A handler that may return a replacement input MUST declare `rewrites: true` and 
 
 ### Requirement: Install Adopts Predecessors And Migrates Legacy Entries
 
-An adapter MUST declare the registration pattern of the tool it replaces. On install, an entry that matches an active adapter's pattern (dcg, git-ai, rtk) or the legacy `sh ~/.sd/hook` dispatcher is removed and recorded in the manifest as adopted, in Claude `settings.json` and Codex `hooks.json`. Codex `config.toml` also holds the trust state, so rune MUST NOT rewrite it: a legacy entry there is reported with its line for the owner. A Codex entry rune wrote is trusted only after the harness's own trust step, so the install prints that step and `--check` reports an untrusted entry until then.
+An adapter MUST declare the registration pattern of the tool it replaces. On install, an entry that matches an active adapter's pattern (dcg, git-ai, rtk) or the legacy dispatcher (`sh ~/.sd/hook` or its successor `sh ~/.config/just/hook`) is removed and recorded in the manifest as adopted, in Claude `settings.json` and Codex `hooks.json`. Codex `config.toml` also holds the trust state, so rune MUST NOT rewrite it: a legacy entry there is reported with its line for the owner. A Codex entry rune wrote is trusted only after the harness's own trust step, so the install prints that step and `--check` reports an untrusted entry until then.
 
 #### Scenario: git-ai adopted
 
