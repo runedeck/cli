@@ -258,6 +258,11 @@ fn emptying_the_handlers_takes_rune_s_entries_back_and_keeps_the_owner_s() {
 
 /// `rune install --json` of a one-rule module into a scratch target.
 fn install_module(scene: &Scene) -> std::process::Output {
+    install_module_with(scene, &[])
+}
+
+/// `install_module` with more variables for rune.
+fn install_module_with(scene: &Scene, env: &[(&str, PathBuf)]) -> std::process::Output {
     let source = scene.path("module");
     std::fs::create_dir_all(source.join("rules")).unwrap();
     std::fs::write(
@@ -269,8 +274,9 @@ fn install_module(scene: &Scene) -> std::process::Output {
     std::fs::write(source.join("rules/Fixture.md"), "a rule\n").unwrap();
     let target = scene.path("target");
     std::fs::create_dir_all(&target).unwrap();
-    scene
-        .rune()
+    let mut command = scene.rune();
+    command.envs(env.iter().map(|(name, value)| (*name, value)));
+    command
         .args([
             "install",
             "--source",
@@ -281,6 +287,25 @@ fn install_module(scene: &Scene) -> std::process::Output {
         ])
         .output()
         .unwrap()
+}
+
+#[test]
+fn rune_install_in_a_proof_scene_with_the_live_home_skips_the_hooks_in_silence() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    let output = install_module_with(&scene, &[("RUNE_PROOF_LIVE_HOME", scene.home())]);
+    assert!(output.status.success(), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        document.get("hooks").is_none_or(Value::is_null),
+        "{document}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("hook tables"),
+        "{document}"
+    );
+    assert!(!claude_settings(&scene).exists(), "no table was written");
 }
 
 #[test]

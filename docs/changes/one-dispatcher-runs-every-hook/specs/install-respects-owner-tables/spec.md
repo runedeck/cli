@@ -119,7 +119,7 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 
 ### Requirement: A Proof Scene Installs No Hook Into The Live HOME
 
-The proof runner MUST name its own HOME to each scene. A hook install a scene starts with that HOME MUST write nothing: `rune hook install` fails and names the HOME, and `rune install` deploys its deck and skips the hook step with a warning. A scene that names a HOME of its own installs as usual.
+The proof runner MUST name its own HOME to each scene. A hook install a scene starts with that HOME MUST write nothing: `rune hook install` fails and names the HOME. `rune install` deploys its deck and skips the hook step without a line about it, so the transcript holds nothing that only the runner's machine prints. A scene that names a HOME of its own installs as usual.
 
 #### Scenario: Scene installs with the runner's HOME
 
