@@ -1,9 +1,9 @@
 ---
 type: proof
 change: run-isolates-write-runs
-head: eff81daf33af081b93d288cc5c3c814382a83717
-recorded: 2026-10-23
-transcript: eb3c853672aa00fc2a16b903cea0d605893860f5b4ea3434870179accdd8fcfd
+head: 650f94b8b33299a38d21157d849aa7ca92e9c71d
+recorded: 2026-10-24
+transcript: ce96b4ffb148b265fa655a8f48c95ca88971bb072b12a290b10c8353b7cbaa21
 scenes:
 - scenario: execute-prompts-off-session#a-workspace-write-run-works-in-its-own-jj-workspace/workspace-write-seat-edits-a-file
   kind: check
