@@ -157,10 +157,16 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     };
     let rune = std::env::current_exe()
         .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
-    // One install at a time reads and writes this set of files.
+    // One install at a time reads and writes this set of files. A check
+    // or a dry run writes nothing and creates no directory, so it reads
+    // without the lock.
     let mut targets = vec![plan_path.clone(), manifest_path.clone()];
     targets.extend(install::table_files(&home)?);
-    let _lock = publish::Lock::acquire(&targets)?;
+    let _lock = if check || dry_run {
+        None
+    } else {
+        Some(publish::Lock::acquire(&targets)?)
+    };
     // Every table is read and checked before the plan, a table, or the
     // manifest changes; then all of them are written as one step, the
     // plan first, so a refused install leaves the old set in place.

@@ -171,10 +171,13 @@ pub(crate) fn publish(files: &[Staged]) -> Result<(), Error> {
 
 /// An exclusive lock on the directories of a set of targets, held while
 /// one install reads and writes them, so two installs never interleave.
-/// A directory that does not exist yet is locked through its nearest
-/// existing ancestor. Each directory is locked once by its canonical
-/// path: a second lock on it through another name would wait for the
-/// first forever. The lock is advisory: only rune takes it.
+/// Each target's directory is created before it is locked, so every
+/// install that shares a target locks that directory itself, whether it
+/// existed before or not. Locking an ancestor of a missing directory let
+/// a second install lock the directory the first one went on to create.
+/// Each directory is locked once by its canonical path: a second lock on
+/// it through another name would wait for the first forever. The lock is
+/// advisory: only rune takes it. Only a writing install takes it.
 pub(crate) struct Lock {
     /// The locks, released when the value drops. Only a test reads them.
     #[cfg(unix)]
@@ -184,14 +187,15 @@ pub(crate) struct Lock {
 
 impl Lock {
     pub(crate) fn acquire(targets: &[PathBuf]) -> Result<Self, Error> {
-        let mut dirs: Vec<PathBuf> = targets
-            .iter()
-            .filter_map(|target| {
-                let target = std::path::absolute(target).ok()?;
-                let dir = target.parent()?.ancestors().find(|dir| dir.is_dir())?;
-                Some(fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
-            })
-            .collect();
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for target in targets {
+            let target = std::path::absolute(target).map_err(|e| io(target, &e))?;
+            let Some(parent) = target.parent() else {
+                continue;
+            };
+            fs::create_dir_all(parent).map_err(|e| io(parent, &e))?;
+            dirs.push(fs::canonicalize(parent).map_err(|e| io(parent, &e))?);
+        }
         dirs.sort();
         dirs.dedup();
         #[cfg(unix)]
@@ -309,6 +313,32 @@ mod tests {
         }
         assert!(fs::read_to_string(&target).unwrap().starts_with("writer "));
         assert_eq!(leftovers(dir.path()), Vec::<String>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_second_install_waits_although_the_first_created_the_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("state").join("hooks").join("plan.json");
+        let first = Lock::acquire(std::slice::from_ref(&target)).unwrap();
+        // The first install's staging makes the missing directories.
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let (sent, got) = std::sync::mpsc::channel();
+        let second_target = target.clone();
+        let second = std::thread::spawn(move || {
+            let lock = Lock::acquire(std::slice::from_ref(&second_target)).unwrap();
+            let _ = sent.send(());
+            drop(lock);
+        });
+        assert!(
+            got.recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "both installs held the lock at once"
+        );
+        drop(first);
+        got.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the second install runs once the first is done");
+        second.join().unwrap();
     }
 
     #[cfg(unix)]
