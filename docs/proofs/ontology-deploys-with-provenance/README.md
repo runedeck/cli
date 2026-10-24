@@ -1,9 +1,9 @@
 ---
 type: proof
 change: ontology-deploys-with-provenance
-head: e60aed9434ed4149e663f682e70a3f70a87a12dc
-recorded: 2026-10-16
-transcript: f92e040bc56084a5b92e913caf49cbc1963873d3d26a1431e44e82982d33fccb
+head: a96297d142515ff6a9ff468b937cd4c1e2bfae7f
+recorded: 2026-10-24
+transcript: 84d2d711da7ac830e42d890e4d754e129490e7acf4cd9fe5a57b1885581fce5c
 scenes:
 - scenario: ontology-deploys-with-provenance#consumer-names-its-ontology-source/key-names-an-absent-source
   kind: check
@@ -55,6 +55,8 @@ $ rune install --source consumer
  ✓ ontology
    files 1
    ● rune.ttl
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 2 deployed
 $ cmp deck/ontology/rune.ttl consumer/ontology/rune.ttl
@@ -87,6 +89,8 @@ $ rune install --source consumer
  ✓ claude
    rules 1
    ● CiteTerms
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 1 deployed
 $ sh -c 'test -f consumer/.claude/rules/CiteTerms.md && test ! -e consumer/ontology && echo "rule deployed, no ontology copy"'
@@ -123,6 +127,8 @@ $ rune install --source consumer
  ✓ ontology
    files 1
    ● rune.ttl
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 2 deployed
 $ sh -c 'printf "# edited by hand\n" > consumer/ontology/rune.ttl'
@@ -155,6 +161,8 @@ $ rune install --source consumer
  ✓ claude
  ✓ ontology
    ○ consumer/ontology/rune.ttl — user modified
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ○ 2 skipped
 $ cat consumer/ontology/rune.ttl
@@ -165,6 +173,8 @@ $ rune install --source consumer --force
  ✓ ontology
    files 1
    ● rune.ttl
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 1 deployed  ○ 1 skipped
 $ cmp deck/ontology/rune.ttl consumer/ontology/rune.ttl

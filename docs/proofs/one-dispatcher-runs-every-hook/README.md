@@ -1,9 +1,9 @@
 ---
 type: proof
 change: one-dispatcher-runs-every-hook
-head: 3b329720513a95265a5a351b6380d2d8a789165a
+head: 81a2bd70930b13c858e7795f53fa93668007fb68
 recorded: 2026-10-24
-transcript: 4d09089a5dd38312b024f3224fb0ad5d6b38ce47e103034a7f275af14565135c
+transcript: 5932b9f3ccf7fa555c2933293251cc094ca9ee1fc79b0472236cf3592fdedbc1
 scenes:
 - scenario: one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
   kind: check
@@ -100,6 +100,10 @@ scenes:
 - scenario: install-respects-owner-tables#one-install-prints-one-result/hook-step-fails
   kind: check
 - scenario: install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/scene-installs-with-the-runner-s-home
+  kind: check
+- scenario: install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/deck-install-in-a-scene-with-the-runner-s-home
+  kind: check
+- scenario: install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/marker-outside-a-proof
   kind: check
 - scenario: install-respects-owner-tables#the-manifest-remembers-the-last-install/new-foreign-entry
   kind: check
@@ -522,14 +526,21 @@ unchanged
 
 ```console
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$# the plan turns read-only, the config changes, and a directory takes the manifest's place
-$ sh -c 'chmod 444 state/hooks/plan.json && cp -f state/hooks/plan.json old-plan.json && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/failures/.config/rune/config.yaml" home/.config/rune/config.yaml && mv state/hooks/manifest.json manifest.saved && mkdir -p state/hooks/manifest.json/inside'
+$# the plan turns read-only, and copies of the plan and both tables stay aside
+$ sh -c 'chmod 444 state/hooks/plan.json && cp -f state/hooks/plan.json plan.before && cp -f home/.claude/settings.json claude.before && cp -f home/.codex/hooks.json codex.before'
+$# the config gains a session.start handler: every rune entry still matches, so preparation needs no manifest record
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home-plus/.config/rune/config.yaml" home/.config/rune/config.yaml'
+$# a directory takes the manifest's place, so the step's last replacement fails after the plan and the tables were replaced
+$ sh -c 'mv state/hooks/manifest.json manifest.saved && mkdir -p state/hooks/manifest.json/inside'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
-...
-$# the plan has its old bytes and mode, and nothing staged or kept is left beside a target
-$ sh -c 'cmp state/hooks/plan.json old-plan.json && ls -l state/hooks/plan.json | cut -c1-10'
+[..]state/hooks/manifest.json: cannot keep the old file to put it back: [..]
+$# the plan and both tables have their old bytes, the plan its old mode, and no table gained SessionStart
+$ sh -c 'cmp state/hooks/plan.json plan.before && cmp home/.claude/settings.json claude.before && cmp home/.codex/hooks.json codex.before && ls -l state/hooks/plan.json | cut -c1-10'
 -r--r--r--
+$ jq -c '[.hooks | has("SessionStart")]' home/.claude/settings.json home/.codex/hooks.json
+[false]
+[false]
 $ sh -c '! ls -a state/hooks home/.claude home/.codex | grep -q rune- && echo no staged or kept file'
 no staged or kept file
 ```
@@ -706,12 +717,32 @@ hook tables not written: [..]home/.codex/hooks.json is not JSON: [..]
 ## install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/scene-installs-with-the-runner-s-home
 
 ```console
-$# the scene names its HOME as the runner's own, as a scene that keeps the live HOME does
-$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && cp -f home/.claude/settings.json before.json && RUNE_PROOF_LIVE_HOME="$PWD/home" HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
+$# a marker with this shell's process id and the scene's HOME stands in for the runner's, so the scene's HOME counts as the runner's own
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && cp -f home/.claude/settings.json before.json && printf "%s\n%s\n" "$$" "$PWD/home" > marker && RUNE_PROOF_SCENE="$PWD/marker" HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
-[..]a proof scene runs with the live HOME [..]home, so it installs no hook there; give the scene a HOME of its own
+[..]a proof scene runs with the runner's HOME [..]home, so it installs no hook there; give the scene a HOME of its own
 $ sh -c 'cmp home/.claude/settings.json before.json && test ! -e home/.codex/hooks.json && test ! -e state/hooks && echo nothing written'
 nothing written
+```
+
+## install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/deck-install-in-a-scene-with-the-runner-s-home
+
+```console
+$# the same stand-in marker, and a deck install
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/install-module" module && cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && mkdir -p target && printf "%s\n%s\n" "$$" "$PWD/home" > marker && RUNE_PROOF_SCENE="$PWD/marker" HOME="$PWD/home" RUNE_STATE_DIR=state rune install --source module --target target --json 2>/dev/null | jq -r ".hooks.skipped, (.installed | length > 0)"'
+a proof scene runs with the runner's HOME [..]home, so it installs no hook there; give the scene a HOME of its own
+true
+$ sh -c 'cmp home/.claude/settings.json "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables/.claude/settings.json" && test ! -e home/.codex/hooks.json && echo no table changed'
+no table changed
+```
+
+## install-respects-owner-tables#a-proof-scene-installs-no-hook-into-the-live-home/marker-outside-a-proof
+
+```console
+$# a shell writes the marker and exits, so the marker names a process that no longer runs
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && sh -c "printf \"%s\n%s\n\" \$\$ \"$PWD/home\" > marker"'
+$ sh -c 'RUNE_PROOF_SCENE="$PWD/marker" HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^claude: PreToolUse registered"'
+claude: PreToolUse registered
 ```
 
 ## install-respects-owner-tables#the-manifest-remembers-the-last-install/new-foreign-entry

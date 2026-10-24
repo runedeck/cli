@@ -1,4 +1,4 @@
-## install-deck-ontology#consumer-names-its-ontology-source/key-names-an-absent-source
+## ontology-deploys-with-provenance#consumer-names-its-ontology-source/key-names-an-absent-source
 kind: check
 $ sh -s
 < cp -R "$RUNE_PROOF_ROOT/tests/fixtures/install-ontology/deck" deck
@@ -9,7 +9,7 @@ $ rune install --source consumer
 $ sh -c 'test ! -e consumer/ontology && echo "no ontology copy"'
   no ontology copy
 
-## install-deck-ontology#install-deploys-the-ontology-with-provenance/consumer-cites-a-deck-term
+## ontology-deploys-with-provenance#install-deploys-the-ontology-with-provenance/consumer-cites-a-deck-term
 kind: check
 $ sh -s
 < cp -R "$RUNE_PROOF_ROOT/tests/fixtures/install-ontology/deck" deck
@@ -17,9 +17,9 @@ $ sh -s
 < printf 'version: 1\nsources:\n  deck:\n    local: ../deck\nrunes:\n  deck:\n    rules: [CiteTerms]\nontology: deck\n' > consumer/.rune
 < printf -- '---\nstatus: proposed\n---\n\n# Cite the instance\n\n## Why\n\nA reader meets a term.\n\n## What Changes\n\n- Cite it.\n\n## Capabilities\n\n- deployed-copy-records (new)\n\n## Impact\n\n- The specification.\n' > consumer/docs/changes/cite-the-instance/proposal.md
 < printf '## 1. Work\n\n- [ ] 1.1 Cite\n' > consumer/docs/changes/cite-the-instance/tasks.md
-< printf '## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *instance* [INSTANCE] MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: https://runedeck.ai/ns#Instance\n' > consumer/docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md
+< printf '## ADDED Requirements\n\n### Requirement: Copy carries a record\n\nEvery *[instance][INSTANCE]* MUST carry a record.\n\n#### Scenario: Copy lands\n\n- **WHEN** a copy lands\n- **THEN** its record exists\n\n[INSTANCE]: ../../../../specs/glossary/instance.md\n' > consumer/docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md
 $ rune spec validate cite-the-instance --source consumer
-  error[delta-term-undefined]: docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md:5: defined term 'instance' needs a glossary; create docs/specs/glossary.md with `- **instance**: <definition>`
+  specification validation passed
 $ rune install --source consumer
 
    ✓ claude
@@ -28,6 +28,8 @@ $ rune install --source consumer
    ✓ ontology
      files 1
      ● rune.ttl
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 2 deployed
 
@@ -38,12 +40,16 @@ $ cat consumer/ontology/.manifest
     provenance: .provenance/rune.ttl.yaml
 $ sh -c 'grep -E "name: ontology/rune.ttl|source: |uri: " consumer/ontology/.provenance/rune.ttl.yaml'
     - name: ontology/rune.ttl
-          source: /private/tmp/claude-501/rune-proof-53004-install-deck-ontology-install-deploys-the-ontology-with-provenance-consumer-cites-a-deck-term-2b311548-6-0/deck
+          source: /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-install-deploys-the-ontology-with-provenance-consumer-cites-a-deck-term-2dd26c48-8-0/deck
         - uri: ontology/rune.ttl
+$ rune spec validate cite-the-instance --source consumer
+  error[delta-term-page]: docs/changes/cite-the-instance/specs/deployed-copy-records/spec.md:5: glossary page docs/specs/glossary/instance.md is missing; run `rune spec glossary --write`
+$ rune spec glossary --write --source consumer
+  wrote docs/specs/glossary: 3 page(s) and the index, 4 file(s) changed
 $ rune spec validate cite-the-instance --source consumer
   specification validation passed
 
-## install-deck-ontology#consumer-without-the-key-installs-as-before/manifest-carries-no-ontology-key
+## ontology-deploys-with-provenance#consumer-without-the-key-installs-as-before/manifest-carries-no-ontology-key
 kind: check
 $ sh -s
 < cp -R "$RUNE_PROOF_ROOT/tests/fixtures/install-ontology/deck" deck
@@ -54,13 +60,15 @@ $ rune install --source consumer
    ✓ claude
      rules 1
      ● CiteTerms
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 1 deployed
 
 $ sh -c 'test -f consumer/.claude/rules/CiteTerms.md && test ! -e consumer/ontology && echo "rule deployed, no ontology copy"'
   rule deployed, no ontology copy
 
-## install-deck-ontology#source-without-an-ontology-file-is-refused/source-carries-no-ontology-file
+## ontology-deploys-with-provenance#source-without-an-ontology-file-is-refused/source-carries-no-ontology-file
 kind: check
 $ sh -s
 < cp -R "$RUNE_PROOF_ROOT/tests/fixtures/install-ontology/deck" deck
@@ -68,11 +76,11 @@ $ sh -s
 < mkdir consumer
 < printf 'version: 1\nsources:\n  deck:\n    local: ../deck\nrunes:\n  deck:\n    rules: [CiteTerms]\nontology: deck\n' > consumer/.rune
 $ rune install --source consumer
-  fatal: .rune: ontology 'deck' names source 'deck' at /private/tmp/claude-501/rune-proof-53004-install-deck-ontology-source-without-an-ontology-file-is-refused-source-carries-no-ontology-file-d1209f0-20-0/deck, which has no ontology file at ontology/rune.ttl
+  fatal: .rune: ontology 'deck' names source 'deck' at /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-source-without-an-ontology-file-is-refused-source-carries-no-ontology-file-3449d188-26-0/deck, which has no ontology file at ontology/rune.ttl
 $ sh -c 'test ! -e consumer/.claude && test ! -e consumer/ontology && echo "no provider tree, no ontology copy"'
   no provider tree, no ontology copy
 
-## install-deck-ontology#deployed-copy-reports-drift/copy-edited-by-hand
+## ontology-deploys-with-provenance#deployed-copy-reports-drift/copy-edited-by-hand
 kind: check
 $ sh -s
 < cp -R "$RUNE_PROOF_ROOT/tests/fixtures/install-ontology/deck" deck
@@ -86,6 +94,8 @@ $ rune install --source consumer
    ✓ ontology
      files 1
      ● rune.ttl
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 2 deployed
 
@@ -104,7 +114,7 @@ $ sh -c 'cd consumer && rune drift'
 $ rune drift --source consumer --target consumer
 
    ontology
-     ┌ ontology/rune.ttl (source: /private/tmp/claude-501/rune-proof-53004-install-deck-ontology-deployed-copy-reports-drift-copy-edited-by-hand-2c87eed0-25-0/deck)
+     ┌ ontology/rune.ttl (source: /private/tmp/claude-501/rune-proof-8585-ontology-deploys-with-provenance-deployed-copy-reports-drift-copy-edited-by-hand-b540640-32-0/deck)
      │  frontmatter  ✓
      │  body         ⚡ drifted
      └
@@ -119,6 +129,8 @@ $ rune install --source consumer
    ✓ claude
    ✓ ontology
      ○ consumer/ontology/rune.ttl — user modified
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ○ 2 skipped
 
@@ -130,6 +142,8 @@ $ rune install --source consumer --force
    ✓ ontology
      files 1
      ● rune.ttl
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 1 deployed  ○ 1 skipped
 
