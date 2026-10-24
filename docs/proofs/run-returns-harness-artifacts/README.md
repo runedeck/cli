@@ -1,9 +1,9 @@
 ---
 type: proof
 change: run-returns-harness-artifacts
-head: d875d9a012467cfc61a8d56b46328efd4c751f0b
-recorded: 2026-10-22
-transcript: f5a5818001537d30b11810795b2983ffc5dc3fd7c7984aa6463213149ac11b19
+head: 650f94b8b33299a38d21157d849aa7ca92e9c71d
+recorded: 2026-10-24
+transcript: 5a2a37341f533eaba00ce363edb019d0516f098e0584b36a19605cf535871437
 scenes:
 - scenario: execute-prompts-off-session#the-run-reports-the-files-the-harness-created/agy-draws-an-image
   kind: check
