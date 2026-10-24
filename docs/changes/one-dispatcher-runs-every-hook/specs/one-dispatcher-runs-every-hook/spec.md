@@ -46,7 +46,7 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: The Dispatcher Normalizes And Answers
 
-`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload (`v`, `harness`, `event`, `native_event`, `session_id`, `cwd`, `model`, `tool`, `prompt`, `raw`), run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits exits 0 without a handler. The dispatcher tells Grok apart by the camelCase keys only Grok's payload carries, and an inherited environment variable decides nothing.
+`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload (`v`, `harness`, `event`, `native_event`, `session_id`, `cwd`, `model`, `tool`, `prompt`, `raw`), run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's payload keys, exits 0 without a handler.
 
 #### Scenario: Grok payload reaches a handler
 
@@ -65,7 +65,7 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: Dispatcher Failures Follow The Strongest Policy
 
-When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. Install writes the plan's path and that policy into each registration, so a plan that is missing, truncated, or under another state directory still gets the strongest policy. A guarded Claude registration also sets `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
+When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
 
 #### Scenario: Payload names another event on a guarded gate
 
@@ -84,32 +84,17 @@ When the dispatcher itself cannot run the handlers, because the payload's event 
 
 ### Requirement: Handlers Run In Order And Fail By Policy
 
-Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. A denial outranks every other effect, whichever handler came first. An effect the event does not take, such as `continue_turn` outside `turn.finish`, is a failed result. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve and the time it takes to stop a handler. A handler past its timeout gets a grace of a few milliseconds before the kill, so the answer leaves before the harness deadline. A handler fails when it exits non-zero, times out, cannot start because the budget is spent, prints nothing, or prints anything but one JSON result in the rune result shape. A field that shape does not know, such as a harness's own `hookSpecificOutput`, is a failed result. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`. The dispatcher log holds the tool's name and each hook's id with its effect or failure kind. It holds no command and no reason. Only the owner can read it, and it keeps two generations of at most 256 KiB.
+Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve. A handler fails when it exits non-zero, times out, prints nothing or anything but one JSON result, or cannot start because the budget is spent. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
 
 #### Scenario: Guard times out
 
 - **WHEN** dcg, policy `deny`, exceeds its timeout on `tool.before`
 - **THEN** the tool call is denied with a reason naming the timeout
 
-#### Scenario: Guard ignores the stop signal
-
-- **WHEN** dcg, policy `deny`, ignores SIGTERM and runs past its timeout on `tool.before`
-- **THEN** the denial reaches stdout before the timeout rendered in the harness table
-
 #### Scenario: Linter crashes
 
 - **WHEN** lint-on-write, policy `warn`, exits 3 on `tool.after`
 - **THEN** the edit stands, the failure is logged, and the next handler runs
-
-#### Scenario: Guard answers in the harness's own shape
-
-- **WHEN** dcg, policy `deny`, prints Claude's `hookSpecificOutput` or prints nothing on `tool.before`
-- **THEN** the tool call is denied with a reason naming the failed result
-
-#### Scenario: Continuation before a guard
-
-- **WHEN** a handler returns `continue_turn` on `tool.before` and dcg, ordered after it, returns `deny`
-- **THEN** the tool call is denied with dcg's reason, and the continuation is reported as a failed result
 
 #### Scenario: Budget spent before the guard
 
