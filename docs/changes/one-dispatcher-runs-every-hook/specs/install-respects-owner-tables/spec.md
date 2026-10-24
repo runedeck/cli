@@ -59,3 +59,12 @@ Install MUST adopt a tool's own entry, such as dcg's, only on a harness and nati
 
 - **WHEN** a handler runs `rune-hook-dcg` on `claude:PreToolUse` only, and both Claude and Codex hold a dcg entry on `PreToolUse`
 - **THEN** install adopts Claude's dcg entry and keeps Codex's
+
+### Requirement: The Manifest Remembers The Last Install
+
+A later install MUST carry every adopted entry forward in the manifest, so the record of what install removed survives. `rune install --check` MUST count a foreign entry the manifest does not list as drift.
+
+#### Scenario: New foreign entry
+
+- **WHEN** the owner adds a hook to `Stop` after an install and runs `rune install --check`
+- **THEN** the check exits non-zero and names the new entry and its event

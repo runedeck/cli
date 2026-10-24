@@ -191,6 +191,11 @@ fn is_owned(command: &str, harness: Harness) -> bool {
 /// What adopts the legacy `sd hook` dispatcher.
 const LEGACY: &str = "legacy sd hook";
 
+/// Whether two records name the same entry: its event, command, and file.
+fn same_entry(a: &Recorded, b: &Recorded) -> bool {
+    a.event == b.event && a.command == b.command && a.source == b.source
+}
+
 /// The built-in adapters the plan runs on one harness's native event:
 /// each handler whose resolved executable is `rune-hook-<name>`.
 fn adapters_on(plan: &Plan, harness: Harness, event: &str) -> Vec<String> {
@@ -409,6 +414,28 @@ pub(crate) fn prepare(
                 rewritten.insert(name.clone(), kept.groups);
             }
         }
+        // An entry adopted by an earlier install is gone from the table,
+        // so its record comes forward from the manifest.
+        for earlier in &previous.adopted {
+            if !next.adopted.iter().any(|r| same_entry(r, earlier)) {
+                next.adopted.push(earlier.clone());
+            }
+        }
+        // A foreign entry the manifest does not list arrived after the
+        // last install.
+        let arrived: Vec<String> = next
+            .foreign
+            .iter()
+            .filter(|r| !previous.foreign.iter().any(|p| same_entry(p, r)))
+            .map(|r| {
+                format!(
+                    "{}: foreign `{}` on {} is new since the last install",
+                    path.display(),
+                    r.command,
+                    r.event
+                )
+            })
+            .collect();
         if harness == Harness::Codex {
             legacy_codex_toml(home, plan, &wanted, &mut report);
             if !wanted.is_empty() {
@@ -424,6 +451,7 @@ pub(crate) fn prepare(
                     .drift
                     .push(format!("{}: differs from the plan", path.display()));
             }
+            report.drift.extend(arrived);
             continue;
         }
         if changed {
@@ -1145,6 +1173,72 @@ mod tests {
         assert!(commands(&claude, "PostToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()));
         assert!(commands(&codex, "PreToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()));
         assert_eq!(report.adopted.len(), 1, "{report:?}");
+    }
+
+    #[test]
+    fn the_manifest_keeps_what_was_adopted_and_check_sees_a_new_foreign_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let path = settings(home.path(), LIVE);
+        let manifest = home.path().join("state").join("manifest.json");
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let read: Manifest = serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(
+            read.harnesses[&Harness::Claude].adopted.len(),
+            3,
+            "the second install keeps the first one's adoptions"
+        );
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(report.drift.is_empty(), "{:?}", report.drift);
+        let mut table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        table["hooks"]["Stop"] =
+            json!([{"hooks": [{"type": "command", "command": "/new/unknown-hook"}]}]);
+        fs::write(&path, table.to_string()).unwrap();
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(
+            report
+                .drift
+                .iter()
+                .any(|d| d.contains("/new/unknown-hook") && d.contains("Stop")),
+            "{:?}",
+            report.drift
+        );
     }
 
     #[test]
