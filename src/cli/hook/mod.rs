@@ -19,6 +19,7 @@ pub(crate) mod payload;
 pub(crate) mod plan;
 pub(crate) mod publish;
 pub(crate) mod record;
+pub(crate) mod retire;
 pub(crate) mod run;
 pub(crate) mod sandbox_guard;
 pub(crate) mod stats;
@@ -179,7 +180,7 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         Some(publish::Lock::acquire_dirs(&dirs)?)
     };
     // Every table is read and checked before anything changes.
-    let prepared = install::prepare(
+    let mut prepared = install::prepare(
         &plan,
         &home,
         &rune,
@@ -188,7 +189,7 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         check,
         chrono::Utc::now(),
     )?;
-    let mut report = prepared.report;
+    let mut report = std::mem::take(&mut prepared.report);
     if check {
         // A registration whose generation is gone, or no longer holds the
         // bytes its name is the digest of, falls to its policy.
@@ -210,11 +211,9 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
         // The new generations come first. Each is a file of its own that
         // no install rewrites, so a registration of the old tables reads
         // the plan it was installed with until the tables change. The
-        // tables and the manifest then change as one step.
-        for generation in &prepared.generations {
-            plan::write_generation(generation)?;
-        }
-        publish::publish(&prepared.files)?;
+        // retired records the new tables make stale go next, then the
+        // tables and the manifest change as one step.
+        install::write(&prepared)?;
         // A fresh read of the tables names every generation still in use.
         // A session that loaded its hooks before this install still calls
         // the old paths, so an unnamed generation stays until the tables

@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 
 use super::codex_trust::{self, Trust};
 use super::publish::Staged;
+use super::retire::{self, Retired, canonical};
 use super::table::Table;
 
 /// One entry of a harness table as rune records it.
@@ -55,84 +56,14 @@ pub(crate) struct Manifest {
     /// The plan generations the last install's registrations name.
     #[serde(default)]
     pub generations: Vec<String>,
-    /// The generations no table names any more, each with the time and
-    /// the install at which the tables stopped naming it.
+    /// The generations no table names any more, each with the time, the
+    /// install, and the days at which installs found it unnamed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired: Vec<Retired>,
     /// How many installs wrote this manifest: a count the clock cannot
     /// move.
     #[serde(default)]
     pub installs: u64,
-}
-
-/// A generation no table names, kept for a session that loaded its hooks
-/// before the tables changed and still calls its path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Retired {
-    pub generation: String,
-    /// When an install found that no table names it, RFC 3339 in UTC.
-    pub since: String,
-    /// The manifest's install count at that time.
-    #[serde(default)]
-    pub install: Option<u64>,
-}
-
-/// How long a generation stays after the tables stop naming it. A
-/// session that started before the change calls the old path, and under
-/// `deny` each of its guarded calls would fail without the file.
-pub(crate) const RETENTION_DAYS: i64 = 14;
-
-/// How many installs must follow the one that retired a generation before
-/// it goes, so a clock set forward cannot end the window alone.
-pub(crate) const RETENTION_INSTALLS: u64 = 2;
-
-/// A record that a generation stopped being named now, at `install`.
-fn retired_now(path: &Path, now: chrono::DateTime<chrono::Utc>, install: u64) -> Retired {
-    Retired {
-        generation: path.display().to_string(),
-        since: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        install: Some(install),
-    }
-}
-
-/// A path as the file system names it, or as given when it is gone.
-fn canonical(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// The retired records once install knows which generations the tables
-/// named before it and name after it. A generation a table names keeps
-/// no record, so a record left from before it was named again cannot cut
-/// its next window short. A generation the old tables named and the new
-/// ones do not starts a fresh window now. Every other record stays.
-fn reconcile_retired(
-    records: &[Retired],
-    before: &std::collections::BTreeSet<PathBuf>,
-    after: &std::collections::BTreeSet<PathBuf>,
-    now: chrono::DateTime<chrono::Utc>,
-    install: u64,
-) -> Vec<Retired> {
-    let keys =
-        |paths: &std::collections::BTreeSet<PathBuf>| -> std::collections::BTreeSet<PathBuf> {
-            paths.iter().map(|path| canonical(path)).collect()
-        };
-    let (before_keys, after_keys) = (keys(before), keys(after));
-    let mut out: Vec<Retired> = records
-        .iter()
-        .filter(|record| {
-            let key = canonical(Path::new(&record.generation));
-            !after_keys.contains(&key) && !before_keys.contains(&key)
-        })
-        .cloned()
-        .collect();
-    for path in before {
-        if !after_keys.contains(&canonical(path)) {
-            out.push(retired_now(path, now, install));
-        }
-    }
-    out.sort_by(|a, b| a.generation.cmp(&b.generation));
-    out.dedup_by(|a, b| a.generation == b.generation);
-    out
 }
 
 /// What one run of the installer found and did.
@@ -492,7 +423,24 @@ pub(crate) fn table_files(home: &Path) -> Result<Vec<PathBuf>, Error> {
 pub(crate) struct Prepared {
     pub report: Report,
     pub generations: Vec<super::plan::Generation>,
+    /// The old manifest without the retired records of generations the
+    /// old or the new tables name, written before the tables when it
+    /// differs from the file.
+    pub early: Option<Staged>,
     pub files: Vec<Staged>,
+}
+
+/// Write what `prepare` computed, in order: the new generations, the
+/// early manifest, then the tables and the manifest as one step. The
+/// cleanup that follows runs only after that step succeeds.
+pub(crate) fn write(prepared: &Prepared) -> Result<(), Error> {
+    for generation in &prepared.generations {
+        super::plan::write_generation(generation)?;
+    }
+    if let Some(early) = &prepared.early {
+        super::publish::publish(std::slice::from_ref(early))?;
+    }
+    super::publish::publish(&prepared.files)
 }
 
 /// Install or check the tables of every registered harness under `home`.
@@ -535,11 +483,9 @@ fn generation_of(command: &str) -> Option<PathBuf> {
 
 /// Keep every generation in `dir` that a registration in a table under
 /// `home` names, from a fresh read of the tables. Record in the manifest
-/// when, and at which install, the tables stopped naming each other one.
-/// Delete it only once that time is `RETENTION_DAYS` before `now` and
-/// `RETENTION_INSTALLS` installs have run since. A generation without a
-/// record, or with one that does not parse, is recorded as unnamed from
-/// now. Returns the generations deleted.
+/// when, at which install, and on which days installs found each other
+/// one unnamed, and delete it only once `retire::observe` lets it go.
+/// Returns the generations deleted.
 pub(crate) fn sweep_generations(
     home: &Path,
     dir: &Path,
@@ -570,36 +516,17 @@ pub(crate) fn sweep_generations(
         if named.contains(&key) {
             continue;
         }
-        let record = earlier.get(&key).and_then(|record| {
-            let since = chrono::DateTime::parse_from_rfc3339(&record.since).ok()?;
-            Some((since.with_timezone(&chrono::Utc), record.install?))
-        });
-        match record {
-            Some((since, install))
-                if now - since >= chrono::TimeDelta::days(RETENTION_DAYS)
-                    && installs >= install.saturating_add(RETENTION_INSTALLS) =>
-            {
-                fs::remove_file(&path)
-                    .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
-                swept.push(path);
-            }
-            Some((since, install)) => retired.push(Retired {
-                generation: path.display().to_string(),
-                since: since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                install: Some(install),
-            }),
-            None => retired.push(retired_now(&path, now, installs)),
+        if let Some(kept) = retire::observe(earlier.get(&key).copied(), &path, now, installs) {
+            retired.push(kept);
+        } else {
+            fs::remove_file(&path)
+                .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
+            swept.push(path);
         }
     }
     if retired != manifest.retired {
         manifest.retired = retired;
-        let text = serde_json::to_string_pretty(&manifest)
-            .map_err(|error| Error::io(error.to_string()))?;
-        super::publish::publish(&[Staged {
-            target: manifest_path.to_path_buf(),
-            text: format!("{text}\n"),
-            new_mode: Some(0o600),
-        }])?;
+        super::publish::publish(&[manifest_file(&manifest, manifest_path)?])?;
     }
     Ok(swept)
 }
@@ -834,33 +761,51 @@ pub(crate) fn prepare(
         }
         manifest.harnesses.insert(harness, next);
     }
+    let mut early = None;
     if !check {
+        // The manifest goes last in the step, so an install killed after
+        // the tables changed leaves the old one. Before the tables change,
+        // the old manifest drops the record of every generation the old
+        // or the new tables name: a record that survives a kill is then
+        // never older than the last time a table named its generation.
+        let mut first = read_manifest(manifest_path);
+        let unnamed = retire::unnamed_only(&first.retired, &named_before, &named_after);
+        if unnamed != first.retired {
+            first.retired = unnamed;
+            early = Some(manifest_file(&first, manifest_path)?);
+        }
         manifest.installs += 1;
         manifest.generations = named_after
             .iter()
             .map(|generation| generation.display().to_string())
             .collect();
-        // Before the tables change, no generation they will name keeps a
-        // record, and each one they stop naming starts its window now.
-        manifest.retired = reconcile_retired(
+        // No generation the new tables name keeps a record, and each one
+        // they stop naming starts its window now.
+        manifest.retired = retire::reconcile(
             &manifest.retired,
             &named_before,
             &named_after,
             now,
             manifest.installs,
         );
-        let text = serde_json::to_string_pretty(&manifest)
-            .map_err(|error| Error::io(error.to_string()))?;
-        files.push(Staged {
-            target: manifest_path.to_path_buf(),
-            text: format!("{text}\n"),
-            new_mode: Some(0o600),
-        });
+        files.push(manifest_file(&manifest, manifest_path)?);
     }
     Ok(Prepared {
         report,
         generations,
+        early,
         files,
+    })
+}
+
+/// The manifest as the file install stages.
+fn manifest_file(manifest: &Manifest, path: &Path) -> Result<Staged, Error> {
+    let text =
+        serde_json::to_string_pretty(manifest).map_err(|error| Error::io(error.to_string()))?;
+    Ok(Staged {
+        target: path.to_path_buf(),
+        text: format!("{text}\n"),
+        new_mode: Some(0o600),
     })
 }
 
@@ -1759,17 +1704,13 @@ mod tests {
         }
         assert_eq!(
             read_manifest(&manifest).retired,
-            [Retired {
-                generation: plans.join("orphan.json").display().to_string(),
-                since: "2026-10-24T12:00:00Z".to_string(),
-                install: Some(0),
-            }],
+            [retire::fresh(&plans.join("orphan.json"), now, 0)],
             "only rune's commands name a generation"
         );
     }
 
     #[test]
-    fn a_generation_goes_after_fourteen_days_and_two_installs_unnamed() {
+    fn the_sweep_deletes_only_a_generation_retire_lets_go() {
         let (home, plans, manifest) = sweep_home();
         for name in [
             "recent.json",
@@ -1779,26 +1720,34 @@ mod tests {
         ] {
             fs::write(plans.join(name), "{}").unwrap();
         }
-        let record = |name: &str, since: &str, install: Option<u64>| Retired {
+        let record = |name: &str, since: &str, install: Option<u64>, days: u32| Retired {
             generation: plans.join(name).display().to_string(),
             since: since.to_string(),
             install,
+            days,
+            last_day: Some(
+                if days == 14 {
+                    "2026-10-24"
+                } else {
+                    "2026-10-23"
+                }
+                .to_string(),
+            ),
         };
         let earlier = Manifest {
             version: 1,
             installs: 7,
             retired: vec![
                 // A table names it again, so its record goes.
-                record("named.json", "2026-01-01T00:00:00Z", Some(1)),
-                record("orphan.json", "2026-10-10T12:00:00Z", Some(5)),
-                record("recent.json", "2026-10-10T12:00:01Z", Some(5)),
-                // 14 days, but one install since: a clock set forward
-                // cannot end the window alone.
-                record("young.json", "2026-01-01T00:00:00Z", Some(6)),
-                record("garbled.json", "last week", Some(1)),
-                record("uncounted.json", "2026-01-01T00:00:00Z", None),
+                record("named.json", "2026-01-01T00:00:00Z", Some(1), 13),
+                record("orphan.json", "2026-10-10T12:00:00Z", Some(5), 13),
+                record("recent.json", "2026-10-10T12:00:01Z", Some(5), 13),
+                // 14 days, but one install since.
+                record("young.json", "2026-01-01T00:00:00Z", Some(6), 13),
+                record("garbled.json", "last week", Some(1), 13),
+                record("uncounted.json", "2026-01-01T00:00:00Z", None, 13),
                 // The file is gone, and so is its record.
-                record("deleted.json", "2026-10-20T00:00:00Z", Some(6)),
+                record("deleted.json", "2026-10-20T00:00:00Z", Some(6), 13),
             ],
             ..Manifest::default()
         };
@@ -1812,10 +1761,10 @@ mod tests {
         assert_eq!(
             read_manifest(&manifest).retired,
             [
-                record("garbled.json", "2026-10-24T12:00:00Z", Some(7)),
-                record("recent.json", "2026-10-10T12:00:01Z", Some(5)),
-                record("uncounted.json", "2026-10-24T12:00:00Z", Some(7)),
-                record("young.json", "2026-01-01T00:00:00Z", Some(6)),
+                retire::fresh(&plans.join("garbled.json"), now, 7),
+                record("recent.json", "2026-10-10T12:00:01Z", Some(5), 14),
+                retire::fresh(&plans.join("uncounted.json"), now, 7),
+                record("young.json", "2026-01-01T00:00:00Z", Some(6), 14),
             ]
         );
     }
@@ -1824,10 +1773,10 @@ mod tests {
     fn a_named_generation_keeps_no_record_and_one_that_stops_starts_afresh() {
         let dir = tempfile::tempdir().unwrap();
         let path = |name: &str| dir.path().join(name);
+        let now = at("2026-10-24T12:00:00Z");
         let record = |name: &str, since: &str| Retired {
-            generation: path(name).display().to_string(),
             since: since.to_string(),
-            install: Some(1),
+            ..retire::fresh(&path(name), now, 1)
         };
         // `again` was retired, then named again by an install that stopped
         // before its cleanup. `stale` carries a backdated record although
@@ -1843,19 +1792,89 @@ mod tests {
         let after = [path("again.json"), path("kept.json")]
             .into_iter()
             .collect();
-        let now = at("2026-10-24T12:00:00Z");
-        let out = reconcile_retired(&records, &before, &after, now, 9);
         assert_eq!(
-            out,
+            retire::reconcile(&records, &before, &after, now, 9),
             [
                 record("other.json", "2026-10-01T00:00:00Z"),
-                Retired {
-                    generation: path("stale.json").display().to_string(),
-                    since: "2026-10-24T12:00:00Z".to_string(),
-                    install: Some(9),
-                },
+                retire::fresh(&path("stale.json"), now, 9),
             ]
         );
+        // What install writes before the tables keeps only `other`.
+        assert_eq!(
+            retire::unnamed_only(&records, &before, &after),
+            [record("other.json", "2026-10-01T00:00:00Z")]
+        );
+    }
+
+    /// Run one install of `plan` the way `rune hook install` does, at
+    /// `now`, or stop it after the tables changed, before the manifest,
+    /// as a killed install would.
+    fn install_at(
+        plan: &Plan,
+        home: &Path,
+        plans: &Path,
+        manifest: &Path,
+        now: chrono::DateTime<chrono::Utc>,
+        killed: bool,
+    ) {
+        let prepared = prepare(plan, home, "/opt/rune", plans, manifest, false, now).unwrap();
+        if killed {
+            for generation in &prepared.generations {
+                super::super::plan::write_generation(generation).unwrap();
+            }
+            if let Some(early) = &prepared.early {
+                super::super::publish::publish(std::slice::from_ref(early)).unwrap();
+            }
+            let tables = &prepared.files[..prepared.files.len() - 1];
+            super::super::publish::publish(tables).unwrap();
+            return;
+        }
+        write(&prepared).unwrap();
+        sweep_generations(home, plans, manifest, now).unwrap();
+    }
+
+    #[test]
+    fn a_killed_install_can_only_delay_a_deletion() {
+        let home = tempfile::tempdir().unwrap();
+        let plans = home.path().join("plans");
+        let manifest = home.path().join("manifest.json");
+        let guard = plan();
+        let watch = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: dcg\n    exec: [watch]\n    events: [tool.before]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let generation =
+            super::super::plan::generation(&plans, &guard, Harness::Claude, "PreToolUse")
+                .unwrap()
+                .path;
+        let day = |n: u32| at(&format!("2026-10-{n:02}T12:00:00Z"));
+        // Day 1 names the guard's generation, day 2 retires it, and daily
+        // installs to day 13 count twelve days of its window.
+        install_at(&guard, home.path(), &plans, &manifest, day(1), false);
+        for n in 2..=13 {
+            install_at(&watch, home.path(), &plans, &manifest, day(n), false);
+        }
+        // Day 14 names it again, and the install dies after the tables,
+        // before the manifest.
+        install_at(&guard, home.path(), &plans, &manifest, day(14), true);
+        // On day 15 the owner removes the entries the manifest does not
+        // know, and installs again: the tables stop naming the generation.
+        let _ = fs::remove_file(home.path().join(".claude").join("settings.json"));
+        let _ = fs::remove_file(home.path().join(".codex").join("hooks.json"));
+        // The record from day 2 would end the window on day 16, two days
+        // after the tables last named the generation. Its window starts on
+        // day 15 instead, and lasts 14 days and 14 install days.
+        for n in 15..=28 {
+            install_at(&watch, home.path(), &plans, &manifest, day(n), false);
+            assert!(
+                generation.exists(),
+                "the generation is still there on day {n}"
+            );
+        }
+        install_at(&watch, home.path(), &plans, &manifest, day(29), false);
+        assert!(!generation.exists(), "the window ends on day 29");
     }
 
     #[test]
