@@ -29,6 +29,7 @@
 - [ ] 4.3 Status from digests, head drift by change id or ancestry, the archiver's refusal
 - [ ] 4.4 Graph exporter: proves edges from the status
 - [ ] 4.5 Pages for the `proof/v1` build type and the `review/v1` predicate under `docs/`
+- [x] 4.6 Today's check holds a signed or reworded head: `rune proof run` records `head_change` and `head_tree`, `--check` accepts an ancestor with both, and a proof without them reads both from the old commit. Tests in `tests/proof_head.rs` cover a signed, a reworded, and a content-edited head
 
 ## 5. View
 
