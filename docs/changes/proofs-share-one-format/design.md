@@ -64,7 +64,7 @@ docs/proofs/<change>/
 | judgment | `https://github.com/runedeck/cli/review/v1`, `role: judgment` | `judge` | the same files |
 | approval | the same, `role: approval` | `approve` | the same files |
 
-Provenance `resolvedDependencies` holds head (`gitCommit` plus the jj change id as an annotation), the digest of each section the chain ran through (`README.md#setup`, `#<earlier-slug>`, `#<slug>/on-screen`), every fixture, and every input. A section digest covers only its fence lines and block bodies, so a prose edit stales nothing. The claim has its own digest, `#<slug>/claim`, which only a judgment binds. The review predicate takes EARL's outcome words [EARL]: `passed`, `failed`, `cantTell`. Its fields are `scenario`, `role`, `by`, `outcome`, `reason`, `quote`, `ux`, `inputs`, `overrules`, and `date`.
+Provenance `resolvedDependencies` holds head (`gitCommit` and `gitTree` digests, plus the jj change id as an annotation, matched as today's check matches `head_change` and `head_tree`), the digest of each section the chain ran through (`README.md#setup`, `#<earlier-slug>`, `#<slug>/on-screen`), every fixture, and every input. A section digest covers only its fence lines and block bodies, so a prose edit stales nothing. The claim has its own digest, `#<slug>/claim`, which only a judgment binds. The review predicate takes EARL's outcome words [EARL]: `passed`, `failed`, `cantTell`. Its fields are `scenario`, `role`, `by`, `outcome`, `reason`, `quote`, `ux`, `inputs`, `overrules`, and `date`.
 
 | Status | When | CTRF | Glyph |
 |---|---|---|---|

@@ -38,7 +38,7 @@ When the proof runner records some scenes, it MUST replace only the statements o
 
 ### Requirement: Head Drift Is A Warning
 
-When the recorded head commit is not in the history of the current commit, by its change id or by commit ancestry, the validator MUST warn and name the head. The status of the scenes is unchanged, so a rewrite of history does not drop judgments and approvals. The archiver refuses a change whose proof has head drift.
+The head holds when the history of the current commit holds the recorded head commit, or a commit with its change id and its tree. A signature or a reworded description keeps both, and a content edit changes the tree. When the head does not hold, the validator MUST warn and name the head. The status of the scenes is unchanged, so a rewrite of history does not drop judgments and approvals. The archiver refuses a change whose proof has head drift.
 
 #### Scenario: History rewrite replaces the head commit
 
