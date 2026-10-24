@@ -294,6 +294,28 @@ fn a_proof_scene_with_the_live_home_installs_no_hook() {
     assert!(claude_settings(&scene).exists());
 }
 
+#[test]
+fn a_relative_state_directory_registers_an_absolute_plan_path() {
+    let scene = Scene::new();
+    std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
+    scene.config(DCG_GUARD);
+    let mut command = scene.rune();
+    command
+        .env("RUNE_STATE_DIR", "state")
+        .args(["hook", "install"])
+        .assert()
+        .success();
+    let settings = json_at(&claude_settings(&scene));
+    let rendered = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let words: Vec<&str> = rendered.split_whitespace().collect();
+    let plan = words[words.iter().position(|w| *w == "--plan").unwrap() + 1];
+    assert!(Path::new(plan).is_absolute(), "{rendered}");
+    assert!(Path::new(plan).is_file(), "{rendered}");
+}
+
 // ------------------------------------------------------------- adapters ----
 
 #[test]

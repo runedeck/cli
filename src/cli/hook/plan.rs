@@ -13,8 +13,12 @@ use rune::hooks::Plan;
 
 use crate::cli::state;
 
+/// The plan's path, made absolute against the current directory: the
+/// registration carries it to a harness that runs elsewhere, and
+/// `RUNE_STATE_DIR` may be relative.
 pub(crate) fn path() -> Result<PathBuf, Error> {
-    Ok(state::dir()?.join("hooks").join("plan.json"))
+    let path = state::dir()?.join("hooks").join("plan.json");
+    std::path::absolute(&path).map_err(|error| Error::io(format!("{}: {error}", path.display())))
 }
 
 pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
