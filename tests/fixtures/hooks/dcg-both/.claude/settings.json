@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "/Users/x/.local/bin/dcg"}]
+      }
+    ]
+  }
+}

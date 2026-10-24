@@ -1,0 +1,6 @@
+# The dcg adapter on Claude's PreToolUse only, as a native event.
+hooks:
+  handlers:
+    - id: dcg
+      exec: [rune-hook-dcg]
+      events: [claude:PreToolUse]

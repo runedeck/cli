@@ -1,0 +1,9 @@
+# A guard that ignores SIGTERM and sleeps past its timeout. The ignored
+# signal passes to the `sleep` it starts.
+hooks:
+  handlers:
+    - id: dcg
+      exec: [sh, -c, 'trap "" TERM; cat > /dev/null; sleep 5; printf "%s" "{}"']
+      events: [tool.before]
+      timeout_ms: 100
+      on_failure: deny

@@ -1,0 +1,13 @@
+# A handler that asks to continue the turn on tool.before, ahead of a
+# guard that denies rm -rf.
+hooks:
+  handlers:
+    - id: steer
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"effect\":\"continue_turn\"}"']
+      events: [tool.before]
+      order: 10
+    - id: dcg
+      exec: [sh, -c, 'cat > dcg.json; grep -q "rm -rf" dcg.json && printf "%s" "{\"effect\":\"deny\",\"reason\":\"no rm -rf\"}" || printf "%s" "{}"']
+      events: [tool.before]
+      order: 20
+      on_failure: deny

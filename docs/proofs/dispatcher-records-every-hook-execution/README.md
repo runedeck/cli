@@ -1,9 +1,9 @@
 ---
 type: proof
 change: dispatcher-records-every-hook-execution
-head: b973dea83fe0861071f86f907492f2e50713699f
+head: f95d10ae6915d1a1afe98c42da0a74bea62d7085
 recorded: 2026-10-24
-transcript: 0cf39ed9fc74cb9117a47985f602390c659e2a48511663cf51796401042a1523
+transcript: 60ddb4c6156a3d845e866c3c750f42b52818f802beb68bea35644b98e5229b75
 scenes:
 - scenario: dispatcher-records-every-hook-execution#the-hook-dispatcher-records-every-hook-execution/two-hooks-run-on-one-event
   kind: check
@@ -18,7 +18,7 @@ scenes:
 - scenario: dispatcher-records-every-hook-execution#recording-never-delays-or-changes-the-answer/record-directory-is-read-only
   kind: check
 - scenario: dispatcher-records-every-hook-execution#recording-never-delays-or-changes-the-answer/disk-blocks-the-writer
-  kind: unproven
+  kind: check
 - scenario: dispatcher-records-every-hook-execution#the-record-holds-no-text/vale-quotes-a-sentence
   kind: check
 - scenario: dispatcher-records-every-hook-execution#a-hook-may-return-counted-metrics/hook-returns-conforming-metrics
@@ -58,6 +58,8 @@ scenes:
 - scenario: owner-reads-the-hook-record#the-record-stays-on-the-machine/release-runs-with-a-populated-record
   kind: check
 - scenario: owner-reads-the-hook-record#the-record-stays-on-the-machine/proof-runs-with-a-populated-record
+  kind: check
+- scenario: owner-reads-the-hook-record#the-record-stays-on-the-machine/proof-scene-reads-the-record
   kind: check
 ---
 
@@ -164,6 +166,16 @@ $ sh -c 'chmod 755 state/hooks/record; ls state/hooks/record | wc -l | tr -d " "
 ## dispatcher-records-every-hook-execution#recording-never-delays-or-changes-the-answer/disk-blocks-the-writer
 
 ```console
+$ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-home" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
+$# the month's record file is a FIFO with no reader, so a write to it never completes
+$ sh -c 'mkdir -p state/hooks/record && mkfifo "state/hooks/record/$(date -u +%Y-%m).jsonl"'
+$ sh -c 'start=$(date +%s); RUNE_STATE_DIR=state rune hook run --harness claude --native-event PostToolUse; test $(( $(date +%s) - start )) -lt 3 && echo answered in under 3 s'
+< {"hook_event_name":"PostToolUse","session_id":"s1","cwd":".","tool_name":"Write","tool_use_id":"toolu_9","tool_input":{"file_path":"a.md"},"tool_response":{}}
+{"decision":"block","reason":"a.md:3:52 error Core.NoEmDash: No em dash. The sentence \"the quick brown fox\" is quoted."}
+rune hook: textual returned metrics the record refuses: value of `note` is not an integer, a list, or an object; dropped
+rune hook: over returned metrics the record refuses: metrics is 4097 bytes; the cap is 4096; dropped
+rune hook: the hook record writer did not finish within [..] ms; 5 record(s) lost under state/hooks/record
+answered in under 3 s
 ```
 
 ## dispatcher-records-every-hook-execution#the-record-holds-no-text/vale-quotes-a-sentence
@@ -407,6 +419,20 @@ $ sh -c 'for t in deck/runes/science/dist/*.gz; do tar -tzf "$t" | grep -c "hook
 ```console
 $ sh -c 'mkdir -p state/hooks/record && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-lines/2026-10.jsonl" state/hooks/record/'
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled-good" repo && RUNE_STATE_DIR=state rune proof run sample-change-one --pause 0 --source repo >/dev/null'
+$ sh -c 'grep -rl "toolu_a1" repo || echo "no record line in the proof"'
+no record line in the proof
+```
+
+## owner-reads-the-hook-record#the-record-stays-on-the-machine/proof-scene-reads-the-record
+
+```console
+$ sh -c 'mkdir -p state/hooks/record && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/record-lines/2026-10.jsonl" state/hooks/record/'
+$# with the state dir named, the record lists its lines
+$ sh -c 'RUNE_STATE_DIR=state rune hook record --json | wc -l | tr -d " "'
+8
+$# a proof scene runs the same command without naming a state dir, and its fence expects no output
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/record-reader" repo && RUNE_STATE_DIR=state rune proof run sample-change-one --pause 0 --source repo | tail -n 1'
+1 scenes, 1 proven, 0 unproven; transcript [..]
 $ sh -c 'grep -rl "toolu_a1" repo || echo "no record line in the proof"'
 no record line in the proof
 ```

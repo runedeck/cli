@@ -1,9 +1,9 @@
 ---
 type: proof
 change: proof-cast-reads-scene-by-scene
-head: b973dea83fe0861071f86f907492f2e50713699f
+head: 55dc52aa2078f9907ba8dd2bb2007cbc51fe450f
 recorded: 2026-10-24
-transcript: 9b6ba3743eb46ebf9294bbbd45445e6be4864ca8a405a55b7535226b56ceadb7
+transcript: 3524515fea99ac82ec3d018bb1b58358b2e0adcdc427b207a1de855c8dacd51f
 scenes:
 - scenario: proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/scenes-are-paced-for-a-reader
   kind: check
@@ -12,6 +12,8 @@ scenes:
 - scenario: proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/failed-step-shows-its-reason-in-the-cast
   kind: check
 - scenario: proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/comment-before-a-command
+  kind: check
+- scenario: proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/heading-in-a-command-s-output
   kind: check
 - scenario: proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/comment-with-no-command
   kind: check
@@ -87,9 +89,9 @@ rune --version
 ```console
 $# the third scene of the fixture carries a comment above its command
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/paced" repo && rune proof run sample-change-one --source repo >/dev/null'
-$ grep -n -B1 -A1 '^# the shell' repo/docs/proofs/sample-change-one/proof.txt
+$ grep -n -B1 -A1 '^\$# the shell' repo/docs/proofs/sample-change-one/proof.txt
 [..]-kind: check
-[..]:# the shell prints what it is given
+[..]:$# the shell prints what it is given
 [..]-$ printf 'one\n'
 $ python3 -
 < import json, re
@@ -103,10 +105,20 @@ comment: # the shell prints what it is given
 then: ❯ printf 'one\n'
 ```
 
+## proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/heading-in-a-command-s-output
+
+```console
+$# the command prints a Markdown heading, and the fence expects it as output, not as a comment
+$ printf '# Glossary\n\nOne term per line.\n'
+# Glossary
+
+One term per line.
+```
+
 ## proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/comment-with-no-command
 
 ```console
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/dangling-comment" repo && rune proof run sample-change-one --source repo'
 ? 2
-fatal: [..]README.md: line 20: a comment `# text` comes before the command it explains
+fatal: [..]README.md: line 20: a comment `$# text` comes before the command it explains
 ```

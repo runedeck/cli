@@ -1,0 +1,8 @@
+# A guard that quotes the refused command in its reason, the way a real
+# guard often does.
+hooks:
+  handlers:
+    - id: dcg
+      exec: [sh, -c, 'cat > dcg.json; printf "{\"effect\":\"deny\",\"reason\":\"refused %s\"}" "$(jq -r .tool.input.command dcg.json)"']
+      events: [tool.before]
+      on_failure: deny

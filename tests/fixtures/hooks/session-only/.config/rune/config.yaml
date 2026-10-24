@@ -1,0 +1,6 @@
+# One passive handler, so the plan names no tool.before event.
+hooks:
+  handlers:
+    - id: capture
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{}"']
+      events: [session.end]

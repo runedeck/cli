@@ -1,0 +1,13 @@
+# The rewriter of `sandbox-rewriter`, with a sandbox guard that exempts
+# `rtk jj *` too.
+hooks:
+  handlers:
+    - id: rtk
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"input\":{\"command\":\"rtk jj log\"}}"']
+      events: [tool.before]
+      order: 10
+      rewrites: true
+    - id: sandbox-guard
+      exec: [rune-hook-sandbox-guard, "jj *", "rtk jj *"]
+      events: [tool.before]
+      order: 25

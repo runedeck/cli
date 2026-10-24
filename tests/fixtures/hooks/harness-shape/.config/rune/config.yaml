@@ -1,0 +1,8 @@
+# A guard that answers in Claude's own shape for `echo shape` and prints
+# nothing for any other command.
+hooks:
+  handlers:
+    - id: dcg
+      exec: [sh, -c, 'cat > dcg.json; grep -q shape dcg.json && printf "%s" "{\"hookSpecificOutput\":{\"permissionDecision\":\"allow\"}}"; true']
+      events: [tool.before]
+      on_failure: deny

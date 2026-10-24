@@ -1,0 +1,13 @@
+# A rewriter that turns every command into `rtk jj log`, ahead of the
+# sandbox guard, which exempts `jj *` only.
+hooks:
+  handlers:
+    - id: rtk
+      exec: [sh, -c, 'cat > /dev/null; printf "%s" "{\"input\":{\"command\":\"rtk jj log\"}}"']
+      events: [tool.before]
+      order: 10
+      rewrites: true
+    - id: sandbox-guard
+      exec: [rune-hook-sandbox-guard, "jj *"]
+      events: [tool.before]
+      order: 25
