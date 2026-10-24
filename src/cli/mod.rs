@@ -1355,6 +1355,12 @@ enum HookAction {
         /// The event in the harness's own name, such as `PreToolUse`.
         #[arg(long = "native-event", value_name = "EVENT")]
         native_event: String,
+        /// The compiled plan to read; install writes its path into the registration.
+        #[arg(long, value_name = "PATH")]
+        plan: Option<std::path::PathBuf>,
+        /// The strongest policy of the event's handlers, applied when the plan cannot load.
+        #[arg(long = "on-failure", value_name = "POLICY", default_value = "warn", value_parser = ["warn", "deny"])]
+        on_failure: String,
     },
     /// List the hook record: one line per hook the dispatcher ran
     Record {
@@ -2401,7 +2407,9 @@ pub fn run() -> i32 {
                 Some(HookAction::Run {
                     harness,
                     native_event,
-                }) => hook::run::run(&harness, &native_event),
+                    plan,
+                    on_failure,
+                }) => hook::run::run(&harness, &native_event, plan.as_deref(), &on_failure),
                 Some(HookAction::Record { action, filter }) => {
                     exit_code(hook::record_command(action, filter, args.json), args.json)
                 }

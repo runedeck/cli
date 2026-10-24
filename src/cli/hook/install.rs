@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rune::error::{Error, ErrorKind};
-use rune::hooks::{Harness, Plan};
+use rune::hooks::{Harness, Mode, OnFailure, Plan, PlannedEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -91,9 +91,31 @@ impl Report {
     }
 }
 
-/// The dispatcher command an entry must start with to be rune's.
-fn dispatcher(rune: &str, harness: Harness, event: &str) -> String {
-    format!("{rune} hook run --harness {harness} --native-event {event}")
+/// The dispatcher command of one event. It names the plan install wrote,
+/// so a harness that starts it with another state directory reads the
+/// same plan, and it carries the event's strongest failure policy, so a
+/// plan that does not load still denies where a guard would have.
+fn dispatcher(rune: &str, harness: Harness, event: &str, plan: &str, guarded: bool) -> String {
+    let mut command = format!(
+        "{} hook run --harness {harness} --native-event {event} --plan {}",
+        crate::cli::shell_quote(rune),
+        crate::cli::shell_quote(plan)
+    );
+    if guarded {
+        command.push_str(" --on-failure deny");
+    }
+    command
+}
+
+/// Whether any handler of the event denies on failure where the harness
+/// can block it.
+fn guarded(harness: Harness, event: &PlannedEvent) -> bool {
+    event.mode == Mode::Gate
+        && event.canonical.is_some_and(|c| c.can_block(harness))
+        && event
+            .handlers
+            .iter()
+            .any(|h| h.on_failure == OnFailure::Deny)
 }
 
 fn is_owned(command: &str, rune_names: &[&str]) -> bool {
@@ -140,12 +162,18 @@ fn hash_value(value: &Value) -> String {
 }
 
 /// The entry rune writes for one event.
-fn rendered(rune: &str, harness: Harness, event: &str, budget_ms: u64) -> Value {
-    let timeout = budget_ms.div_ceil(1_000).max(1);
+fn rendered(
+    rune: &str,
+    harness: Harness,
+    event: &str,
+    planned: &PlannedEvent,
+    plan: &str,
+) -> Value {
+    let timeout = planned.budget_ms.div_ceil(1_000).max(1);
     json!({
         "hooks": [{
             "type": "command",
-            "command": dispatcher(rune, harness, event),
+            "command": dispatcher(rune, harness, event, plan, guarded(harness, planned)),
             "timeout": timeout,
         }]
     })
@@ -213,6 +241,7 @@ pub(crate) fn apply(
     plan: &Plan,
     home: &Path,
     rune: &str,
+    plan_path: &str,
     manifest_path: &Path,
     check: bool,
     dry_run: bool,
@@ -259,7 +288,10 @@ pub(crate) fn apply(
                 events
                     .iter()
                     .map(|(name, event)| {
-                        (name.clone(), rendered(rune, harness, name, event.budget_ms))
+                        (
+                            name.clone(),
+                            rendered(rune, harness, name, event, plan_path),
+                        )
                     })
                     .collect()
             })
@@ -383,7 +415,10 @@ pub(crate) fn apply(
                 }
                 next.owned.push(Recorded {
                     event: name.clone(),
-                    command: dispatcher(rune, harness, &name),
+                    command: want["hooks"][0]["command"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
                     hash: Some(hash_value(want)),
                     by: None,
                     source: None,
@@ -480,6 +515,8 @@ mod tests {
         path
     }
 
+    const PLAN: &str = "/state/hooks/plan.json";
+
     const LIVE: &str = r#"{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]},{"hooks":[{"type":"command","command":"sh /Users/x/.sd/hook PreToolUse"}]},{"matcher":"*","hooks":[{"type":"command","command":"/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin"}]}],"Notification":[{"hooks":[{"type":"command","command":"cmux hooks claude Notification"}]}]}}"#;
 
     #[test]
@@ -487,7 +524,16 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = settings(home.path(), LIVE);
         let manifest = home.path().join("state").join("manifest.json");
-        let report = apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(table["model"], "opus", "the rest of the file is untouched");
         let pre = table["hooks"]["PreToolUse"].as_array().unwrap();
@@ -498,7 +544,9 @@ mod tests {
             .collect();
         assert_eq!(
             commands,
-            ["/opt/rune hook run --harness claude --native-event PreToolUse"],
+            [
+                "/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plan.json --on-failure deny"
+            ],
             "dcg, the legacy dispatcher, and git-ai were adopted"
         );
         assert_eq!(
@@ -527,22 +575,57 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = settings(home.path(), LIVE);
         let manifest = home.path().join("state").join("manifest.json");
-        apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         let first = fs::read_to_string(&path).unwrap();
-        let report = apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(report.written.is_empty(), "{report:?}");
         assert_eq!(fs::read_to_string(&path).unwrap(), first);
         let edited = first.replace("\"timeout\": 3", "\"timeout\": 99");
         assert_ne!(edited, first);
         fs::write(&path, &edited).unwrap();
-        let error = apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap_err();
+        let error = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("changed by hand"), "{error}");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             edited,
             "nothing written"
         );
-        let report = apply(&plan(), home.path(), "/opt/rune", &manifest, true, false);
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            true,
+            false,
+        );
         assert!(report.is_err(), "check reports the same conflict");
     }
 
@@ -551,19 +634,46 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = settings(home.path(), "{}");
         let manifest = home.path().join("state").join("manifest.json");
-        apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         let bigger: Plan = serde_yaml::from_str::<Hooks>(
             "events:\n  session.end: {budget_ms: 1400}\nhandlers:\n  - id: capture\n    exec: [x]\n    events: [session.end]\n",
         )
         .unwrap()
         .compile()
         .unwrap();
-        let report = apply(&bigger, home.path(), "/opt/rune", &manifest, true, false).unwrap();
+        let report = apply(
+            &bigger,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            true,
+            false,
+        )
+        .unwrap();
         assert!(
             report.drift.iter().any(|d| d.contains("settings.json")),
             "{report:?}"
         );
-        let report = apply(&bigger, home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        let report = apply(
+            &bigger,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(report.written.iter().any(|(_, e)| e == "SessionEnd"));
         assert!(
             report
@@ -587,7 +697,16 @@ mod tests {
         )
         .unwrap();
         let manifest = home.path().join("state").join("manifest.json");
-        let report = apply(&plan(), home.path(), "/opt/rune", &manifest, false, false).unwrap();
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(
             report.legacy_toml[0].contains("config.toml:3"),
             "{report:?}"
@@ -597,7 +716,7 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(codex.join("hooks.json")).unwrap()).unwrap();
         assert_eq!(
             hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-            "/opt/rune hook run --harness codex --native-event PreToolUse"
+            "/opt/rune hook run --harness codex --native-event PreToolUse --plan /state/hooks/plan.json --on-failure deny"
         );
         assert!(
             hooks["hooks"].get("Notification").is_none(),

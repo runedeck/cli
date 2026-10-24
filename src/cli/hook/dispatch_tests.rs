@@ -531,6 +531,47 @@ fn a_result_that_fails_under_warn_lets_the_call_proceed() {
     assert!(answer.stderr[0].contains("quiet failed: printed nothing"));
 }
 
+// --------------------------------------------- a plan that does not load ----
+
+#[test]
+fn a_missing_plan_follows_the_policy_the_registration_carries() {
+    use rune::hooks::OnFailure;
+    let denied = super::run::no_plan(
+        Harness::Claude,
+        "PreToolUse",
+        OnFailure::Deny,
+        "no compiled hook plan",
+    );
+    assert_eq!(decision(&denied), "deny", "{denied:?}");
+    assert_eq!(denied.exit, 0, "never non-zero on a gate");
+    assert!(denied.stderr[0].ends_with("denied"), "{:?}", denied.stderr);
+    let warned = super::run::no_plan(
+        Harness::Claude,
+        "PreToolUse",
+        OnFailure::Warn,
+        "no compiled hook plan",
+    );
+    assert_eq!(warned.stdout, None);
+    assert!(warned.stderr[0].ends_with("proceeding"));
+    // A passive event cannot be blocked, whatever the registration says.
+    let passive = super::run::no_plan(
+        Harness::Claude,
+        "SessionEnd",
+        OnFailure::Deny,
+        "no compiled hook plan",
+    );
+    assert_eq!(passive.stdout, None);
+}
+
+#[test]
+fn grok_is_told_apart_by_its_payload_not_its_environment() {
+    use super::run::fired_by_grok;
+    assert!(fired_by_grok(&json!({
+        "hookEventName": "pre_tool_use", "sessionId": "g1", "toolName": "Bash"
+    })));
+    assert!(!fired_by_grok(&claude_tool("ls")));
+}
+
 // ------------------------------------------------------------ the record ----
 
 fn recording_runner(fakes: HashMap<String, Fake>, dir: &std::path::Path) -> Runner {

@@ -46,7 +46,7 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: The Dispatcher Normalizes And Answers
 
-`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload (`v`, `harness`, `event`, `native_event`, `session_id`, `cwd`, `model`, `tool`, `prompt`, `raw`), run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's environment, exits 0 without a handler.
+`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload (`v`, `harness`, `event`, `native_event`, `session_id`, `cwd`, `model`, `tool`, `prompt`, `raw`), run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits exits 0 without a handler. The dispatcher tells Grok apart by the camelCase keys only Grok's payload carries, and an inherited environment variable decides nothing.
 
 #### Scenario: Grok payload reaches a handler
 
@@ -65,12 +65,17 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: Dispatcher Failures Follow The Strongest Policy
 
-When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
+When the dispatcher itself cannot run the handlers, because the payload's event disagrees with the argument, the payload does not decode, or the plan does not load, it MUST answer with the strongest policy among the handlers subscribed to that event: `deny` when any of them is a `deny` handler and the harness can block, else `pass` with the failure on stderr. Install writes the plan's path and that policy into each registration, so a plan that is missing, truncated, or under another state directory still gets the strongest policy. It never exits non-zero on a gate event, because the harnesses treat that as a non-blocking error.
 
 #### Scenario: Payload names another event on a guarded gate
 
 - **WHEN** the argument says `PreToolUse`, the payload's `hook_event_name` is `Stop`, and dcg (`deny`) subscribes to `tool.before`
 - **THEN** stdout denies with a reason naming both events and the exit code is 0
+
+#### Scenario: Plan missing on a guarded gate
+
+- **WHEN** the plan file is gone or truncated and the `PreToolUse` registration carries the `deny` policy of dcg
+- **THEN** stdout denies with a reason naming the plan, and the exit code is 0
 
 #### Scenario: Plan missing on a passive event
 

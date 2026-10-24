@@ -1,10 +1,11 @@
 //! The compiled plan on disk: `<state>/hooks/plan.json`, written by
 //! `rune install` (and by `rune hook list --write` for a machine that
-//! installs nothing), read by `rune hook run`. The dispatcher reads only
-//! this file, so a config edit changes nothing until the next install.
+//! installs nothing), read by `rune hook run` at the path its registration
+//! names. The dispatcher reads only this file, so a config edit changes
+//! nothing until the next install.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use rune::error::{Error, ErrorKind};
@@ -28,9 +29,11 @@ pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
     Ok(path)
 }
 
-/// The plan, and a warning when the user config is newer than it.
-pub(crate) fn read() -> Result<(Plan, Option<String>), Error> {
-    let path = path()?;
+/// The plan at `path`, and a warning when the user config is newer than
+/// it. The registration names the path install wrote, so a harness that
+/// runs the dispatcher with another state directory reads the same plan.
+pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
+    let path = path.to_path_buf();
     let text = fs::read_to_string(&path).map_err(|error| {
         Error::new(
             ErrorKind::Config,

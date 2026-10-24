@@ -119,6 +119,7 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
         &plan,
         &home,
         &rune,
+        &plan::path()?.display().to_string(),
         &install::manifest_path()?,
         check,
         dry_run,

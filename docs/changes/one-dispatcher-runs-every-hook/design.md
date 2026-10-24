@@ -7,11 +7,12 @@ The research, the vendor protocol table, and Astra's schematics live in the work
 ```text
 harness event, stdin JSON
         |
-rune hook run --harness H --native-event N
+rune hook run --harness H --native-event N --plan PATH [--on-failure deny]
         |
-read the compiled plan ~/.local/state/rune/hooks/plan.json (written by rune install;
-a user config newer than the plan is a warning on stderr, never a reload)
-if H is claude and Grok's environment is present: exit 0, log, stop
+if H is claude and the payload carries Grok's camelCase keys: exit 0, log, stop
+read the compiled plan at PATH, the path install wrote into the registration
+(a user config newer than the plan is a warning on stderr, never a reload)
+plan missing or unreadable -> the registration's --on-failure decides: deny where H can block
 check argument against the payload's event name
 normalize -> HandlerPayload v1
         |
@@ -48,6 +49,10 @@ encode Result for H and N -> stdout JSON, exit 0
 - Plan: `{harness: {native_event: {canonical, mode, budget_ms, handlers: [{id, exec, timeout_ms, on_failure, rewrites}]}}}`.
 - Manifest `hooks` section per harness: `owned: [{event, registration_hash}]`, `foreign: [{event, source, command}]`, `adopted: [{event, source, command, by}]`.
 - Identity: `user.name` and `user.email` in the checkout's `.jj/repo/config.toml`, and `git config user.name` / `user.email` when colocated.
+
+## The registration
+
+Each rendered entry is `rune hook run --harness H --native-event N --plan PATH`, plus `--on-failure deny` when a handler of that event resolves to `deny` and the harness can block it. The plan path is absolute, so a harness that starts the dispatcher without `RUNE_STATE_DIR` or with another `XDG_STATE_HOME` reads the plan install wrote. The policy in the registration is what a missing or truncated plan falls back to. The dispatcher does not compile the config in that case, because the compiled plan stays its only source of handlers (review hit 17 below).
 
 ## Ownership of the Claude table
 

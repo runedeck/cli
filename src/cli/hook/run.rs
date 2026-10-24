@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use rune::hooks::{Canonical, Harness, Mode, OnFailure, Plan, PlannedEvent, PlannedHandler};
@@ -19,18 +19,15 @@ use super::plan;
 use super::record::{self, Record};
 use crate::cli::process::{ProcessFailure, ProcessRequest, run_process_request};
 
-/// The entry point of the CLI: read stdin, dispatch, print, exit.
-pub fn run(harness: &str, native_event: &str) -> i32 {
+/// The entry point of the CLI: read stdin, dispatch, print, exit. `plan`
+/// is the path the registration names, else the state directory's.
+/// `on_failure` is the strongest policy install wrote into the
+/// registration: it decides the answer when the plan cannot load.
+pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &str) -> i32 {
     let Some(harness) = Harness::parse(harness) else {
         eprintln!("rune hook: `{harness}` is not a harness");
         return 2;
     };
-    // Grok reads Claude's settings, so a Claude registration also fires
-    // under Grok; Grok's own environment tells them apart.
-    if harness == Harness::Claude && std::env::var_os("GROK_SESSION_ID").is_some() {
-        eprintln!("rune hook: claude registration fired by grok; nothing run");
-        return 0;
-    }
     let mut text = String::new();
     let raw: Result<Value, String> = match std::io::stdin().read_to_string(&mut text) {
         Ok(_) if text.trim().is_empty() => Ok(Value::Object(serde_json::Map::new())),
@@ -39,19 +36,31 @@ pub fn run(harness: &str, native_event: &str) -> i32 {
         }
         Err(error) => Err(format!("cannot read the payload: {error}")),
     };
-    let (plan, warning) = match plan::read() {
-        Ok(read) => read,
-        Err(error) => {
-            // Without a plan no handler is known: the harness's default
-            // stands, and the reason goes where a person reads it.
-            eprintln!("rune hook: {error}");
-            return 0;
-        }
-    };
-    if let Some(warning) = warning {
-        eprintln!("rune hook: {warning}");
+    // Grok reads Claude's settings, so a Claude registration also fires
+    // under Grok. Grok's own payload keys tell them apart; an inherited
+    // environment variable does not.
+    if harness == Harness::Claude && raw.as_ref().is_ok_and(fired_by_grok) {
+        eprintln!("rune hook: claude registration fired by grok; nothing run");
+        return 0;
     }
-    let answer = dispatch(&plan, harness, native_event, raw, &Runner::real());
+    let policy = if on_failure == "deny" {
+        OnFailure::Deny
+    } else {
+        OnFailure::Warn
+    };
+    let loaded = match plan {
+        Some(path) => plan::read_at(path),
+        None => plan::path().and_then(|path| plan::read_at(&path)),
+    };
+    let answer = match loaded {
+        Ok((plan, warning)) => {
+            if let Some(warning) = warning {
+                eprintln!("rune hook: {warning}");
+            }
+            dispatch(&plan, harness, native_event, raw, &Runner::real())
+        }
+        Err(error) => no_plan(harness, native_event, policy, &error.to_string()),
+    };
     if let Some(stdout) = &answer.stdout {
         println!("{stdout}");
     }
@@ -59,6 +68,41 @@ pub fn run(harness: &str, native_event: &str) -> i32 {
         eprintln!("{line}");
     }
     answer.exit
+}
+
+/// Keys only Grok's payload carries: its camelCase spelling of the event,
+/// the session, and the tool. A Claude payload is `snake_case` throughout.
+pub(crate) fn fired_by_grok(raw: &Value) -> bool {
+    ["hookEventName", "sessionId", "toolName", "toolInput"]
+        .iter()
+        .any(|key| raw.get(*key).is_some())
+}
+
+/// The answer when the plan does not load: the policy the registration
+/// carries, which install took from the plan's handlers for this event.
+/// A `deny` registration denies where the harness can block the event.
+pub(crate) fn no_plan(
+    harness: Harness,
+    native_event: &str,
+    policy: OnFailure,
+    why: &str,
+) -> Answer {
+    let canonical = Canonical::from_native(harness, native_event);
+    let event = PlannedEvent {
+        canonical,
+        mode: canonical.map_or(Mode::Passive, Canonical::mode),
+        budget_ms: 0,
+        response_reserve_ms: 0,
+        handlers: vec![PlannedHandler {
+            id: "registration".to_string(),
+            exec: Vec::new(),
+            order: 0,
+            timeout_ms: 0,
+            on_failure: policy,
+            rewrites: false,
+        }],
+    };
+    dispatcher_failure(harness, native_event, &event, why)
 }
 
 /// What spawning a handler yields: its exit code, stdout, stderr.
