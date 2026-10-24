@@ -1,9 +1,9 @@
 ---
 type: proof
 change: proof-cast-reads-scene-by-scene
-head: 55dc52aa2078f9907ba8dd2bb2007cbc51fe450f
+head: f18c2f6f6c8988cafa4f84ee135d22cf1f6fe475
 recorded: 2026-10-24
-transcript: 3524515fea99ac82ec3d018bb1b58358b2e0adcdc427b207a1de855c8dacd51f
+transcript: b0a8ef0fd922cd574303d8ba11a0c4e8dfde4330e6b1443b8edb81eb63bddfb1
 scenes:
 - scenario: proof-cast-reads-scene-by-scene#the-cast-is-paced-for-a-reader/scenes-are-paced-for-a-reader
   kind: check

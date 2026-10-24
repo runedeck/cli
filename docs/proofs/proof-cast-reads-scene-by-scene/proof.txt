@@ -37,7 +37,7 @@ $# the first scene expects rune 0.5.0 and the run is newer
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/mismatch" repo && rune proof run sample-change-one --source repo'
   sample-capability-one#thing-holds/version-prints ... unproven: output of `rune --version` differs:
   - rune 0.5.0 ([..])
-  + rune 0.6.0 (6c4df97e8) built 2026-10-24T05:43:49Z
+  + rune 0.6.0 (d7bc0cfdf) built 2026-10-24T06:00:38Z
   sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
   2 scenes, 1 proven, 1 unproven; transcript 0b12cfe5a004
 $ python3 -
@@ -82,5 +82,5 @@ $ printf '# Glossary\n\nOne term per line.\n'
 ## proof-cast-reads-scene-by-scene#a-fence-comment-explains-the-step/comment-with-no-command
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/dangling-comment" repo && rune proof run sample-change-one --source repo'
-  fatal: /private/tmp/claude-501/rune-proof-21259-proof-cast-reads-scene-by-scene-a-fence-comment-explains-the-step-comment-with-no-command-13920280-27-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `$# text` comes before the command it explains
+  fatal: /private/tmp/claude-501/rune-proof-15143-proof-cast-reads-scene-by-scene-a-fence-comment-explains-the-step-comment-with-no-command-287d5370-27-0/repo/docs/proofs/sample-change-one/README.md: line 20: a comment `$# text` comes before the command it explains
 
