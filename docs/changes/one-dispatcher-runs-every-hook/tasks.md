@@ -51,3 +51,10 @@
 - [x] 8.2 Install: each target directory created before it is locked, the bridge keeping every old handler of a shared event, and the bridge and the final plan in one transaction
 - [x] 8.3 Tests: every test starts rune through the support module, and the guard test checks each line that could start it or clear its environment
 - [x] 8.4 Proof: the rollback scene fails during the replacement and checks the error and every restored file, and the marker scenes are recorded
+
+## 9. Review fixes, round four
+
+- [x] 9.1 Install: each registration names its own plan generation, written before the tables and never rewritten, and the bridge and its two-step transaction are gone
+- [x] 9.2 Install: after the tables and the manifest, every generation no table names is deleted, and the manifest lists the generations the registrations name
+- [x] 9.3 Tests: an old registration keeps its plan when an observer reuses a guard's id, a rewriter runs after a guard, or the event turns passive
+- [x] 9.4 Proof: scenes for a failed and a successful install over an old registration, and the scenes that read the single plan file read the generations
