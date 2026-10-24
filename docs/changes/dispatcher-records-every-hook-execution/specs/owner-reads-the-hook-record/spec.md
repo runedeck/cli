@@ -90,7 +90,7 @@ A later import MUST read from the offset, resolve an attachment's file path thro
 
 ### Requirement: The Record Stays On The Machine
 
-rune MUST read the hook record only from the configured state dir, and MUST NOT transmit record data or include it in a release tarball, a bench report, a proof, or a signing artifact, under any file name or embedded in another file.
+rune MUST read the hook record only from the configured state dir, and MUST NOT transmit record data or include it in a release tarball, a bench report, a proof, or a signing artifact, under any file name or embedded in another file. The proof runner MUST give each scene its own empty state dir, unless the scene names a fixture state dir itself.
 
 #### Scenario: Release runs with a populated record
 
@@ -101,6 +101,11 @@ rune MUST read the hook record only from the configured state dir, and MUST NOT 
 
 - **WHEN** the state dir holds record files and a change's proof is recorded
 - **THEN** no proof file contains a record line
+
+#### Scenario: Proof scene reads the record
+
+- **WHEN** the state dir holds record files and a proof scene runs `rune hook record --json` without naming a state dir
+- **THEN** the scene lists no record, and no proof file contains a record line
 
 [HOOKRECORD]: ../../../../specs/glossary/hook-record.md
 [HOOK]: ../../../../specs/glossary/hook.md

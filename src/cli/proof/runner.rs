@@ -3,7 +3,9 @@
 //! grammar. `rune` resolves to the running binary, every other program
 //! through `PATH`, and a program that cannot start fails the scene.
 //! `RUNE_PROOF_ROOT` names the repository for a scene that runs through
-//! `sh -c` and needs a fixture. A step's `< ` lines reach it as a file on
+//! `sh -c` and needs a fixture. `RUNE_STATE_DIR` names a fresh state
+//! directory for the scene unless the scene names its own, so no live
+//! record reaches a proof. A step's `< ` lines reach it as a file on
 //! standard input. Capture files live outside the scene's
 //! directory and are read through the handle the runner holds, so a
 //! command cannot rewrite what it printed.
@@ -83,11 +85,24 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
             return run;
         }
     };
+    // The scene's own rune state, apart from the capture: the owner's
+    // hook record, plan, and queues stay out of every proof. A scene that
+    // needs a fixture state names it with `RUNE_STATE_DIR=…` on its
+    // command line.
+    let state_dir = match fresh_dir("state") {
+        Ok(dir) => dir,
+        Err(message) => {
+            let _ = fs::remove_dir_all(&capture_dir);
+            run.failure = Some(message);
+            return run;
+        }
+    };
     let (cwd, steps, cleanup) =
         match working_directory(scene, root, &mut run.section, &mut run.steps) {
             Ok(v) => v,
             Err(message) => {
                 let _ = fs::remove_dir_all(&capture_dir);
+                let _ = fs::remove_dir_all(&state_dir);
                 run.failure = Some(message);
                 return run;
             }
@@ -98,7 +113,7 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
             run.section.push_str(line);
             run.section.push('\n');
         }
-        let (text, code, error) = execute(step, &cwd, root, &capture_dir);
+        let (text, code, error) = execute(step, &cwd, root, &capture_dir, &state_dir);
         let text = text.unwrap_or_default();
         let mut shown = StepRun {
             comments: step.comments.clone(),
@@ -148,6 +163,7 @@ pub fn run_scene(scene: &Scene, root: &Path) -> SceneRun {
         run.steps.push(shown);
     }
     let _ = fs::remove_dir_all(&capture_dir);
+    let _ = fs::remove_dir_all(&state_dir);
     if let Some(dir) = cleanup {
         let _ = fs::remove_dir_all(dir);
     }
@@ -207,6 +223,7 @@ fn execute(
     cwd: &Path,
     root: &Path,
     capture_dir: &Path,
+    state_dir: &Path,
 ) -> (Option<String>, Option<i32>, Option<String>) {
     let program = if step.argv[0] == "rune" {
         match std::env::current_exe() {
@@ -276,12 +293,16 @@ fn execute(
         }
         path.push(existing);
     }
-    // The scene's own variables go first, so `PATH` and the root the
-    // runner sets can never be replaced by a fence token.
+    // The isolated state directory comes before the scene's own
+    // variables, so a scene may name a fixture state. The scene's
+    // variables come before `PATH` and the root, so a fence token can
+    // never replace those two.
     let mut command = Command::new(&program);
     command
         .args(&step.argv[1..])
         .current_dir(cwd)
+        .env("RUNE_STATE_DIR", state_dir)
+        .env_remove("XDG_STATE_HOME")
         .envs(&step.env)
         .env("NO_COLOR", "1")
         .env("COLUMNS", "100")

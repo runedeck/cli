@@ -52,6 +52,7 @@ The month comes from the record's own UTC timestamp. The writer runs after the a
 - The code depends on `one-dispatcher-runs-every-hook`, signed at `68fb6321` and not yet on main, which still has two open task groups. The specification sits on main. The code waits for that change.
 - Claude Code owns the transcript format the import reads. The import is a backfill, not the record's source, so a format change costs the backfill and nothing else.
 - Paths in the record may name AMBER vault notes. The record is local, and the last requirement of `owner-reads-the-hook-record` keeps it out of every artifact rune produces.
+- The proof runner sets `RUNE_STATE_DIR` to a fresh directory for each scene and clears `XDG_STATE_HOME`. A scene that names `RUNE_STATE_DIR=…` itself keeps its fixture, because the scene's variables come after the runner's. Without that default, a scene running `rune hook record` copied the owner's live record into `proof.txt` and `proof.cast`.
 - `tests/hook_record_local.rs` runs a release and a proof with a populated record and scans the source for readers of the record directory outside the hook module. `rune bench report` and `rune sign` are covered by that scan only, because neither has a fixture that produces an artifact without a bench suite or a key.
 
 ## Coverage

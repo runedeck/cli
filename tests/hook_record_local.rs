@@ -117,6 +117,50 @@ fn a_proof_run_carries_no_record_line() {
     assert!(leaked.is_empty(), "{leaked:?}");
 }
 
+/// A scene that reads the record without naming a fixture state sees an
+/// empty one: the runner gives every scene its own state directory.
+#[test]
+fn a_proof_scene_reads_its_own_state_and_never_the_live_record() {
+    let state = populated_state();
+    let repo = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proof/filled-good");
+    copy_tree(&fixture, repo.path());
+    let readme = repo.path().join("docs/proofs/sample-change-one/README.md");
+    let text = std::fs::read_to_string(&readme).unwrap().replace(
+        "$ rune --version\nrune [..] built [..]",
+        "$ rune hook record --json",
+    );
+    assert!(text.contains("$ rune hook record --json"), "{text}");
+    std::fs::write(&readme, text).unwrap();
+    let output = rune(state.path())
+        .args([
+            "proof",
+            "run",
+            "sample-change-one",
+            "--pause",
+            "0",
+            "--source",
+            repo.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut leaked = Vec::new();
+    for entry in walkdir(repo.path()) {
+        if let Ok(text) = std::fs::read_to_string(&entry)
+            && text.contains(SENTINEL)
+        {
+            leaked.push(entry);
+        }
+    }
+    assert!(leaked.is_empty(), "{leaked:?}");
+}
+
 /// Only the hook module names the record directory in the source tree, so
 /// release, bench, proof, and sign cannot read it by construction.
 #[test]
