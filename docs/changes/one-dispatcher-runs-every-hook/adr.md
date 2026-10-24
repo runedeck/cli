@@ -53,7 +53,7 @@ Option 1 leaves six wirings and no normalization. Option 2 would need a payload 
 - [+] The deck's one-configuration requirement is met by the rune config, and CI runs the same checker through `rune check`.
 - [+] The author identity stops being a hand `jj metaedit` after every commit, because the checkout carries it.
 - [-] Every hook event now pays rune's startup. The budget per event is explicit and clamped to each harness's cap: Claude's `SessionEnd` hooks share 1.5 s and Codex's `SessionEnd` allows 3 s at most, so session-end handlers only enqueue work.
-- [-] The dotfiles settings template can no longer own the Claude hooks block. It becomes a modify script that keeps rune's block, and `rune install --check` reports drift between the two.
+- [-] The dotfiles settings template can no longer own the Claude hooks block. It becomes a modify script that keeps rune's block, and `rune hook install --check` reports drift between the two.
 - [-] Grok reads Claude's settings, so a Claude registration also fires under Grok. The dispatcher recognizes Grok's environment and exits without a handler until the Grok adapter (change 2) registers Grok's own entries.
 - [-] A Codex entry rune writes is inactive until the harness's trust step, which only the owner can take. Retiring the legacy Codex registration waits for that step.
 - [-] OpenCode has no shell hooks. Until change 2 its plugins stay as they are.

@@ -122,7 +122,7 @@ A handler that may return a replacement input MUST declare `rewrites: true` and 
 
 ### Requirement: Install Owns Its Entries And Nothing Else
 
-`rune install` MUST write one dispatcher entry per subscribed event into the Claude `settings.json` and Codex `hooks.json` tables and inventory every entry of those tables in the manifest as owned (its full registration hashed: matcher, command, arguments, timeout, async) or foreign (its source location). Ownership is by the command's `rune hook run` prefix and event, never by position. An owned entry whose registration differs from the plan and the manifest is a conflict that stops the install and names the file and event. `rune install --check` reports every owned entry that differs from the plan and every foreign entry it did not know.
+`rune install` MUST write one dispatcher entry per subscribed event into the Claude `settings.json` and Codex `hooks.json` tables and inventory every entry of those tables in the manifest as owned (its full registration hashed: matcher, command, arguments, timeout, async) or foreign (its source location). Ownership is by the command's `rune hook run` prefix and event, never by position. An owned entry whose registration differs from the plan and the manifest is a conflict that stops the install and names the file and event. `rune hook install --check` reports every owned entry that differs from the plan and every foreign entry it did not know.
 
 #### Scenario: Foreign entries survive
 
