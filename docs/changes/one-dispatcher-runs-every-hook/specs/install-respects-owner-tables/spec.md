@@ -81,7 +81,7 @@ Install MUST adopt a tool's own entry, such as dcg's, only on a harness and nati
 
 ### Requirement: A Codex Predecessor Waits For Trust
 
-On Codex, install MUST keep every entry a rune entry replaces until Codex trusts that rune entry at its position. Install MUST leave an emptied Codex group in place as a group with no hook, so no later group moves. `rune hook install --check` MUST fail while a Codex rune entry is untrusted.
+On Codex, install MUST keep every entry a rune entry replaces until Codex trusts that rune entry at the position it has once those entries are gone. When removing them would move the rune entry to a position Codex does not trust, install MUST keep them and name both positions. Install MUST leave an emptied Codex group in place as a group with no hook, so no later group moves. `rune hook install --check` MUST fail while a Codex rune entry is untrusted.
 
 #### Scenario: Untrusted rune entry
 
@@ -92,6 +92,11 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 
 - **WHEN** the owner trusted the rune entry in `/hooks` and `rune install` runs again
 - **THEN** dcg is adopted, its group stays as an empty group, and the rune entry keeps its position
+
+#### Scenario: Predecessor before rune in one group
+
+- **WHEN** one Codex `PreToolUse` group holds dcg and then the rune entry, and Codex trusts the rune entry as the group's second handler
+- **THEN** dcg stays, the output says the rune entry would move to the first handler, and `rune hook install --check` exits non-zero
 
 ### Requirement: One Install Prints One Result
 
