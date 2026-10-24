@@ -181,7 +181,9 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
     if !check && !dry_run {
         // While the tables change, the plan on disk serves the old
         // registrations and the new ones: the bridge first, then the new
-        // plan once every table is written.
+        // plan once every table is written. Both steps are one
+        // transaction, so a failure in the second puts back the plan,
+        // the tables, and the manifest the first one replaced.
         let previous = plan::read_at(&plan_path).ok().map(|(old, _)| old);
         let bridge = previous
             .as_ref()
@@ -193,14 +195,16 @@ pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<instal
             new_mode: None,
         }];
         files.extend(prepared.files);
-        publish::publish(&files)?;
+        let mut transaction = publish::Transaction::default();
+        transaction.publish(&files)?;
         if bridge.is_some() {
-            publish::publish(&[publish::Staged {
+            transaction.publish(&[publish::Staged {
                 target: plan_path,
                 text: plan_text(&plan)?,
                 new_mode: None,
             }])?;
         }
+        transaction.commit();
     }
     Ok(Some(prepared.report))
 }

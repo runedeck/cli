@@ -3,8 +3,10 @@
 //! its target, the old target is kept as a backup beside it, linked or
 //! copied. When a replace fails, every target already replaced gets its
 //! backup back by rename, a target that did not exist is removed again,
-//! and a restore that fails is reported. A target keeps its permission
-//! bits. `Lock` serializes the installs that share a target directory.
+//! and a restore that fails is reported. A `Transaction` keeps the
+//! backups across several steps, so a later step's failure puts back the
+//! earlier steps' files too. A target keeps its permission bits. `Lock`
+//! serializes the installs that share a target directory.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -97,9 +99,27 @@ fn back_up(target: &Path) -> Result<Option<PathBuf>, Error> {
     }
     let backup = beside(target, "old");
     if fs::hard_link(target, &backup).is_err() {
-        fs::copy(target, &backup).map_err(|e| io(&backup, &e))?;
+        fs::copy(target, &backup).map_err(|error| {
+            Error::io(format!(
+                "{}: cannot keep the old file to put it back: {error}",
+                target.display()
+            ))
+        })?;
     }
     Ok(Some(backup))
+}
+
+/// Replace one target with its staged file, keeping the old one beside it.
+fn replace(file: &Staged, staged: &Path) -> Result<Option<PathBuf>, Error> {
+    let backup = back_up(&file.target)?;
+    fs::rename(staged, &file.target)
+        .map(|()| backup.clone())
+        .map_err(|error| {
+            if let Some(backup) = &backup {
+                let _ = fs::remove_file(backup);
+            }
+            io(&file.target, &error)
+        })
 }
 
 /// Put every replaced target back, newest first: its backup by rename, or
@@ -120,53 +140,80 @@ fn restore_all(done: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
 
 /// Write every file, or none of them.
 pub(crate) fn publish(files: &[Staged]) -> Result<(), Error> {
-    let mut staged: Vec<PathBuf> = Vec::new();
-    for file in files {
-        match stage(file) {
-            Ok(path) => staged.push(path),
-            Err(error) => {
-                for path in &staged {
-                    let _ = fs::remove_file(path);
-                }
-                return Err(error);
-            }
-        }
-    }
-    let mut done: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
-    for (index, file) in files.iter().enumerate() {
-        let replaced = back_up(&file.target).and_then(|backup| {
-            fs::rename(&staged[index], &file.target)
-                .map(|()| backup.clone())
-                .map_err(|error| {
-                    if let Some(backup) = &backup {
-                        let _ = fs::remove_file(backup);
-                    }
-                    io(&file.target, &error)
-                })
-        });
-        match replaced {
-            Ok(backup) => done.push((file.target.clone(), backup)),
-            Err(error) => {
-                for path in &staged[index..] {
-                    let _ = fs::remove_file(path);
-                }
-                let failed = restore_all(&done);
-                if failed.is_empty() {
-                    return Err(error);
-                }
-                return Err(Error::io(format!(
-                    "{error}; the earlier files could not be put back: {}",
-                    failed.join(", ")
-                )));
-            }
-        }
-    }
-    for (_, backup) in &done {
-        if let Some(backup) = backup {
-            let _ = fs::remove_file(backup);
-        }
-    }
+    let mut transaction = Transaction::default();
+    transaction.publish(files)?;
+    transaction.commit();
     Ok(())
+}
+
+/// Replacements that stand or fall together across one or more steps:
+/// every old file stays beside its target until `commit`. A step that
+/// fails puts back every file the transaction replaced, the files of its
+/// earlier steps included, and so does a transaction dropped before
+/// `commit`. A target replaced twice goes back to the file it had first.
+#[derive(Debug, Default)]
+pub(crate) struct Transaction {
+    done: Vec<(PathBuf, Option<PathBuf>)>,
+}
+
+impl Transaction {
+    /// Stage every file of one step, then replace each target in order.
+    pub(crate) fn publish(&mut self, files: &[Staged]) -> Result<(), Error> {
+        let mut staged: Vec<PathBuf> = Vec::new();
+        for file in files {
+            match stage(file) {
+                Ok(path) => staged.push(path),
+                Err(error) => {
+                    for path in &staged {
+                        let _ = fs::remove_file(path);
+                    }
+                    return Err(self.abort(error));
+                }
+            }
+        }
+        for (index, file) in files.iter().enumerate() {
+            match replace(file, &staged[index]) {
+                Ok(backup) => self.done.push((file.target.clone(), backup)),
+                Err(error) => {
+                    for path in &staged[index..] {
+                        let _ = fs::remove_file(path);
+                    }
+                    return Err(self.abort(error));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep every new file and drop the old ones.
+    pub(crate) fn commit(mut self) {
+        for (_, backup) in std::mem::take(&mut self.done) {
+            if let Some(backup) = backup {
+                let _ = fs::remove_file(backup);
+            }
+        }
+    }
+
+    /// Put back every file the transaction replaced, and name the ones
+    /// that could not be put back in the error.
+    fn abort(&mut self, error: Error) -> Error {
+        let failed = restore_all(&std::mem::take(&mut self.done));
+        if failed.is_empty() {
+            return error;
+        }
+        Error::io(format!(
+            "{error}; the earlier files could not be put back: {}",
+            failed.join(", ")
+        ))
+    }
+}
+
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        if !self.done.is_empty() {
+            let _ = restore_all(&std::mem::take(&mut self.done));
+        }
+    }
 }
 
 /// An exclusive lock on the directories of a set of targets, held while
@@ -279,6 +326,55 @@ mod tests {
         assert_eq!(fs::read_to_string(&first).unwrap(), "first-old");
         assert!(!second.exists(), "a file that did not exist is gone again");
         assert!(blocked.join("inside").is_dir());
+        assert_eq!(leftovers(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_failed_second_step_puts_back_the_files_of_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = dir.path().join("plan.json");
+        fs::write(&plan, "plan-old").unwrap();
+        let table = dir.path().join("settings.json");
+        fs::write(&table, "table-old").unwrap();
+        let fresh = dir.path().join("manifest.json");
+        let blocked = dir.path().join("blocked");
+        fs::create_dir_all(blocked.join("inside")).unwrap();
+        let mut transaction = Transaction::default();
+        // The bridge step: the plan, a table, and a new manifest.
+        transaction
+            .publish(&[
+                staged(plan.clone(), "plan-bridge"),
+                staged(table.clone(), "table-new"),
+                staged(fresh.clone(), "manifest-new"),
+            ])
+            .unwrap();
+        assert_eq!(fs::read_to_string(&table).unwrap(), "table-new");
+        // The final step replaces the plan again, then fails.
+        let error = transaction
+            .publish(&[
+                staged(plan.clone(), "plan-final"),
+                staged(blocked.clone(), "never"),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("blocked"), "{error}");
+        assert_eq!(fs::read_to_string(&plan).unwrap(), "plan-old");
+        assert_eq!(fs::read_to_string(&table).unwrap(), "table-old");
+        assert!(!fresh.exists(), "a file the first step made is gone again");
+        assert_eq!(leftovers(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_dropped_transaction_puts_back_what_it_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = dir.path().join("plan.json");
+        fs::write(&plan, "plan-old").unwrap();
+        {
+            let mut transaction = Transaction::default();
+            transaction
+                .publish(&[staged(plan.clone(), "plan-bridge")])
+                .unwrap();
+        }
+        assert_eq!(fs::read_to_string(&plan).unwrap(), "plan-old");
         assert_eq!(leftovers(dir.path()), Vec::<String>::new());
     }
 
