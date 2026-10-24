@@ -35,7 +35,7 @@ The dispatcher MUST keep back from each event budget the time it takes to stop a
 
 ### Requirement: The Registration Carries The Plan And The Policy
 
-Install MUST write the plan's absolute path into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, or loads and names no handler for the registered event, MUST answer with that policy. While install changes the tables, the plan on disk MUST name every event of the old plan and the new one, so no registration of either install finds its event missing. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
+Install MUST write the plan's absolute path into each registration, and the `deny` policy where a `deny` handler subscribes and the harness can block the event. A dispatcher whose plan does not load, or loads and names no handler for the registered event, MUST answer with that policy. While install changes the tables, the plan on disk MUST also hold every event and handler of the old plan, so no old registration loses its guard. On Claude, a guarded registration MUST also set `onFailure: block`, so a dispatcher that crashes or overruns its timeout blocks the call.
 
 #### Scenario: Plan under another state directory
 

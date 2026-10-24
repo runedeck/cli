@@ -34,15 +34,33 @@ pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
 }
 
 /// The plan for the moment between publishing the plan and the tables:
-/// the new plan plus every event the old plan has and the new one drops.
-/// A registration of either install finds its event in it, so no guarded
-/// event falls to its registration's fallback while the tables change.
+/// the new plan plus every event the old plan has and the new one drops,
+/// and on an event both have, every old handler the new event lacks. A
+/// registration of either install finds its event and every guard it
+/// stood for, so an old guard keeps guarding until the tables change.
+/// The handlers run by their order, and the event takes the smaller of
+/// the two budgets, so the answer beats the timeout of either install's
+/// registration.
 pub(crate) fn bridge(old: &Plan, new: &Plan) -> Plan {
     let mut bridge = new.clone();
     for (harness, events) in &old.harnesses {
         let target = bridge.harnesses.entry(*harness).or_default();
         for (name, event) in events {
-            target.entry(name.clone()).or_insert_with(|| event.clone());
+            let Some(shared) = target.get_mut(name) else {
+                target.insert(name.clone(), event.clone());
+                continue;
+            };
+            let mut added = false;
+            for handler in &event.handlers {
+                if !shared.handlers.iter().any(|h| h.id == handler.id) {
+                    shared.handlers.push(handler.clone());
+                    added = true;
+                }
+            }
+            if added {
+                shared.handlers.sort_by_key(|h| h.order);
+                shared.budget_ms = shared.budget_ms.min(event.budget_ms);
+            }
         }
     }
     bridge
@@ -109,5 +127,24 @@ mod tests {
         assert!(both.event(Harness::Claude, "PreToolUse").is_some());
         assert!(both.event(Harness::Claude, "SessionEnd").is_some());
         assert_eq!(bridge(&new, &new), new, "no dropped event, no bridge");
+    }
+
+    #[test]
+    fn the_bridge_keeps_an_old_guard_on_an_event_both_plans_have() {
+        let old = plan(
+            "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n",
+        );
+        let new = plan(
+            "handlers:\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 10\n",
+        );
+        let both = bridge(&old, &new);
+        let ids: Vec<&str> = both
+            .event(Harness::Claude, "PreToolUse")
+            .unwrap()
+            .handlers
+            .iter()
+            .map(|h| h.id.as_str())
+            .collect();
+        assert_eq!(ids, ["watch", "dcg"]);
     }
 }

@@ -96,6 +96,43 @@ fn a_denial_on_claude_tool_before_ends_the_gate() {
     assert_eq!(seen.borrow().len(), 1, "the second handler never ran");
 }
 
+/// sol's probe: the old plan guards `PreToolUse` with dcg, and the new
+/// plan keeps `PreToolUse` with an observer and drops `session.end`. The
+/// bridge an install publishes before the tables must still deny.
+#[test]
+fn the_bridge_plan_denies_where_the_old_plan_denied() {
+    let old = plan(
+        "handlers:\n  - id: dcg\n    exec: [dcg]\n    events: [tool.before]\n    order: 20\n    on_failure: deny\n  - id: cap\n    exec: [cap]\n    events: [session.end]\n",
+    );
+    let new = plan(
+        "handlers:\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 10\n",
+    );
+    let bridge = super::plan::bridge(&old, &new);
+    let decide = |plan: &rune::hooks::Plan| {
+        let (runner, _) = runner(HashMap::from([
+            (
+                "dcg".to_string(),
+                fake(r#"{"effect":"deny","reason":"no rm"}"#),
+            ),
+            ("watch".to_string(), fake("{}")),
+        ]));
+        let answer = dispatch(
+            plan,
+            Harness::Claude,
+            "PreToolUse",
+            Ok(claude_tool("rm -rf /")),
+            &runner,
+        );
+        answer.stdout.map_or(Value::Null, |out| {
+            serde_json::from_str::<Value>(&out).unwrap()["hookSpecificOutput"]["permissionDecision"]
+                .clone()
+        })
+    };
+    assert_eq!(decide(&old), "deny");
+    assert_eq!(decide(&new), Value::Null, "the new plan alone allows");
+    assert_eq!(decide(&bridge), "deny", "the bridge keeps the old guard");
+}
+
 #[test]
 fn a_rewriter_before_the_guard_changes_what_the_guard_sees() {
     let plan = plan(
