@@ -22,8 +22,9 @@ Proofs have the same gap. A proof is recorded by hand through the deck's bash dr
 
 ## Capabilities
 
-- every-scenario-has-proof (new)
 - review-the-whole-change (new)
+
+The every-scenario-has-proof capability moved to the change proofs-share-one-format on 22 October 2026, which rewrites the proof format. The proof bullets above and tasks 1.2 to 2.7 record what this change built before the move.
 
 ## Impact
 
