@@ -2,10 +2,20 @@ mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+/// Rune with its own HOME, so the postbox is `<home>/.rune/postbox.tsv`,
+/// and outside any harness session unless a test sets one.
 fn rune(home: &std::path::Path) -> Command {
     let mut command = support::rune();
-    command.env("HOME", home);
     command
+        .env("HOME", home)
+        .env("USER", "owner")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("CODEX_THREAD_ID");
+    command
+}
+
+fn postbox(home: &std::path::Path) -> String {
+    std::fs::read_to_string(home.join(".rune/postbox.tsv")).unwrap_or_default()
 }
 
 /// A fake `codex` that records its arguments and environment beside
@@ -66,6 +76,7 @@ fn codex_session_takes_a_queued_message() {
     rune(home.path())
         .args([
             "queue",
+            "post",
             "codex",
             "--session",
             "ouroboros",
@@ -96,7 +107,7 @@ fn json_result_names_the_message_and_the_thread() {
     let codex = fake_codex(home.path(), RECEIPT, "", 0);
 
     let output = rune(home.path())
-        .args(["--json", "queue", "codex", "--session", "ouroboros"])
+        .args(["--json", "queue", "post", "codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "Is the deck ready?"])
         .output()
         .expect("queue output");
@@ -109,6 +120,21 @@ fn json_result_names_the_message_and_the_thread() {
     assert_eq!(result["message_id"], "msg-41");
     assert_eq!(result["thread_id"], "019a-ouroboros");
     assert_eq!(result["exit_code"], 0);
+
+    // The ledger records the message as posted, then queued, so a read for
+    // the session never hands it out a second time.
+    let id = result["id"].as_str().expect("an id");
+    let states: Vec<String> = postbox(home.path())
+        .lines()
+        .filter(|line| line.contains(id))
+        .map(|line| line.split('\t').nth(2).unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(states, ["posted", "queued"]);
+    rune(home.path())
+        .args(["queue", "read", "--session", "ouroboros"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
 }
 
 #[cfg(unix)]
@@ -130,7 +156,7 @@ fn profile_environment_applies_and_its_arguments_stay_out() {
 
     rune(home.path())
         .env("CODEX_THREAD_ID", "the-calling-session")
-        .args(["queue", "deep@codex", "--session", "ouroboros"])
+        .args(["queue", "post", "deep@codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "Is the deck ready?"])
         .assert()
         .success()
@@ -157,6 +183,7 @@ fn message_comes_from_stdin_and_remote_options_pass_on() {
     rune(home.path())
         .args([
             "queue",
+            "post",
             "codex",
             "--session",
             "ouroboros",
@@ -191,7 +218,7 @@ fn dry_run_shows_the_command_and_starts_nothing() {
     let codex = fake_codex(home.path(), RECEIPT, "", 0);
 
     let output = rune(home.path())
-        .args(["--json", "queue", "codex", "--session", "ouroboros"])
+        .args(["--json", "queue", "post", "codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "--dry-run", "Is the deck ready?"])
         .output()
         .expect("queue output");
@@ -214,7 +241,7 @@ fn dry_run_shows_the_command_and_starts_nothing() {
     assert!(!home.path().join("args.txt").exists(), "the harness ran");
 
     rune(home.path())
-        .args(["queue", "codex", "--session", "ouroboros"])
+        .args(["queue", "post", "codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "--dry-run", "Is the deck ready?"])
         .assert()
         .success()
@@ -224,19 +251,177 @@ fn dry_run_shows_the_command_and_starts_nothing() {
 }
 
 #[test]
-fn harness_without_a_queue_is_refused_before_anything_starts() {
+fn route_that_names_no_harness_is_refused_before_anything_starts() {
     let home = tempfile::tempdir().expect("home");
-    for route in ["sol@claude", "agy", "grok", "opencode", "ollama"] {
-        let output = rune(home.path())
-            .args(["--json", "queue", route, "--session", "ouroboros", "hi"])
-            .output()
-            .expect("queue output");
-        assert_eq!(output.status.code(), Some(125), "{route}");
-        let result = json_of(&output);
-        assert_eq!(result["ok"], false, "{route}");
-        assert_eq!(result["kind"], "unsupported_harness", "{route}");
-        assert_eq!(result["details"]["supported"], serde_json::json!(["codex"]));
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "queue",
+            "post",
+            "ollama",
+            "--session",
+            "seat",
+            "hi",
+        ])
+        .output()
+        .expect("queue output");
+    assert_eq!(output.status.code(), Some(125));
+    let result = json_of(&output);
+    assert_eq!(result["kind"], "unsupported_harness");
+    assert!(postbox(home.path()).is_empty(), "nothing was posted");
+}
+
+#[test]
+fn message_waits_in_the_postbox_until_its_session_reads_it() {
+    let home = tempfile::tempdir().expect("home");
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "queue",
+            "post",
+            "sol@claude",
+            "--session",
+            "42e43c0b",
+        ])
+        .arg("Is the deck ready?\nSecond line.")
+        .output()
+        .expect("post output");
+    assert_eq!(output.status.code(), Some(0));
+    let posted = json_of(&output);
+    assert_eq!(posted["kind"], "posted");
+    assert_eq!(posted["transport"], "postbox");
+    assert_eq!(posted["sender"], "user:owner");
+    let id = posted["id"].as_str().expect("an id").to_string();
+
+    let ledger = postbox(home.path());
+    let lines: Vec<&str> = ledger.lines().collect();
+    assert_eq!(lines.len(), 2, "the header and one event: {ledger}");
+    assert!(lines[0].starts_with("# timestamp\tid\tstate"), "{ledger}");
+    let columns: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(
+        columns[1..],
+        [
+            id.as_str(),
+            "posted",
+            "user:owner",
+            "claude",
+            "42e43c0b",
+            "Is the deck ready?\\nSecond line."
+        ]
+    );
+
+    rune(home.path())
+        .args(["queue", "read", "--session", "42e43c0b"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Message {id} from user:owner at"
+        )))
+        .stdout(predicate::str::contains("Is the deck ready?\nSecond line."));
+    rune(home.path())
+        .args(["queue", "read", "--session", "42e43c0b"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("no messages for 42e43c0b"));
+
+    let ledger = postbox(home.path());
+    assert_eq!(
+        ledger.lines().count(),
+        3,
+        "the read is a new line: {ledger}"
+    );
+    assert!(ledger.contains(&format!("\t{id}\tread\tuser:owner\tclaude\t42e43c0b\t")));
+}
+
+#[test]
+fn read_finds_its_own_session_and_the_sender_names_its_session() {
+    let home = tempfile::tempdir().expect("home");
+    rune(home.path())
+        .env("CODEX_THREAD_ID", "01a0abff")
+        .args([
+            "queue",
+            "post",
+            "claude",
+            "--session",
+            "42e43c0b",
+            "--postbox",
+        ])
+        .arg("From a Codex session")
+        .assert()
+        .success();
+    let output = rune(home.path())
+        .env("CLAUDE_CODE_SESSION_ID", "42e43c0b")
+        .args(["--json", "queue", "read"])
+        .output()
+        .expect("read output");
+    assert_eq!(output.status.code(), Some(0));
+    let read = json_of(&output);
+    assert_eq!(read["sessions"], serde_json::json!(["42e43c0b"]));
+    assert_eq!(read["messages"][0]["sender"], "codex:01a0abff");
+    assert_eq!(read["messages"][0]["message"], "From a Codex session");
+}
+
+#[test]
+fn read_outside_a_session_needs_the_session_named() {
+    let home = tempfile::tempdir().expect("home");
+    let output = rune(home.path())
+        .args(["--json", "queue", "read"])
+        .output()
+        .expect("read output");
+    assert_eq!(output.status.code(), Some(125));
+    assert_eq!(json_of(&output)["kind"], "configuration_error");
+}
+
+#[test]
+fn list_shows_each_message_in_its_last_state_and_changes_nothing() {
+    let home = tempfile::tempdir().expect("home");
+    for (session, text) in [("seat-a", "first"), ("seat-b", "second")] {
+        rune(home.path())
+            .args([
+                "queue",
+                "post",
+                "agy",
+                "--session",
+                session,
+                "--from",
+                "council",
+            ])
+            .arg(text)
+            .assert()
+            .success();
     }
+    rune(home.path())
+        .args(["queue", "read", "--session", "seat-a"])
+        .assert()
+        .success();
+    let before = postbox(home.path());
+
+    let output = rune(home.path())
+        .args(["--json", "queue", "list"])
+        .output()
+        .expect("list output");
+    let list = json_of(&output);
+    let states: Vec<(&str, &str)> = list["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .map(|message| {
+            (
+                message["session"].as_str().expect("session"),
+                message["state"].as_str().expect("state"),
+            )
+        })
+        .collect();
+    assert_eq!(states, [("seat-a", "read"), ("seat-b", "posted")]);
+
+    rune(home.path())
+        .args(["queue", "list", "--state", "posted"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("council -> agy:seat-b  second"))
+        .stdout(predicate::str::contains("seat-a").not());
+    assert_eq!(postbox(home.path()), before, "list wrote nothing");
 }
 
 #[cfg(unix)]
@@ -246,7 +431,7 @@ fn harness_failure_passes_its_status_and_its_stderr_through() {
     let codex = fake_codex(home.path(), "", "Error: no session named ouroboros", 1);
 
     let output = rune(home.path())
-        .args(["--json", "queue", "codex", "--session", "ouroboros"])
+        .args(["--json", "queue", "post", "codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "Is the deck ready?"])
         .output()
         .expect("queue output");
@@ -268,7 +453,7 @@ fn missing_receipt_still_reports_success_with_a_warning() {
     let codex = fake_codex(home.path(), "", "", 0);
 
     let output = rune(home.path())
-        .args(["--json", "queue", "codex", "--session", "ouroboros"])
+        .args(["--json", "queue", "post", "codex", "--session", "ouroboros"])
         .args(["--binary", &codex, "Is the deck ready?"])
         .output()
         .expect("queue output");
@@ -288,10 +473,48 @@ fn missing_receipt_still_reports_success_with_a_warning() {
 fn usage_error_under_json_is_one_object_with_exit_125() {
     let home = tempfile::tempdir().expect("home");
     let output = rune(home.path())
-        .args(["--json", "queue", "codex", "Is the deck ready?"])
+        .args(["--json", "queue", "post", "codex", "Is the deck ready?"])
         .output()
         .expect("queue output");
     assert_eq!(output.status.code(), Some(125));
     let result = json_of(&output);
     assert_eq!(result["kind"], "configuration_error");
+}
+
+#[test]
+fn postbox_hook_adapter_adds_the_message_to_a_claude_prompt() {
+    let home = tempfile::tempdir().expect("home");
+    rune(home.path())
+        .args([
+            "queue",
+            "post",
+            "claude",
+            "--session",
+            "42e43c0b",
+            "--from",
+            "codex:01a0abff",
+        ])
+        .arg("Is the deck ready?")
+        .assert()
+        .success();
+
+    let payload = serde_json::json!({
+        "v": 1,
+        "harness": "claude",
+        "event": "prompt.before",
+        "native_event": "UserPromptSubmit",
+        "session_id": "42e43c0b",
+        "raw": {},
+    });
+    let output = rune(home.path())
+        .args(["hook", "adapter", "postbox"])
+        .write_stdin(payload.to_string())
+        .output()
+        .expect("adapter output");
+    assert_eq!(output.status.code(), Some(0));
+    let result = json_of(&output);
+    let context = result["context"][0].as_str().expect("context");
+    assert!(context.contains("from codex:01a0abff"), "{result}");
+    assert!(context.contains("Is the deck ready?"), "{result}");
+    assert!(postbox(home.path()).contains("\tread\tcodex:01a0abff\tclaude\t42e43c0b\t"));
 }

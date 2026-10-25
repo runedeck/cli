@@ -1,9 +1,9 @@
-//! `rune queue`: one message for a harness session that is already running,
-//! read at the session's next turn. The message goes through the harness's
-//! own queue, and a harness without one is refused: nothing imitates a queue
-//! with a second turn or a copy of the session. Codex is the one harness
-//! with a queue command (`codex queue`, help read on 2026-10-25), and
-//! [`queue_transport`] says why each other harness is refused.
+//! `rune queue`: messages between harness sessions, read at the receiving
+//! session's next turn. `post` hands a message to the harness's own queue
+//! where one exists (Codex, `codex queue`, help read on 2026-10-25) and
+//! records it in the postbox ledger. Every other harness reads its messages
+//! from the postbox, through the `postbox` hook handler or `rune queue read`.
+//! Nothing imitates a queue with a second turn or a copy of the session.
 use crate::cli::launch;
 use crate::cli::process::{ProcessRequest, run_process_request};
 use crate::cli::run::{
@@ -15,22 +15,32 @@ use crate::cli::surface::{
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+pub(crate) mod inbox;
+pub(crate) mod ledger;
 
 #[cfg(test)]
+mod ledger_tests;
+#[cfg(test)]
 mod tests;
+
+pub(crate) use inbox::{ListOptions, ReadOptions, execute_list, execute_read};
 
 /// The placeholder the dry run prints for the message.
 const MESSAGE_PLACEHOLDER: &str = "<message>";
 
-/// The harnesses with a queue, named in every refusal.
-const SUPPORTED: &[&str] = &["codex"];
+/// The harnesses a message can be posted for, named in every refusal.
+const HARNESSES: &[&str] = &["claude", "codex", "agy", "grok", "opencode"];
 
-pub(crate) struct QueueOptions {
+pub(crate) struct PostOptions {
     pub(crate) tool: String,
     pub(crate) session: String,
     pub(crate) message: Option<String>,
     pub(crate) message_file: Option<PathBuf>,
+    pub(crate) from: Option<String>,
+    /// Post to the ledger even where the harness has its own queue.
+    pub(crate) postbox: bool,
     pub(crate) binary: Option<PathBuf>,
     pub(crate) remote: Option<String>,
     pub(crate) remote_auth_token_env: Option<String>,
@@ -45,34 +55,27 @@ pub(crate) enum Transport {
     /// `codex queue --thread=<session> --message=<text>`, which prints
     /// `Queued message <id> for thread <id>.`
     CodexQueue,
+    /// The postbox ledger, read by the session's hook or by `rune queue read`.
+    Postbox,
 }
 
 impl Transport {
     fn label(self) -> &'static str {
         match self {
             Self::CodexQueue => "codex queue",
+            Self::Postbox => "postbox",
         }
     }
 }
 
-/// How a message reaches a running session of `surface`, else why it
-/// cannot. Each reason comes from the harness's own help, read on
-/// 2026-10-25, and the `OpenCode` server page of the same day.
-pub(crate) fn queue_transport(surface: Surface) -> Result<Transport, &'static str> {
+/// How a message reaches a running session of `surface`. Codex has its own
+/// queue. Claude Code (2.1.310), agy (1.4.7), and grok (1.0.62) can only
+/// resume a session for a new turn, and `OpenCode`'s `run --attach`
+/// (1.18.29) waits for the turn, so their messages wait in the postbox.
+pub(crate) fn queue_transport(surface: Surface) -> Transport {
     match surface {
-        Surface::Codex => Ok(Transport::CodexQueue),
-        Surface::Claude => Err(
-            "claude has no command that queues a message for a running session: --resume starts a new turn, and with --bg a running session gets a copy",
-        ),
-        Surface::Agy => Err(
-            "agy has no command that queues a message for a running conversation: --conversation resumes one for a new turn",
-        ),
-        Surface::Grok => Err(
-            "grok has no command that queues a message for a running session: --resume starts a new turn",
-        ),
-        Surface::Opencode => Err(
-            "opencode has no command that queues without waiting: run --attach waits for the turn, and its server does not document what a prompt does to a busy session",
-        ),
+        Surface::Codex => Transport::CodexQueue,
+        Surface::Claude | Surface::Agy | Surface::Grok | Surface::Opencode => Transport::Postbox,
     }
 }
 
@@ -138,22 +141,18 @@ pub(crate) fn dropped_profile_args(args: &[OsString]) -> Option<String> {
     })
 }
 
-pub(crate) fn execute(options: &QueueOptions) -> i32 {
+pub(crate) fn execute_post(options: &PostOptions) -> i32 {
     let outcome =
         execute_inner(options).unwrap_or_else(|error| configuration_outcome(&options.tool, error));
     print_outcome(options.json, outcome)
 }
 
-fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError> {
-    // A harness without a queue is refused from the route alone: no
+fn execute_inner(options: &PostOptions) -> Result<Outcome, launch::ResolveError> {
+    // A route that names no harness is refused from the route alone: no
     // profile resolves, no middleware runs, and no message is read.
     let (tool, _) = launch::split_invocation(&options.tool);
-    let transport = match Surface::from_tool(tool)
-        .ok_or("rune drives no such harness")
-        .and_then(queue_transport)
-    {
-        Ok(transport) => transport,
-        Err(reason) => return Ok(unsupported_outcome(options, tool, reason)),
+    let Some(surface) = Surface::from_tool(tool) else {
+        return Ok(unsupported_outcome(options, tool));
     };
     if options.session.trim().is_empty() {
         return Err(
@@ -161,6 +160,30 @@ fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError
                 .to_string()
                 .into(),
         );
+    }
+    let transport = if options.postbox {
+        Transport::Postbox
+    } else {
+        queue_transport(surface)
+    };
+    let message = read_text(
+        options.message.as_deref(),
+        options.message_file.as_deref(),
+        "message",
+        "--message-file",
+    )?;
+    let posted = ledger::Event {
+        timestamp: ledger::now(),
+        id: ledger::new_id(),
+        state: ledger::State::Posted,
+        sender: inbox::sender(options.from.as_deref()),
+        harness: tool.to_string(),
+        session: options.session.clone(),
+        message,
+    };
+    let postbox = ledger::path()?;
+    if transport == Transport::Postbox {
+        return Ok(post_to_postbox(options, &posted, &postbox));
     }
     let resolved = launch::resolve(&options.tool, &[])?;
     let wrappers = resolved.unsupported_wrappers();
@@ -171,12 +194,6 @@ fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError
         )
         .into());
     }
-    let message = read_text(
-        options.message.as_deref(),
-        options.message_file.as_deref(),
-        "message",
-        "--message-file",
-    )?;
     let timeout = options.timeout.as_deref().map(parse_duration).transpose()?;
     let (resolved_binary, profile_args) = resolved
         .argv
@@ -195,13 +212,13 @@ fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError
     // The caller's environment, minus the parent session's variables, plus
     // the route's: the isolation `rune run` gives its harness.
     let isolation = parent_session_isolation(&resolved.route_keys());
-    let args = |message: &str| match transport {
-        Transport::CodexQueue => codex_queue_args(
+    let args = |message: &str| {
+        codex_queue_args(
             &options.session,
             message,
             options.remote.as_deref(),
             options.remote_auth_token_env.as_deref(),
-        ),
+        )
     };
     let mut request = ProcessRequest::new(binary);
     request.env.clone_from(&resolved.env);
@@ -216,7 +233,7 @@ fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError
             transport,
             &request,
             &isolation,
-            message.chars().count(),
+            posted.message.chars().count(),
             &warnings,
         ));
     }
@@ -224,17 +241,82 @@ fn execute_inner(options: &QueueOptions) -> Result<Outcome, launch::ResolveError
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
-    request.args = args(&message);
-    Ok(send(options, tool, transport, &request, warnings))
+    request.args = args(&posted.message);
+    Ok(send(options, &posted, &postbox, &request, warnings))
+}
+
+/// Write the message to the postbox as `posted`, where its session reads
+/// it. A dry run prints the line it would write, with the text as a
+/// placeholder, and writes nothing.
+fn post_to_postbox(options: &PostOptions, posted: &ledger::Event, postbox: &Path) -> Outcome {
+    let shown = ledger::Event {
+        message: MESSAGE_PLACEHOLDER.to_string(),
+        ..posted.clone()
+    };
+    let json = json!({
+        "ok": true,
+        "kind": if options.dry_run { "dry_run" } else { "posted" },
+        "tool": posted.harness,
+        "requested_route": options.tool,
+        "transport": Transport::Postbox.label(),
+        "id": posted.id,
+        "sender": posted.sender,
+        "session": posted.session,
+        "postbox": postbox.display().to_string(),
+        "message_chars": posted.message.chars().count(),
+    });
+    if options.dry_run {
+        return Outcome {
+            exit_code: 0,
+            json,
+            text: Text::Stdout(format!(
+                "tool: {}\nroute: {}\ntransport: postbox\npostbox: {}\nline: {}\nmessage_chars: {}",
+                posted.harness,
+                options.tool,
+                postbox.display(),
+                shown.line(),
+                posted.message.chars().count()
+            )),
+        };
+    }
+    if let Err(message) = ledger::append(postbox, std::slice::from_ref(posted)) {
+        return postbox_failure(options, &posted.harness, message);
+    }
+    Outcome {
+        exit_code: 0,
+        json,
+        text: Text::Stdout(format!(
+            "posted message {} for {} session {} in {}",
+            posted.id,
+            posted.harness,
+            posted.session,
+            postbox.display()
+        )),
+    }
+}
+
+/// The postbox could not be written: exit 125 and the reason.
+fn postbox_failure(options: &PostOptions, tool: &str, message: String) -> Outcome {
+    Outcome {
+        exit_code: EXIT_RUNNER_ERROR,
+        json: json!({
+            "ok": false,
+            "kind": "postbox_error",
+            "tool": tool,
+            "requested_route": options.tool,
+            "details": { "message": message },
+        }),
+        text: Text::Fatal(message),
+    }
 }
 
 /// Start the harness command and read its outcome. The credentials of the
 /// child's environment, and the remote token's value, are hidden in the
 /// stream tails of a failure.
 fn send(
-    options: &QueueOptions,
-    tool: &str,
-    transport: Transport,
+    options: &PostOptions,
+    posted: &ledger::Event,
+    postbox: &Path,
     request: &ProcessRequest,
     warnings: Vec<String>,
 ) -> Outcome {
@@ -258,22 +340,22 @@ fn send(
                     eprintln!();
                 }
             }
-            queued_outcome(options, tool, transport, &output.stdout, warnings)
+            queued_outcome(options, posted, postbox, &output.stdout, warnings)
         }
         Err(failure) => Outcome {
             exit_code: failure_exit_code(&failure),
-            json: failure_json(tool, &failure),
+            json: failure_json(&posted.harness, &failure),
             text: Text::Stderr(format!("error: {failure}")),
         },
     }
 }
 
-/// The refusal of a harness without a queue: exit 125, the reason, and the
-/// harnesses that have one.
-fn unsupported_outcome(options: &QueueOptions, tool: &str, reason: &str) -> Outcome {
+/// The refusal of a route that names no harness: exit 125, and the
+/// harnesses a message can be posted for.
+fn unsupported_outcome(options: &PostOptions, tool: &str) -> Outcome {
     let message = format!(
-        "cannot queue a message for a {tool} session: {reason}. Harnesses with a queue: {}",
-        SUPPORTED.join(", ")
+        "cannot post a message for a {tool} session: rune drives no such harness. Harnesses: {}",
+        HARNESSES.join(", ")
     );
     Outcome {
         exit_code: EXIT_RUNNER_ERROR,
@@ -284,7 +366,7 @@ fn unsupported_outcome(options: &QueueOptions, tool: &str, reason: &str) -> Outc
             "requested_route": options.tool,
             "details": {
                 "message": message,
-                "supported": SUPPORTED,
+                "supported": HARNESSES,
             },
         }),
         text: Text::Fatal(message),
@@ -292,14 +374,30 @@ fn unsupported_outcome(options: &QueueOptions, tool: &str, reason: &str) -> Outc
 }
 
 /// A message the harness took: the ids from its receipt line, or null ids
-/// and a warning when it printed none.
+/// and a warning when it printed none. The ledger records it as posted and
+/// queued, so the hook never delivers it a second time. A ledger that
+/// cannot be written is a warning: the message is already queued.
 fn queued_outcome(
-    options: &QueueOptions,
-    tool: &str,
-    transport: Transport,
+    options: &PostOptions,
+    posted: &ledger::Event,
+    postbox: &Path,
     stdout: &str,
     mut warnings: Vec<String>,
 ) -> Outcome {
+    let tool = posted.harness.as_str();
+    let transport = Transport::CodexQueue;
+    let queued = ledger::Event {
+        timestamp: ledger::now(),
+        state: ledger::State::Queued,
+        message: String::new(),
+        ..posted.clone()
+    };
+    if let Err(message) = ledger::append(postbox, &[posted.clone(), queued]) {
+        let warning =
+            format!("the message is queued, and the postbox did not record it: {message}");
+        eprintln!("warning: {warning}");
+        warnings.push(warning);
+    }
     let receipt = parse_receipt(stdout);
     let text = if let Some(receipt) = &receipt {
         format!(
@@ -326,6 +424,8 @@ fn queued_outcome(
             "tool": tool,
             "requested_route": options.tool,
             "transport": transport.label(),
+            "id": posted.id,
+            "sender": posted.sender,
             "session": options.session,
             "message_id": receipt.as_ref().map(|receipt| receipt.message_id.as_str()),
             "thread_id": receipt.as_ref().map(|receipt| receipt.thread_id.as_str()),
@@ -338,7 +438,7 @@ fn queued_outcome(
 /// The command the queue would start, with the message as a placeholder
 /// and every credential hidden. Nothing starts.
 fn dry_run_outcome(
-    options: &QueueOptions,
+    options: &PostOptions,
     tool: &str,
     transport: Transport,
     request: &ProcessRequest,

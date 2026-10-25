@@ -24,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Read the consumer manifest from `.rune/manifest.yaml` when `.rune` is a directory, so it shares the directory with the records home. A `.rune` directory without a manifest is no consumer.
 - Add `rune run --mode answer-only`: claude gets `--tools ""` and opencode a deny-all permission. Codex, agy and grok cannot switch their tools off and are refused by name.
 - Add `rune run --session-name <NAME>`: claude receives it as `--name` and opencode as `run --title`. Codex, agy and grok take none, and the dry run says `session_name_flag: none`.
-- Add `rune queue <ROUTE> --session <ID|NAME>`: queue a message for a running Codex session through `codex queue`. Other harnesses have no queue and exit 125.
+- Add `rune queue post`, `read`, and `list`: messages between sessions in the `~/.rune/postbox.tsv` ledger, through `codex queue` for Codex and a `postbox` hook handler or `read` elsewhere.
 - Report the files an agy run created in its brain folder as `artifact:` lines and `artifacts` in the JSON result, and copy them to `--artifacts-dir <DIR>` or the rune state directory.
 - Run every `rune run --mode workspace-write` in its own jj workspace under `$XDG_STATE_HOME/rune/workspaces/`, on a copy of the caller's files, and leave the caller's checkout untouched.
 - Fold a workspace-write run's files into one change on the caller's current change, named `rune run <route>: <session>` and reported as the `workspace` object, or leave no trace.

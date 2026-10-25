@@ -30,6 +30,7 @@ pub(crate) const NAMES: &[&str] = &[
     "tmux-status",
     "jj-guards",
     "sandbox-guard",
+    "postbox",
 ];
 
 /// Run one adapter over the payload on stdin; print its result.
@@ -81,6 +82,7 @@ pub(crate) fn dispatch(
         "turn-checkpoint" => turn_checkpoint(payload),
         "tmux-status" => tmux_status(payload),
         "jj-guards" => jj_guards(payload),
+        "postbox" => postbox(payload),
         "sandbox-guard" => super::sandbox_guard::guard(payload, args),
         other => Err(format!(
             "`{other}` is not a built-in adapter ({})",
@@ -1420,6 +1422,55 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         payload.cwd.as_deref().map(Path::new),
     )?;
     Ok(HandlerResult::default())
+}
+
+/// Deliver the postbox's messages for this session (`rune queue`): as
+/// context on an event that takes context, or at a turn's end as the reason
+/// to keep working, so the session reads them at its next turn. A harness
+/// that can express neither on the event reads nothing, so no message is
+/// marked read and lost.
+fn postbox(payload: &HandlerPayload) -> Result<HandlerResult, String> {
+    postbox_at(payload, &crate::cli::queue::ledger::path()?)
+}
+
+pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<HandlerResult, String> {
+    use crate::cli::queue::{inbox, ledger};
+    use rune::hooks::Capability;
+    let Some(session) = payload
+        .session_id
+        .as_deref()
+        .filter(|session| !session.is_empty())
+    else {
+        return Ok(HandlerResult::default());
+    };
+    let capability = match payload.event.as_str() {
+        "session.start" | "prompt.before" | "tool.after" => Capability::Context,
+        "turn.finish" => Capability::TurnContinue,
+        _ => return Ok(HandlerResult::default()),
+    };
+    if !capability.supported(payload.harness) {
+        return Ok(HandlerResult::default());
+    }
+    let messages = ledger::take_posted(ledger, &[session.to_string()], &ledger::now())?;
+    if messages.is_empty() {
+        return Ok(HandlerResult::default());
+    }
+    let text = format!(
+        "Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender with `rune queue post`.\n\n{}",
+        inbox::format_messages(&messages)
+    );
+    Ok(if capability == Capability::TurnContinue {
+        HandlerResult {
+            effect: Effect::ContinueTurn,
+            reason: Some(text),
+            ..HandlerResult::default()
+        }
+    } else {
+        HandlerResult {
+            context: vec![text],
+            ..HandlerResult::default()
+        }
+    })
 }
 
 /// The tmux window flag, by event.

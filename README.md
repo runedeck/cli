@@ -442,16 +442,32 @@ Every run writes a state file beside its folder, `$XDG_STATE_HOME/rune/workspace
 
 A git repository without jj is colocated first (`jj git init --colocate`), once, and the result says so. A folder under neither git nor jj cannot take a workspace-write run: the refusal names read-only mode and the colocation command. Ignored files, such as build output and `.env`, are absent from the workspace, so a build inside a run starts cold. Every workspace-write run needs `jj` on the PATH. A runner killed with SIGKILL cannot clean up. Its workspace then stays in `jj workspace list` with a `run-` name, and `jj workspace forget <name>` removes it.
 
-Send a question to a session that is already running. The message waits in the session's own queue, and the session reads it at its next turn without interrupting the turn in progress:
+Send a question to a session that is already running. The session reads it at its next turn, and the turn in progress goes on:
 
 ```sh
-rune queue codex --session ouroboros "Is the deck ready for review?"
-rune queue sol61@codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 --message-file question.md
+rune queue post codex --session ouroboros "Is the deck ready for review?"
+rune queue post claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a --message-file question.md
+rune queue read                      # inside a session: its messages, marked read
+rune queue list --state posted       # the postbox, changed by nothing
 ```
 
-`--session` takes the session id or its exact name. The route picks the harness, and a profile's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that Codex home. The profile's arguments start a session, so they are not passed, and a warning names them. The queue goes to the local Codex app-server daemon (`--remote unix://`), which holds the running sessions. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. The result names the message id and the thread id that Codex printed, and `--json` makes it one object of kind `queued`. `--dry-run` prints the command with the message as `<message>`.
+Every message is recorded in the postbox, `~/.rune/postbox.tsv`, one file for every session on the machine. Each event is one tab-separated line: timestamp, id, state, sender, harness, session, message. A tab, newline, or backslash in a message is escaped, so `rg` and `column -t -s $'\t'` read the file. Nothing is removed: a state change (`posted`, `queued`, `read`) is a new line with the message's id, and its last line is its state. The sender is `--from`, else the posting session as `harness:id`, else `user:<login>`.
 
-Codex is the one harness with a queue, through `codex queue`. Claude Code, agy, and grok can only resume a session for a new turn, and OpenCode's `run --attach` waits for the turn, so `rune queue` refuses them with exit 125 and kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
+Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed.
+
+Claude Code, agy, grok, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
+
+```yaml
+hooks:
+  handlers:
+    - id: postbox
+      exec: [rune-hook-postbox]
+      events: [session.start, prompt.before, turn.finish]
+```
+
+Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
+
+`--json` makes every result one object (`posted`, `queued`, `read`, `list`, `dry_run`). `--dry-run` prints what would be posted with the message as `<message>`. A route that names no harness exits 125 with kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
 
 Run a helper script bundled with a skill:
 

@@ -30,7 +30,7 @@ utility instead:
 
 Every `rune run --json` result carries that number as `exit_code`, the result
 file included. `rune queue` supervises its harness command too and uses the
-same table. A harness without a queue for a running session is a runner error,
+same table. A route that names no harness is a runner error,
 `125`. `rune run --check` reports a result and supervises nothing:
 `0` served, `1` missing, `2` endpoint failed.
 

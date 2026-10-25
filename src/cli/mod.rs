@@ -848,49 +848,13 @@ enum Command {
         output: Option<std::path::PathBuf>,
     },
 
-    /// Queue a message for a running harness session, read at its next turn
+    /// Post and read messages between harness sessions, read at the next turn
     #[command(
-        after_help = "EXAMPLES:\n  rune queue codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 \"Is the deck ready?\"\n  rune queue sol61@codex --session ouroboros --message-file question.md\n  command cat question.md | rune queue codex --session ouroboros\n\nHARNESSES:\n  codex takes the message through `codex queue --remote unix://`, the local\n  app-server daemon that holds the running sessions, and the session reads\n  it at its next turn without interrupting the turn in progress. claude, agy,\n  grok and opencode have no queue for a running session and are refused\n  with exit 125.\n\nPROFILES:\n  A profile's environment applies, so a profile that sets CODEX_HOME\n  reaches the sessions of that home. Its arguments start a session and are\n  not passed; a warning names them.\n\nThe exit status follows rune run: the harness's own status passes through,\n124 is the time limit, 125 an error of rune itself, 126 and 127 a binary\nthat cannot run or is not found."
+        after_help = "EXAMPLES:\n  rune queue post codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 \"Is the deck ready?\"\n  rune queue post claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a --message-file question.md\n  rune queue read\n  rune queue list --state posted\n\nPOSTBOX:\n  Every message is recorded in ~/.rune/postbox.tsv, one tab-separated line\n  per event: timestamp, id, state, sender, harness, session, message.\n  Nothing is removed: a state change (posted, queued, read) is a new line.\n\nDELIVERY:\n  codex takes the message through its own queue, `codex queue --remote\n  unix://`. claude, agy, grok and opencode read it from the postbox: the\n  `postbox` hook handler adds it to the next turn, or the session runs\n  `rune queue read`.\n\nThe exit status follows rune run: the harness's own status passes through,\n124 is the time limit, 125 an error of rune itself, 126 and 127 a binary\nthat cannot run or is not found."
     )]
     Queue {
-        /// Route of the session's harness, such as `codex` or `sol61@codex`.
-        tool: String,
-
-        /// The session to reach: its id or its exact name, as the harness
-        /// knows it.
-        #[arg(long, value_name = "ID|NAME")]
-        session: String,
-
-        /// Message text. Omit to use --message-file or noninteractive stdin.
-        #[arg(value_name = "MESSAGE", conflicts_with = "message_file")]
-        message: Option<String>,
-
-        /// Read the message from a UTF-8 text file.
-        #[arg(long, value_name = "FILE")]
-        message_file: Option<std::path::PathBuf>,
-
-        /// Override the resolved harness binary.
-        #[arg(long, value_name = "FILE")]
-        binary: Option<std::path::PathBuf>,
-
-        /// The app server that holds the session: `ws://host:port`,
-        /// `wss://host:port`, `unix://`, or `unix://PATH`. Passed to codex as
-        /// `--remote`. Defaults to `unix://`, the local daemon's socket.
-        #[arg(long, value_name = "ADDR")]
-        remote: Option<String>,
-
-        /// The environment variable that holds the bearer token for a remote
-        /// websocket app server. Passed to codex by name, never by value.
-        #[arg(long, value_name = "VAR", requires = "remote")]
-        remote_auth_token_env: Option<String>,
-
-        /// Optional deadline for the harness command, such as 30s or 5m.
-        #[arg(long, value_name = "DURATION")]
-        timeout: Option<String>,
-
-        /// Print the command and its environment without starting it.
-        #[arg(long)]
-        dry_run: bool,
+        #[command(subcommand)]
+        action: QueueAction,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -1359,6 +1323,78 @@ enum KindAction {
         /// Full pinned commit SHA for an HTTPS source.
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum QueueAction {
+    /// Post a message for a session: its harness's own queue, else the postbox
+    Post {
+        /// Route of the session's harness, such as `codex`, `claude`, or
+        /// `sol61@codex`.
+        tool: String,
+
+        /// The session to reach: its id or its exact name, as the harness
+        /// knows it. A hook reads by the session's id.
+        #[arg(long, value_name = "ID|NAME")]
+        session: String,
+
+        /// Message text. Omit to use --message-file or noninteractive stdin.
+        #[arg(value_name = "MESSAGE", conflicts_with = "message_file")]
+        message: Option<String>,
+
+        /// Read the message from a UTF-8 text file.
+        #[arg(long, value_name = "FILE")]
+        message_file: Option<std::path::PathBuf>,
+
+        /// Who posts. Defaults to this harness session as `harness:id`, else
+        /// `user:<login>`.
+        #[arg(long, value_name = "SENDER")]
+        from: Option<String>,
+
+        /// Write to the postbox even where the harness has its own queue.
+        #[arg(long)]
+        postbox: bool,
+
+        /// Override the resolved harness binary (codex queue).
+        #[arg(long, value_name = "FILE")]
+        binary: Option<std::path::PathBuf>,
+
+        /// The app server that holds the session: `ws://host:port`,
+        /// `wss://host:port`, `unix://`, or `unix://PATH`. Passed to codex as
+        /// `--remote`. Defaults to `unix://`, the local daemon's socket.
+        #[arg(long, value_name = "ADDR")]
+        remote: Option<String>,
+
+        /// The environment variable that holds the bearer token for a remote
+        /// websocket app server. Passed to codex by name, never by value.
+        #[arg(long, value_name = "VAR", requires = "remote")]
+        remote_auth_token_env: Option<String>,
+
+        /// Optional deadline for the harness command, such as 30s or 5m.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print what would be posted without posting it.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Read the messages posted for this session and mark them read
+    Read {
+        /// The session to read for, by id or name; repeatable. Defaults to
+        /// this harness session (`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`).
+        #[arg(long, value_name = "ID|NAME")]
+        session: Vec<String>,
+    },
+    /// List the postbox's messages and their states without changing them
+    List {
+        /// Only the messages for this session.
+        #[arg(long, value_name = "ID|NAME")]
+        session: Option<String>,
+
+        /// Only the messages in this state: posted, queued, or read.
+        #[arg(long, value_name = "STATE")]
+        state: Option<String>,
     },
 }
 
@@ -2322,30 +2358,7 @@ pub fn run() -> i32 {
                 json: args.json,
             });
         }
-        Command::Queue {
-            tool,
-            session,
-            message,
-            message_file,
-            binary,
-            remote,
-            remote_auth_token_env,
-            timeout,
-            dry_run,
-        } => {
-            return queue::execute(&queue::QueueOptions {
-                tool,
-                session,
-                message,
-                message_file,
-                binary,
-                remote,
-                remote_auth_token_env,
-                timeout,
-                dry_run,
-                json: args.json,
-            });
-        }
+        Command::Queue { action } => return run_queue(action, args.json),
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -2609,6 +2622,46 @@ fn root_help_requested(mut args: impl Iterator<Item = OsString>) -> bool {
 fn json_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .any(|argument| argument == "--json")
+}
+
+fn run_queue(action: QueueAction, json: bool) -> i32 {
+    match action {
+        QueueAction::Post {
+            tool,
+            session,
+            message,
+            message_file,
+            from,
+            postbox,
+            binary,
+            remote,
+            remote_auth_token_env,
+            timeout,
+            dry_run,
+        } => queue::execute_post(&queue::PostOptions {
+            tool,
+            session,
+            message,
+            message_file,
+            from,
+            postbox,
+            binary,
+            remote,
+            remote_auth_token_env,
+            timeout,
+            dry_run,
+            json,
+        }),
+        QueueAction::Read { session } => queue::execute_read(&queue::ReadOptions {
+            sessions: session,
+            json,
+        }),
+        QueueAction::List { session, state } => queue::execute_list(&queue::ListOptions {
+            session,
+            state,
+            json,
+        }),
+    }
 }
 
 /// Whether the command line names the `run` or the `queue` subcommand:
@@ -2991,8 +3044,8 @@ fn plumbing_help(help: &mut String) {
     help_command(
         help,
         "queue",
-        "<TOOL> --session <ID|NAME> [MESSAGE]",
-        "Queue a message for a running session",
+        "post <TOOL> --session <ID> [MESSAGE] | read | list",
+        "Post and read messages between sessions",
     );
     help_command(
         help,
