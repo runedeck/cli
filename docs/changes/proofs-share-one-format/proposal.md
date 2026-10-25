@@ -31,6 +31,7 @@ There is no common view either. The proof pane plays only one GIF per proof and 
 ### New Capabilities
 
 - `every-scenario-has-proof`: the proof source, the chain, the checkout of head, preconditions, transcripts, and the converter. This capability moves here from review-changes-with-proofs and is rewritten.
+- `console-fences-prove-scenarios`: the proof runner in the code today, with main's scenario titles, so a proof can name its scenes until the converter retires them.
 - `proof-record-binds-evidence`: the record, what each statement binds, status from digests, and head drift.
 - `live-scenes-need-approval`: screen blocks, model prompts, the judge, and the owner's approval.
 - `proofs-render-one-view`: the view model, its text and JSON forms, the CI re-run, the dashboard page, the paced recording of command scenes, and images on demand.

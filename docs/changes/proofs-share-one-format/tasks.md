@@ -12,6 +12,16 @@
 - [x] 2.1 Move every-scenario-has-proof out of review-changes-with-proofs: delete its delta there, update that proposal's capabilities, and mark its ADR's proof-format decision as replaced by this change's ADR
 - [ ] 2.2 Ontology: the `live` kind, and the terms judgment, approval, recording, record, and screen text, with glossary pages. Redefine attestation and `transcriptMatches`
 - [ ] 2.3 `rune spec validate proofs-share-one-format` and `rune docs check` pass
+- [ ] 2.4 A scene in this change's proof names `console-fences-prove-scenarios#proof-frontmatter-is-the-record/instruction-scene-without-a-model` over `tests/fixtures/proof/bad-instruction`
+- [ ] 2.5 A scene names `console-fences-prove-scenarios#run-executes-every-executable-scene/scene-names-a-command-the-runner-cannot-find`
+- [ ] 2.6 A scene names `console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input`
+- [ ] 2.7 A scene names `console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/input-line-before-any-command` over `tests/fixtures/proof/input-first`
+- [ ] 2.8 A scene names `console-fences-prove-scenarios#every-scene-starts-clean/scenes-do-not-share-a-directory` over `tests/fixtures/proof/isolation`
+- [ ] 2.9 A scene names `console-fences-prove-scenarios#the-transcript-binds-the-claim/scene-key-edited-after-the-run` over `tests/fixtures/proof/edited-key`
+- [ ] 2.10 A scene names `console-fences-prove-scenarios#the-transcript-binds-the-claim/instruction-scene-never-run` over `tests/fixtures/proof/instruction-pending`
+- [ ] 2.11 A scene names `console-fences-prove-scenarios#check-refuses-drift/transcript-drifted-after-the-run` over `tests/fixtures/proof/drifted`
+- [ ] 2.12 A scene names `console-fences-prove-scenarios#the-run-records-its-own-cast/cast-written-from-the-captured-output` and reads the cast header
+- [ ] 2.13 A scene names `console-fences-prove-scenarios#the-graph-shows-only-proven-scenes/proof-transcript-does-not-match` through `rune graph export`
 
 ## 3. Command scenes
 
