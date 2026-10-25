@@ -30,6 +30,7 @@ for handler in plan[H][event], serial, ordered:
     for the handlers after it; from any other handler it is a failure by policy
     continue_turn outside turn.finish is a failure by policy; a deny outranks every effect
     gate: stop on deny   collect: merge context in order, keep a deny   passive: ignore effects and input
+    every mode keeps context and message in order, each message line named for its handler
         |
 dispatcher failure (mismatch, decode, plan) -> strongest policy among subscribed handlers
 encode Result for H and N -> stdout JSON, exit 0
@@ -42,7 +43,7 @@ encode Result for H and N -> stdout JSON, exit 0
 - `src/cli/hook/events.rs`: `Canonical` (eight), `native(harness)`, `mode`, `default_budget`, `cap(harness)`. Extensions as `Extension { harness, name }`.
 - `src/cli/hook/payload.rs`: decoders for Claude, Codex, Grok, Gemini, Antigravity into `HandlerPayload`, `raw` kept. Release 1 registers Claude and Codex; the others decode for the tests and the later change.
 - `src/cli/hook/run.rs`: the dispatcher above, spawning through `src/cli/process`.
-- `src/cli/hook/encode.rs`: Claude and Codex encoders for every effect; the other harnesses' tables so an unsupported effect is reported.
+- `src/cli/hook/encode.rs`: Claude and Codex encoders for every effect; the other harnesses' tables so an unsupported effect is reported. Context and a message go only into the field the harness's reference documents for that event, and each is reported on stderr as `reported, not applied` where the event has none, so a passive event drops nothing in silence. The [Claude Code hooks reference][CCHOOKS] (read 2026-10-25) takes `additionalContext` on `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop`, and discards `systemMessage` on `Notification`, `SessionEnd`, and `PreCompact`. The [Gemini CLI hooks reference][GEMINIHOOKS] (read 2026-10-25) takes `additionalContext` on `SessionStart`, `BeforeAgent`, and `AfterTool`, and `systemMessage` on `SessionStart`, `SessionEnd`, `Notification`, and `PreCompress`. The [Codex hooks reference][CODEXHOOKS] (read 2026-10-24) documents no field for either.
 - `src/cli/hook/adapters/`: built-in handlers that call the existing executables with their native payloads and translate to `Result`: `author-identity`, `dcg`, `git-ai`, `rtk`, `lint-on-write`, `session-capture`, `turn-checkpoint`, `tmux-status`, `jj-guards` (the worktree, agent isolation, and VCS internals parts as one handler). Each adapter declares `adopts`, the registration pattern of the entry it replaces. The dcg adapter hands dcg every shell tool as one Claude `Bash` call: `Bash`, Gemini's `run_shell_command`, Antigravity's `run_command`, and Codex's `shell` (an argument list), `shell_command`, and `exec_command` (its `cmd` field). The [Codex hooks reference][CODEXHOOKS] matches `exec_command` as `Bash` (read 2026-10-24), so the other names are the shapes a decoded payload can still carry.
 - `src/cli/hook/install.rs`: render one entry per subscribed event into Claude `settings.json` and Codex `hooks.json`; inventory the tables; adopt matching predecessor entries in Claude `settings.json` and Codex `hooks.json`, name a tool's entry in Codex `config.toml` by the line of its command value, from the TOML parser's spans (that file also holds the trust state, so rune never rewrites it); keep every legacy dispatcher entry, and record in a cover file beside the generations each handler whose whole command a part of that entry runs, with the entry's slot in the table install writes; write the manifest section; print the Codex trust step; `--check`.
 - `src/cli/hook/legacy.rs`: the legacy dispatcher shapes, the known content of the dispatcher script, the parts folder of an event and the names every locale sorts one way, the first part's shape (an optional `-x` or `-f` guard on the program its one final `exec` line runs), `$HOME` expansion outside single quotes and the refusal of every other expansion, the text a counted line may hold and the glob characters it may not, the system `sh` by canonical path, the shebang check of a direct entry, the caps on a folder scan, and the bounded non-blocking read every cover file goes through. It parses no loop and no other line.
@@ -51,7 +52,7 @@ encode Result for H and N -> stdout JSON, exit 0
 ## Data
 
 - Handler payload: `{"v":1,"harness","event","native_event","session_id","turn_id","cwd","transcript_path","model","tool":{"name","id","input","response"},"prompt","stop_active","raw"}`.
-- Result: `{"v":1,"effect":"pass|deny|continue_turn","reason","input","context":[]}`.
+- Result: `{"v":1,"effect":"pass|deny|continue_turn","reason","input","context":[],"message"}`.
 - Plan: `{harness: {native_event: {canonical, mode, budget_ms, handlers: [{id, exec, timeout_ms, on_failure, rewrites}]}}}`.
 - Plan generation: the plan narrowed to one harness and native event, in `hooks/plans/<sha256 of its text>.json` under the state directory.
 - Manifest `hooks` section per harness: `owned: [{event, registration_hash}]`, `foreign: [{event, source, command}]`, `adopted: [{event, source, command, by}]`, `generations`, the generation paths the registrations name after the last install, `installs`, the count of installs that wrote the manifest, and `retired: [{generation, since, install, days, last_day}]`, each generation no table names with the time and the install count at which the tables stopped naming it, and the number of days on which installs found it unnamed.
@@ -163,5 +164,6 @@ Astra on the specification (`gpt-6-astra`, clean state, 22 hits, 2026-09-27):
 
 [CCHOOKS]: https://code.claude.com/docs/en/hooks
 [CODEXHOOKS]: https://developers.openai.com/codex/hooks
+[GEMINIHOOKS]: https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
 [CODEXDISCOVERY]: https://github.com/openai/codex/blob/main/codex-rs/hooks/src/engine/discovery.rs
 [CODEX49399]: https://github.com/openai/codex/issues/49399

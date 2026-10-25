@@ -87,6 +87,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Warn when an earlier install adopted a legacy dispatcher entry that is gone from its table now, and name the entry.
 - Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
+- Accept `message` in a hook result and pass it as `systemMessage` to Claude Code and Gemini CLI on the events their references document, each line named for its handler.
+- Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
+- Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
@@ -313,6 +316,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - Clamp a hook budget to the whole seconds of the harness cap, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s, the budget Claude raises for a per-hook timeout.
+- Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
+- Report an event a harness lacks as `unsupported:` for every harness the plan targets, Antigravity and OpenCode included, where `rune hook install` named it for Claude and Codex alone.
+- Name, at install, each handler whose command a part behind the first part of a legacy `Stop.d` runs, with that part and why it covers nothing, where the output said nothing for it.
 - Write the session's author identity to the jj workspace config and the git worktree config, so two workspaces of one repository keep their own model.
 - Pass `rune proof run --check` after a signature or reword of the head: a proof records `head_change` and `head_tree`, and an ancestor with both holds.
 - Fix `rune run` and `rune launch` hanging or exiting 1 under another harness: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` names, `CODEX_SANDBOX`) leave the child's environment.

@@ -359,7 +359,7 @@ pub(crate) fn dispatch(
                 if event.mode == Mode::Passive {
                     passive_notes(native_event, harness, &handler.id, &result, &mut stderr);
                 }
-                merge(&mut payload, &mut merged, result, event.mode);
+                merge(&mut payload, &mut merged, result, event.mode, &handler.id);
             }
             Err(failure) => {
                 let _ = writeln!(log, "{} failed {}", handler.id, failure.kind);
@@ -411,12 +411,34 @@ fn remaining(event: &PlannedEvent, started: Instant) -> Duration {
 }
 
 /// Fold one handler's result into the effective input and the answer.
+/// Context and a message steer nothing, so every event keeps them, a
+/// passive one included; the encoder says where the harness takes them.
 fn merge(
     payload: &mut HandlerPayload,
     merged: &mut HandlerResult,
     result: HandlerResult,
     mode: Mode,
+    handler_id: &str,
 ) {
+    merged.context.extend(result.context);
+    // Every handler's note reaches the owner in handler order, each line
+    // named for the handler that wrote it.
+    if let Some(message) = result
+        .message
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        let named = message
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| format!("{handler_id}: {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        merged.message = Some(match merged.message.take() {
+            Some(earlier) => format!("{earlier}\n{named}"),
+            None => named,
+        });
+    }
     // A passive event steers nothing, a replacement input included.
     if mode == Mode::Passive {
         return;
@@ -437,7 +459,6 @@ fn merge(
         merged.effect = result.effect;
         merged.reason = result.reason;
     }
-    merged.context.extend(result.context);
 }
 
 /// A result whose effect the event does not take fails like any other
@@ -779,7 +800,9 @@ fn budget_spent(native_event: &str, budget_ms: u64, policy: OnFailure) -> Failur
 
 /// A steering result on a passive event is logged and never applied.
 /// The notes a passive event's result earns: one for an effect other than
-/// pass, one for a replacement input. Neither is applied.
+/// pass, one for a replacement input. Neither is applied. Its context and
+/// message are kept, and the encoder reports each the event has no field
+/// for.
 fn passive_notes(
     native_event: &str,
     harness: Harness,

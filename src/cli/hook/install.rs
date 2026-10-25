@@ -602,15 +602,15 @@ pub(crate) fn prepare(
     manifest.version = 1;
     // Codex keeps hook trust in the user config.
     let codex_config = home.join(".codex").join("config.toml");
+    // Every harness the plan targets, a harness install registers nothing
+    // for included: an event it lacks is named, never substituted.
     for gap in &plan.unsupported {
-        if Harness::REGISTERED.contains(&gap.harness) {
-            report.unsupported.push(format!(
-                "{} has no {} for {}",
-                gap.harness,
-                gap.event,
-                gap.handlers.join(", ")
-            ));
-        }
+        report.unsupported.push(format!(
+            "{} has no {} for {}",
+            gap.harness,
+            gap.event,
+            gap.handlers.join(", ")
+        ));
     }
     for harness in Harness::REGISTERED {
         let path = table_path(home, harness);
@@ -1724,6 +1724,9 @@ impl Dispatchers<'_> {
             .map_or_else(|| name.to_string(), |c| c.as_str().to_string());
         // One install scan reads as many bytes of parts as one firing may.
         let mut budget = legacy::SCAN_LIMIT;
+        // The parts behind the first are read for a message alone, from a
+        // budget of their own, so that read can change no cover.
+        let mut aside = legacy::SCAN_LIMIT;
         // The `sh` the dispatcher runs each part with, by the PATH here.
         let inner_sh = legacy::resolve_shell("sh", self.path_env.as_deref());
         let mut shell = |word: &str| legacy::resolve_shell(word, self.path_env.as_deref());
@@ -1786,6 +1789,28 @@ impl Dispatchers<'_> {
                     continue;
                 }
             };
+            // A part behind the first runs a handler's command too, at
+            // times, and covers nothing: the dispatcher may stop before it.
+            // Install names each such handler, so the owner knows why the
+            // handler runs twice; a wrong read here changes that line alone.
+            for later in legacy::later_parts(&folder, home, &mut aside) {
+                if !later.active {
+                    continue;
+                }
+                for (handler, runs) in &candidates {
+                    if cover::same_command(&part.exec, runs, &mut shell)
+                        || !cover::same_command(&later.exec, runs, &mut shell)
+                    {
+                        continue;
+                    }
+                    report.warnings.push(format!(
+                        "{harness}: {name} does not cover {} with the part {} of `{command}`, because that part is not the first; {} runs twice while the part runs its command",
+                        handler.id,
+                        later.path.display(),
+                        handler.id
+                    ));
+                }
+            }
             if !part.active {
                 continue;
             }
@@ -3285,6 +3310,15 @@ mod tests {
         (runner, seen)
     }
 
+    /// The warnings of `report` that name a part behind the first, and the
+    /// rest, apart.
+    fn later_part_lines(report: &Report) -> (Vec<&String>, Vec<&String>) {
+        report
+            .warnings
+            .iter()
+            .partition(|w| w.contains("that part is not the first"))
+    }
+
     /// The owner's live `Stop.d`: tmux attention, turn wrap, turn snapshot.
     const STOP_PARTS: &[(&str, &str, &str)] = &[
         (
@@ -3400,7 +3434,7 @@ mod tests {
         let stop_d = home.path().join(".config/just/hooks/Stop.d");
         // Only the first part covers: a failing earlier part ends the
         // dispatcher before a later one runs. The turn checkpoint part is
-        // third, so turn runs twice.
+        // third, so turn runs twice, and the output says so by its part.
         assert_eq!(report.covered.len(), 1, "{report:?}");
         assert!(
             report.covered[0].starts_with("claude: Stop covers tmux with the part ")
@@ -3412,7 +3446,18 @@ mod tests {
             "{:?}",
             report.covered
         );
-        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let (later, other) = later_part_lines(report);
+        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(later.len(), 1, "{later:?}");
+        assert!(
+            later[0].starts_with("claude: Stop does not cover turn with the part ")
+                && later[0].contains(&stop_d.join("30-turn-snapshot.sh").display().to_string())
+                && later[0].contains(dispatcher)
+                && later[0].ends_with(
+                    "because that part is not the first; turn runs twice while the part runs its command"
+                ),
+            "{later:?}"
+        );
         assert!(report.adopted.is_empty(), "{:?}", report.adopted);
         let summary = report.summary();
         assert_eq!(summary.covered, report.covered);
@@ -3421,6 +3466,12 @@ mod tests {
                 .lines()
                 .iter()
                 .any(|l| l.starts_with("covered: claude: Stop covers tmux"))
+        );
+        assert!(
+            summary
+                .lines()
+                .iter()
+                .any(|l| l.starts_with("warning: claude: Stop does not cover turn with the part "))
         );
         // The cover file names the entry, the script, and the part per
         // handler, and goes beside the generations.
@@ -3446,6 +3497,42 @@ mod tests {
         assert_eq!(tmux.exec, tmux.runs);
         assert_eq!(tmux.runs[1], "attention");
         assert_eq!(cover_in(&prepared, Harness::Codex, "Stop"), None);
+    }
+
+    #[test]
+    fn an_event_a_harness_lacks_is_named_for_every_harness_the_plan_targets() {
+        let home = tempfile::tempdir().unwrap();
+        settings(home.path(), "{}");
+        let manifest = home.path().join("state").join("manifest.json");
+        let prepared = prepare(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            Path::new(PLAN),
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let unsupported = &prepared.report.unsupported;
+        // Antigravity and OpenCode have no session end; install registers
+        // nothing for either, and names the gap all the same.
+        for harness in ["antigravity", "opencode"] {
+            assert!(
+                unsupported.contains(&format!("{harness} has no session.end for capture")),
+                "{unsupported:?}"
+            );
+        }
+        assert!(
+            prepared
+                .report
+                .summary()
+                .lines()
+                .iter()
+                .any(|l| l == "unsupported: antigravity has no session.end for capture"),
+            "{:?}",
+            prepared.report.summary().lines()
+        );
     }
 
     #[test]
@@ -3721,7 +3808,12 @@ mod tests {
         };
         let (covered, warnings) = with(None);
         assert_eq!(covered, ["tmux"]);
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.contains("does not cover turn") && w.contains("not the first")),
+            "{warnings:?}"
+        );
         let (covered, warnings) = with(Some("SHELLOPTS"));
         assert!(covered.is_empty(), "{covered:?}");
         assert_eq!(
@@ -3894,12 +3986,16 @@ mod tests {
             })
         };
         assert!(names(&prepared, "05-log.sh"), "{:?}", prepared.report);
-        // The unshaped part goes: the tmux part is first and covers tmux.
+        // The unshaped part goes: the tmux part is first and covers tmux,
+        // and the snapshot part behind it is named for turn.
         fs::remove_file(stop_d.join("05-log.sh")).unwrap();
         let prepared = at(home.path());
         assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
         assert!(prepared.report.covered[0].contains("covers tmux"));
-        assert!(prepared.report.warnings.is_empty(), "{:?}", prepared.report);
+        let (later, other) = later_part_lines(&prepared.report);
+        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(later.len(), 1, "{later:?}");
+        assert!(later[0].contains("does not cover turn"), "{later:?}");
         // A guard that is not `-x` or `-f` on the exec program is no
         // shape: the first part has none, so the folder covers nothing.
         fs::write(
@@ -4895,7 +4991,15 @@ mod tests {
             "a later glob part blocks nothing: {:?}",
             later.report
         );
-        assert!(later.report.warnings.is_empty(), "{:?}", later.report);
+        // The glob part has no shape, so it is named for no handler; the
+        // snapshot part behind the first is named for turn.
+        let (named, other) = later_part_lines(&later.report);
+        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert!(
+            named[0].contains("does not cover turn") && named[0].contains("30-turn-snapshot.sh"),
+            "{named:?}"
+        );
         let stop_d = home.path().join(".config/just/hooks/Stop.d");
         fs::rename(stop_d.join("40-glob.sh"), stop_d.join("05-glob.sh")).unwrap();
         let first = at();

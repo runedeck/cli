@@ -400,6 +400,96 @@ fn a_denial_on_a_passive_event_is_logged_not_applied() {
 }
 
 #[test]
+fn context_on_a_passive_event_reaches_claude_session_start() {
+    let plan = plan("handlers:\n  - id: id\n    exec: [id]\n    events: [session.start]\n");
+    let (runner, _) = runner(HashMap::from([(
+        "id".to_string(),
+        fake(r#"{"context":["remember x"]}"#),
+    )]));
+    let raw = json!({"hook_event_name": "SessionStart", "session_id": "s"});
+    let answer = dispatch(&plan, Harness::Claude, "SessionStart", Ok(raw), &runner);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    assert_eq!(out["hookSpecificOutput"]["additionalContext"], "remember x");
+    assert_eq!(out.get("decision"), None, "{out}");
+    assert!(answer.stderr.is_empty(), "{:?}", answer.stderr);
+}
+
+#[test]
+fn a_message_on_a_passive_event_reaches_the_field_that_carries_it() {
+    let plan = plan(
+        "handlers:\n  - id: a\n    exec: [a]\n    events: [session.start, session.end]\n    order: 10\n  - id: b\n    exec: [b]\n    events: [session.start, session.end]\n    order: 20\n",
+    );
+    let (runner, _) = runner(HashMap::from([
+        ("a".to_string(), fake(r#"{"message":"one\n\ntwo"}"#)),
+        ("b".to_string(), fake(r#"{"message":"three"}"#)),
+    ]));
+    // Claude shows `systemMessage` on SessionStart, each line named for
+    // its handler, in handler order.
+    let raw = json!({"hook_event_name": "SessionStart", "session_id": "s"});
+    let answer = dispatch(&plan, Harness::Claude, "SessionStart", Ok(raw), &runner);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["systemMessage"], "a: one\na: two\nb: three");
+    assert_eq!(out.get("hookSpecificOutput"), None, "{out}");
+    assert!(answer.stderr.is_empty(), "{:?}", answer.stderr);
+    // Gemini shows one on SessionEnd.
+    let raw = json!({"hook_event_name": "SessionEnd", "session_id": "s"});
+    let answer = dispatch(&plan, Harness::Gemini, "SessionEnd", Ok(raw), &runner);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["systemMessage"], "a: one\na: two\nb: three");
+    assert!(answer.stderr.is_empty(), "{:?}", answer.stderr);
+}
+
+#[test]
+fn context_and_a_message_on_an_event_that_takes_neither_get_a_note() {
+    let plan = plan("handlers:\n  - id: id\n    exec: [id]\n    events: [notification]\n");
+    let (runner, _) = runner(HashMap::from([(
+        "id".to_string(),
+        fake(r#"{"context":["remember x"],"message":"shown"}"#),
+    )]));
+    let raw = json!({"hook_event_name": "Notification", "session_id": "s"});
+    let answer = dispatch(&plan, Harness::Claude, "Notification", Ok(raw), &runner);
+    assert_eq!(answer.stdout, None);
+    for what in ["context", "a message"] {
+        assert!(
+            answer.stderr.iter().any(|l| l
+                == &format!(
+                    "rune hook: claude cannot express {what} on Notification; reported, not applied"
+                )),
+            "{what}: {:?}",
+            answer.stderr
+        );
+    }
+}
+
+#[test]
+fn a_steering_effect_on_a_passive_event_is_ignored_while_its_context_stays() {
+    let plan = plan("handlers:\n  - id: id\n    exec: [id]\n    events: [session.start]\n");
+    let (runner, _) = runner(HashMap::from([(
+        "id".to_string(),
+        fake(r#"{"effect":"deny","reason":"x","context":["remember x"]}"#),
+    )]));
+    let raw = json!({"hook_event_name": "SessionStart", "session_id": "s"});
+    let answer = dispatch(&plan, Harness::Claude, "SessionStart", Ok(raw), &runner);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["hookSpecificOutput"]["additionalContext"], "remember x");
+    assert_eq!(out.get("decision"), None, "{out}");
+    assert_eq!(
+        out["hookSpecificOutput"].get("permissionDecision"),
+        None,
+        "{out}"
+    );
+    assert!(
+        answer
+            .stderr
+            .iter()
+            .any(|l| l.contains("id's Deny is logged, not applied")),
+        "{:?}",
+        answer.stderr
+    );
+}
+
+#[test]
 fn an_unknown_registration_runs_nothing() {
     let plan = plan("handlers:\n  - id: a\n    exec: [a]\n    events: [tool.before]\n");
     let (runner, seen) = runner(HashMap::new());

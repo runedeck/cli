@@ -27,7 +27,7 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: Canonical Events Map To Each Harness
 
-The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported and never substituted. Each mapping carries the harness's timeout cap. A rendered timeout (whole seconds on Claude and Codex) and the dispatcher deadline stay inside it: Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
+The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported, for every harness the plan targets, and never substituted. Each mapping carries the harness's timeout cap. A rendered timeout (whole seconds on Claude and Codex) and the dispatcher deadline stay inside it: Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
 
 #### Scenario: Event the harness lacks
 
@@ -46,7 +46,7 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 ### Requirement: The Dispatcher Normalizes And Answers
 
-`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload, run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's payload keys, exits 0 without a handler.
+`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload, run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context, a message) into the harness's documented answer for that event. Antigravity carries no event name, so the argument is the source. An effect, context, or message the harness cannot express there is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's payload keys, exits 0 without a handler.
 
 #### Scenario: Grok payload reaches a handler
 
@@ -84,7 +84,7 @@ When the dispatcher itself cannot run the handlers, because the payload's event 
 
 ### Requirement: Handlers Run In Order And Fail By Policy
 
-Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. Each handler gets the smaller of its timeout and the remaining budget less a response reserve. A handler fails when it exits non-zero, times out, prints anything but one JSON result, or cannot start on a spent budget. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
+Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler, keeps context and message, and steers nothing. Each handler gets the smaller of its timeout and the remaining budget less a response reserve. A handler fails when it exits non-zero, times out, prints anything but one JSON result, or cannot start on a spent budget. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
 
 #### Scenario: Guard times out
 

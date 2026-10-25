@@ -494,6 +494,36 @@ pub(crate) fn first_part(
     home: &Path,
     budget: &mut u64,
 ) -> Result<Option<Part>, String> {
+    let Some(mut numbered) = numbered_parts(folder)? else {
+        return Ok(None);
+    };
+    let Some((_, name)) = numbered.pop_first() else {
+        return Ok(None);
+    };
+    read_part(&folder.join(name), home, budget).map(Some)
+}
+
+/// The parts after the first in `folder`, in the order the dispatcher
+/// runs them, each in the shape rune reads. Install names them in a
+/// message alone, never for covering: the dispatcher may stop before a
+/// later part, so one this misses or misreads changes a message and
+/// nothing else. A folder that cannot be listed, a part outside the
+/// shape, and a part past `budget` are left out.
+pub(crate) fn later_parts(folder: &Path, home: &Path, budget: &mut u64) -> Vec<Part> {
+    let Ok(Some(numbered)) = numbered_parts(folder) else {
+        return Vec::new();
+    };
+    numbered
+        .into_values()
+        .skip(1)
+        .filter_map(|name| read_part(&folder.join(name), home, budget).ok())
+        .collect()
+}
+
+/// The `*.sh` names of `folder` by number, as the dispatcher's glob
+/// orders them under every locale. `Ok(None)` for a missing folder; `Err`
+/// says why the folder covers nothing.
+fn numbered_parts(folder: &Path) -> Result<Option<BTreeMap<u8, OsString>>, String> {
     let unreadable = || format!("{} cannot be read", folder.display());
     let entries = match fs::read_dir(folder) {
         Ok(entries) => entries,
@@ -527,11 +557,13 @@ pub(crate) fn first_part(
             ));
         }
     }
-    let Some((_, name)) = numbered.pop_first() else {
-        return Ok(None);
-    };
-    let path = folder.join(name);
-    let Some(meta) = fs::metadata(&path).ok().filter(fs::Metadata::is_file) else {
+    Ok(Some(numbered))
+}
+
+/// The part at `path`, a regular file within the bytes left in `budget`,
+/// in the shape rune reads. Its bytes come off `budget`.
+fn read_part(path: &Path, home: &Path, budget: &mut u64) -> Result<Part, String> {
+    let Some(meta) = fs::metadata(path).ok().filter(fs::Metadata::is_file) else {
         return Err(format!("{} is no regular file", path.display()));
     };
     if meta.len() > *budget {
@@ -542,15 +574,15 @@ pub(crate) fn first_part(
     }
     // The read is bounded by what is left, so a part that grew since its
     // size was read counts as nothing and never overdraws.
-    let Some(bytes) = read_bounded(&path, READ_LIMIT.min(*budget)) else {
+    let Some(bytes) = read_bounded(path, READ_LIMIT.min(*budget)) else {
         return Err(format!(
             "{} is no regular file under {READ_LIMIT} bytes",
             path.display()
         ));
     };
-    *budget -= u64::try_from(bytes.len()).map_err(|_| unreadable())?;
-    shape_of(&path, &bytes, home)
-        .map(Some)
+    *budget -=
+        u64::try_from(bytes.len()).map_err(|_| format!("{} cannot be read", path.display()))?;
+    shape_of(path, &bytes, home)
         .ok_or_else(|| format!("{} has a shape rune does not read", path.display()))
 }
 
