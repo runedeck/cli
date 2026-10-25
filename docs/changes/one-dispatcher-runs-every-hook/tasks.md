@@ -20,7 +20,7 @@
 
 ## 4. Handlers
 
-- [x] 4.1 `author-identity`: harness and the payload's `model` against `authors.yaml` (checkout, else deck), identity written into the session's jj workspace config and git worktree config, the `unlisted@` identity for an unknown model, a missing model warns. Fixture: a captured Claude `SessionStart` payload
+- [x] 4.1 `author-identity`: harness and the payload's `model` against `authors.yaml` (checkout, else deck), identity written into the session's jj workspace config and git worktree config, the `unlisted_model@` identity for an unknown model, a missing model warns. Fixture: a captured Claude `SessionStart` payload
 - [x] 4.2 Adapters over the existing executables and parts, each declaring what it adopts: dcg (`tool.before`, `deny`), git-ai checkpoint (`tool.before`, `tool.after`, `turn.finish`), rtk (`tool.before`, rewriter), lint-on-write (`tool.after`), session-capture (`session.end`, `compact.before`, detached), turn-checkpoint (`prompt.before`, `turn.finish`, `session.end`), tmux-status (`prompt.before`, `notification`, `turn.finish`, `session.end`), jj-guards (`tool.before`, `deny`: worktree, agent isolation, VCS internals)
 - [x] 4.3 Tests: the identity scenarios including two checkouts, two workspaces of one repository, the push gate on the unlisted identity, and a commit's author, each adapter's translation on a fixture payload, each guard's refusal
 - [ ] 4.4 (deferred to the deck change that gives hook runes their frontmatter; until then a deck hook is declared as any other `exec` handler) A deck hook rune fixture (frontmatter: event, handler, policy) deploys as an executable under the provider's `hooks/<deck>/` and appears in the plan through `.rune` selection
@@ -142,3 +142,17 @@
 - [x] 20.1 `src/cli/hook/run.rs`: a handler's failure text, its stderr tail, a spawn error, a timeout note, a refused result, and the spent budget, goes through `visible` before the handler's name on stderr and in a `deny` reason, and so do a refused metrics key and a dispatcher failure's stderr line
 - [x] 20.2 `src/cli/hook/adapters.rs`: after `git config --worktree` writes the identity, each key is read back with `--show-origin --get`; when either differs from the session's, both keys are unset again, no git identity is written, and the context names the origin and value git reads and says a raw git commit there carries that identity
 - [x] 20.3 Tests: a handler that exits 1 with a cursor escape, a carriage return, and a zero-width space on its last stderr line fails to fake `guard:` under `warn` and under `deny`, with the reason shown once, a dispatcher failure's stderr line shown, and an include in `config.worktree` before the written keys loses while one after them wins, removes the keys, and names the included file
+
+## 21. The policy's rules, the policy fallback, the commented part, and the absent harness
+
+- [x] 21.1 `src/cli/hook/adapters.rs`: the identity resolved by the rules of `scripts/author-identity.py`, `model_domains` included, so every model the policy admits gets the identity the helper's `validate` accepts, and a refused model keeps the unlisted identity with the policy named
+- [x] 21.2 `src/cli/hook/adapters.rs`: the policy is the checkout's `authors.yaml`, else the roster argument, else the built-in rule of the replaced `claude-agent-identity` hook, the claude domain alone, and the context says when the built-in rule was used
+- [x] 21.3 `src/cli/hook/legacy.rs` and `src/cli/hook/install.rs`: a later part is read for its message with full-line comments dropped, and one still unreadable is named as such, while the first part's covering rules stay
+- [x] 21.4 `src/hooks.rs` and `src/cli/hook/install.rs`: an unsupported event is named for a registered harness, one set up in the home, or one the config names
+- [x] 21.5 Tests: Opus 5.5, Fable 5.1, Opus 4.8, and Astra against the repository's `authors.yaml` pass the helper's `validate` and match its `resolve`, Gemini is refused with the policy named, a checkout with no policy takes the built-in rule, an unreadable policy leaves the model unlisted, the owner's snapshot part with a `±` comment names turn, a `±` on a running line names the part as unreadable, and a bare home names no Antigravity or OpenCode gap while a home that holds one or a config that names one does
+
+## 22. The XDG config root, the unlisted address, and the untrimmed model
+
+- [x] 22.1 `src/cli/hook/install.rs`: a harness is set up when its directory under `$XDG_CONFIG_HOME`, else `~/.config`, exists, beside `~/.<harness>/` and the directory of its table
+- [x] 22.2 `src/cli/hook/adapters.rs`: the unlisted address is `unlisted_model@<harness>.noreply.nexus.local`, outside the helper's model ID shape, so `validate` refuses it for every payload model, and the model goes to the rules untrimmed, as the helper reads it
+- [x] 22.3 Tests: `opencode/` under the XDG root names the OpenCode gap in the unit test and through `rune --json hook install --dry-run`, a leftover `~/.config/opencode` under another root does not, ` gpt-6-astra ` and `unlisted[1m][1m]` get the unlisted identity that `validate` and `resolve` refuse, and the push check's reason is the model ID shape

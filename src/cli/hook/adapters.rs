@@ -4,10 +4,13 @@
 //! `rune hook adapter <name>` when a handler's `exec` names
 //! `rune-hook-<name>`, so they run out of process like any handler.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde_json::{Value, json};
 
 use super::encode::{Effect, HandlerResult};
@@ -87,71 +90,371 @@ pub(crate) fn dispatch(
 }
 
 // ------------------------------------------------------------ identity ----
+//
+// The rules here are a port of `scripts/author-identity.py`, the helper
+// the push gate and `scripts/check-authorship` run, restriction for
+// restriction: the adapter admits a model exactly when the gate admits
+// the identity it writes. A change to one belongs in the other.
 
-/// One roster line: `Display Name (model-id) <local@domain>`.
+/// The domain suffix of every model identity: `<harness>.noreply.nexus.local`.
+const DOMAIN_SUFFIX: &str = ".noreply.nexus.local";
+
+/// The local part of the address a refused model gets. The underscore
+/// is outside the helper's model ID shape, so no roster can list the
+/// address and `validate` refuses it whatever the payload's model said:
+/// a model spelled `unlisted[1m]` once made a name and an `unlisted@`
+/// address that read as one listed model ID (found 2026-10-26).
+const UNLISTED_LOCAL: &str = "unlisted_model";
+
+/// Model IDs an earlier roster spelled with the context marker folded in,
+/// and the ID each one means.
+const LEGACY_MODELS: &[(&str, &str)] = &[
+    ("claude-fable-51m", "claude-fable-5"),
+    ("claude-opus-51m", "claude-opus-5"),
+];
+
+/// The identity the checkout takes: the name `Display Name (model-id)`
+/// and the address `model-id@<harness>.noreply.nexus.local`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Identity {
     pub name: String,
     pub email: String,
-    pub model: String,
-    pub domain: String,
 }
 
-/// The model as the roster spells it: the `[1m]` context marker stripped.
-pub(crate) fn canonical_model(model: &str) -> String {
-    let mut model = model.trim().to_string();
-    if let Some(open) = model.rfind('[')
-        && model.ends_with(']')
-    {
-        model.truncate(open);
+/// An `authors.yaml` as the helper reads it: the listed authors, the
+/// trailer-only aliases, and the model domains it trusts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Policy {
+    pub authors: Vec<String>,
+    pub trailers: Vec<String>,
+    pub model_domains: Vec<String>,
+}
+
+/// The rule of the `claude-agent-identity` hook this adapter replaces.
+/// That hook read no policy file: it wrote `<model>@claude.noreply.nexus.local`
+/// for every model, so a checkout with no `authors.yaml` and no roster
+/// argument resolves by the same rule, the claude domain trusted and no
+/// author listed.
+fn built_in_policy() -> Policy {
+    Policy {
+        model_domains: vec![format!("claude{DOMAIN_SUFFIX}")],
+        ..Policy::default()
     }
-    model
 }
 
-/// Parse the `authors:` list of an `authors.yaml`.
-pub(crate) fn roster(text: &str) -> Vec<Identity> {
-    let Ok(value) = serde_yaml::from_str::<Value>(text) else {
-        return Vec::new();
-    };
-    let Some(authors) = value.get("authors").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    authors
+/// A character Python's `str.isprintable` refuses: the Other and the
+/// Separator categories, less the ASCII space.
+static UNPRINTABLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{C}\p{Z}--[ ]]").expect("unprintable character regex"));
+
+fn printable(text: &str) -> bool {
+    !UNPRINTABLE.is_match(text)
+}
+
+/// The helper's model ID shape: `[a-z0-9]+(?:[.-][a-z0-9]+)*`.
+fn is_model_id(text: &str) -> bool {
+    text.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
+        && text.split(['.', '-']).all(|segment| !segment.is_empty())
+}
+
+/// The helper's harness shape: `[a-z][a-z0-9]*(?:-[a-z0-9]+)*`.
+fn is_harness(text: &str) -> bool {
+    text.starts_with(|c: char| c.is_ascii_lowercase())
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && text.split('-').all(|segment| !segment.is_empty())
+}
+
+/// The model ID as the roster spells it: the `[1m]` context marker
+/// stripped, the shape checked, a legacy alias replaced.
+pub(crate) fn canonical_model_id(model: &str) -> Result<String, String> {
+    let model = model.strip_suffix("[1m]").unwrap_or(model);
+    if !is_model_id(model) {
+        return Err(
+            "model ID must use lowercase ASCII letters, digits, dots, and hyphens".to_string(),
+        );
+    }
+    Ok(LEGACY_MODELS
         .iter()
-        .filter_map(Value::as_str)
-        .filter_map(parse_identity)
-        .collect()
+        .find(|(alias, _)| *alias == model)
+        .map_or(model, |(_, id)| id)
+        .to_string())
 }
 
-fn parse_identity(line: &str) -> Option<Identity> {
-    let (name, rest) = line.split_once(" <")?;
-    let email = rest.strip_suffix('>')?;
-    let (_, domain) = email.split_once('@')?;
-    let open = name.rfind(" (")?;
-    let model = name[open + 2..].strip_suffix(')')?;
-    Some(Identity {
-        name: name.to_string(),
-        email: email.to_string(),
-        model: model.to_string(),
-        domain: domain.to_string(),
+/// `Display Name <local@domain>`, as the helper reads it: printable, no
+/// surrounding whitespace, no angle bracket in the name, no whitespace or
+/// second `@` in the address.
+fn address(identity: &str) -> Result<(&str, &str, &str), String> {
+    if identity.is_empty() || !printable(identity) || identity != identity.trim() {
+        return Err(
+            "identity must contain printable text without surrounding whitespace".to_string(),
+        );
+    }
+    let shape = || "identity must use 'Display Name <address>'".to_string();
+    let (name, rest) = identity
+        .strip_suffix('>')
+        .and_then(|open| open.split_once(" <"))
+        .ok_or_else(shape)?;
+    let (local, domain) = rest.split_once('@').ok_or_else(shape)?;
+    let clean = |part: &str| {
+        !part.is_empty() && !part.contains(['<', '>', '@']) && !part.contains(char::is_whitespace)
+    };
+    if name.contains(['<', '>'])
+        || name.trim().is_empty()
+        || name != name.trim()
+        || !clean(local)
+        || !clean(domain)
+    {
+        return Err(shape());
+    }
+    Ok((name, local, domain))
+}
+
+/// The domain and the raw model ID (`[1m]` stripped, an alias kept) of a
+/// listed model identity: a name that ends in `(model-id)` and an address
+/// whose local part names the same model.
+fn raw_model(identity: &str) -> Result<(&str, &str), String> {
+    let (name, local, domain) = address(identity)?;
+    let shape = || "model identity must include a final parenthesized model ID".to_string();
+    let head = name.strip_suffix(')').ok_or_else(shape)?;
+    let open = head.rfind(" (").ok_or_else(shape)?;
+    let (display, paren) = (&head[..open], &head[open + 2..]);
+    if paren.contains(['(', ')']) || display.trim().is_empty() || display != display.trim() {
+        return Err(shape());
+    }
+    let model = canonical_model_id(paren)?;
+    if canonical_model_id(local)? != model {
+        return Err("display model ID and address model ID must match".to_string());
+    }
+    Ok((domain, paren.strip_suffix("[1m]").unwrap_or(paren)))
+}
+
+/// Whether `domain` is `<harness>.noreply.nexus.local`.
+fn valid_domain(domain: &str) -> bool {
+    domain.strip_suffix(DOMAIN_SUFFIX).is_some_and(is_harness)
+}
+
+/// The helper's check of one listed author or trailer: an address, and,
+/// under the model domain suffix, a harness domain and a model that parse.
+fn listed(identity: &str) -> Result<(), String> {
+    let (_, _, domain) = address(identity)?;
+    if domain.to_lowercase().ends_with(DOMAIN_SUFFIX) {
+        if !valid_domain(domain) {
+            return Err("listed model identity has an invalid harness domain".to_string());
+        }
+        let (_, raw) = raw_model(identity)?;
+        canonical_model_id(raw)?;
+    }
+    Ok(())
+}
+
+/// `key:` or `key: []`, trailing spaces allowed: a section header, and
+/// whether it marks the section empty.
+fn header(line: &str) -> Option<(&str, bool)> {
+    let trimmed = line.trim_end_matches(' ');
+    let (body, empty) = trimmed
+        .strip_suffix("[]")
+        .map_or((trimmed, false), |body| (body.trim_end_matches(' '), true));
+    let key = body.strip_suffix(':')?;
+    (!key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        .then_some((key, empty))
+}
+
+/// `    - value`: a list item of four spaces, its value starting and
+/// ending in a non-blank character.
+fn item(line: &str) -> Option<&str> {
+    let value = line.strip_prefix("    - ")?;
+    let (first, last) = value.chars().next().zip(value.chars().next_back())?;
+    (!first.is_whitespace() && !last.is_whitespace()).then_some(value)
+}
+
+/// Parse an `authors.yaml` as the helper does: plain block lists under
+/// `authors`, `trailers`, and `model_domains`, four-space items, no quoted
+/// or flow scalar, every listed model identity well formed, and, with no
+/// `model_domains` key, the domains the listed authors name.
+pub(crate) fn parse_policy(text: &str) -> Result<Policy, String> {
+    const KEYS: [&str; 3] = ["authors", "trailers", "model_domains"];
+    const FLOW: [char; 14] = [
+        '[', ']', '{', '}', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`',
+    ];
+    let text = text.replace("\r\n", "\n");
+    if text.split('\n').any(|line| !printable(line)) {
+        return Err("policy contains a control character".to_string());
+    }
+    let mut lists: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut section: Option<&str> = None;
+    let mut empty: Vec<&str> = Vec::new();
+    for (index, line) in text.split('\n').enumerate() {
+        let number = index + 1;
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if let Some((key, marks_empty)) = header(line) {
+            if !KEYS.contains(&key) {
+                return Err(format!("line {number}: unknown policy key"));
+            }
+            if lists.contains_key(key) {
+                return Err(format!("line {number}: duplicate policy key"));
+            }
+            lists.insert(key, Vec::new());
+            if marks_empty {
+                empty.push(key);
+            }
+            section = Some(key);
+            continue;
+        }
+        let (Some(value), Some(key)) = (item(line), section.filter(|key| !empty.contains(key)))
+        else {
+            return Err(format!(
+                "line {number}: expected a plain list entry with four spaces"
+            ));
+        };
+        if value.starts_with(FLOW) || value.contains(" #") || value.contains(": ") {
+            return Err(format!("line {number}: unsupported YAML scalar"));
+        }
+        let list = lists.entry(key).or_default();
+        if list.iter().any(|entry| entry == value) {
+            return Err(format!("line {number}: duplicate policy entry"));
+        }
+        list.push(value.to_string());
+    }
+    let authors = lists.remove("authors").unwrap_or_default();
+    if authors.is_empty() {
+        return Err("policy must contain a nonempty authors list".to_string());
+    }
+    let trailers = lists.remove("trailers").unwrap_or_default();
+    for identity in authors.iter().chain(&trailers) {
+        listed(identity).map_err(|why| format!("invalid listed identity: {why}"))?;
+    }
+    if authors.iter().any(|author| trailers.contains(author)) {
+        return Err("an identity appears in both authors and trailers".to_string());
+    }
+    let model_domains = lists.remove("model_domains").unwrap_or_else(|| {
+        // A legacy policy names its trusted harnesses through its authors.
+        let mut domains: Vec<String> = authors
+            .iter()
+            .filter_map(|author| address(author).ok())
+            .map(|(_, _, domain)| domain)
+            .filter(|domain| valid_domain(domain))
+            .map(str::to_string)
+            .collect();
+        domains.sort();
+        domains.dedup();
+        domains
+    });
+    if model_domains.iter().any(|domain| !valid_domain(domain)) {
+        return Err("model domains must use '<harness>.noreply.nexus.local'".to_string());
+    }
+    Ok(Policy {
+        authors,
+        trailers,
+        model_domains,
     })
 }
 
-/// The identity a harness and model resolve to in a roster: the listed
-/// line whose model matches and whose domain names the harness, or the
-/// first model match when no domain does.
+/// Python's `str.title` for the ASCII the model ID shape allows: a letter
+/// after a non-letter is uppercased and a letter after a letter is
+/// lowercased, so `gpt` is `Gpt` and `4o` is `4O`.
+fn title(segment: &str) -> String {
+    let mut after_letter = false;
+    segment
+        .chars()
+        .map(|c| {
+            let out = if after_letter {
+                c.to_ascii_lowercase()
+            } else {
+                c.to_ascii_uppercase()
+            };
+            after_letter = c.is_ascii_alphabetic();
+            out
+        })
+        .collect()
+}
+
+/// The display name the helper mints: `claude-fable-5-1` under claude is
+/// `Claude Fable 5.1`, `gpt-6-astra` under codex is `Codex Gpt 6 Astra`.
+/// Segments title-case, a run of numeric segments joins with dots, and
+/// the harness leads unless the first segment names it.
+pub(crate) fn display_name(model: &str, harness: &str) -> String {
+    let digits = |word: &str| !word.is_empty() && word.chars().all(|c| c.is_ascii_digit());
+    let mut words: Vec<String> = Vec::new();
+    for segment in model.split('-') {
+        match words.last_mut() {
+            Some(last) if digits(segment) && digits(&last.replace('.', "")) => {
+                last.push('.');
+                last.push_str(segment);
+            }
+            _ => words.push(title(segment)),
+        }
+    }
+    if words
+        .first()
+        .is_none_or(|first| !first.eq_ignore_ascii_case(harness))
+    {
+        words.insert(0, title(harness));
+    }
+    words.join(" ")
+}
+
+fn parsed(identity: &str) -> Result<Identity, String> {
+    let (name, local, domain) = address(identity)?;
+    Ok(Identity {
+        name: name.to_string(),
+        email: format!("{local}@{domain}"),
+    })
+}
+
+/// The identity a model under a harness resolves to, by the helper's
+/// rules: the listed author whose model and domain match, the one spelled
+/// as the payload spells it first; else an identity minted under a domain
+/// the policy trusts; else the reason the policy refuses the model.
 pub(crate) fn resolve_identity(
-    roster: &[Identity],
+    policy: &Policy,
     harness: &str,
     model: &str,
-) -> Option<Identity> {
-    let model = canonical_model(model);
-    let matches: Vec<&Identity> = roster.iter().filter(|i| i.model == model).collect();
-    matches
-        .iter()
-        .find(|i| i.domain.starts_with(&format!("{harness}.")))
-        .or_else(|| matches.first())
-        .map(|i| (*i).clone())
+) -> Result<Identity, String> {
+    let raw = model.strip_suffix("[1m]").unwrap_or(model);
+    let model = canonical_model_id(model)?;
+    if !is_harness(harness) {
+        return Err("harness must be a lowercase ASCII slug".to_string());
+    }
+    let domain = format!("{harness}{DOMAIN_SUFFIX}");
+    let mut matches = Vec::new();
+    let mut exact = Vec::new();
+    for identity in &policy.authors {
+        let Ok((listed_domain, listed_raw)) = raw_model(identity) else {
+            continue;
+        };
+        let Ok(listed_model) = canonical_model_id(listed_raw) else {
+            continue;
+        };
+        if listed_model == model && listed_domain == domain {
+            matches.push(identity);
+            if listed_raw == raw {
+                exact.push(identity);
+            }
+        }
+    }
+    let matches = if exact.is_empty() { matches } else { exact };
+    if matches.len() > 1 {
+        return Err("model and harness match multiple listed identities".to_string());
+    }
+    if let Some(identity) = matches.first() {
+        return parsed(identity);
+    }
+    if !policy.model_domains.contains(&domain) {
+        return Err("model domain is not trusted by the policy".to_string());
+    }
+    let minted = format!(
+        "{} ({model}) <{model}@{domain}>",
+        display_name(&model, harness)
+    );
+    if policy.trailers.contains(&minted) {
+        return Err("a trailer-only alias cannot be the commit author".to_string());
+    }
+    parsed(&minted)
 }
 
 fn find_roster(cwd: &Path) -> Option<PathBuf> {
@@ -193,11 +496,14 @@ fn author_identity_in(
     env_model: Option<String>,
 ) -> Result<HandlerResult, String> {
     let harness = payload.harness.as_str();
-    let from_env = env_model.filter(|m| payload.harness == Harness::Claude && !m.trim().is_empty());
+    // The model goes to the rules as the payload spells it, as it goes to
+    // the helper's `resolve`: a space around it is refused there, so it is
+    // refused here, and the identity is the unlisted one.
+    let from_env = env_model.filter(|m| payload.harness == Harness::Claude && !m.is_empty());
     let Some(model) = payload
         .model
         .as_deref()
-        .filter(|m| !m.trim().is_empty())
+        .filter(|m| !m.is_empty())
         .map(str::to_string)
         .or(from_env)
     else {
@@ -219,29 +525,52 @@ fn author_identity_in(
         return Ok(HandlerResult::default()
             .with_warning("no checkout directory in the payload; identity not written"));
     };
-    let roster_path = find_roster(&cwd).or(deck_roster);
-    let listed = roster_path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|text| roster(&text))
-        .unwrap_or_default();
-    let (name, email, warning) = if let Some(identity) = resolve_identity(&listed, harness, model) {
-        (identity.name, identity.email, None)
-    } else {
-        {
-            let id = canonical_model(model);
-            (
-                format!("Unlisted {harness} model ({id})"),
-                format!("unlisted@{harness}.noreply.nexus.local"),
-                Some(format!(
-                    "model `{id}` is listed in no authors.yaml ({}); the checkout carries an unlisted identity the push gate refuses",
-                    roster_path
-                        .map_or_else(|| "none found".to_string(), |p| p.display().to_string())
-                )),
+    // The policy: the checkout's own `authors.yaml`, the roster the
+    // handler's argument names, or the built-in rule of the hook this
+    // adapter replaces. Every note names which one answered.
+    let raw = model.strip_suffix("[1m]").unwrap_or(model);
+    let found = find_roster(&cwd).or(deck_roster);
+    let resolved = match &found {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| parse_policy(&text))
+            .map_err(|why| format!("{} cannot be read as a policy ({why})", path.display()))
+            .and_then(|policy| {
+                resolve_identity(&policy, harness, model).map_err(|why| {
+                    format!(
+                        "model `{raw}` is admitted by no rule of {}: {why}",
+                        path.display()
+                    )
+                })
+            }),
+        None => resolve_identity(&built_in_policy(), harness, model).map_err(|why| {
+            format!(
+                "model `{raw}` is admitted by no rule of the built-in policy (no authors.yaml above {} and no roster argument): {why}",
+                cwd.display()
             )
-        }
+        }),
     };
-    let notes = write_checkout_identity(&cwd, &name, &email, config_home)?;
+    let (identity, warning) = match resolved {
+        Ok(identity) => {
+            let note = found.is_none().then(|| {
+                format!(
+                    "no authors.yaml above {} and no roster argument; the identity follows the built-in rule of the claude-agent-identity hook this adapter replaces, which trusts the claude domain alone",
+                    cwd.display()
+                )
+            });
+            (identity, note)
+        }
+        Err(why) => (
+            Identity {
+                name: format!("Unlisted {harness} model ({raw})"),
+                email: format!("{UNLISTED_LOCAL}@{harness}{DOMAIN_SUFFIX}"),
+            },
+            Some(format!(
+                "{why}; the checkout carries an unlisted identity the push gate refuses"
+            )),
+        ),
+    };
+    let notes = write_checkout_identity(&cwd, &identity.name, &identity.email, config_home)?;
     let mut result = HandlerResult::default();
     if let Some(warning) = warning {
         result = result.with_warning(&warning);
@@ -1203,16 +1532,102 @@ mod tests {
         }
     }
 
-    const ROSTER: &str = "authors:\n    - Martin Zeman <N4M3Z@users.noreply.github.com>\n    - Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>\n    - Codex Gpt 6 Astra (gpt-6-astra) <gpt-6-astra@codex.noreply.nexus.local>\n";
+    /// A roster that trusts the claude domain alone: a claude model it
+    /// does not list is minted, a codex model it does not list is refused.
+    const ROSTER: &str = "authors:\n    - Martin Zeman <N4M3Z@users.noreply.github.com>\n    - Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>\n    - Codex Gpt 6 Astra (gpt-6-astra) <gpt-6-astra@codex.noreply.nexus.local>\nmodel_domains:\n    - claude.noreply.nexus.local\n";
 
     #[test]
-    fn the_roster_resolves_a_model_by_harness_domain() {
-        let list = roster(ROSTER);
-        assert_eq!(list.len(), 2, "a human line has no model");
-        let fable = resolve_identity(&list, "claude", "claude-fable-5-1[1m]").unwrap();
+    fn the_roster_resolves_a_model_by_the_helper_s_rules() {
+        let policy = parse_policy(ROSTER).unwrap();
+        assert_eq!(policy.authors.len(), 3);
+        assert_eq!(policy.model_domains, ["claude.noreply.nexus.local"]);
+        let fable = resolve_identity(&policy, "claude", "claude-fable-5-1[1m]").unwrap();
         assert_eq!(fable.name, "Claude Fable 5.1 (claude-fable-5-1)");
         assert_eq!(fable.email, "claude-fable-5-1@claude.noreply.nexus.local");
-        assert!(resolve_identity(&list, "codex", "gpt-6-luna").is_none());
+        // A listed model under another harness is a new model there.
+        let astra = resolve_identity(&policy, "codex", "gpt-6-astra").unwrap();
+        assert_eq!(astra.email, ASTRA);
+        let luna = resolve_identity(&policy, "codex", "gpt-6-luna").unwrap_err();
+        assert_eq!(luna, "model domain is not trusted by the policy");
+        // A claude model the roster does not list is minted under the
+        // trusted domain, spelled as the helper spells it.
+        let opus = resolve_identity(&policy, "claude", "claude-opus-5-5").unwrap();
+        assert_eq!(opus.name, "Claude Opus 5.5 (claude-opus-5-5)");
+        assert_eq!(opus.email, "claude-opus-5-5@claude.noreply.nexus.local");
+        let sol = resolve_identity(&policy, "claude", "gpt-5.6-sol").unwrap();
+        assert_eq!(sol.name, "Claude Gpt 5.6 Sol (gpt-5.6-sol)");
+        // The legacy alias resolves to the model it means.
+        let legacy = resolve_identity(&policy, "claude", "claude-opus-51m").unwrap();
+        assert_eq!(legacy.email, "claude-opus-5@claude.noreply.nexus.local");
+        // A model outside the ID shape is refused before any rule.
+        let bad = resolve_identity(&policy, "claude", "Claude-Opus").unwrap_err();
+        assert!(bad.contains("lowercase ASCII"), "{bad}");
+        let bad = resolve_identity(&policy, "claude", "claude-opus-5-5[200k]").unwrap_err();
+        assert!(bad.contains("lowercase ASCII"), "{bad}");
+    }
+
+    #[test]
+    fn the_display_name_is_spelled_as_the_helper_spells_it() {
+        assert_eq!(
+            display_name("claude-fable-5-1", "claude"),
+            "Claude Fable 5.1"
+        );
+        assert_eq!(display_name("gpt-6-astra", "codex"), "Codex Gpt 6 Astra");
+        assert_eq!(display_name("kimi-k3", "kimi"), "Kimi K3");
+        assert_eq!(display_name("grok-4.6", "grok"), "Grok 4.6");
+        assert_eq!(display_name("gpt-4o-mini", "codex"), "Codex Gpt 4O Mini");
+        assert_eq!(
+            display_name("gemini-3-pro", "open-code"),
+            "Open-Code Gemini 3 Pro"
+        );
+    }
+
+    #[test]
+    fn the_policy_parser_refuses_what_the_helper_refuses() {
+        let refused = |text: &str| parse_policy(text).unwrap_err();
+        assert!(
+            refused("authors:\n  - Martin Zeman <m@example.com>\n")
+                .contains("expected a plain list entry with four spaces")
+        );
+        assert!(
+            refused("authors:\n    - \"Martin Zeman <m@example.com>\"\n")
+                .contains("unsupported YAML scalar")
+        );
+        assert!(
+            refused("authors:\n    - Martin Zeman <m@example.com>\nowners:\n    - x\n")
+                .contains("unknown policy key")
+        );
+        assert!(refused("authors: []\n").contains("nonempty authors list"));
+        assert!(
+            refused("authors: []\n    - Martin Zeman <m@example.com>\n")
+                .contains("expected a plain list entry")
+        );
+        assert!(
+            refused("authors:\n    - Claude Opus (claude-opus-5) <claude-opus-5-5@claude.noreply.nexus.local>\n")
+                .contains("display model ID and address model ID must match")
+        );
+        assert!(
+            refused("authors:\n    - Martin Zeman <m@example.com>\nmodel_domains:\n    - claude.example.com\n")
+                .contains("<harness>.noreply.nexus.local")
+        );
+        assert!(
+            refused("authors:\n    - Martin\u{a0}Zeman <m@example.com>\n")
+                .contains("control character")
+        );
+        // Without `model_domains`, the listed authors name the trusted
+        // domains, as the helper reads a legacy roster.
+        let legacy = parse_policy(
+            "# roster\n\nauthors:\n    - Codex Gpt 6 Astra (gpt-6-astra) <gpt-6-astra@codex.noreply.nexus.local>\n    - Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>\ntrailers:\n    - Claude <noreply@anthropic.com>\n",
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.model_domains,
+            ["claude.noreply.nexus.local", "codex.noreply.nexus.local"]
+        );
+        assert_eq!(legacy.trailers, ["Claude <noreply@anthropic.com>"]);
+        let crlf = parse_policy("authors:\r\n    - Martin Zeman <m@example.com>\r\n").unwrap();
+        assert_eq!(crlf.authors, ["Martin Zeman <m@example.com>"]);
+        assert_eq!(crlf.model_domains, Vec::<String>::new());
     }
 
     /// A scratch config home for jj and git, with the deck's roster in
@@ -1610,7 +2025,7 @@ mod tests {
         jj_run(dir.path(), home.path(), &["commit", "-m", "luna"]);
         assert_eq!(
             jj_show(dir.path(), home.path(), "@-", "author.email()"),
-            "unlisted@codex.noreply.nexus.local"
+            "unlisted_model@codex.noreply.nexus.local"
         );
         let check = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/check-authorship");
         let authorship = |from: &str| {
@@ -1636,7 +2051,7 @@ mod tests {
         let (code, stdout) = authorship("HEAD~1");
         assert_eq!(code, Some(1), "{stdout}");
         assert!(
-            stdout.contains("author 'Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>' does not satisfy"),
+            stdout.contains("author 'Unlisted codex model (gpt-6-luna) <unlisted_model@codex.noreply.nexus.local>' does not satisfy"),
             "{stdout}"
         );
         assert!(!stdout.contains(FABLE), "{stdout}");
@@ -1904,10 +2319,166 @@ mod tests {
             Some(1),
             "the gate refuses the unlisted model: {stderr}"
         );
-        assert!(stderr.contains("must match"), "{stderr}");
+        assert!(stderr.contains("must use lowercase"), "{stderr}");
         write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-astra");
         let (code, _, stderr) = gate("gpt-6-astra");
         assert_eq!(code, Some(0), "the gate accepts the listed model: {stderr}");
+    }
+
+    /// Every model this repository's own policy admits gets an identity
+    /// the push gate accepts, listed or minted under a trusted domain,
+    /// spelled as the helper spells it. A model under no rule gets the
+    /// unlisted one, and the note names the policy file and the rule.
+    #[test]
+    fn the_repository_policy_admits_the_models_the_gate_admits() {
+        if run_tool("python3", &["--version"], &[], None).is_err() {
+            eprintln!("skipped: python3 is not installed");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let roster = home.path().join("authors.yaml");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/authors.yaml"),
+            &roster,
+        )
+        .unwrap();
+        let policy = roster.display().to_string();
+        let dir = jj_checkout();
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/author-identity.py");
+        let helper = |args: &[&str]| {
+            let mut argv = vec!["-I", script];
+            argv.extend_from_slice(args);
+            run_tool("python3", &argv, &[], None).unwrap()
+        };
+        let written = || {
+            let name = jj_get(dir.path(), home.path(), "user.name");
+            let email = jj_get(dir.path(), home.path(), "user.email");
+            format!("{name} <{email}>")
+        };
+        let admitted = [
+            (Harness::Claude, "claude-opus-5-5"),
+            (Harness::Claude, "claude-fable-5-1[1m]"),
+            (Harness::Claude, "claude-opus-4-8"),
+            (Harness::Codex, "gpt-6-astra"),
+        ];
+        for (harness, model) in admitted {
+            let result = write_identity(harness, dir.path(), home.path(), model);
+            assert!(
+                result.context.iter().all(|note| !note.contains("unlisted")),
+                "{result:?}"
+            );
+            let identity = written();
+            let (code, _, stderr) =
+                helper(&["validate", "--policy", &policy, "--identity", &identity]);
+            assert_eq!(code, Some(0), "{identity}: {stderr}");
+            let (code, stdout, stderr) = helper(&[
+                "resolve",
+                "--policy",
+                &policy,
+                "--model",
+                model,
+                "--harness",
+                harness.as_str(),
+            ]);
+            assert_eq!(code, Some(0), "{stderr}");
+            assert_eq!(stdout.trim(), identity, "one spelling for {model}");
+        }
+        let result = write_identity(Harness::Gemini, dir.path(), home.path(), "gemini-3-pro");
+        let note = &result.context[0];
+        assert!(note.contains("admitted by no rule of"), "{note}");
+        assert!(note.contains(&policy), "{note}");
+        assert!(note.contains("not trusted by the policy"), "{note}");
+        let identity = written();
+        assert_eq!(
+            identity,
+            "Unlisted gemini model (gemini-3-pro) <unlisted_model@gemini.noreply.nexus.local>"
+        );
+        let (code, _, stderr) = helper(&["validate", "--policy", &policy, "--identity", &identity]);
+        assert_eq!(code, Some(1), "{stderr}");
+
+        // Models the helper refuses: a listed ID wrapped in spaces, which
+        // the adapter does not trim, and a model whose raw spelling once
+        // produced a name and address that read as one listed ID. Each
+        // gets the unlisted identity, which `validate` refuses.
+        let refused = [
+            (Harness::Codex, " gpt-6-astra "),
+            (Harness::Claude, "unlisted[1m][1m]"),
+        ];
+        for (harness, model) in refused {
+            let result = write_identity(harness, dir.path(), home.path(), model);
+            let note = &result.context[0];
+            assert!(note.contains("admitted by no rule of"), "{model:?}: {note}");
+            let identity = written();
+            assert!(identity.contains(UNLISTED_LOCAL), "{model:?}: {identity}");
+            let (code, _, stderr) =
+                helper(&["validate", "--policy", &policy, "--identity", &identity]);
+            assert_eq!(code, Some(1), "{model:?} written as {identity}: {stderr}");
+            let (code, stdout, stderr) = helper(&[
+                "resolve",
+                "--policy",
+                &policy,
+                "--model",
+                model,
+                "--harness",
+                harness.as_str(),
+            ]);
+            assert_eq!(code, Some(1), "{model:?}: {stdout}{stderr}");
+        }
+    }
+
+    #[test]
+    fn a_checkout_with_no_policy_follows_the_rule_of_the_hook_this_adapter_replaces() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = jj_checkout();
+        let cwd = dir.path().display().to_string();
+        let start = |harness: Harness, model: &str| {
+            author_identity_in(
+                &payload(harness, "session.start", None, &cwd, Some(model)),
+                None,
+                Some(home.path()),
+                None,
+            )
+            .unwrap()
+        };
+        let result = start(Harness::Claude, "claude-opus-5-5[1m]");
+        assert_eq!(result.context.len(), 2, "{result:?}");
+        assert!(result.context[0].contains("built-in rule"), "{result:?}");
+        assert!(result.context[0].contains(&cwd), "{result:?}");
+        assert_eq!(
+            jj_get(dir.path(), home.path(), "user.name"),
+            "Claude Opus 5.5 (claude-opus-5-5)"
+        );
+        assert_eq!(
+            jj_get(dir.path(), home.path(), "user.email"),
+            "claude-opus-5-5@claude.noreply.nexus.local"
+        );
+        let result = start(Harness::Codex, "gpt-6-astra");
+        assert!(result.context[0].contains("built-in policy"), "{result:?}");
+        assert!(result.context[0].contains("not trusted"), "{result:?}");
+        assert_eq!(
+            jj_get(dir.path(), home.path(), "user.email"),
+            "unlisted_model@codex.noreply.nexus.local"
+        );
+    }
+
+    #[test]
+    fn a_policy_the_helper_cannot_read_leaves_the_model_unlisted() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = jj_checkout();
+        std::fs::write(
+            dir.path().join("authors.yaml"),
+            "authors:\n  - Martin Zeman <m@example.com>\n",
+        )
+        .unwrap();
+        jj_run(dir.path(), home.path(), &["commit", "-m", "roster"]);
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-opus-5-5");
+        let note = &result.context[0];
+        assert!(note.contains("cannot be read as a policy"), "{note}");
+        assert!(note.contains("four spaces"), "{note}");
+        assert_eq!(
+            jj_get(dir.path(), home.path(), "user.email"),
+            "unlisted_model@claude.noreply.nexus.local"
+        );
     }
 
     #[test]

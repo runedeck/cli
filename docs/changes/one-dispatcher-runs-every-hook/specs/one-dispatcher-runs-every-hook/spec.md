@@ -27,12 +27,12 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: Canonical Events Map To Each Harness
 
-The dispatcher MUST know eight canonical events, `session.start`, `session.end`, `notification` (passive), `prompt.before`, `tool.before`, `turn.finish` (gate), `tool.after`, `compact.before` (collect), each mapped per harness to a native event or none. Install reports an event a harness lacks as unsupported, for every targeted harness, never substituted. Each mapping carries the harness's cap, binding a canonical or native subscription alike: a rendered timeout (whole seconds on Claude and Codex) and the deadline stay inside it. Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
+The dispatcher MUST know eight canonical events, `session.start`, `session.end`, `notification` (passive), `prompt.before`, `tool.before`, `turn.finish` (gate), `tool.after`, `compact.before` (collect), each mapped per harness to a native event or none. Install names an unsupported event, never substituted, for a harness registered, present in the home, or named in the config. Each mapping carries the harness's cap for canonical and native subscriptions: a rendered timeout (whole seconds on Claude and Codex) and the deadline stay inside it. Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default, 3 s at most. `rune hook list --events` prints the table.
 
 #### Scenario: Event the harness lacks
 
-- **WHEN** a handler subscribes to `session.end` and `rune install` runs for Antigravity
-- **THEN** the install output lists `session.end` as unsupported on Antigravity and writes no entry for it
+- **WHEN** a handler subscribes to `session.end` and `rune install` runs in a home where Antigravity is set up and `$XDG_CONFIG_HOME` holds an `opencode/` directory
+- **THEN** the output lists `session.end` as unsupported on Antigravity and on OpenCode, writes no entry for either, and says nothing for a harness absent from the home and the config
 
 #### Scenario: Compaction on Claude
 

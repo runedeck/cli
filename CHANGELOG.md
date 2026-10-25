@@ -320,8 +320,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
 - Withhold `additionalContext` on a passive Claude `Stop`, where it continues the turn, and report it on stderr. The encoder now knows the event's mode and sends no decision or input on a passive event.
 - Pass a hook `message` as `systemMessage` on Gemini `BeforeAgent`, `BeforeTool`, `AfterTool`, and `AfterAgent`, where the reference lists it as a common field and the encoder dropped it.
-- Report an event a harness lacks as `unsupported:` for every harness the plan targets, Antigravity and OpenCode included, where `rune hook install` named it for Claude and Codex alone.
+- Report an event a harness lacks as `unsupported:` for a registered harness, one set up in the home, or one the config names, where `rune hook install` named it for Claude and Codex alone.
 - Name, at install, each handler whose command a part behind the first part of a legacy `Stop.d` runs, with that part and why it covers nothing, where the output said nothing for it.
+- Drop full-line comments before reading a later `Stop.d` part for its message, so a `±` in a comment no longer hides the handler the part runs, and name a later part that still cannot be read.
+- Resolve the author identity by the rules of `scripts/author-identity.py`, `model_domains` included, so `claude-opus-5-5`, admitted by domain, is no longer written as unlisted.
+- Count a harness as set up when `$XDG_CONFIG_HOME/<harness>` exists, with `~/.config/<harness>` as the fallback, so `rune hook install` names the OpenCode gap under that variable.
+- Give a refused model the `unlisted_model@` address, outside the helper's model ID shape, where `unlisted[1m][1m]` once produced an identity the authorship check accepted.
+- Pass the payload's model to the identity rules untrimmed, as `scripts/author-identity.py` reads it, so a model wrapped in spaces is refused here as there.
+- Trust the claude domain alone, as the replaced `claude-agent-identity` hook did, when no `authors.yaml` is above the checkout and no roster is given, and name the policy in the context.
 - Write the session's author identity to the jj workspace config and the git worktree config, never to the shared `.git/config`.
 - Re-author the working-copy commit only while it is empty, undescribed, and this workspace's alone. Otherwise start the session in a new working copy on top of it.
 - Keep `extensions.worktreeConfig` off while any repository or worktree config, or a file it includes, sets `core.bare` or `core.worktree`, and name the file.

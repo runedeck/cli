@@ -836,6 +836,58 @@ fn a_valid_plan_without_the_registered_event_follows_the_registration() {
     );
 }
 
+/// The `unsupported` lines of `rune --json hook install --dry-run` in the
+/// scene, with `xdg` as `XDG_CONFIG_HOME`.
+fn unsupported_under(scene: &Scene, xdg: &Path) -> Vec<String> {
+    let mut command = scene.rune();
+    command.env("XDG_CONFIG_HOME", xdg);
+    let output = command
+        .args(["--json", "hook", "install", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    report["unsupported"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_harness_under_the_xdg_config_root_has_its_gap_named() {
+    // `opencode debug paths` names `$XDG_CONFIG_HOME/opencode` as the
+    // config directory under that variable. Install read `~/.config`
+    // alone, so a home with the variable set reported no gap for an
+    // OpenCode set up there (found 2026-10-26).
+    let scene = Scene::new();
+    let capture = scene.handler("capture", "cat > /dev/null; printf '{}'");
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: capture\n      exec: [sh, {capture}]\n      events: [session.end]\n"
+    ));
+    let xdg = scene.path("xdg");
+    std::fs::create_dir_all(xdg.join("opencode")).unwrap();
+    assert_eq!(
+        unsupported_under(&scene, &xdg),
+        ["opencode has no session.end for capture"]
+    );
+    // The scene's own root, `~/.config`, holds no harness.
+    assert_eq!(
+        unsupported_under(&scene, &scene.home().join(".config")),
+        Vec::<String>::new()
+    );
+    std::fs::create_dir_all(scene.home().join(".config/opencode")).unwrap();
+    assert_eq!(
+        unsupported_under(&scene, &scene.home().join(".config")),
+        ["opencode has no session.end for capture"]
+    );
+}
+
 #[test]
 fn an_inherited_grok_variable_does_not_switch_the_guard_off() {
     let scene = Scene::new();

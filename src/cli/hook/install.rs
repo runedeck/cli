@@ -401,6 +401,24 @@ fn table_path(home: &Path, harness: Harness) -> PathBuf {
     }
 }
 
+/// The XDG config root the harnesses read: `$XDG_CONFIG_HOME` when it is
+/// set and not empty, else `~/.config`. `opencode debug paths` names
+/// `$XDG_CONFIG_HOME/opencode` as its config directory under that
+/// variable, so a home with it set keeps no `~/.config/opencode`.
+fn config_root(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| home.join(".config"), PathBuf::from)
+}
+
+/// Whether `harness` is set up in `home`: the directory its table lives
+/// in, `~/.<harness>/`, or its directory under the XDG config root, which
+/// `OpenCode` uses, exists.
+fn harness_present(home: &Path, config_root: &Path, harness: Harness) -> bool {
+    table_path(home, harness).parent().is_some_and(Path::exists)
+        || config_root.join(harness.as_str()).exists()
+}
+
 /// The file a table path names: the target of a symbolic link, so the
 /// write lands in the owner's file and the link stays a link.
 fn resolved(path: &Path) -> Result<PathBuf, Error> {
@@ -473,9 +491,10 @@ pub(crate) fn apply(
     check: bool,
     dry_run: bool,
 ) -> Result<Report, Error> {
-    let prepared = prepare(
+    let prepared = prepare_in(
         plan,
         home,
+        &home.join(".config"),
         rune,
         Path::new(generations),
         manifest_path,
@@ -577,12 +596,36 @@ fn generations_in(groups: &[Value]) -> Vec<PathBuf> {
 /// Read every table, find every conflict, and compute what install would
 /// write. `rune` is the dispatcher's own path as the tables will call it,
 /// and `now` the time a generation the new tables stop naming is retired
-/// at. One pass over every event of every registered harness: long, and
-/// linear.
-#[allow(clippy::too_many_lines)]
+/// at. The XDG config root comes from this process's environment.
 pub(crate) fn prepare(
     plan: &Plan,
     home: &Path,
+    rune: &str,
+    generations_dir: &Path,
+    manifest_path: &Path,
+    check: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Prepared, Error> {
+    prepare_in(
+        plan,
+        home,
+        &config_root(home),
+        rune,
+        generations_dir,
+        manifest_path,
+        check,
+        now,
+    )
+}
+
+/// `prepare` with the XDG config root given, so a test names one without
+/// touching the environment. One pass over every event of every
+/// registered harness: long, and linear.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prepare_in(
+    plan: &Plan,
+    home: &Path,
+    config_root: &Path,
     rune: &str,
     generations_dir: &Path,
     manifest_path: &Path,
@@ -603,8 +646,16 @@ pub(crate) fn prepare(
     // Codex keeps hook trust in the user config.
     let codex_config = home.join(".codex").join("config.toml");
     // Every harness the plan targets, a harness install registers nothing
-    // for included: an event it lacks is named, never substituted.
+    // for included: an event it lacks is named, never substituted. A
+    // harness that is not set up in this home, and that the owner's
+    // config never names, has no gap to name.
     for gap in &plan.unsupported {
+        if !Harness::REGISTERED.contains(&gap.harness)
+            && !gap.named
+            && !harness_present(home, config_root, gap.harness)
+        {
+            continue;
+        }
         report.unsupported.push(format!(
             "{} has no {} for {}",
             gap.harness,
@@ -1794,6 +1845,15 @@ impl Dispatchers<'_> {
             // Install names each such handler, so the owner knows why the
             // handler runs twice; a wrong read here changes that line alone.
             for later in legacy::later_parts(&folder, home, &mut aside) {
+                let later = match later {
+                    Ok(later) => later,
+                    Err(why) => {
+                        report.warnings.push(format!(
+                            "{harness}: {name} cannot read a later part of `{command}`, because {why}; a handler that part runs is not named"
+                        ));
+                        continue;
+                    }
+                };
                 if !later.active {
                     continue;
                 }
@@ -1865,6 +1925,29 @@ impl Dispatchers<'_> {
 mod tests {
     use super::*;
     use rune::hooks::Hooks;
+
+    /// `super::prepare` with the scratch home's `.config` as the XDG
+    /// config root, so no test reads the owner's `$XDG_CONFIG_HOME`.
+    fn prepare(
+        plan: &Plan,
+        home: &Path,
+        rune: &str,
+        generations_dir: &Path,
+        manifest_path: &Path,
+        check: bool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Prepared, Error> {
+        prepare_in(
+            plan,
+            home,
+            &home.join(".config"),
+            rune,
+            generations_dir,
+            manifest_path,
+            check,
+            now,
+        )
+    }
 
     fn plan() -> Plan {
         serde_yaml::from_str::<Hooks>(
@@ -3499,39 +3582,115 @@ mod tests {
         assert_eq!(cover_in(&prepared, Harness::Codex, "Stop"), None);
     }
 
-    #[test]
-    fn an_event_a_harness_lacks_is_named_for_every_harness_the_plan_targets() {
-        let home = tempfile::tempdir().unwrap();
-        settings(home.path(), "{}");
-        let manifest = home.path().join("state").join("manifest.json");
-        let prepared = prepare(
-            &plan(),
-            home.path(),
+    /// An install of `plan` into `home`, prepared under a fixed plan
+    /// directory, with the manifest under `home/state`.
+    fn prepared_in(home: &Path, plan: &Plan) -> Prepared {
+        let manifest = home.join("state").join("manifest.json");
+        prepare(
+            plan,
+            home,
             "/opt/rune",
             Path::new(PLAN),
             &manifest,
             false,
             chrono::Utc::now(),
         )
-        .unwrap();
-        let unsupported = &prepared.report.unsupported;
+        .unwrap()
+    }
+
+    /// The `unsupported:` lines of an install of `plan` into `home`, with
+    /// `home/.config` as the XDG config root.
+    fn unsupported_in(home: &Path, plan: &Plan) -> Vec<String> {
+        unsupported_under(home, &home.join(".config"), plan)
+    }
+
+    /// The `unsupported:` lines of an install of `plan` into `home` with
+    /// `config_root` as the XDG config root.
+    fn unsupported_under(home: &Path, config_root: &Path, plan: &Plan) -> Vec<String> {
+        let manifest = home.join("state").join("manifest.json");
+        prepare_in(
+            plan,
+            home,
+            config_root,
+            "/opt/rune",
+            Path::new(PLAN),
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap()
+        .report
+        .summary()
+        .lines()
+        .into_iter()
+        .filter(|line| line.starts_with("unsupported: "))
+        .collect()
+    }
+
+    const OPENCODE_GAP: &str = "unsupported: opencode has no session.end for capture";
+
+    #[test]
+    fn an_event_a_harness_lacks_is_named_for_every_harness_set_up_in_the_home() {
+        let home = tempfile::tempdir().unwrap();
+        settings(home.path(), "{}");
+        fs::create_dir_all(home.path().join(".antigravity")).unwrap();
+        fs::create_dir_all(home.path().join(".config").join("opencode")).unwrap();
+        let unsupported = unsupported_in(home.path(), &plan());
         // Antigravity and OpenCode have no session end; install registers
-        // nothing for either, and names the gap all the same.
+        // nothing for either, and names the gap for each one set up here.
         for harness in ["antigravity", "opencode"] {
             assert!(
-                unsupported.contains(&format!("{harness} has no session.end for capture")),
+                unsupported.contains(&format!(
+                    "unsupported: {harness} has no session.end for capture"
+                )),
                 "{unsupported:?}"
             );
         }
-        assert!(
-            prepared
-                .report
-                .summary()
-                .lines()
-                .iter()
-                .any(|l| l == "unsupported: antigravity has no session.end for capture"),
-            "{:?}",
-            prepared.report.summary().lines()
+    }
+
+    #[test]
+    fn a_harness_under_the_xdg_config_root_is_set_up() {
+        // `opencode debug paths` names `$XDG_CONFIG_HOME/opencode` as the
+        // config directory when the variable is set, so a home with it set
+        // and the harness there read no gap before (found 2026-10-26).
+        let home = tempfile::tempdir().unwrap();
+        settings(home.path(), "{}");
+        let xdg = home.path().join("xdg");
+        fs::create_dir_all(xdg.join("opencode")).unwrap();
+        assert_eq!(
+            unsupported_under(home.path(), &xdg, &plan()),
+            [OPENCODE_GAP]
+        );
+        // The variable names the root OpenCode reads, so a leftover
+        // `~/.config/opencode` under another root sets nothing up.
+        fs::create_dir_all(home.path().join(".config").join("opencode")).unwrap();
+        let other = home.path().join("elsewhere");
+        fs::create_dir_all(&other).unwrap();
+        let unsupported = unsupported_under(home.path(), &other, &plan());
+        assert!(unsupported.is_empty(), "{unsupported:?}");
+        // Without the variable, `~/.config` is the root.
+        assert_eq!(unsupported_in(home.path(), &plan()), [OPENCODE_GAP]);
+    }
+
+    #[test]
+    fn an_event_a_harness_lacks_is_not_named_for_a_harness_absent_from_the_home() {
+        // Neither harness is set up here, and the config names neither,
+        // so the owner reads no line about a harness they do not run.
+        let home = tempfile::tempdir().unwrap();
+        settings(home.path(), "{}");
+        let unsupported = unsupported_in(home.path(), &plan());
+        assert!(unsupported.is_empty(), "{unsupported:?}");
+        // The config names Antigravity: its gap is named, OpenCode's not.
+        let named = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n    per_harness:\n      antigravity: {timeout_ms: 900}\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let unsupported = unsupported_in(home.path(), &named);
+        assert_eq!(
+            unsupported,
+            ["unsupported: antigravity has no session.end for capture"]
         );
     }
 
@@ -4026,7 +4185,8 @@ mod tests {
         );
         // The snapshot part is first once the folder is gone: it covers
         // turn, and a part behind it that the dispatcher runs with `nohup`
-        // blocks nothing, because rune never reads it.
+        // blocks nothing. It has no shape rune reads, so the warning names
+        // it as unreadable and for no handler.
         fs::remove_dir(stop_d.join("15-dir.sh")).unwrap();
         fs::write(
             stop_d.join("40-nohup.sh"),
@@ -4040,7 +4200,14 @@ mod tests {
             "{:?}",
             prepared.report
         );
-        assert!(prepared.report.warnings.is_empty(), "{:?}", prepared.report);
+        assert_eq!(prepared.report.warnings.len(), 1, "{:?}", prepared.report);
+        assert!(
+            prepared.report.warnings[0].starts_with("claude: Stop cannot read a later part of")
+                && prepared.report.warnings[0]
+                    .contains("40-nohup.sh has a shape rune does not read"),
+            "{:?}",
+            prepared.report
+        );
     }
 
     /// The legacy dispatcher on Stop, as the owner's Claude table holds it
@@ -4961,7 +5128,7 @@ mod tests {
         // `b[ab]` names one word to rune and the files it matches to the
         // shell, so a part that holds one has no shape rune reads. First
         // in its folder it covers nothing; after the first part it is
-        // never read.
+        // named as unread and blocks nothing.
         let glob = "#!/bin/sh\nexec \"$HOME/.local/bin/claude-tmux-status\" b[ab]\n";
         let mut parts = STOP_PARTS.to_vec();
         parts.push(("Stop", "40-glob.sh", glob));
@@ -4991,10 +5158,15 @@ mod tests {
             "a later glob part blocks nothing: {:?}",
             later.report
         );
-        // The glob part has no shape, so it is named for no handler; the
-        // snapshot part behind the first is named for turn.
+        // The glob part has no shape, so it is named as unread and for no
+        // handler; the snapshot part behind the first is named for turn.
         let (named, other) = later_part_lines(&later.report);
-        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(other.len(), 1, "{other:?}");
+        assert!(
+            other[0].starts_with("claude: Stop cannot read a later part of")
+                && other[0].contains("40-glob.sh has a shape rune does not read"),
+            "{other:?}"
+        );
         assert_eq!(named.len(), 1, "{named:?}");
         assert!(
             named[0].contains("does not cover turn") && named[0].contains("30-turn-snapshot.sh"),
@@ -5012,6 +5184,85 @@ mod tests {
             "{:?}",
             first.report.warnings
         );
+    }
+
+    /// The owner's live snapshot part: a `±` in a comment, a `-f` guard on
+    /// the checkpoint, then the exec line.
+    const SNAPSHOT_WITH_COMMENT: &str = "#!/bin/sh\n# Snapshot the footprint so the ± segment and review see the turn.\n[ -f \"$HOME/.config/just/claude/turn/checkpoint\" ] || exit 0\nexec sh \"$HOME/.config/just/claude/turn/checkpoint\" snapshot\n";
+
+    #[test]
+    fn a_comment_in_a_later_part_keeps_the_handler_it_runs_named() {
+        // The shell runs no comment, so the message about a later part
+        // drops it before the text is checked: the `±` keeps turn named.
+        let home = owner_home(&[
+            STOP_PARTS[0],
+            STOP_PARTS[1],
+            ("Stop", "30-turn-snapshot.sh", SNAPSHOT_WITH_COMMENT),
+        ]);
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": PLAIN_ENTRY}]}]}})
+                .to_string(),
+        );
+        let prepared = prepared_in(home.path(), &stop_plan());
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        let (named, other) = later_part_lines(&prepared.report);
+        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert!(
+            named[0].starts_with("claude: Stop does not cover turn with the part ")
+                && named[0].contains("30-turn-snapshot.sh"),
+            "{named:?}"
+        );
+        // The first part is read whole, as the shell reads it: the same
+        // comment there is text rune does not read, and covers nothing.
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        fs::write(
+            stop_d.join("10-tmux-attention.sh"),
+            "#!/bin/sh\n# The ± segment.\nexec \"$HOME/.local/bin/claude-tmux-status\" attention\n",
+        )
+        .unwrap();
+        let first = prepared_in(home.path(), &stop_plan());
+        assert!(first.report.covered.is_empty(), "{:?}", first.report);
+        assert!(
+            first.report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains("10-tmux-attention.sh has a shape rune does not read")
+            }),
+            "{:?}",
+            first.report.warnings
+        );
+    }
+
+    #[test]
+    fn a_later_part_that_cannot_be_read_is_named_as_unreadable() {
+        // A `±` on a line that runs is text rune does not read. The part
+        // is named as unreadable, for no handler, and blocks nothing.
+        let mut parts = STOP_PARTS.to_vec();
+        parts.push((
+            "Stop",
+            "40-note.sh",
+            "#!/bin/sh\nexec \"$HOME/.local/bin/claude-tmux-status\" ±\n",
+        ));
+        let home = owner_home(&parts);
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": PLAIN_ENTRY}]}]}})
+                .to_string(),
+        );
+        let prepared = prepared_in(home.path(), &stop_plan());
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        let (named, other) = later_part_lines(&prepared.report);
+        assert_eq!(other.len(), 1, "{other:?}");
+        assert!(
+            other[0].starts_with(
+                "claude: Stop cannot read a later part of `sh ~/.config/just/hook Stop`, because "
+            ) && other[0].contains("40-note.sh has a shape rune does not read")
+                && other[0].ends_with("; a handler that part runs is not named"),
+            "{other:?}"
+        );
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert!(named[0].contains("30-turn-snapshot.sh"), "{named:?}");
     }
 
     #[cfg(unix)]

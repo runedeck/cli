@@ -504,20 +504,53 @@ pub(crate) fn first_part(
 }
 
 /// The parts after the first in `folder`, in the order the dispatcher
-/// runs them, each in the shape rune reads. Install names them in a
-/// message alone, never for covering: the dispatcher may stop before a
-/// later part, so one this misses or misreads changes a message and
-/// nothing else. A folder that cannot be listed, a part outside the
-/// shape, and a part past `budget` are left out.
-pub(crate) fn later_parts(folder: &Path, home: &Path, budget: &mut u64) -> Vec<Part> {
+/// runs them: each in the shape rune reads, or why it cannot be read.
+/// Install names them in a message alone, never for covering: the
+/// dispatcher may stop before a later part, so one this misreads changes
+/// a message and nothing else. For that message a full-line comment is
+/// dropped before the text is checked, so a comment's character outside
+/// plain text keeps no part from it. A folder that cannot be listed is
+/// left out: the first part's read named it already.
+pub(crate) fn later_parts(
+    folder: &Path,
+    home: &Path,
+    budget: &mut u64,
+) -> Vec<Result<Part, String>> {
     let Ok(Some(numbered)) = numbered_parts(folder) else {
         return Vec::new();
     };
     numbered
         .into_values()
         .skip(1)
-        .filter_map(|name| read_part(&folder.join(name), home, budget).ok())
+        .map(|name| {
+            let path = folder.join(name);
+            let bytes = part_bytes(&path, budget)?;
+            shape_of(&path, &without_comments(&bytes), home).ok_or_else(|| unread(&path))
+        })
         .collect()
+}
+
+/// `bytes` less every line whose first non-blank byte is `#`. The shell
+/// runs none of them, so for a message they say nothing; a cover still
+/// reads the first part whole, as the shell reads it.
+fn without_comments(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for line in bytes.split(|&b| b == b'\n') {
+        let comment = line
+            .iter()
+            .find(|b| !matches!(b, b' ' | b'\t'))
+            .is_some_and(|&b| b == b'#');
+        if comment {
+            continue;
+        }
+        out.extend_from_slice(line);
+        out.push(b'\n');
+    }
+    out
+}
+
+fn unread(path: &Path) -> String {
+    format!("{} has a shape rune does not read", path.display())
 }
 
 /// The `*.sh` names of `folder` by number, as the dispatcher's glob
@@ -563,6 +596,13 @@ fn numbered_parts(folder: &Path) -> Result<Option<BTreeMap<u8, OsString>>, Strin
 /// The part at `path`, a regular file within the bytes left in `budget`,
 /// in the shape rune reads. Its bytes come off `budget`.
 fn read_part(path: &Path, home: &Path, budget: &mut u64) -> Result<Part, String> {
+    let bytes = part_bytes(path, budget)?;
+    shape_of(path, &bytes, home).ok_or_else(|| unread(path))
+}
+
+/// The bytes of the part at `path`, a regular file within the bytes left
+/// in `budget`. They come off `budget`.
+fn part_bytes(path: &Path, budget: &mut u64) -> Result<Vec<u8>, String> {
     let Some(meta) = fs::metadata(path).ok().filter(fs::Metadata::is_file) else {
         return Err(format!("{} is no regular file", path.display()));
     };
@@ -582,8 +622,7 @@ fn read_part(path: &Path, home: &Path, budget: &mut u64) -> Result<Part, String>
     };
     *budget -=
         u64::try_from(bytes.len()).map_err(|_| format!("{} cannot be read", path.display()))?;
-    shape_of(path, &bytes, home)
-        .ok_or_else(|| format!("{} has a shape rune does not read", path.display()))
+    Ok(bytes)
 }
 
 /// `$HOME` and `${HOME}` in a command line replaced by `home`, as the

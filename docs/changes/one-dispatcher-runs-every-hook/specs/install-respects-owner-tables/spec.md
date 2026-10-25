@@ -63,15 +63,15 @@ When the config declares no handler and an earlier install left a plan generatio
 
 ### Requirement: The Legacy Dispatcher Keeps Its Entry
 
-Install MUST keep a legacy dispatcher entry (`sh ~/.config/just/hook <Event>`, `sh ~/.sd/hook <Event>`, `sd hook <Event>`) and MUST NOT advise its removal. Every handler stays in the generation. Install MUST record the handler whose whole command the first part runs, and name both. `rune hook run` MUST skip the handler only while the entry, its keys, the shell, the script, the environment, the first part, and the command hold at each firing. A `deny` handler or a rewriter is never skipped. A matcher, a compound line, or a Codex table skips nothing, and install names each later part that makes a handler run twice, and why.
+Install MUST keep a legacy dispatcher entry (`sh ~/.config/just/hook <Event>`, `sh ~/.sd/hook <Event>`, `sd hook <Event>`), never advise its removal, and keep every handler in the generation. It MUST record and name the handler whose whole command the first part runs. `rune hook run` MUST skip it only while the entry with its keys, shell, script, environment, first part, and command hold at each firing. A `deny` handler or a rewriter is never skipped. A matcher, compound line, or Codex table skips nothing. Install names each later part that runs a handler's command, less comments, or is unreadable.
 
 #### Scenario: Owner's Stop parts on Claude
 
 - **WHEN** `Stop` holds `sh $HOME/.config/just/hook Stop`, its `Stop.d` parts run the tmux attention script and the turn checkpoint, and handlers run `rune-hook-tmux-status`, `rune-hook-turn-checkpoint`, and `rune-hook-session-capture` on `turn.finish`
 - **THEN** the entry stays and Claude's `Stop` generation keeps all three handlers
 - **AND** the output names tmux as covered with its part, and turn as not covered with its part, because that part is not the first
-- **AND** `rune hook run` skips tmux and runs turn and capture
-- **AND** once the tmux part is gone, the next firing runs tmux with no install
+- **AND** a `±` in a comment of the snapshot part changes none of that, while a part with one on a line that runs is named as unreadable
+- **AND** `rune hook run` skips tmux and runs turn and capture, and once the tmux part is gone the next firing runs tmux with no install
 
 #### Scenario: Legacy dispatcher joined with an owner's check
 

@@ -647,6 +647,11 @@ pub struct Unsupported {
     pub harness: Harness,
     pub event: Canonical,
     pub handlers: Vec<String>,
+    /// Whether the owner's config names the harness: a `per_harness`
+    /// override or a native subscription of it. Install names a gap of a
+    /// harness the owner never set up only when the config names it.
+    #[serde(default)]
+    pub named: bool,
 }
 
 /// A capability a harness lacks that a handler requires.
@@ -880,6 +885,7 @@ impl Hooks {
         };
         for harness in Harness::ALL {
             let mut events: BTreeMap<String, PlannedEvent> = BTreeMap::new();
+            let named = self.names(harness);
             for canonical in Canonical::ALL {
                 let subscribers: Vec<&Handler> = self
                     .handlers
@@ -894,6 +900,7 @@ impl Hooks {
                         harness,
                         event: canonical,
                         handlers: subscribers.iter().map(|h| h.id.clone()).collect(),
+                        named,
                     });
                     continue;
                 };
@@ -934,44 +941,59 @@ impl Hooks {
                     },
                 );
             }
-            // Native extensions of this harness. A name that is one of the
-            // harness's own canonical events keeps that event's cap, so a
-            // `codex:SessionEnd` renders inside Codex's 3 s like `session.end`.
-            for handler in &self.handlers {
-                for subscription in &handler.events {
-                    let Subscription::Native { harness: h, name } = subscription else {
-                        continue;
-                    };
-                    if *h != harness {
-                        continue;
-                    }
-                    let mut budget = self.defaults.timeout_ms.max(1_000);
-                    if let Some(cap) = Canonical::from_native(harness, name)
-                        .and_then(|canonical| canonical.native(harness))
-                        .and_then(|native| native.budget_cap_ms(harness))
-                    {
-                        budget = budget.min(cap);
-                    }
-                    let event = events.entry(name.clone()).or_insert_with(|| PlannedEvent {
-                        canonical: None,
-                        mode: Mode::Passive,
-                        budget_ms: budget,
-                        response_reserve_ms: self.defaults.response_reserve_ms,
-                        handlers: Vec::new(),
-                    });
-                    event
-                        .handlers
-                        .push(self.planned(handler, harness, event.budget_ms));
-                    event
-                        .handlers
-                        .sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
-                }
-            }
+            self.extend_native(harness, &mut events);
             if !events.is_empty() {
                 plan.harnesses.insert(harness, events);
             }
         }
         Ok(plan)
+    }
+
+    /// Add the native extensions of `harness` to `events`. A name that is
+    /// one of the harness's own canonical events keeps that event's cap, so
+    /// a `codex:SessionEnd` renders inside Codex's 3 s like `session.end`.
+    fn extend_native(&self, harness: Harness, events: &mut BTreeMap<String, PlannedEvent>) {
+        for handler in &self.handlers {
+            for subscription in &handler.events {
+                let Subscription::Native { harness: h, name } = subscription else {
+                    continue;
+                };
+                if *h != harness {
+                    continue;
+                }
+                let mut budget = self.defaults.timeout_ms.max(1_000);
+                if let Some(cap) = Canonical::from_native(harness, name)
+                    .and_then(|canonical| canonical.native(harness))
+                    .and_then(|native| native.budget_cap_ms(harness))
+                {
+                    budget = budget.min(cap);
+                }
+                let event = events.entry(name.clone()).or_insert_with(|| PlannedEvent {
+                    canonical: None,
+                    mode: Mode::Passive,
+                    budget_ms: budget,
+                    response_reserve_ms: self.defaults.response_reserve_ms,
+                    handlers: Vec::new(),
+                });
+                event
+                    .handlers
+                    .push(self.planned(handler, harness, event.budget_ms));
+                event
+                    .handlers
+                    .sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
+            }
+        }
+    }
+
+    /// Whether the config names `harness`: a `per_harness` override or a
+    /// native subscription of it.
+    fn names(&self, harness: Harness) -> bool {
+        self.handlers.iter().any(|h| {
+            h.per_harness.contains_key(&harness)
+                || h.events.iter().any(|subscription| {
+                    matches!(subscription, Subscription::Native { harness: h, .. } if *h == harness)
+                })
+        })
     }
 
     fn planned(&self, handler: &Handler, harness: Harness, budget_ms: u64) -> PlannedHandler {

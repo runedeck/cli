@@ -8,17 +8,38 @@ Who a commit made by a harness session is attributed to: the model, resolved aga
 
 ### Requirement: Identity Binds To The Checkout
 
-The handler `author-identity` on `session.start` MUST resolve the harness and the payload's model (Claude and Codex carry `model`; a payload without it is a warning and no write) to an identity listed in the checkout's `authors.yaml`, or the deck's when the checkout has none, and write it into the jj workspace and git worktree the session runs in, never into a file shared between sessions. A model with no listed identity writes `Unlisted <harness> model (<id>)` with an `unlisted@` address, which the attribution check refuses at push, so the miss is loud and no listed author is borrowed.
+The handler `author-identity` on `session.start` MUST resolve the payload's model as spelled (none warns, no write) and harness by the rules of `scripts/author-identity.py`: a listed identity for that model and harness, else one minted as `<Display Name> (<model>) <model@<harness>.noreply.nexus.local>` when the policy's `model_domains` trusts the domain. The policy is the checkout's `authors.yaml`, else the roster argument, else a built-in rule trusting the claude domain alone. The identity goes into the session's checkout alone. A refused model writes `Unlisted <harness> model (<id>)` with an `unlisted_model@` address no policy lists and the push check refuses, and the warning names the policy.
 
 #### Scenario: Listed model at session start
 
 - **WHEN** Claude starts with model `claude-fable-5-1[1m]` in a checkout whose `authors.yaml` lists `Claude Fable 5.1 (claude-fable-5-1)`
 - **THEN** `jj config get user.name` in that checkout prints the listed name and a commit made by the session carries it
 
+#### Scenario: Model admitted by a trusted domain
+
+- **WHEN** Claude starts with model `claude-opus-5-5` in a checkout whose `authors.yaml` lists no such model and names `claude.noreply.nexus.local` under `model_domains`
+- **THEN** the checkout's author is `Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>`, which `scripts/author-identity.py validate` accepts
+
 #### Scenario: Unlisted model
 
-- **WHEN** Codex starts with a model no `authors.yaml` lists
-- **THEN** the checkout's author becomes `Unlisted codex model (<id>)`, one warning names the model, and the push gate refuses a commit by it
+- **WHEN** Codex starts with a model the checkout's `authors.yaml` lists under no entry and admits under no domain
+- **THEN** the checkout's author becomes `Unlisted codex model (<id>)`, one warning names the model and the policy file, and the authorship check refuses a commit by it
+
+#### Scenario: Model the helper refuses
+
+- **WHEN** Codex starts with model `gpt-6-astra` wrapped in spaces, or Claude with model `unlisted[1m][1m]`
+- **THEN** the author is `Unlisted <harness> model (<id>)` with the `unlisted_model@` address, which `scripts/author-identity.py validate` refuses, and `resolve` refuses the model
+
+#### Scenario: Checkout without a policy
+
+- **WHEN** Claude starts with model `claude-opus-5-5` in a checkout with no `authors.yaml` above it and no roster argument
+- **THEN** the author is `Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>`, and the context says the built-in rule was used
+- **AND** Codex in the same checkout gets the unlisted identity, because the built-in rule trusts the claude domain alone
+
+#### Scenario: Policy the helper refuses
+
+- **WHEN** the checkout's `authors.yaml` indents a list entry with two spaces
+- **THEN** the model gets the unlisted identity, and the warning names the file and the helper's reason
 
 #### Scenario: Two sessions, two checkouts
 
