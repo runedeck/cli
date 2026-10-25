@@ -144,7 +144,7 @@ pub(crate) fn fold(events: &[Event]) -> Vec<Message> {
 /// `~/.rune/postbox.tsv`.
 pub(crate) fn path() -> Result<PathBuf, String> {
     dirs::home_dir()
-        .map(|home| home.join(".rune").join(FILE_NAME))
+        .map(|home| rune::consumer::user_directory(&home).join(FILE_NAME))
         .ok_or_else(|| "cannot find the home directory for the postbox".to_string())
 }
 
