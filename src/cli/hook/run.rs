@@ -388,7 +388,7 @@ pub(crate) fn dispatch(
     // record: the hooks never get it, and a hook that overran its timeout
     // does not take it away. The writer gets what the answer left of it.
     let own_phase = Instant::now();
-    let mut answer = encode(harness, native_event, &merged);
+    let mut answer = encode(harness, native_event, event.mode, &merged);
     stderr.append(&mut answer.stderr);
     stderr.extend(write_records(
         runner,
@@ -420,9 +420,12 @@ fn merge(
     mode: Mode,
     handler_id: &str,
 ) {
-    merged.context.extend(result.context);
+    merged
+        .context
+        .extend(result.context.iter().map(|line| visible(line, true)));
     // Every handler's note reaches the owner in handler order, each line
-    // named for the handler that wrote it.
+    // named for the handler that wrote it. The name is trustworthy only
+    // when the line cannot move the cursor back over it.
     if let Some(message) = result
         .message
         .as_deref()
@@ -431,7 +434,7 @@ fn merge(
         let named = message
             .lines()
             .filter(|line| !line.trim().is_empty())
-            .map(|line| format!("{handler_id}: {line}"))
+            .map(|line| format!("{handler_id}: {}", visible(line, false)))
             .collect::<Vec<_>>()
             .join("\n");
         merged.message = Some(match merged.message.take() {
@@ -459,6 +462,28 @@ fn merge(
         merged.effect = result.effect;
         merged.reason = result.reason;
     }
+}
+
+/// The text with every control character shown as an escape, so a
+/// handler cannot fake another handler's prefix with a carriage return,
+/// a backspace, or a terminal escape sequence. A tab stays. A newline
+/// stays when the field carries lines, as context does; a message line
+/// has none left after the split.
+pub(super) fn visible(text: &str, keep_newline: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push(c),
+            '\n' if keep_newline => out.push(c),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\x{:02x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A result whose effect the event does not take fails like any other
@@ -614,6 +639,7 @@ fn dispatcher_failure(
         encode(
             harness,
             native_event,
+            event.mode,
             &HandlerResult::deny(format!("rune hook could not run its handlers: {why}")),
         )
     } else {

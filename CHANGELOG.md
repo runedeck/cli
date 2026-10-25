@@ -88,6 +88,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
 - Accept `message` in a hook result and pass it as `systemMessage` to Claude Code and Gemini CLI on the events their references document, each line named for its handler.
+- Show a control character in a hook message or context line as a visible escape such as `\r` or `\x1b` before the handler's name is added, so no handler fakes another's line.
 - Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
 - Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
@@ -317,6 +318,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Clamp a hook budget to the whole seconds of the harness cap, for a canonical or a native subscription alike, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s.
 - Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
+- Withhold `additionalContext` on a passive Claude `Stop`, where it continues the turn, and report it on stderr. The encoder now knows the event's mode and sends no decision or input on a passive event.
+- Pass a hook `message` as `systemMessage` on Gemini `BeforeAgent`, `BeforeTool`, `AfterTool`, and `AfterAgent`, where the reference lists it as a common field and the encoder dropped it.
 - Report an event a harness lacks as `unsupported:` for every harness the plan targets, Antigravity and OpenCode included, where `rune hook install` named it for Claude and Codex alone.
 - Name, at install, each handler whose command a part behind the first part of a legacy `Stop.d` runs, with that part and why it covers nothing, where the output said nothing for it.
 - Write the session's author identity to the jj workspace config, its undescribed working-copy commit, and the git worktree config, and never to the shared `.git/config`.

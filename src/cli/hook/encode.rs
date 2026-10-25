@@ -6,7 +6,7 @@
 //! read the context by value once per call.
 #![allow(clippy::match_same_arms, clippy::needless_pass_by_value)]
 
-use rune::hooks::{Canonical, Harness};
+use rune::hooks::{Canonical, Harness, Mode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -97,13 +97,48 @@ pub(crate) struct Answer {
     pub exit: i32,
 }
 
-/// Encode the merged result for one harness and native event. Context and
-/// a message go into the field the harness reads on that event, by its
-/// reference; where the event has none, each is reported on stderr, so a
-/// passive event drops nothing in silence.
-pub(crate) fn encode(harness: Harness, native_event: &str, result: &HandlerResult) -> Answer {
+/// Encode the merged result for one harness and native event, under the
+/// event's mode. Context and a message go into the field the harness
+/// reads on that event, by its reference; where the event has none, each
+/// is reported on stderr, so a passive event drops nothing in silence.
+///
+/// A passive event steers nothing. The dispatcher drops an effect and a
+/// replacement input before the merge, and the encoder drops them again
+/// here, so no caller fakes a decision through it. Context on an event
+/// where the harness reads context as a continuation, Claude's `Stop`,
+/// is steering too, and a passive event reports it instead.
+pub(crate) fn encode(
+    harness: Harness,
+    native_event: &str,
+    mode: Mode,
+    result: &HandlerResult,
+) -> Answer {
     let canonical = Canonical::from_native(harness, native_event);
     let mut answer = Answer::default();
+    let passive = mode == Mode::Passive;
+    let held;
+    let result = if passive && (result.effect != Effect::Pass || result.input.is_some()) {
+        if result.effect != Effect::Pass {
+            steering(&mut answer, harness, native_event, "a denial decides");
+        }
+        if result.input.is_some() {
+            steering(
+                &mut answer,
+                harness,
+                native_event,
+                "a replacement input decides",
+            );
+        }
+        held = HandlerResult {
+            effect: Effect::Pass,
+            input: None,
+            reason: None,
+            ..result.clone()
+        };
+        &held
+    } else {
+        result
+    };
     let reason = result
         .reason
         .clone()
@@ -115,7 +150,11 @@ pub(crate) fn encode(harness: Harness, native_event: &str, result: &HandlerResul
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string);
-    let notes = Notes { context, message };
+    let notes = Notes {
+        context,
+        message,
+        passive,
+    };
     let encoder = match harness {
         Harness::Claude => encode_claude,
         Harness::Codex => encode_codex,
@@ -130,15 +169,26 @@ pub(crate) fn encode(harness: Harness, native_event: &str, result: &HandlerResul
 
 /// What a result says beside its effect: context for the model, joined
 /// by line, and a message for the owner, trimmed. Each is `None` when
-/// there is nothing to say.
+/// there is nothing to say. `passive` says the event steers nothing, so
+/// context goes nowhere the harness reads it as a continuation.
 struct Notes {
     context: Option<String>,
     message: Option<String>,
+    passive: bool,
 }
 
 fn unexpressed(answer: &mut Answer, harness: Harness, what: &str, event: &str) {
     answer.stderr.push(format!(
         "rune hook: {harness} cannot express {what} on {event}; reported, not applied"
+    ));
+}
+
+/// The note for a field a passive event may not send, because the harness
+/// reads it as a decision or a continuation there. `what` names the field
+/// and what it does, as in `context continues the turn`.
+fn steering(answer: &mut Answer, harness: Harness, event: &str, what: &str) {
+    answer.stderr.push(format!(
+        "rune hook: {event} is passive on {harness}; {what} there and is reported, not applied"
     ));
 }
 
@@ -196,9 +246,22 @@ fn encode_claude(
                 Canonical::ToolBefore
                 | Canonical::ToolAfter
                 | Canonical::PromptBefore
-                | Canonical::SessionStart
-                | Canonical::TurnFinish,
+                | Canonical::SessionStart,
             ) => {
+                specific.insert("additionalContext".into(), json!(context));
+            }
+            // On Stop, context makes the conversation continue, under the
+            // same loop protection as `decision: block`, so a passive Stop
+            // reports it instead of sending it.
+            Some(Canonical::TurnFinish) if notes.passive => {
+                steering(
+                    answer,
+                    Harness::Claude,
+                    native,
+                    "context continues the turn",
+                );
+            }
+            Some(Canonical::TurnFinish) => {
                 specific.insert("additionalContext".into(), json!(context));
             }
             _ => unexpressed(answer, Harness::Claude, "context", native),
@@ -322,18 +385,14 @@ fn encode_gemini(
     }
     if let Some(message) = notes.message {
         match canonical {
-            // SessionStart, SessionEnd, Notification, and PreCompress list
-            // `systemMessage`; the agent, tool, and model events do not
+            // `systemMessage` is a common output field, shown to the owner
+            // in the terminal, on every event the dispatcher maps; only
+            // BeforeToolSelection, which it does not map, refuses it
             // (Gemini CLI hooks reference, read 2026-10-25).
-            Some(
-                Canonical::SessionStart
-                | Canonical::SessionEnd
-                | Canonical::Notification
-                | Canonical::CompactBefore,
-            ) => {
+            Some(_) => {
                 out.insert("systemMessage".into(), json!(message));
             }
-            _ => unexpressed(answer, Harness::Gemini, "a message", native),
+            None => unexpressed(answer, Harness::Gemini, "a message", native),
         }
     }
     if !out.is_empty() {
@@ -375,7 +434,19 @@ fn encode_grok(
         (_, Effect::Pass) => {}
     }
     if let Some(context) = notes.context {
-        out.insert("additionalContext".into(), json!(context));
+        // The repository holds no Grok reference that says what context
+        // does on its stop event, so a passive stop withholds it, as
+        // Claude's does.
+        if notes.passive && canonical == Some(Canonical::TurnFinish) {
+            steering(
+                answer,
+                Harness::Grok,
+                native,
+                "context may continue the turn",
+            );
+        } else {
+            out.insert("additionalContext".into(), json!(context));
+        }
     }
     // No reading of the Grok reference documents a message to the owner.
     if notes.message.is_some() {
@@ -455,9 +526,16 @@ fn encode_bridge(
 mod tests {
     use super::*;
 
+    /// Encode under the event's own mode, as the dispatcher does without
+    /// an override.
+    fn enc(harness: Harness, event: &str, result: &HandlerResult) -> Answer {
+        let mode = Canonical::from_native(harness, event).map_or(Mode::Gate, Canonical::mode);
+        encode(harness, event, mode, result)
+    }
+
     #[test]
     fn a_denial_on_claude_tool_before_is_a_permission_decision() {
-        let answer = encode(Harness::Claude, "PreToolUse", &HandlerResult::deny("no"));
+        let answer = enc(Harness::Claude, "PreToolUse", &HandlerResult::deny("no"));
         let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
         assert_eq!(out["hookSpecificOutput"]["hookEventName"], "PreToolUse");
         assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
@@ -467,14 +545,14 @@ mod tests {
 
     #[test]
     fn a_denial_on_codex_tool_before_and_prompt_before() {
-        let answer = encode(Harness::Codex, "PreToolUse", &HandlerResult::deny("no"));
+        let answer = enc(Harness::Codex, "PreToolUse", &HandlerResult::deny("no"));
         assert!(
             answer
                 .stdout
                 .unwrap()
                 .contains("\"permissionDecision\":\"deny\"")
         );
-        let answer = encode(
+        let answer = enc(
             Harness::Codex,
             "UserPromptSubmit",
             &HandlerResult::deny("no"),
@@ -485,13 +563,13 @@ mod tests {
 
     #[test]
     fn a_pass_prints_nothing_and_context_reaches_claude_post_tool() {
-        let answer = encode(Harness::Claude, "PostToolUse", &HandlerResult::default());
+        let answer = enc(Harness::Claude, "PostToolUse", &HandlerResult::default());
         assert_eq!(answer.stdout, None);
         let result = HandlerResult {
             context: vec!["a".into(), "b".into()],
             ..HandlerResult::default()
         };
-        let answer = encode(Harness::Claude, "PostToolUse", &result);
+        let answer = enc(Harness::Claude, "PostToolUse", &result);
         assert!(
             answer
                 .stdout
@@ -502,10 +580,17 @@ mod tests {
 
     #[test]
     fn an_effect_a_harness_cannot_express_is_reported() {
-        let answer = encode(Harness::Claude, "SessionEnd", &HandlerResult::deny("no"));
+        // A gate override on SessionEnd lets the denial through to the
+        // encoder, which has no field for it there.
+        let answer = encode(
+            Harness::Claude,
+            "SessionEnd",
+            Mode::Gate,
+            &HandlerResult::deny("no"),
+        );
         assert_eq!(answer.stdout, None);
         assert!(answer.stderr[0].contains("cannot express a denial on SessionEnd"));
-        let answer = encode(
+        let answer = enc(
             Harness::Codex,
             "PostToolUse",
             &HandlerResult {
@@ -535,7 +620,7 @@ mod tests {
             "PostToolUse",
             "UserPromptSubmit",
         ] {
-            let answer = encode(Harness::Claude, event, &both);
+            let answer = enc(Harness::Claude, event, &both);
             let out = parsed(&answer);
             assert_eq!(
                 out["hookSpecificOutput"]["additionalContext"], "remember x",
@@ -546,10 +631,10 @@ mod tests {
             assert!(answer.stderr.is_empty(), "{event}: {:?}", answer.stderr);
         }
         // Gemini: SessionStart takes both; SessionEnd the message alone.
-        let out = parsed(&encode(Harness::Gemini, "SessionStart", &both));
+        let out = parsed(&enc(Harness::Gemini, "SessionStart", &both));
         assert_eq!(out["hookSpecificOutput"]["additionalContext"], "remember x");
         assert_eq!(out["systemMessage"], "id: identity written");
-        let answer = encode(Harness::Gemini, "SessionEnd", &both);
+        let answer = enc(Harness::Gemini, "SessionEnd", &both);
         assert_eq!(parsed(&answer)["systemMessage"], "id: identity written");
         assert!(
             answer
@@ -564,7 +649,7 @@ mod tests {
             message: Some("  \n".into()),
             ..HandlerResult::default()
         };
-        assert_eq!(encode(Harness::Claude, "Stop", &blank).stdout, None);
+        assert_eq!(enc(Harness::Claude, "Stop", &blank).stdout, None);
     }
 
     #[test]
@@ -576,7 +661,7 @@ mod tests {
         };
         // Claude discards both on Notification, SessionEnd, and PreCompact.
         for event in ["Notification", "SessionEnd", "PreCompact"] {
-            let answer = encode(Harness::Claude, event, &both);
+            let answer = enc(Harness::Claude, event, &both);
             assert_eq!(answer.stdout, None, "{event}");
             assert!(
                 answer.stderr.iter().any(|l| l
@@ -593,17 +678,20 @@ mod tests {
                 answer.stderr
             );
         }
-        // Gemini lists neither on BeforeTool.
-        let answer = encode(Harness::Gemini, "BeforeTool", &both);
-        assert_eq!(answer.stdout, None);
-        assert_eq!(answer.stderr.len(), 2, "{:?}", answer.stderr);
+        // Gemini lists no context on BeforeTool; `systemMessage` is common.
+        let answer = enc(Harness::Gemini, "BeforeTool", &both);
+        assert_eq!(parsed(&answer)["systemMessage"], "id: identity written");
+        assert_eq!(
+            answer.stderr,
+            ["rune hook: gemini cannot express context on BeforeTool; reported, not applied"]
+        );
         // Antigravity answers with a decision alone.
-        let answer = encode(Harness::Antigravity, "SessionStart", &both);
+        let answer = enc(Harness::Antigravity, "SessionStart", &both);
         assert_eq!(answer.stdout, None);
         assert_eq!(answer.stderr.len(), 2, "{:?}", answer.stderr);
         // Nothing but Claude and Gemini documents a message.
         for harness in [Harness::Codex, Harness::Grok, Harness::Opencode] {
-            let answer = encode(harness, "Stop", &both);
+            let answer = enc(harness, "Stop", &both);
             assert!(
                 answer
                     .stderr
@@ -624,8 +712,125 @@ mod tests {
     }
 
     #[test]
+    fn gemini_shows_a_message_on_every_agent_and_tool_event() {
+        let note = HandlerResult {
+            message: Some("id: identity written".into()),
+            ..HandlerResult::default()
+        };
+        for event in ["BeforeAgent", "BeforeTool", "AfterTool", "AfterAgent"] {
+            let answer = enc(Harness::Gemini, event, &note);
+            assert_eq!(
+                parsed(&answer)["systemMessage"],
+                "id: identity written",
+                "{event}"
+            );
+            assert_eq!(parsed(&answer).get("decision"), None, "{event}");
+            assert!(answer.stderr.is_empty(), "{event}: {:?}", answer.stderr);
+        }
+        // An event the dispatcher does not map still has no field.
+        let answer = enc(Harness::Gemini, "BeforeToolSelection", &note);
+        assert_eq!(answer.stdout, None);
+        assert!(answer.stderr[0].contains("cannot express a message"));
+    }
+
+    #[test]
+    fn a_passive_stop_reports_context_instead_of_continuing_the_turn() {
+        let both = HandlerResult {
+            context: vec!["remember x".into()],
+            message: Some("id: identity written".into()),
+            ..HandlerResult::default()
+        };
+        // Claude's Stop reads context as a continuation; Grok's may.
+        for harness in [Harness::Claude, Harness::Grok] {
+            let answer = encode(harness, "Stop", Mode::Passive, &both);
+            let out = parsed(&answer);
+            assert_eq!(out.get("hookSpecificOutput"), None, "{harness}: {out}");
+            assert_eq!(out.get("additionalContext"), None, "{harness}: {out}");
+            assert_eq!(out.get("decision"), None, "{harness}: {out}");
+            assert!(
+                answer.stderr.iter().any(|l| l
+                    .starts_with(&format!("rune hook: Stop is passive on {harness}; context"))
+                    && l.ends_with("the turn there and is reported, not applied")),
+                "{harness}: {:?}",
+                answer.stderr
+            );
+        }
+        // The message steers nothing and still reaches Claude's owner.
+        let answer = encode(Harness::Claude, "Stop", Mode::Passive, &both);
+        assert_eq!(parsed(&answer)["systemMessage"], "id: identity written");
+        // The same context on a gate Stop is the continuation it asks for.
+        let answer = encode(Harness::Claude, "Stop", Mode::Gate, &both);
+        assert_eq!(
+            parsed(&answer)["hookSpecificOutput"]["additionalContext"],
+            "remember x"
+        );
+        // Context elsewhere does not continue, so a passive event sends it.
+        for event in [
+            "SessionStart",
+            "PreToolUse",
+            "PostToolUse",
+            "UserPromptSubmit",
+        ] {
+            let answer = encode(Harness::Claude, event, Mode::Passive, &both);
+            assert_eq!(
+                parsed(&answer)["hookSpecificOutput"]["additionalContext"],
+                "remember x",
+                "{event}"
+            );
+            assert!(answer.stderr.is_empty(), "{event}: {:?}", answer.stderr);
+        }
+        let answer = encode(Harness::Gemini, "AfterTool", Mode::Passive, &both);
+        assert_eq!(
+            parsed(&answer)["hookSpecificOutput"]["additionalContext"],
+            "remember x"
+        );
+    }
+
+    #[test]
+    fn a_passive_event_never_carries_a_decision_or_an_input() {
+        let steer = HandlerResult {
+            input: Some(json!({"command": "rm -rf /"})),
+            context: vec!["remember x".into()],
+            ..HandlerResult::deny("no")
+        };
+        for (harness, event) in [
+            (Harness::Claude, "PreToolUse"),
+            (Harness::Claude, "Stop"),
+            (Harness::Gemini, "BeforeTool"),
+            (Harness::Gemini, "AfterAgent"),
+            (Harness::Codex, "PreToolUse"),
+            (Harness::Codex, "Stop"),
+            (Harness::Grok, "PreToolUse"),
+            (Harness::Grok, "Stop"),
+        ] {
+            let answer = encode(harness, event, Mode::Passive, &steer);
+            let stdout = answer.stdout.clone().unwrap_or_default();
+            assert_eq!(answer.exit, 0, "{harness} {event}");
+            for field in ["deny", "block", "updatedInput", "tool_input", "rm -rf"] {
+                assert!(!stdout.contains(field), "{harness} {event}: {stdout}");
+            }
+            assert!(
+                answer.stderr.iter().any(|l| l.contains("a denial decides")),
+                "{harness} {event}: {:?}",
+                answer.stderr
+            );
+            assert!(
+                answer
+                    .stderr
+                    .iter()
+                    .any(|l| l.contains("a replacement input decides")),
+                "{harness} {event}: {:?}",
+                answer.stderr
+            );
+        }
+        // Antigravity's tool gate still answers, and it answers allow.
+        let answer = encode(Harness::Antigravity, "PreToolUse", Mode::Passive, &steer);
+        assert_eq!(answer.stdout.as_deref(), Some("{\"decision\":\"allow\"}"));
+    }
+
+    #[test]
     fn antigravity_always_answers_its_tool_gate() {
-        let answer = encode(
+        let answer = enc(
             Harness::Antigravity,
             "PreToolUse",
             &HandlerResult::default(),
