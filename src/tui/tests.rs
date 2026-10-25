@@ -1416,7 +1416,7 @@ fn wrapped_code_and_comment_rows_cannot_hide_logical_cursor() {
 fn committed_fixture_repo(root: &std::path::Path, source_path: &str, content: &str) {
     std::fs::write(root.join(source_path), content).unwrap();
     for args in [
-        &["init", "-q"][..],
+        &["init", "-q", "--template="][..],
         &["config", "user.email", "tui@example.invalid"][..],
         &["config", "user.name", "TUI Test"][..],
         &["config", "commit.gpgsign", "false"][..],

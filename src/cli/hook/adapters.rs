@@ -852,7 +852,7 @@ mod tests {
     fn jj_checkout() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let ok = Command::new("git")
-            .args(["init", "-q", "-b", "main"])
+            .args(["init", "-q", "-b", "main", "--template="])
             .current_dir(dir.path())
             .status()
             .is_ok_and(|s| s.success());

@@ -228,7 +228,7 @@ fn corrupt_manifest_error_has_no_unsafe_fix_command() {
 fn commitless_repository_has_no_freshness_warning() {
     let module = TempDir::new().unwrap();
     std::process::Command::new("git")
-        .args(["init", "-b", "main"])
+        .args(["init", "-b", "main", "--template="])
         .current_dir(module.path())
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")

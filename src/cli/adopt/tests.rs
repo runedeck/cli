@@ -8,11 +8,14 @@ fn module() -> tempfile::TempDir {
     dir
 }
 
+/// A git repository with no sample hooks: `--template=` copies nothing, so
+/// the test does not depend on the machine's template folder, which a
+/// sandbox may refuse to read (Xcode's git keeps one inside the app).
 fn init_git(directory: &std::path::Path) {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(directory)
-        .args(["init", "--quiet"])
+        .args(["init", "--quiet", "--template="])
         .output()
         .expect("git init runs");
     assert!(
@@ -888,7 +891,7 @@ fn multiple_git_worktrees_use_distinct_session_directories() {
             String::from_utf8_lossy(&output.stderr)
         );
     };
-    run_git(repository.path(), &["init", "--quiet"]);
+    run_git(repository.path(), &["init", "--quiet", "--template="]);
     run_git(
         repository.path(),
         &["config", "user.email", "test@example.com"],
@@ -950,27 +953,51 @@ fn modules_in_one_repository_use_distinct_session_directories() {
     assert!(first.is_file() && second.is_file());
 }
 
+/// A path from `base` to `target`, both absolute: `..` for each component
+/// of `base`, then every component of `target`. A test cannot change its
+/// process's directory, so a relative path has to climb from cargo's
+/// directory to a repository under the temp directory. The base is made
+/// canonical first, since `..` climbs the physical tree.
+fn relative_path(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
+    let base = base.canonicalize().expect("canonical base");
+    let mut relative = std::path::PathBuf::new();
+    for _ in base.components().skip(1) {
+        relative.push("..");
+    }
+    for component in target.components().skip(1) {
+        relative.push(component);
+    }
+    relative
+}
+
 #[test]
 fn relative_root_selects_an_open_session_by_artifact() {
-    let current = std::env::current_dir().expect("current directory");
-    let repository = tempfile::tempdir_in(&current).expect("repository");
-    init_git(repository.path());
-    std::fs::write(repository.path().join("module.yaml"), "name: fixture\n").expect("module");
+    // The repository sits under the temp directory, like every fixture: a
+    // sandbox may refuse `git init` inside the checkout, and the relative
+    // root climbs to it from the current directory instead. The sessions
+    // open on canonical paths, as `rune adopt` hands them over: a session
+    // names its artifact relative to the canonical module root.
+    let repository = tempfile::tempdir().expect("repository");
+    let root = repository
+        .path()
+        .canonicalize()
+        .expect("canonical repository");
+    init_git(&root);
+    std::fs::write(root.join("module.yaml"), "name: fixture\n").expect("module");
 
     for name in ["First", "Second"] {
-        let artifact = repository.path().join("skills").join(name);
+        let artifact = root.join("skills").join(name);
         std::fs::create_dir_all(&artifact).expect("artifact directory");
         std::fs::write(artifact.join("SKILL.md"), format!("# {name}\n")).expect("skill");
         review::open_session(&artifact, "https://example.test/skill", "digest")
             .expect("session opens");
     }
 
-    let relative_root = repository
-        .path()
-        .strip_prefix(&current)
-        .expect("repository is below the current directory");
+    let current = std::env::current_dir().expect("current directory");
+    let relative_root = relative_path(&current, &root);
+    assert!(relative_root.is_relative(), "{}", relative_root.display());
     assert_eq!(
-        review::next(relative_root, Some("skills/Second"), 1, true).expect("session selected"),
+        review::next(&relative_root, Some("skills/Second"), 1, true).expect("session selected"),
         0
     );
 }
