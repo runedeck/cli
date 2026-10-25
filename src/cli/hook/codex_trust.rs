@@ -9,11 +9,15 @@
 //! read 2026-10-24, and it reproduced a trusted hash on the owner's
 //! machine.
 
-use std::fs;
 use std::path::Path;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+use super::legacy;
+
+/// The most bytes rune reads of Codex's `config.toml`.
+pub(crate) const CONFIG_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// What Codex makes of the rune entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +90,13 @@ pub(crate) fn hash(event: &str, group: &Value, hook: &Value) -> String {
     format!("sha256:{:x}", Sha256::digest(text.as_bytes()))
 }
 
+/// The trust state in `config`, parsed, or `None` when the file is
+/// missing, is no regular file under the limit, or does not parse.
+pub(crate) fn read_state(config: &Path) -> Option<toml::Value> {
+    let text = legacy::read_text_bounded(config, CONFIG_LIMIT)?;
+    toml::from_str::<toml::Value>(&text).ok()
+}
+
 /// What Codex makes of the hook at `group` and `handler` of `event` in
 /// `table`, from the trust state in `config`.
 pub(crate) fn trust(
@@ -96,10 +107,21 @@ pub(crate) fn trust(
     handler: usize,
     expected: &str,
 ) -> Trust {
-    let Some(state) = fs::read_to_string(config)
-        .ok()
-        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-    else {
+    let state = read_state(config);
+    trust_in(state.as_ref(), table, event, group, handler, expected)
+}
+
+/// What Codex makes of the hook at `group` and `handler` of `event` in
+/// `table`, from a parsed trust `state`; none is no trust.
+pub(crate) fn trust_in(
+    state: Option<&toml::Value>,
+    table: &Path,
+    event: &str,
+    group: usize,
+    handler: usize,
+    expected: &str,
+) -> Trust {
+    let Some(state) = state else {
         return Trust::Untrusted;
     };
     let key = format!("{}:{}:{group}:{handler}", table.display(), label(event));
@@ -122,6 +144,8 @@ pub(crate) fn trust(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -170,5 +194,21 @@ mod tests {
             trust(&config, table, "Stop", 0, 0, &expected),
             Trust::Disabled
         );
+        // The state is read once per firing and the lookups reuse it.
+        let state = read_state(&config);
+        assert_eq!(
+            trust_in(state.as_ref(), table, "PreToolUse", 0, 0, &expected),
+            Trust::Trusted
+        );
+        assert_eq!(
+            trust_in(None, table, "PreToolUse", 0, 0, &expected),
+            Trust::Untrusted
+        );
+        #[cfg(unix)]
+        {
+            let fifo = dir.path().join("fifo.toml");
+            nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+            assert_eq!(read_state(&fifo), None, "a FIFO is not opened");
+        }
     }
 }

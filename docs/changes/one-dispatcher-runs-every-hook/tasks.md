@@ -15,8 +15,8 @@
 
 ## 3. Install
 
-- [x] 3.1 `src/cli/hook/install.rs`: one entry per subscribed event into Claude `settings.json` and Codex `hooks.json`, ownership by command prefix and event, full-registration hash, foreign inventory, adoption of adapter predecessors and `sh ~/.sd/hook` entries in Claude settings and both Codex sources, the manifest section, the Codex trust step printed, `--check`
-- [x] 3.2 Tests: a cmux entry survives and is inventoried, one rune entry per event, a timeout edit stops the install, an unsupported event listed and skipped, git-ai adopted, the legacy Codex `config.toml` entry adopted, an untrusted Codex entry reported
+- [x] 3.1 `src/cli/hook/install.rs`: one entry per subscribed event into Claude `settings.json` and Codex `hooks.json`, ownership by command prefix and event, full-registration hash, foreign inventory, adoption of adapter predecessors in Claude settings and both Codex sources, the manifest section, the Codex trust step printed, `--check`
+- [x] 3.2 Tests: a cmux entry survives and is inventoried, one rune entry per event, a timeout edit stops the install, an unsupported event listed and skipped, git-ai adopted, a tool's Codex `config.toml` entry named with its line, an untrusted Codex entry reported
 
 ## 4. Handlers
 
@@ -25,9 +25,9 @@
 - [x] 4.3 Tests: the identity scenarios including two checkouts and a commit's author, each adapter's translation on a fixture payload, each guard's refusal
 - [ ] 4.4 (deferred to the deck change that gives hook runes their frontmatter; until then a deck hook is declared as any other `exec` handler) A deck hook rune fixture (frontmatter: event, handler, policy) deploys as an executable under the provider's `hooks/<deck>/` and appears in the plan through `.rune` selection
 
-## 5. Retire sd hook
+## 5. Dotfiles and the live migration
 
-- [ ] 5.1 dotfiles: the Claude settings template becomes a modify script that keeps the live `hooks` block and declares no hook; `dot_sd/hooks/` and `dot_sd/executable_hook` removed after the first install adopted their entries; the dcg, git-ai, and rtk installers stop writing hook entries
+- [ ] 5.1 dotfiles: the Claude settings template becomes a modify script that keeps the live `hooks` block and declares no hook; the dispatcher and its parts stay under `~/.config/just/`; the dcg, git-ai, and rtk installers stop writing hook entries
 - [ ] 5.2 Live: `rune install`, the Codex trust step taken by the owner, `--check` clean, one session of each harness confirms a commit authored by the model, a denied command, a lint finding, a captured session, and no duplicate checkpoint
 
 ## 6. Verification
@@ -73,3 +73,36 @@
 - [x] 11.2 Codex: a removal that would move a hook Codex trusts waits, the output names the step, and `--check` checks every hook in the groups install touches
 - [x] 11.3 Install: a generation goes only after installs on 14 different days have found it unnamed, so a clock set forward cannot end the window
 - [x] 11.4 Install: a staged file whose write fails is removed at once
+
+## 12. The legacy dispatcher keeps its entry
+
+- [x] 12.1 `src/cli/hook/legacy.rs`: the dispatcher shapes, the known script content, the parts in name order up to the first that is not a regular file, each part's shape (an optional `-x` or `-f` guard on the program of its one `exec` line), `$HOME` expanded outside single quotes, a bare `sh` or `/bin/sh` with no option that resolves to `/bin/sh`
+- [x] 12.2 Install: a legacy dispatcher entry stays and is never advised away, every handler stays in the generation, and each handler whose whole command a part runs is recorded in `hooks/cover/<harness>-<event>.json` with `covered:` naming both. Nothing is covered for a `deny` handler, a handler with arguments, a reshaped payload off Claude, a matcher other than `*`, or a compound line, and the warning says where a part may run twice. No record is written for Codex. Codex `config.toml` hooks are read with the TOML parser and named by their real line. A gone entry an earlier install adopted is named
+- [x] 12.3 `src/cli/hook/cover.rs` and `rune hook run`: the cover read at each firing, the handler skipped only while the entry, its matcher, the shell, the script, the part, its guard, and the command still hold, and the hook record carries `skipped` with the part
+- [x] 12.4 Tests: the owner's `Stop.d` covers tmux-status and turn-checkpoint on Claude with the entry kept, every handler in the generation, both parts named, and the cover staged. The dispatcher skips both, runs tmux once its part is gone and turn once its guard fails, with no install and no registration change. The `PreToolUse.d` guards keep running beside dcg and jj-guards. A dcg part never covers the `deny` handler. An earlier part without the shape or with a `-e` guard stops the count. A matcher or a compound line covers nothing. A Codex part covers nothing, and a Codex record is refused at the firing. A gone adopted entry is named and its record kept until the entry is back
+
+## 13. A doubt runs the handler
+
+- [x] 13.1 `src/cli/hook/legacy.rs`: a counted line is printable ASCII with no `\r`, backslash, or open quote, split on space and tab, in a file with plain `\n` endings. The shell in front is `sh` or `/bin/sh` and resolves by canonical path to `/bin/sh`, the `sh` on `PATH` that runs each part resolves there too, and a direct entry needs an executable script whose first line is exactly `#!/bin/sh`
+- [x] 13.2 `src/cli/hook/legacy.rs` and install: a folder counts only when every `*.sh` entry is a regular file in the shape, so the order of the parts cannot change the result
+- [x] 13.3 `src/cli/hook/cover.rs`: a hook or group with a key rune does not read covers nothing. `holds` reads the table under `CLAUDE_CONFIG_DIR`, takes `HOME` from the environment alone, checks the record's harness and event, refuses every record for Codex, and matches the handler about to run by command, policy, and adapter command
+- [x] 13.4 `src/cli/hook/run.rs` and `legacy.rs`: every cover file is a regular file under a limit, read without blocking. The budget clock starts before the cover read, a cover that holds past the deadline still skips its handler with the part recorded, and one firing reads each table, the script, each folder, and each shell word once
+- [x] 13.5 Install records each slot from the table it writes and names a Codex `config.toml` hook by the line of its command value. The capability spec is under 150 lines, each requirement under 100 words, each step under 30
+- [x] 13.6 Tests: a CRLF or non-ASCII part, a fake `sh` first on `PATH`, a shebang with an option, a `nohup` part beside a good one, an `if` key at install and at a firing, `HOME` unset or another home, `CLAUDE_CONFIG_DIR` elsewhere, a record copied to another harness, a changed handler, a FIFO table, a cover that holds past the deadline, the cache, the slot, and the TOML line
+
+## 14. Nothing on Codex, only the system shell, and a bounded scan
+
+- [x] 14.1 Codex: install writes no Codex cover record and prints no `covered:` or trust line for it, `holds` refuses every Codex record, and the direct-entry handover keeps its trust check
+- [x] 14.2 `src/cli/hook/legacy.rs`: only `sh` or `/bin/sh` in front, resolved on the firing's `PATH` by canonical path to `/bin/sh`, the inner `sh` resolved the same way at install and at each firing, and a shebang counted only as `#!/bin/sh`
+- [x] 14.3 `src/cli/hook/legacy.rs`: a folder counts at most 16 `*.sh` entries, one scan reads at most 256 KiB of parts, and past a cap the folder covers nothing and install says why
+- [x] 14.4 `src/cli/hook/legacy.rs`: a counted word with an unquoted `*`, `?`, `{`, or a `[` paired with `]` covers nothing, and `[` alone stays the test command of a guard
+- [x] 14.5 `src/cli/hook/run.rs`: a cover that holds past the budget records `skipped` with its part, and the comment says so
+- [x] 14.6 Tests: a Codex entry covers nothing at install and at the firing, `zsh` and `bash` entries cover nothing, a fake `sh` first on `PATH` at install and at a firing, a shebang other than `#!/bin/sh`, seventeen parts, parts past the byte cap, an unquoted bracket pair, and a cover that holds past the budget
+
+## 15. Only the first part, a quiet environment, and no rewriter
+
+- [x] 15.1 `src/cli/hook/legacy.rs`: only the first `*.sh` part can cover, because the dispatcher stops at the first part that fails. The first part is decided by name under every locale: `NN-name.sh` with no two names on one number. The first part must be a regular file in the shape, a later part is not read, and every directory entry counts toward the cap of 16
+- [x] 15.2 `src/cli/hook/legacy.rs` and `cover.rs`: a counted word expands `$HOME` and `${HOME}` only, so any other `$`, a backquote, or a leading `~` covers nothing. Install and the firing cover nothing while `BASHOPTS`, `BASH_COMPAT`, `BASH_ENV`, `ENV`, `EXECIGNORE`, `GLOBIGNORE`, `GLOBSORT`, `IFS`, `POSIXLY_CORRECT`, `SHELLOPTS`, or a `BASH_FUNC_*` name is set, and install names the variable
+- [x] 15.3 `src/cli/hook/install.rs` and `cover.rs`: a handler with `rewrites: true` is never covered. `[ -x ]` is read with `access(2)`. `words` splits a predecessor on any whitespace as on main, and a part on space and tab only
+- [x] 15.4 Design: a doubt runs the handler and a cover that holds skips past the deadline. Rune keeps every generation because the Claude Code docs say edits are "normally" picked up by a file watcher and rune cannot read when a session last loaded its table. The shell variable list with its bash 3.2 and 5.3 manual sources. A Codex `config.toml` over 8 MiB or not a regular file reads as untrusted, so the handover keeps the predecessor
+- [x] 15.5 Tests: the owner's `Stop` parts cover tmux alone and turn runs twice, a `nohup` part after the first part blocks nothing, a first part outside the shape or a directory first is named, `11-A.sh` and two parts on one number cover nothing, a rewriter with a matching part, `SHELLOPTS` at install and `BASH_FUNC_ls%%` at a firing, and `$OTHER` in a part path at install and at a firing

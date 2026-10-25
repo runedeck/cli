@@ -687,8 +687,10 @@ fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 }
 
 /// The turn checkpoint script: the just tree first, where the dotfiles moved
-/// it from `~/.sd`, then the old place for a home not yet applied.
-fn checkpoint_script(home: &Path) -> Option<PathBuf> {
+/// it from `~/.sd`, then the old place for a home not yet applied. Install
+/// names a legacy part that runs this script as the turn-checkpoint
+/// handler's program.
+pub(crate) fn checkpoint_script(home: &Path) -> Option<PathBuf> {
     [
         ".config/just/claude/turn/checkpoint",
         ".sd/claude/turn/checkpoint",

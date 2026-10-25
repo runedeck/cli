@@ -149,6 +149,7 @@ fn a_live_record_that_holds_the_tool_use_is_not_imported_again() {
         failure: None,
         metrics: None,
         source: None,
+        skipped: None,
     };
     assert_eq!(
         record::write_all(&dir, vec![live], Duration::from_secs(2)),

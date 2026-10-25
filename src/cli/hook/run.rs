@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use rune::hooks::{Canonical, Harness, Mode, OnFailure, Plan, PlannedEvent, PlannedHandler};
 use serde_json::Value;
 
+use super::cover::{self, Cover};
 use super::encode::{Answer, Effect, HandlerResult, encode};
 use super::payload::{HandlerPayload, decode, event_matches, payload_event};
 use super::plan;
@@ -24,6 +25,9 @@ use crate::cli::process::{ProcessFailure, ProcessRequest, run_process_request};
 /// `on_failure` is the strongest policy install wrote into the
 /// registration: it decides the answer when the plan cannot load.
 pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &str) -> i32 {
+    // The budget clock starts before anything is read: the payload, the
+    // cover, the plan. The harness's own deadline runs from the start.
+    let started = Instant::now();
     let Some(harness) = Harness::parse(harness) else {
         eprintln!("rune hook: `{harness}` is not a harness");
         return 2;
@@ -48,10 +52,17 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
     } else {
         OnFailure::Warn
     };
-    let loaded = match plan {
-        Some(path) => plan::read_at(path),
-        None => plan::path().and_then(|path| plan::read_at(&path)),
-    };
+    let path = plan.map_or_else(plan::path, |path| Ok(path.to_path_buf()));
+    // The cover install wrote beside the plan: the handlers a part of a
+    // kept legacy dispatcher entry runs for, checked again at this firing.
+    let cover = path
+        .as_ref()
+        .ok()
+        .and_then(|path| cover::path_beside(path, harness, native_event))
+        .map(|path| cover::read(&path, harness, native_event))
+        .unwrap_or_default();
+    let env = cover::Environment::from_process();
+    let loaded = path.and_then(|path| plan::read_at(&path));
     let answer = match loaded {
         // A plan that loads but names no handler for the registered event
         // is as good as none: a guarded registration still denies.
@@ -70,7 +81,13 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
             if let Some(warning) = warning {
                 eprintln!("rune hook: {warning}");
             }
-            dispatch(&plan, harness, native_event, raw, &Runner::real())
+            dispatch(
+                &plan,
+                harness,
+                native_event,
+                raw,
+                &Runner::real(cover, env, started),
+            )
         }
         Err(error) => no_plan(
             harness,
@@ -158,11 +175,22 @@ pub(crate) struct Runner {
     pub(crate) record_error: Option<String>,
     /// Where the dispatcher log is written; `None` writes none.
     pub(crate) log_dir: Option<PathBuf>,
+    /// The handlers a part of a kept legacy dispatcher entry covers on
+    /// this event, each skipped while its coverage still holds.
+    pub(crate) cover: Cover,
+    /// The environment the coverage is checked under: the home and the
+    /// harness folders as the dispatcher and the harness read them.
+    pub(crate) env: cover::Environment,
+    /// When the budget clock started: before the first read.
+    pub(crate) started: Instant,
 }
 
 impl Runner {
-    pub(crate) fn real() -> Self {
+    pub(crate) fn real(cover: Cover, env: cover::Environment, started: Instant) -> Self {
         Self {
+            cover,
+            env,
+            started,
             log_dir: log_dir(),
             record_dir: record::dir().ok(),
             record_error: record::dir().err().map(|e| e.to_string()),
@@ -213,6 +241,57 @@ struct Failure {
     exit_status: Option<i32>,
 }
 
+/// The record of a handler the cover skips at this firing, because the
+/// legacy dispatcher part install recorded still runs its whole command.
+/// `None` runs the handler. Either way the log says why. `cache` holds
+/// what the checks read, once per firing. A cover that holds skips the
+/// handler whether or not the budget is spent by then: the part runs its
+/// command either way, and the handler would only run it again.
+#[allow(clippy::too_many_arguments)]
+fn skipped(
+    event: &PlannedEvent,
+    handler: &PlannedHandler,
+    harness: Harness,
+    native_event: &str,
+    payload: &HandlerPayload,
+    runner: &Runner,
+    cache: &mut cover::Cache,
+    log: &mut String,
+) -> Option<Record> {
+    let coverage = runner.cover.handlers.get(&handler.id)?;
+    let canonical = event
+        .canonical
+        .map_or_else(|| native_event.to_string(), |c| c.as_str().to_string());
+    let held = cover::holds(
+        coverage,
+        handler,
+        harness,
+        &canonical,
+        native_event,
+        &runner.env,
+        cache,
+    );
+    match held {
+        Ok(()) => {
+            let _ = writeln!(
+                log,
+                "{} skipped: the part {} of `{}` runs its command",
+                handler.id,
+                coverage.part.display(),
+                coverage.command
+            );
+            let mut line = record_line(harness, native_event, payload, &handler.id, Instant::now());
+            line.duration_ms = Some(0);
+            line.skipped = Some(coverage.part.display().to_string());
+            Some(line)
+        }
+        Err(why) => {
+            let _ = writeln!(log, "{} not skipped: {why}", handler.id);
+            None
+        }
+    }
+}
+
 /// Dispatch one event. Pure over the plan, the payload, and the runner.
 pub(crate) fn dispatch(
     plan: &Plan,
@@ -230,18 +309,28 @@ pub(crate) fn dispatch(
     };
     let can_block = event.canonical.is_some_and(|c| c.can_block(harness));
     let mut payload = decode(harness, native_event, raw);
-    let started = Instant::now();
-    let budget = Duration::from_millis(event.budget_ms);
     let reserve = Duration::from_millis(event.response_reserve_ms);
     let mut merged = HandlerResult::default();
     let mut stderr = Vec::new();
     let mut log = log_preamble(&payload);
     let mut records: Vec<Record> = Vec::new();
+    // One firing reads each table, script, and folder once.
+    let mut cache = cover::Cache::default();
     for handler in &event.handlers {
-        let remaining = budget
-            .saturating_sub(started.elapsed())
-            .saturating_sub(reserve)
-            .saturating_sub(STOP_ALLOWANCE);
+        if let Some(line) = skipped(
+            event,
+            handler,
+            harness,
+            native_event,
+            &payload,
+            runner,
+            &mut cache,
+            &mut log,
+        ) {
+            records.push(line);
+            continue;
+        }
+        let remaining = remaining(event, runner.started);
         let handler_started = Instant::now();
         let outcome = if remaining.is_zero() {
             Err(budget_spent(
@@ -267,21 +356,8 @@ pub(crate) fn dispatch(
                 line.asked = result.effect.word().to_string();
                 line.metrics = take_metrics(&mut result, &handler.id, &mut stderr);
                 log_result(&mut log, &handler.id, &result);
-                if event.mode == Mode::Passive && result.effect != Effect::Pass {
-                    stderr.push(passive_note(
-                        native_event,
-                        harness,
-                        &handler.id,
-                        &format!("{:?}", result.effect),
-                    ));
-                }
-                if event.mode == Mode::Passive && result.input.is_some() {
-                    stderr.push(passive_note(
-                        native_event,
-                        harness,
-                        &handler.id,
-                        "replacement input",
-                    ));
+                if event.mode == Mode::Passive {
+                    passive_notes(native_event, harness, &handler.id, &result, &mut stderr);
                 }
                 merge(&mut payload, &mut merged, result, event.mode);
             }
@@ -323,6 +399,15 @@ pub(crate) fn dispatch(
     answer.stderr = stderr;
     append_log(runner.log_dir.as_deref(), harness, native_event, &log);
     answer
+}
+
+/// What the budget leaves a handler started now: the budget less the time
+/// since the clock started, the reserve, and the stop allowance.
+fn remaining(event: &PlannedEvent, started: Instant) -> Duration {
+    Duration::from_millis(event.budget_ms)
+        .saturating_sub(started.elapsed())
+        .saturating_sub(Duration::from_millis(event.response_reserve_ms))
+        .saturating_sub(STOP_ALLOWANCE)
 }
 
 /// Fold one handler's result into the effective input and the answer.
@@ -603,6 +688,7 @@ fn record_line(
         failure: None,
         metrics: None,
         source: None,
+        skipped: None,
     }
 }
 
@@ -692,6 +778,33 @@ fn budget_spent(native_event: &str, budget_ms: u64, policy: OnFailure) -> Failur
 }
 
 /// A steering result on a passive event is logged and never applied.
+/// The notes a passive event's result earns: one for an effect other than
+/// pass, one for a replacement input. Neither is applied.
+fn passive_notes(
+    native_event: &str,
+    harness: Harness,
+    hook: &str,
+    result: &HandlerResult,
+    stderr: &mut Vec<String>,
+) {
+    if result.effect != Effect::Pass {
+        stderr.push(passive_note(
+            native_event,
+            harness,
+            hook,
+            &format!("{:?}", result.effect),
+        ));
+    }
+    if result.input.is_some() {
+        stderr.push(passive_note(
+            native_event,
+            harness,
+            hook,
+            "replacement input",
+        ));
+    }
+}
+
 fn passive_note(native_event: &str, harness: Harness, hook: &str, what: &str) -> String {
     format!(
         "rune hook: {native_event} is passive on {harness}; {hook}'s {what} is logged, not applied"

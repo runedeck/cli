@@ -63,6 +63,10 @@ pub(crate) struct Record {
     /// Absent for a live record; `import-claude` for a backfilled one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The legacy part that ran this hook's command instead, when the
+    /// dispatcher skipped the hook; absent when the hook ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
 }
 
 impl Record {

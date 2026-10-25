@@ -4,11 +4,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rune::hooks::{Harness, Hooks};
 use serde_json::{Value, json};
 
+use super::cover::{self, Cover};
 use super::encode::Effect;
 use super::payload::HandlerPayload;
 use super::run::{Runner, dispatch};
@@ -39,6 +40,9 @@ fn runner(fakes: HashMap<String, Fake>) -> (Runner, Seen) {
         record_dir: None,
         record_error: None,
         log_dir: None,
+        cover: Cover::default(),
+        env: cover::Environment::default(),
+        started: Instant::now(),
         spawn: Box::new(move |handler, stdin, timeout, _env, _cwd| {
             let payload: HandlerPayload = serde_json::from_slice(stdin).expect("payload json");
             log.borrow_mut().push((handler.id.clone(), payload));
@@ -106,6 +110,9 @@ fn answer_from(path: &std::path::Path) -> (Value, Value) {
         record_dir: None,
         record_error: None,
         log_dir: None,
+        cover: Cover::default(),
+        env: cover::Environment::default(),
+        started: Instant::now(),
         spawn: Box::new(|handler, _stdin, _timeout, _env, _cwd| {
             let stdout = match handler.exec[0].as_str() {
                 "dcg" => r#"{"effect":"deny","reason":"no rm"}"#,
@@ -641,6 +648,9 @@ fn a_handler_timeout_leaves_the_stop_allowance_inside_the_budget() {
         record_dir: None,
         record_error: None,
         log_dir: None,
+        cover: Cover::default(),
+        env: cover::Environment::default(),
+        started: Instant::now(),
         spawn: Box::new(move |_, _, timeout, _, _| {
             *seen.borrow_mut() = timeout;
             Ok((Some(0), "{}".to_string(), String::new()))

@@ -2,9 +2,13 @@
 //! subscribed event in Claude's `settings.json` and Codex's `hooks.json`.
 //! rune owns only the entries it wrote (known by their command), keeps
 //! every other entry, adopts the entries of the tools its adapters
-//! replace and of the legacy `sd hook` dispatcher, and stops on an owned
-//! entry a hand changed. The inventory lives in a manifest under the rune
-//! state directory.
+//! replace, and stops on an owned entry a hand changed. The legacy
+//! dispatcher's entry stays, and every handler stays in its event's
+//! generation: where a part of that entry runs a handler's whole command,
+//! install records the pair in a cover file (see `cover`), and the
+//! dispatcher skips the handler at each firing only while that still
+//! holds. The inventory lives in a manifest under the rune state
+//! directory.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -18,6 +22,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::codex_trust::{self, Trust};
+use super::cover;
+use super::legacy;
 use super::publish::Staged;
 use super::retire::{self, Retired, canonical};
 use super::table::Table;
@@ -30,7 +36,7 @@ pub(crate) struct Recorded {
     /// The hash of the whole registration rune wrote (owned entries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
-    /// Which adapter or migration adopted it (adopted entries).
+    /// Which adapter adopted it (adopted entries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
     /// The file the entry lives in (foreign and adopted entries).
@@ -77,6 +83,9 @@ pub(crate) struct Report {
     pub drift: Vec<String>,
     pub trust: Vec<String>,
     pub legacy_toml: Vec<String>,
+    /// A handler a part of a kept legacy dispatcher entry covers, so the
+    /// dispatcher skips it at each firing while the part runs its command.
+    pub covered: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -102,6 +111,7 @@ impl Report {
                 .collect(),
             unsupported: self.unsupported.clone(),
             legacy: self.legacy_toml.clone(),
+            covered: self.covered.clone(),
             drift: self.drift.clone(),
             trust: self.trust.clone(),
             warnings: self.warnings.clone(),
@@ -131,6 +141,9 @@ impl Report {
         }
         for line in &self.legacy_toml {
             let _ = writeln!(out, "legacy: {line}");
+        }
+        for line in &self.covered {
+            let _ = writeln!(out, "covered: {line}");
         }
         for line in &self.drift {
             let _ = writeln!(out, "drift: {line}");
@@ -173,8 +186,15 @@ fn guarded(harness: Harness, event: &PlannedEvent) -> bool {
 }
 
 /// The words of a command line with their quotes removed: enough of the
-/// shell to read back what `shell_quote` wrote.
-fn words(command: &str) -> Vec<String> {
+/// shell to read back what `shell_quote` wrote. Any blank splits words,
+/// as main reads a predecessor's command; `legacy::words` reads a part
+/// the way `sh` does.
+pub(crate) fn words(command: &str) -> Vec<String> {
+    split_words(command, char::is_whitespace)
+}
+
+/// The words of `command`, split outside quotes wherever `is_blank`.
+pub(crate) fn split_words(command: &str, is_blank: impl Fn(char) -> bool) -> Vec<String> {
     let mut out = Vec::new();
     let mut word = String::new();
     let mut started = false;
@@ -193,7 +213,7 @@ fn words(command: &str) -> Vec<String> {
                 word.extend(chars.next());
                 started = true;
             }
-            None if c.is_whitespace() => {
+            None if is_blank(c) => {
                 if started {
                     out.push(std::mem::take(&mut word));
                     started = false;
@@ -235,27 +255,27 @@ fn is_owned(command: &str, harness: Harness) -> bool {
     dispatcher_of(command).is_some_and(|(of, _)| of == harness.as_str())
 }
 
-/// What adopts the legacy `sd hook` dispatcher.
-const LEGACY: &str = "legacy sd hook";
-
 /// Whether two records name the same entry: its event, command, and file.
 fn same_entry(a: &Recorded, b: &Recorded) -> bool {
     a.event == b.event && a.command == b.command && a.source == b.source
 }
 
-/// The built-in adapters the plan runs on one harness's native event:
-/// each handler whose resolved executable is `rune-hook-<name>`.
-fn adapters_on(plan: &Plan, harness: Harness, event: &str) -> Vec<String> {
-    plan.event(harness, event)
-        .map(|planned| {
-            planned
-                .handlers
-                .iter()
-                .filter_map(|h| h.exec.first()?.strip_prefix("rune-hook-"))
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+/// The built-in adapter a handler runs: the `<name>` of a resolved
+/// executable `rune-hook-<name>`.
+fn adapter_of(handler: &rune::hooks::PlannedHandler) -> Option<&str> {
+    handler.exec.first()?.strip_prefix("rune-hook-")
+}
+
+/// The built-in adapters an event's registration runs, as install
+/// registers it: each handler whose resolved executable is
+/// `rune-hook-<name>`.
+fn adapters_of(planned: &PlannedEvent) -> Vec<String> {
+    planned
+        .handlers
+        .iter()
+        .filter_map(adapter_of)
+        .map(str::to_string)
+        .collect()
 }
 
 /// A predecessor install finds in a hook's command, by what replaces it.
@@ -273,9 +293,10 @@ enum Predecessor {
 /// line without them runs one program.
 const OPERATORS: &[char] = &[';', '&', '|', '<', '>', '(', ')', '$', '`', '\n', '\r'];
 
-/// The predecessor in a hook's command: the legacy dispatcher, or a tool
-/// whose adapter the plan runs on the same harness and native event. Only
-/// a command that runs the predecessor alone is install's to remove.
+/// The predecessor in a hook's command: a tool whose adapter the plan runs
+/// on the same harness and native event. Only a command that runs the
+/// predecessor alone is install's to remove. The legacy dispatcher is no
+/// predecessor: its entry stays, and `legacy` reads its parts.
 fn predecessor(command: &str, adapters: &[String]) -> Option<Predecessor> {
     if !command.contains(OPERATORS) {
         return predecessor_run(&words(command), adapters).map(Predecessor::Alone);
@@ -286,9 +307,8 @@ fn predecessor(command: &str, adapters: &[String]) -> Option<Predecessor> {
         .map(Predecessor::Compound)
 }
 
-/// What one simple command runs, by its words: `[sh] PATH/.sd/hook EVENT`,
-/// its successor `[sh] PATH/.config/just/hook EVENT`, or `sd hook EVENT` for
-/// the legacy dispatcher, else the program of a tool the plan replaces here.
+/// What one simple command runs, by its words: the program of a tool
+/// whose adapter the plan runs here.
 fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str> {
     let name = |word: &String| {
         Path::new(word)
@@ -296,21 +316,6 @@ fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     };
-    let args = match words.first().map(String::as_str) {
-        Some("sh" | "bash" | "zsh") => &words[1..],
-        _ => words,
-    };
-    match args {
-        [program, _event, ..]
-            if program.ends_with("/.sd/hook") || program.ends_with("/.config/just/hook") =>
-        {
-            return Some(LEGACY);
-        }
-        [program, hook, _event, ..] if name(program) == "sd" && hook == "hook" => {
-            return Some(LEGACY);
-        }
-        _ => {}
-    }
     let program = name(words.first()?);
     let second = words.get(1).map(String::as_str);
     let runs = |adapter: &str| adapters.iter().any(|a| a == adapter);
@@ -427,6 +432,9 @@ pub(crate) fn table_files(home: &Path) -> Result<Vec<PathBuf>, Error> {
 pub(crate) struct Prepared {
     pub report: Report,
     pub generations: Vec<super::plan::Generation>,
+    /// The cover files that changed: per event, the handlers a part of a
+    /// kept legacy dispatcher entry covers. Written beside the generations.
+    pub covers: Vec<Staged>,
     /// The old manifest without the retired records of generations the
     /// old or the new tables name, written before the tables when it
     /// differs from the file.
@@ -434,12 +442,15 @@ pub(crate) struct Prepared {
     pub files: Vec<Staged>,
 }
 
-/// Write what `prepare` computed, in order: the new generations, the
-/// early manifest, then the tables and the manifest as one step. The
-/// cleanup that follows runs only after that step succeeds.
+/// Write what `prepare` computed, in order: the new generations and the
+/// cover files, the early manifest, then the tables and the manifest as
+/// one step. The cleanup that follows runs only after that step succeeds.
 pub(crate) fn write(prepared: &Prepared) -> Result<(), Error> {
     for generation in &prepared.generations {
         super::plan::write_generation(generation)?;
+    }
+    if !prepared.covers.is_empty() {
+        super::publish::publish(&prepared.covers)?;
     }
     if let Some(early) = &prepared.early {
         super::publish::publish(std::slice::from_ref(early))?;
@@ -580,6 +591,9 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, Error> {
     let mut files: Vec<Staged> = Vec::new();
     let mut generations: Vec<super::plan::Generation> = Vec::new();
+    let mut covers: Vec<Staged> = Vec::new();
+    // The cover files live beside the generations, under the hooks dir.
+    let hooks_dir = generations_dir.parent().unwrap_or(generations_dir);
     // The generations rune's registrations name before and after install.
     let mut named_before = std::collections::BTreeSet::new();
     let mut named_after = std::collections::BTreeSet::new();
@@ -610,11 +624,33 @@ pub(crate) fn prepare(
         let mut next = HarnessManifest::default();
         let mut changed = false;
         let mut rewritten: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        // Each registration names its own generation.
+        let codex = harness == Harness::Codex;
+        // Each registration names its own generation: the event as the
+        // plan compiles it, every handler included. A handler that a part
+        // of a kept legacy dispatcher entry covers goes in the event's
+        // cover file, which the dispatcher reads at each firing.
+        let dispatchers = Dispatchers {
+            home,
+            harness,
+            table: &path,
+            path_env: std::env::var_os("PATH"),
+            shell_variable: cover::shell_variable_set(),
+        };
+        let toml = if codex {
+            codex_toml_hooks(&codex_config)
+        } else {
+            Vec::new()
+        };
         let mut wanted: BTreeMap<String, Value> = BTreeMap::new();
+        let mut events: BTreeMap<String, PlannedEvent> = BTreeMap::new();
         for (name, event) in plan.harnesses.get(&harness).into_iter().flatten() {
-            let Some(generation) = super::plan::generation(generations_dir, plan, harness, name)
-            else {
+            let Some(generation) = super::plan::generation_of(
+                generations_dir,
+                plan.version,
+                harness,
+                name,
+                event.clone(),
+            ) else {
                 continue;
             };
             let plan_path = generation.path.display().to_string();
@@ -622,6 +658,7 @@ pub(crate) fn prepare(
                 name.clone(),
                 rendered(rune, harness, name, event, &plan_path),
             );
+            events.insert(name.clone(), event.clone());
             generations.push(generation);
         }
         // Every event the table already has, in its order, plus every
@@ -632,7 +669,6 @@ pub(crate) fn prepare(
                 names.push(name.clone());
             }
         }
-        let codex = harness == Harness::Codex;
         let mut untrusted: Vec<(String, Trust)> = Vec::new();
         let mut moved: Vec<(String, Slot, Slot)> = Vec::new();
         let mut deferred: Vec<String> = Vec::new();
@@ -645,7 +681,7 @@ pub(crate) fn prepare(
                 path: &path,
                 want: wanted.get(name),
                 previous: &previous,
-                adapters: adapters_on(plan, harness, name),
+                adapters: events.get(name).map(adapters_of).unwrap_or_default(),
                 adopt: !codex,
                 keep_slots: codex,
                 hold: std::collections::BTreeSet::new(),
@@ -720,6 +756,15 @@ pub(crate) fn prepare(
                 touched_trust(&event, &codex_config, &kept, &mut report.drift);
             }
             named_after.extend(generations_in(&kept.groups));
+            // The cover names each entry at the slot the table has once
+            // this install wrote it, so an entry adopted before the
+            // dispatcher in this same install does not shift the slot.
+            if let Some(planned) = events.get(name) {
+                let handlers = dispatchers.covered(name, planned, &kept.groups, &mut report);
+                if !check && let Some(staged) = cover_file(hooks_dir, harness, name, handlers)? {
+                    covers.push(staged);
+                }
+            }
             if kept.changed {
                 changed = true;
                 rewritten.insert(name.clone(), kept.groups);
@@ -739,11 +784,24 @@ pub(crate) fn prepare(
             ));
         }
         // An entry adopted by an earlier install is gone from the table,
-        // so its record comes forward from the manifest.
+        // so its record comes forward from the manifest. A legacy
+        // dispatcher entry an earlier release adopted is one rune now
+        // keeps: install says it is gone, until the owner puts it back,
+        // when it is foreign and its record goes.
         for earlier in &previous.adopted {
-            if !next.adopted.iter().any(|r| same_entry(r, earlier)) {
-                next.adopted.push(earlier.clone());
+            if next.adopted.iter().any(|r| same_entry(r, earlier)) {
+                continue;
             }
+            if earlier.by.as_deref() == Some(LEGACY_SD_HOOK) {
+                if next.foreign.iter().any(|r| same_entry(r, earlier)) {
+                    continue;
+                }
+                report.warnings.push(format!(
+                    "{harness}: {} no longer has the legacy dispatcher entry `{}`, which an earlier install removed; rune keeps that entry now, so put it back by hand if its parts should run",
+                    earlier.event, earlier.command
+                ));
+            }
+            next.adopted.push(earlier.clone());
         }
         // A foreign entry the manifest does not list arrived after the
         // last install.
@@ -761,7 +819,7 @@ pub(crate) fn prepare(
             })
             .collect();
         if codex {
-            legacy_codex_toml(home, plan, &wanted, &mut report);
+            legacy_codex_toml(&codex_config, &toml, &events, &mut report);
         }
         if check {
             if changed {
@@ -827,9 +885,45 @@ pub(crate) fn prepare(
     Ok(Prepared {
         report,
         generations,
+        covers,
         early,
         files,
     })
+}
+
+/// The `by` an earlier release recorded when it adopted, and removed, a
+/// legacy dispatcher entry.
+const LEGACY_SD_HOOK: &str = "legacy sd hook";
+
+/// The cover file of `event` on `harness` as install stages it, or `None`
+/// when the file already holds `handlers`, or there is nothing to cover
+/// and no file to clear.
+fn cover_file(
+    hooks_dir: &Path,
+    harness: Harness,
+    event: &str,
+    handlers: BTreeMap<String, super::cover::Coverage>,
+) -> Result<Option<Staged>, Error> {
+    let target = super::cover::path_for(hooks_dir, harness, event);
+    let cover = super::cover::Cover {
+        v: 1,
+        harness: harness.as_str().to_string(),
+        event: event.to_string(),
+        handlers,
+    };
+    let text =
+        serde_json::to_string_pretty(&cover).map_err(|error| Error::io(error.to_string()))?;
+    let text = format!("{text}\n");
+    let current = fs::read_to_string(&target).ok();
+    if current.as_deref() == Some(text.as_str()) || (current.is_none() && cover.handlers.is_empty())
+    {
+        return Ok(None);
+    }
+    Ok(Some(Staged {
+        target,
+        text,
+        new_mode: Some(0o600),
+    }))
 }
 
 /// The manifest as the file install stages.
@@ -852,7 +946,8 @@ struct Event<'a> {
     /// The entry the plan wants here, or `None` when it wants none.
     want: Option<&'a Value>,
     previous: &'a HarnessManifest,
-    /// The built-in adapters the plan runs on this harness and event.
+    /// The built-in adapters the registration runs on this harness and
+    /// event.
     adapters: Vec<String>,
     /// Whether a predecessor may go now. On Codex it waits until Codex
     /// trusts the rune entry that replaces it.
@@ -1051,19 +1146,11 @@ impl Event<'_> {
 
     /// One hook that is not rune's: adopted when a handler on this event
     /// replaces it and the command runs nothing else, else kept as
-    /// foreign. Returns whether it stays.
+    /// foreign. The legacy dispatcher is foreign too: it stays, whatever
+    /// its parts run. Returns whether it stays.
     fn foreign(&self, command: &str, next: &mut HarnessManifest, report: &mut Report) -> bool {
         let (harness, name) = (self.harness, self.name);
         match predecessor(command, &self.adapters) {
-            Some(Predecessor::Alone(LEGACY) | Predecessor::Compound(LEGACY))
-                if self.want.is_none() =>
-            {
-                // The legacy dispatcher still serves this event: no rune
-                // entry takes its place, so it stays.
-                report.warnings.push(format!(
-                    "{harness}: {name} keeps the legacy `{command}`, because no handler subscribes to {name}; move what it runs into a handler, then remove it by hand"
-                ));
-            }
             Some(Predecessor::Compound(by)) => {
                 report.warnings.push(format!(
                     "{harness}: {name} keeps `{command}`, because it runs {by} with other commands; split it by hand, and the next install takes the {by} part"
@@ -1279,6 +1366,14 @@ impl Event<'_> {
 /// the handler within it.
 type Slot = (usize, usize);
 
+/// A handler a legacy dispatcher part covers, with the part and the
+/// command the handler's adapter runs on this harness and event.
+type Pair<'a> = (
+    &'a rune::hooks::PlannedHandler,
+    &'a legacy::Part,
+    Vec<String>,
+);
+
 /// A slot as the owner finds it in `/hooks`, counted from one.
 fn slot_word((group, handler): Slot) -> String {
     format!("group {} handler {}", group + 1, handler + 1)
@@ -1350,59 +1445,394 @@ fn codex_trust_of(event: &Event<'_>, config: &Path, groups: &[Value]) -> Trust {
     codex_trust::trust(config, event.path, event.name, g, h, &expected)
 }
 
-/// Codex also reads `[[hooks.<Event>]]` from `config.toml`. That file is
-/// rendered by the dotfiles and carries Codex's trust hashes, so rune
-/// names the legacy lines instead of rewriting the file.
-fn legacy_codex_toml(
-    home: &Path,
-    plan: &Plan,
-    registered: &BTreeMap<String, Value>,
-    report: &mut Report,
-) {
-    let path = home.join(".codex").join("config.toml");
-    let Ok(text) = fs::read_to_string(&path) else {
-        return;
+/// One command hook Codex reads from `config.toml`, with the line that
+/// holds its command, for a message.
+pub(crate) struct TomlHook {
+    pub event: String,
+    pub command: String,
+    pub line: Option<usize>,
+}
+
+/// The command hooks of `[[hooks.<Event>]]` in Codex's `config.toml`, read
+/// with the TOML parser, so a comment, a single-quoted string, and an
+/// inline table read as Codex reads them. A file that does not parse, or
+/// is no regular file under the limit, holds none install can read. The
+/// line named for a hook is the line of its `command` value, from the
+/// parser's spans: a string elsewhere that quotes the command never wins.
+pub(crate) fn codex_toml_hooks(path: &Path) -> Vec<TomlHook> {
+    let Some(text) = legacy::read_text_bounded(path, codex_trust::CONFIG_LIMIT) else {
+        return Vec::new();
     };
-    // The event a line belongs to: the last `[[hooks.<Event>…]]` header.
-    let mut event = String::new();
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if let Some(header) = trimmed.strip_prefix("[[hooks.") {
-            event = header
-                .split(['.', ']'])
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            continue;
-        }
-        if !trimmed.starts_with("command") {
-            continue;
-        }
-        let Some(command) = trimmed
-            .split_once('=')
-            .map(|(_, v)| v.trim().trim_matches('"'))
-        else {
+    let Ok(config) = toml::from_str::<toml::Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(events) = config.get("hooks").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+    let spans = toml::from_str::<SpannedConfig>(&text).ok();
+    let mut out = Vec::new();
+    for (event, groups) in events {
+        // `hooks.state` is a table of trust, not an array of groups.
+        let Some(groups) = groups.as_array() else {
             continue;
         };
-        let found = predecessor(command, &adapters_on(plan, Harness::Codex, &event));
-        let (by, alone) = match found {
+        for (g, group) in groups.iter().enumerate() {
+            let Ok(group) = serde_json::to_value(group) else {
+                continue;
+            };
+            let list = group["hooks"].as_array().cloned().unwrap_or_default();
+            for (h, hook) in list.into_iter().enumerate() {
+                let Some(command) = hook["command"].as_str().map(str::to_string) else {
+                    continue;
+                };
+                let line = spans
+                    .as_ref()
+                    .and_then(|spans| spans.start_of(event, g, h))
+                    .map(|start| 1 + text[..start].matches('\n').count());
+                out.push(TomlHook {
+                    event: event.clone(),
+                    command,
+                    line,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `config.toml` read for the span of each hook's `command` value only.
+#[derive(Deserialize)]
+struct SpannedConfig {
+    #[serde(default)]
+    hooks: BTreeMap<String, SpannedGroups>,
+}
+
+impl SpannedConfig {
+    /// The byte offset of the `command` value of hook `h` in group `g` of
+    /// `event`.
+    fn start_of(&self, event: &str, g: usize, h: usize) -> Option<usize> {
+        let hook = self.hooks.get(event)?.0.get(g)?.hooks.get(h)?;
+        Some(hook.command.as_ref()?.span().start)
+    }
+}
+
+/// The groups of one event, or none for a member of `hooks` that is a
+/// table, such as `hooks.state`.
+struct SpannedGroups(Vec<SpannedGroup>);
+
+impl<'de> Deserialize<'de> for SpannedGroups {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ArrayOrTable;
+        impl<'de> serde::de::Visitor<'de> for ArrayOrTable {
+            type Value = SpannedGroups;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an array of hook groups or a table")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<SpannedGroups, A::Error> {
+                let mut groups = Vec::new();
+                while let Some(group) = seq.next_element::<SpannedGroup>()? {
+                    groups.push(group);
+                }
+                Ok(SpannedGroups(groups))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<SpannedGroups, A::Error> {
+                while map
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(SpannedGroups(Vec::new()))
+            }
+        }
+        deserializer.deserialize_any(ArrayOrTable)
+    }
+}
+
+#[derive(Deserialize)]
+struct SpannedGroup {
+    #[serde(default)]
+    hooks: Vec<SpannedHook>,
+}
+
+#[derive(Deserialize)]
+struct SpannedHook {
+    command: Option<toml::Spanned<String>>,
+}
+
+/// Codex also reads `[[hooks.<Event>]]` from `config.toml`. That file is
+/// rendered by the dotfiles and carries Codex's trust hashes, so rune
+/// names the line of a tool's entry whose adapter now runs, instead of
+/// rewriting the file. A legacy dispatcher line is never named: it stays.
+fn legacy_codex_toml(
+    path: &Path,
+    hooks: &[TomlHook],
+    events: &BTreeMap<String, PlannedEvent>,
+    report: &mut Report,
+) {
+    for hook in hooks {
+        let adapters = events.get(&hook.event).map(adapters_of).unwrap_or_default();
+        let (by, alone) = match predecessor(&hook.command, &adapters) {
             Some(Predecessor::Alone(by)) => (by, true),
             Some(Predecessor::Compound(by)) => (by, false),
             None => continue,
         };
-        if by == LEGACY && !registered.contains_key(&event) {
-            continue;
-        }
         let what = if alone {
             format!("is now the {by} handler; remove it from config.toml")
         } else {
             format!("runs {by} with other commands; split it in config.toml")
         };
+        let at = hook.line.map(|line| format!(":{line}")).unwrap_or_default();
         report.legacy_toml.push(format!(
-            "{}:{}: `{command}` {what} by hand, rune does not rewrite that file",
+            "{}{at}: `{}` {what} by hand, rune does not rewrite that file",
             path.display(),
-            index + 1
+            hook.command
         ));
+    }
+}
+
+/// The legacy dispatcher entries of one harness, as the rule reads them
+/// in the harness table.
+struct Dispatchers<'a> {
+    home: &'a Path,
+    harness: Harness,
+    table: &'a Path,
+    /// The `PATH` a bare shell word in a command resolves by.
+    path_env: Option<std::ffi::OsString>,
+    /// A variable of the install's environment that changes how `sh`
+    /// reads a script, when one is set: nothing is covered then.
+    shell_variable: Option<String>,
+}
+
+/// One hook of an event as the dispatcher scan sees it: in `file`, at
+/// `slot`.
+struct Found<'a> {
+    command: String,
+    group: &'a Value,
+    hook: &'a Value,
+    slot: Slot,
+    file: &'a Path,
+}
+
+/// Why `found` covers nothing, when its first part would otherwise: the
+/// entry has a key rune does not read, or its matcher is not every call.
+fn uncovered_because(found: &Found<'_>) -> Option<String> {
+    if let Err(why) = cover::plain_entry(found.group, found.hook) {
+        return Some(why);
+    }
+    if !cover::every_tool(found.group) {
+        return Some("its matcher does not cover every call".to_string());
+    }
+    None
+}
+
+impl Dispatchers<'_> {
+    /// Every hook of the table `groups`.
+    fn found<'a>(&'a self, groups: &'a [Value]) -> Vec<Found<'a>> {
+        groups
+            .iter()
+            .enumerate()
+            .flat_map(|(g, group)| {
+                group["hooks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .map(move |(h, hook)| Found {
+                        command: hook["command"].as_str().unwrap_or_default().to_string(),
+                        group,
+                        hook,
+                        slot: (g, h),
+                        file: self.table,
+                    })
+            })
+            .collect()
+    }
+
+    /// The handlers of `planned` that the first part of a kept legacy
+    /// dispatcher entry on `name` covers: the part's command is the
+    /// handler's whole command here. Only the first part can cover, since
+    /// the dispatcher stops at the first part that exits non-zero. A
+    /// dispatcher inside a compound command, one whose script or first
+    /// part rune cannot read for sure, one whose folder has a name the
+    /// locale may sort first, or one under a matcher that is not every
+    /// tool covers nothing, and install says why where the first part
+    /// might then run twice. Nothing is covered on Codex: it loads its
+    /// hooks and their trust once per session, so a firing cannot read
+    /// what the session runs, and a handler skipped there could be lost.
+    /// Nothing is covered while a variable that changes how `sh` reads a
+    /// script is set.
+    ///
+    /// `candidates` names the handlers of `planned` a part may cover, each
+    /// with the command its adapter runs here. A `deny` handler, one that
+    /// rewrites the tool call, a handler with its own arguments, one
+    /// `covered` already holds, and one whose adapter reshapes the payload
+    /// off Claude are no candidates.
+    fn candidates<'a>(
+        &self,
+        planned: &'a PlannedEvent,
+        canonical: &str,
+        covered: &BTreeMap<String, cover::Coverage>,
+    ) -> Vec<(&'a rune::hooks::PlannedHandler, Vec<String>)> {
+        let mut out: Vec<(&'a rune::hooks::PlannedHandler, Vec<String>)> = Vec::new();
+        for handler in &planned.handlers {
+            if handler.on_failure == OnFailure::Deny
+                || handler.rewrites
+                || handler.exec.len() != 1
+                || covered.contains_key(&handler.id)
+                || out.iter().any(|(h, _)| h.id == handler.id)
+            {
+                continue;
+            }
+            let Some(adapter) = adapter_of(handler) else {
+                continue;
+            };
+            let Some((runs, shaped)) = cover::runs(adapter, self.harness, canonical, self.home)
+            else {
+                continue;
+            };
+            if shaped && self.harness != Harness::Claude {
+                continue;
+            }
+            out.push((handler, runs));
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn covered(
+        &self,
+        name: &str,
+        planned: &PlannedEvent,
+        groups: &[Value],
+        report: &mut Report,
+    ) -> BTreeMap<String, cover::Coverage> {
+        let (harness, home) = (self.harness, self.home);
+        let mut out: BTreeMap<String, cover::Coverage> = BTreeMap::new();
+        if harness == Harness::Codex {
+            return out;
+        }
+        let canonical = planned
+            .canonical
+            .map_or_else(|| name.to_string(), |c| c.as_str().to_string());
+        // One install scan reads as many bytes of parts as one firing may.
+        let mut budget = legacy::SCAN_LIMIT;
+        // The `sh` the dispatcher runs each part with, by the PATH here.
+        let inner_sh = legacy::resolve_shell("sh", self.path_env.as_deref());
+        let mut shell = |word: &str| legacy::resolve_shell(word, self.path_env.as_deref());
+        for found in self.found(groups) {
+            let command = &found.command;
+            let expanded = legacy::expand_home_in(command, home);
+            if expanded.contains(OPERATORS) {
+                let joined = expanded
+                    .split(OPERATORS)
+                    .any(|part| legacy::dispatcher(&legacy::words(part)).is_some());
+                if joined {
+                    report.warnings.push(format!(
+                        "{harness}: {name} reads no part of `{command}`, because it runs the legacy dispatcher with other commands, so a part may run what a handler runs twice; split it by hand, and the next install reads its parts"
+                    ));
+                }
+                continue;
+            }
+            if legacy::expands(&expanded) {
+                continue;
+            }
+            let Some(dispatcher) = legacy::dispatcher(&legacy::words(&expanded)) else {
+                continue;
+            };
+            let Some(script) = dispatcher.script else {
+                continue;
+            };
+            // The line, the script, the shell in front, and the `sh` the
+            // script runs each part with are read only as the shell reads
+            // them: one plain line, the known script text, a shell word
+            // that resolves to /bin/sh.
+            if !legacy::plain_command(command)
+                || legacy::script(&script)
+                    .check(&script, dispatcher.shell.as_deref())
+                    .is_err()
+                || dispatcher.shell.as_deref().is_some_and(|word| {
+                    legacy::resolve_shell(word, self.path_env.as_deref()).is_none()
+                })
+                || inner_sh.is_none()
+            {
+                continue;
+            }
+            let candidates = self.candidates(planned, &canonical, &out);
+            if candidates.is_empty() {
+                continue;
+            }
+            if let Some(variable) = &self.shell_variable {
+                report.warnings.push(format!(
+                    "{harness}: {name} reads no part of `{command}`, because {variable} is set, which changes how sh reads a script; every handler runs"
+                ));
+                continue;
+            }
+            let folder = legacy::folder(home, &dispatcher.event);
+            let part = match legacy::first_part(&folder, home, &mut budget) {
+                Ok(Some(part)) => part,
+                Ok(None) => continue,
+                Err(why) => {
+                    report.warnings.push(format!(
+                        "{harness}: {name} reads no part of `{command}`, because {why}; every handler runs"
+                    ));
+                    continue;
+                }
+            };
+            if !part.active {
+                continue;
+            }
+            let pairs: Vec<Pair<'_>> = candidates
+                .into_iter()
+                .filter(|(_, runs)| cover::same_command(&part.exec, runs, &mut shell))
+                .map(|(handler, runs)| (handler, &part, runs))
+                .collect();
+            if pairs.is_empty() {
+                continue;
+            }
+            if let Some(why) = uncovered_because(&found) {
+                for (handler, part, _) in &pairs {
+                    report.warnings.push(format!(
+                        "{harness}: {name} reads no part of `{command}`, because {why}, so the part {} may run what {} runs twice; every handler runs",
+                        part.path.display(),
+                        handler.id
+                    ));
+                }
+                continue;
+            }
+            for (handler, part, runs) in pairs {
+                report.covered.push(format!(
+                    "{harness}: {name} covers {} with the part {} of `{command}`; rune hook run skips {} while that part runs its command",
+                    handler.id,
+                    part.path.display(),
+                    handler.id
+                ));
+                out.insert(
+                    handler.id.clone(),
+                    cover::Coverage {
+                        home: home.to_path_buf(),
+                        handler_exec: handler.exec.clone(),
+                        file: found.file.to_path_buf(),
+                        slot: found.slot,
+                        command: command.clone(),
+                        script: script.clone(),
+                        shell: dispatcher.shell.clone(),
+                        folder: folder.clone(),
+                        part: part.path.clone(),
+                        exec: part.exec.clone(),
+                        runs,
+                    },
+                );
+            }
+        }
+        out
     }
 }
 
@@ -1472,12 +1902,15 @@ mod tests {
         let rune = rendered_for(&plan(), Harness::Claude, "PreToolUse");
         assert_eq!(
             commands,
-            [rune["hooks"][0]["command"].as_str().unwrap()],
-            "dcg, the legacy dispatcher, and git-ai were adopted"
+            [
+                "sh /Users/x/.sd/hook PreToolUse",
+                rune["hooks"][0]["command"].as_str().unwrap()
+            ],
+            "dcg and git-ai were adopted; the legacy dispatcher stays"
         );
         assert!(
-            commands[0].starts_with("/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plans/")
-                && commands[0].ends_with(".json --on-failure deny"),
+            commands[1].starts_with("/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plans/")
+                && commands[1].ends_with(".json --on-failure deny"),
             "{commands:?}"
         );
         assert_eq!(
@@ -1486,19 +1919,20 @@ mod tests {
             "a foreign entry on an event rune does not want stays"
         );
         assert_eq!(table["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 1);
-        assert_eq!(report.adopted.len(), 3);
+        assert_eq!(report.adopted.len(), 2, "{report:?}");
         assert!(
             report
                 .foreign
                 .iter()
                 .any(|(_, e, c)| e == "Notification" && c.starts_with("cmux"))
         );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         let manifest: Manifest =
             serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
         let claude = &manifest.harnesses[&Harness::Claude];
         assert_eq!(claude.owned.len(), 3, "PreToolUse, PostToolUse, SessionEnd");
-        assert_eq!(claude.foreign.len(), 1);
-        assert_eq!(claude.adopted.len(), 3);
+        assert_eq!(claude.foreign.len(), 2, "cmux and the legacy dispatcher");
+        assert_eq!(claude.adopted.len(), 2);
     }
 
     #[test]
@@ -1842,14 +2276,15 @@ mod tests {
             ["sh /Users/x/.sd/hook Stop", "/Users/x/bin/my-stop.sh"]
         );
         assert_eq!(commands("SessionEnd"), ["sh /Users/x/.sd/hook SessionEnd"]);
-        assert!(
-            !commands("PreToolUse")
-                .iter()
-                .any(|c| c.contains(".sd/hook")),
-            "the event rune registers adopts it"
+        let pre = commands("PreToolUse");
+        assert_eq!(pre.len(), 2, "{pre:?}");
+        assert_eq!(
+            pre[0], "sh /Users/x/.sd/hook PreToolUse",
+            "the dispatcher stays on the event rune registers too"
         );
-        assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
-        assert!(report.warnings[0].contains("legacy"));
+        assert!(pre[1].starts_with("/opt/rune hook run"), "{pre:?}");
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(report.adopted.is_empty(), "{:?}", report.adopted);
     }
 
     /// A home whose Claude table names `named` from a rune registration
@@ -2081,30 +2516,55 @@ mod tests {
 
     #[test]
     fn only_a_command_that_runs_the_predecessor_alone_is_adopted() {
-        let adapters = vec!["dcg".to_string(), "rtk".to_string()];
+        let adapters = vec![
+            "dcg".to_string(),
+            "rtk".to_string(),
+            "turn-checkpoint".to_string(),
+        ];
         let of = |command: &str| predecessor(command, &adapters);
-        assert_eq!(
-            of("sh ~/.sd/hook PreToolUse"),
-            Some(Predecessor::Alone(LEGACY))
-        );
-        assert_eq!(
-            of("/Users/x/.sd/hook Stop"),
-            Some(Predecessor::Alone(LEGACY))
-        );
-        assert_eq!(of("sd hook Stop"), Some(Predecessor::Alone(LEGACY)));
-        assert_eq!(
-            of("sh ~/.config/just/hook Stop"),
-            Some(Predecessor::Alone(LEGACY))
-        );
+        // The legacy dispatcher is no predecessor: its entry stays.
+        assert_eq!(of("sh ~/.sd/hook PreToolUse"), None);
+        assert_eq!(of("/Users/x/.sd/hook Stop"), None);
+        assert_eq!(of("sd hook Stop"), None);
+        assert_eq!(of("sh ~/.config/just/hook Stop"), None);
         assert_eq!(
             of("/Users/x/.local/bin/dcg"),
             Some(Predecessor::Alone("dcg"))
         );
-        assert_eq!(of("rtk hook claude"), Some(Predecessor::Alone("rtk")));
+        assert_eq!(of("~/.local/bin/dcg"), Some(Predecessor::Alone("dcg")));
+        // A `$` is an operator: a home spelling is a compound line, which
+        // install names for a hand edit and never removes.
         assert_eq!(
-            of("sh ~/.sd/hook PreToolUse && /owner/check-policy"),
-            Some(Predecessor::Compound(LEGACY))
+            of("$HOME/.local/bin/dcg"),
+            Some(Predecessor::Compound("dcg"))
         );
+        assert_eq!(
+            of("/bin/sh -e $HOME/.local/bin/dcg"),
+            Some(Predecessor::Compound("dcg"))
+        );
+        assert_eq!(
+            of("/bin/sh -e ~/.local/bin/dcg"),
+            None,
+            "a shell in front is the program"
+        );
+        assert_eq!(
+            of("sh $HOME/.config/just/claude/turn/checkpoint begin"),
+            None,
+            "the checkpoint script is no adapter's name"
+        );
+        assert_eq!(of("rtk hook claude"), Some(Predecessor::Alone("rtk")));
+        // A predecessor's words split at any blank, as main reads them; a
+        // part's words split at a space or a tab, as sh reads a line.
+        assert_eq!(
+            of("rtk\thook\u{a0}claude"),
+            Some(Predecessor::Alone("rtk")),
+            "a no-break space is a blank to the predecessor reader"
+        );
+        assert_eq!(
+            super::super::legacy::words("rtk\thook\u{a0}claude"),
+            ["rtk", "hook\u{a0}claude"]
+        );
+        assert_eq!(of("sh ~/.sd/hook PreToolUse && /owner/check-policy"), None);
         assert_eq!(
             of("dcg && /owner/check"),
             Some(Predecessor::Compound("dcg"))
@@ -2145,6 +2605,7 @@ mod tests {
             compound
         );
         assert!(report.adopted.is_empty(), "{report:?}");
+        assert!(report.covered.is_empty(), "{report:?}");
         assert!(
             report
                 .warnings
@@ -2233,7 +2694,7 @@ mod tests {
         let read: Manifest = serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
         assert_eq!(
             read.harnesses[&Harness::Claude].adopted.len(),
-            3,
+            2,
             "the second install keeps the first one's adoptions"
         );
         let report = apply(
@@ -2719,9 +3180,12 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join(".codex");
         fs::create_dir_all(&codex).unwrap();
+        // A comment, an inline table, a single-quoted string: TOML as Codex
+        // reads it. The dispatcher line stays unnamed; dcg's is named by
+        // its real line, not the comment above that quotes it.
         fs::write(
             codex.join("config.toml"),
-            "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ncommand = \"sh /Users/x/.sd/hook PreToolUse\"\ntype = \"command\"\n",
+            "# rendered by the dotfiles\n# command = '$HOME/.local/bin/dcg' moved below\n[[hooks.PreToolUse]]\nhooks = [{ type = \"command\", command = 'sh /Users/x/.sd/hook PreToolUse' }]\n\n[[hooks.PreToolUse]]\nmatcher = 'Bash'\n[[hooks.PreToolUse.hooks]]\ncommand = '$HOME/.local/bin/dcg'\ntype = \"command\"\n",
         )
         .unwrap();
         let manifest = home.path().join("state").join("manifest.json");
@@ -2735,11 +3199,17 @@ mod tests {
             false,
         )
         .unwrap();
+        assert_eq!(report.legacy_toml.len(), 1, "{report:?}");
         assert!(
-            report.legacy_toml[0].contains("config.toml:3"),
+            report.legacy_toml[0].contains("config.toml:9")
+                && report.legacy_toml[0].contains("dcg")
+                && report.legacy_toml[0].contains("split it in config.toml by hand"),
             "{report:?}"
         );
-        assert!(report.trust[0].contains("/hooks"));
+        assert!(
+            report.trust.iter().any(|t| t.contains("/hooks")),
+            "{report:?}"
+        );
         let hooks: Value =
             serde_json::from_str(&fs::read_to_string(codex.join("hooks.json")).unwrap()).unwrap();
         assert_eq!(
@@ -2750,5 +3220,1779 @@ mod tests {
             hooks["hooks"].get("Notification").is_none(),
             "codex has no notification event"
         );
+    }
+
+    /// The owner's dispatcher at `.config/just/hook`, the parts it runs
+    /// for each event under `.config/just/hooks/<Event>.d/`, the turn
+    /// checkpoint script the `turn-checkpoint` adapter runs, and the tmux
+    /// status binary the `tmux-status` adapter runs.
+    fn owner_home(parts: &[(&str, &str, &str)]) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        let just = home.path().join(".config").join("just");
+        fs::create_dir_all(just.join("claude").join("turn")).unwrap();
+        fs::write(just.join("hook"), super::super::legacy::tests::SCRIPT).unwrap();
+        fs::write(
+            just.join("claude").join("turn").join("checkpoint"),
+            "#!/bin/sh\n",
+        )
+        .unwrap();
+        let bin = home.path().join(".local").join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("claude-tmux-status"), "#!/bin/sh\n").unwrap();
+        for (event, name, text) in parts {
+            let dir = just.join("hooks").join(format!("{event}.d"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(name), text).unwrap();
+        }
+        home
+    }
+
+    /// The cover `prepared` stages for `event` on `harness`, parsed, or
+    /// `None` when it stages none.
+    fn cover_in(prepared: &Prepared, harness: Harness, event: &str) -> Option<cover::Cover> {
+        let name = format!("{harness}-{event}.json");
+        prepared
+            .covers
+            .iter()
+            .find(|staged| staged.target.ends_with(&name))
+            .map(|staged| serde_json::from_str(&staged.text).unwrap())
+    }
+
+    /// A runner that runs every handler as a pass and logs its id, with
+    /// the hook record under `record` and `cover` checked under `home`.
+    fn covered_runner(
+        home: &Path,
+        record: &Path,
+        cover: cover::Cover,
+    ) -> (
+        super::super::run::Runner,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    ) {
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = std::rc::Rc::clone(&seen);
+        let runner = super::super::run::Runner {
+            record_dir: Some(record.to_path_buf()),
+            record_error: None,
+            log_dir: None,
+            cover,
+            env: cover::Environment::under(home),
+            started: std::time::Instant::now(),
+            spawn: Box::new(move |handler, _, _, _, _| {
+                log.borrow_mut().push(handler.id.clone());
+                Ok((Some(0), "{}".to_string(), String::new()))
+            }),
+        };
+        (runner, seen)
+    }
+
+    /// The owner's live `Stop.d`: tmux attention, turn wrap, turn snapshot.
+    const STOP_PARTS: &[(&str, &str, &str)] = &[
+        (
+            "Stop",
+            "10-tmux-attention.sh",
+            "#!/bin/sh\nexec \"$HOME/.local/bin/claude-tmux-status\" attention\n",
+        ),
+        (
+            "Stop",
+            "20-turn-wrap.sh",
+            "#!/bin/sh\nexec sh \"$HOME/.config/just/claude/turn/wrap\"\n",
+        ),
+        (
+            "Stop",
+            "30-turn-snapshot.sh",
+            "#!/bin/sh\nexec sh \"$HOME/.config/just/claude/turn/checkpoint\" snapshot\n",
+        ),
+    ];
+
+    /// tmux-status, turn-checkpoint, and session-capture on turn.finish.
+    fn stop_plan() -> Plan {
+        serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: tmux\n    exec: [rune-hook-tmux-status]\n    events: [turn.finish]\n  - id: turn\n    exec: [rune-hook-turn-checkpoint]\n    events: [turn.finish]\n  - id: capture\n    exec: [rune-hook-session-capture]\n    events: [turn.finish]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap()
+    }
+
+    /// The generation `prepared` wrote for `event` on `harness`, or `None`
+    /// when it registers nothing there.
+    fn generation_in<'a>(
+        prepared: &'a Prepared,
+        harness: Harness,
+        event: &str,
+    ) -> Option<&'a super::super::plan::Generation> {
+        prepared.generations.iter().find(|generation| {
+            let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+            plan.event(harness, event).is_some()
+        })
+    }
+
+    /// The handler ids in the generation `prepared` wrote for `event` on
+    /// `harness`, or `None` when it registers nothing there.
+    fn handlers_in(prepared: &Prepared, harness: Harness, event: &str) -> Option<Vec<String>> {
+        let generation = generation_in(prepared, harness, event)?;
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        let planned = plan.event(harness, event)?;
+        Some(planned.handlers.iter().map(|h| h.id.clone()).collect())
+    }
+
+    /// Every handler of [`stop_plan`], as a generation lists them.
+    fn every_stop_handler() -> Vec<String> {
+        vec![
+            "capture".to_string(),
+            "tmux".to_string(),
+            "turn".to_string(),
+        ]
+    }
+
+    fn commands_in(prepared: &Prepared, file: &str, event: &str) -> Vec<String> {
+        let staged = prepared
+            .files
+            .iter()
+            .find(|staged| staged.target.ends_with(file))
+            .unwrap_or_else(|| panic!("{file} is staged: {:?}", prepared.files));
+        let table: Value = serde_json::from_str(&staged.text).unwrap();
+        table["hooks"][event]
+            .as_array()
+            .map(|groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_owner_s_stop_parts_cover_tmux_alone_on_claude() {
+        let home = owner_home(STOP_PARTS);
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let manifest = home.path().join("state").join("manifest.json");
+        let prepared = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            Path::new(PLAN),
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let report = &prepared.report;
+        let claude = commands_in(&prepared, "settings.json", "Stop");
+        assert_eq!(claude[0], dispatcher, "the entry stays: {claude:?}");
+        assert_eq!(claude.len(), 2, "{claude:?}");
+        assert_eq!(
+            handlers_in(&prepared, Harness::Claude, "Stop"),
+            Some(every_stop_handler()),
+            "every handler stays in the generation: {report:?}"
+        );
+        assert_eq!(
+            handlers_in(&prepared, Harness::Codex, "Stop"),
+            Some(every_stop_handler())
+        );
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        // Only the first part covers: a failing earlier part ends the
+        // dispatcher before a later one runs. The turn checkpoint part is
+        // third, so turn runs twice.
+        assert_eq!(report.covered.len(), 1, "{report:?}");
+        assert!(
+            report.covered[0].starts_with("claude: Stop covers tmux with the part ")
+                && report.covered[0]
+                    .contains(&stop_d.join("10-tmux-attention.sh").display().to_string())
+                && report.covered[0].contains(dispatcher)
+                && report.covered[0]
+                    .ends_with("rune hook run skips tmux while that part runs its command"),
+            "{:?}",
+            report.covered
+        );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(report.adopted.is_empty(), "{:?}", report.adopted);
+        let summary = report.summary();
+        assert_eq!(summary.covered, report.covered);
+        assert!(
+            summary
+                .lines()
+                .iter()
+                .any(|l| l.starts_with("covered: claude: Stop covers tmux"))
+        );
+        // The cover file names the entry, the script, and the part per
+        // handler, and goes beside the generations.
+        assert_eq!(prepared.covers.len(), 1, "{:?}", prepared.covers);
+        assert_eq!(
+            prepared.covers[0].target,
+            Path::new("/state/hooks/cover/claude-Stop.json")
+        );
+        let cover = cover_in(&prepared, Harness::Claude, "Stop").unwrap();
+        assert_eq!(
+            cover.handlers.keys().collect::<Vec<_>>(),
+            ["tmux"],
+            "{cover:?}"
+        );
+        let tmux = &cover.handlers["tmux"];
+        assert_eq!(tmux.command, dispatcher);
+        assert_eq!(tmux.file, home.path().join(".claude/settings.json"));
+        assert_eq!(tmux.slot, (0, 0));
+        assert_eq!(tmux.script, home.path().join(".config/just/hook"));
+        assert_eq!(tmux.shell.as_deref(), Some("sh"));
+        assert_eq!(tmux.folder, stop_d);
+        assert_eq!(tmux.part, stop_d.join("10-tmux-attention.sh"));
+        assert_eq!(tmux.exec, tmux.runs);
+        assert_eq!(tmux.runs[1], "attention");
+        assert_eq!(cover_in(&prepared, Harness::Codex, "Stop"), None);
+    }
+
+    #[test]
+    fn a_covered_handler_is_skipped_at_each_firing_and_runs_once_its_part_goes() {
+        let home = owner_home(STOP_PARTS);
+        let dispatcher = "sh ~/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let state = home.path().join("state");
+        let manifest = state.join("manifest.json");
+        let plans = state.join("hooks").join("plans");
+        let first = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        write(&first).unwrap();
+        let cover_path = state.join("hooks/cover/claude-Stop.json");
+        let generation = generation_in(&first, Harness::Claude, "Stop")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            super::super::cover::path_beside(&generation.path, Harness::Claude, "Stop").as_deref(),
+            Some(cover_path.as_path())
+        );
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        let record = state.join("record");
+        let fire = || {
+            let cover = super::super::cover::read(&cover_path, Harness::Claude, "Stop");
+            let (runner, seen) = covered_runner(home.path(), &record, cover);
+            let raw = json!({"hook_event_name": "Stop", "session_id": "s", "cwd": "/"});
+            let answer =
+                super::super::run::dispatch(&plan, Harness::Claude, "Stop", Ok(raw), &runner);
+            assert_eq!(answer.exit, 0, "{answer:?}");
+            seen.borrow().clone()
+        };
+        assert_eq!(
+            fire(),
+            ["capture", "turn"],
+            "tmux is skipped; turn is not first, so it runs"
+        );
+        let records = super::super::record::load(&record).unwrap();
+        let skipped: BTreeMap<String, Option<String>> = records
+            .iter()
+            .map(|r| (r.hook.clone(), r.skipped.clone()))
+            .collect();
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        assert_eq!(
+            skipped,
+            BTreeMap::from([
+                ("capture".to_string(), None),
+                (
+                    "tmux".to_string(),
+                    Some(stop_d.join("10-tmux-attention.sh").display().to_string())
+                ),
+                ("turn".to_string(), None),
+            ]),
+            "{records:?}"
+        );
+        let tmux = records.iter().find(|r| r.hook == "tmux").unwrap();
+        assert_eq!(tmux.duration_ms, Some(0));
+        assert_eq!(tmux.exit_status, None);
+        assert_eq!(tmux.asked, "allow");
+        // The tmux part goes: tmux runs at the next firing, with no
+        // install in between. The wrap part is first now and covers no
+        // handler, so the snapshot part behind it covers nothing either.
+        fs::remove_file(stop_d.join("10-tmux-attention.sh")).unwrap();
+        assert_eq!(fire(), ["capture", "tmux", "turn"]);
+        // The next install changes no registration: only the cover, which
+        // empties, because the wrap part runs no handler's command.
+        let second = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            !second
+                .report
+                .written
+                .iter()
+                .any(|(h, e)| *h == Harness::Claude && e == "Stop"),
+            "the registration stays: {:?}",
+            second.report.written
+        );
+        assert!(second.report.covered.is_empty(), "{:?}", second.report);
+        let cover = cover_in(&second, Harness::Claude, "Stop").unwrap();
+        assert!(cover.handlers.is_empty(), "{cover:?}");
+        assert_eq!(
+            generation_in(&second, Harness::Claude, "Stop"),
+            Some(&generation)
+        );
+    }
+
+    #[test]
+    fn the_owner_s_guards_keep_running_beside_dcg_and_jj_guards() {
+        let guard = "#!/bin/sh\ncase \"$tool\" in Bash) ;; *) exit 0 ;; esac\nprintf '%s' \"$cmd\" | grep -q 'jj abandon' && exit 2\nexit 0\n";
+        let home = owner_home(&[
+            ("PreToolUse", "10-jj-abandon.sh", guard),
+            ("PreToolUse", "20-jj-squash.sh", guard),
+            ("PreToolUse", "30-jj-rebase.sh", guard),
+        ]);
+        let dispatcher = "sh $HOME/.config/just/hook PreToolUse";
+        let dcg = "~/.local/bin/dcg";
+        settings(
+            home.path(),
+            &json!({"hooks": {"PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": dcg}]},
+                {"hooks": [{"type": "command", "command": dispatcher}]},
+            ]}})
+            .to_string(),
+        );
+        let guards: Plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: dcg\n    exec: [rune-hook-dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: jj\n    exec: [rune-hook-jj-guards]\n    events: [tool.before]\n    on_failure: deny\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let manifest = home.path().join("state").join("manifest.json");
+        let prepared = prepare(
+            &guards,
+            home.path(),
+            "/opt/rune",
+            Path::new(PLAN),
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let report = &prepared.report;
+        let claude = commands_in(&prepared, "settings.json", "PreToolUse");
+        assert_eq!(claude.len(), 2, "{claude:?}");
+        assert_eq!(claude[0], dispatcher, "the entry stays: {claude:?}");
+        assert!(claude[1].starts_with("/opt/rune hook run"), "{claude:?}");
+        assert_eq!(
+            handlers_in(&prepared, Harness::Claude, "PreToolUse"),
+            Some(vec!["dcg".to_string(), "jj".to_string()]),
+            "a part with no exec line matches nothing: both guards run"
+        );
+        assert!(report.covered.is_empty(), "{report:?}");
+        assert!(prepared.covers.is_empty(), "{:?}", prepared.covers);
+        assert!(
+            report
+                .adopted
+                .iter()
+                .any(|(_, e, c)| e == "PreToolUse" && c == dcg),
+            "dcg follows the adoption path: {:?}",
+            report.adopted
+        );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    #[test]
+    fn a_deny_handler_is_never_covered_even_by_a_part_that_runs_its_program() {
+        let home = owner_home(&[("PreToolUse", "10-dcg.sh", "#!/bin/sh\nexec dcg\n")]);
+        let dispatcher = "sh $HOME/.config/just/hook PreToolUse";
+        settings(
+            home.path(),
+            &json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let manifest = home.path().join("state").join("manifest.json");
+        let prepared = prepare(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            Path::new(PLAN),
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert_eq!(
+            handlers_in(&prepared, Harness::Claude, "PreToolUse"),
+            Some(vec!["dcg".to_string(), "git-ai".to_string()])
+        );
+        assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+        assert!(prepared.covers.is_empty(), "{:?}", prepared.covers);
+        assert!(prepared.report.warnings.is_empty(), "{:?}", prepared.report);
+    }
+
+    #[test]
+    fn a_rewriter_is_never_covered_even_by_a_part_that_runs_its_command() {
+        // A rewriter's output is the call the handlers after it read. A
+        // part's output is not: with rtk covered, dcg read `git status`
+        // while Claude ran `rtk git status`.
+        let home = owner_home(&[(
+            "PreToolUse",
+            "10-rtk.sh",
+            "#!/bin/sh\nexec rtk hook claude\n",
+        )]);
+        let dispatcher = "sh $HOME/.config/just/hook PreToolUse";
+        settings(
+            home.path(),
+            &json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let manifest = home.path().join("state").join("manifest.json");
+        let at = |rewrites: bool| {
+            let plan = serde_yaml::from_str::<Hooks>(&format!(
+                "handlers:\n  - id: rtk\n    exec: [rune-hook-rtk]\n    events: [tool.before]\n    rewrites: {rewrites}\n"
+            ))
+            .unwrap()
+            .compile()
+            .unwrap();
+            prepare(
+                &plan,
+                home.path(),
+                "/opt/rune",
+                Path::new(PLAN),
+                &manifest,
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+        };
+        let plain = at(false);
+        assert_eq!(plain.report.covered.len(), 1, "{:?}", plain.report);
+        assert!(
+            plain.report.covered[0].starts_with("claude: PreToolUse covers rtk"),
+            "{:?}",
+            plain.report
+        );
+        let rewriter = at(true);
+        assert!(rewriter.report.covered.is_empty(), "{:?}", rewriter.report);
+        assert!(rewriter.covers.is_empty(), "{:?}", rewriter.covers);
+        assert!(rewriter.report.warnings.is_empty(), "{:?}", rewriter.report);
+    }
+
+    #[test]
+    fn a_variable_that_changes_how_sh_reads_a_script_covers_nothing_at_install_and_at_the_firing() {
+        // SHELLOPTS=noglob reaches the dispatcher from the harness's
+        // environment, and its glob then lists no part. Install under such
+        // a variable warns and covers nothing; a firing under one skips
+        // nothing.
+        let home = owner_home(STOP_PARTS);
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        let table = settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let plan = stop_plan();
+        let planned = plan.event(Harness::Claude, "Stop").unwrap();
+        let groups = Table::read(&table).unwrap().groups("Stop");
+        let system = std::env::join_paths([Path::new("/bin")]).unwrap();
+        if legacy::resolve_shell("sh", Some(&system)).is_none() {
+            return;
+        }
+        let with = |variable: Option<&str>| {
+            let dispatchers = Dispatchers {
+                home: home.path(),
+                harness: Harness::Claude,
+                table: &table,
+                path_env: Some(system.clone()),
+                shell_variable: variable.map(str::to_string),
+            };
+            let mut report = Report::default();
+            let covered = dispatchers.covered("Stop", planned, &groups, &mut report);
+            (covered.keys().cloned().collect::<Vec<_>>(), report.warnings)
+        };
+        let (covered, warnings) = with(None);
+        assert_eq!(covered, ["tmux"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (covered, warnings) = with(Some("SHELLOPTS"));
+        assert!(covered.is_empty(), "{covered:?}");
+        assert_eq!(
+            warnings,
+            [format!(
+                "claude: Stop reads no part of `{dispatcher}`, because SHELLOPTS is set, which changes how sh reads a script; every handler runs"
+            )]
+        );
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let mut env = cover::Environment::under(installed.home.path());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(())
+        );
+        env.shell_variable = Some("BASH_FUNC_ls%%".to_string());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(
+                "BASH_FUNC_ls%% is set, which changes how sh reads the dispatcher and its parts"
+                    .to_string()
+            )
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_part_that_expands_past_home_covers_nothing_at_install_and_at_the_firing() {
+        // `$OTHER` in the part is a folder named `$OTHER` to rune and
+        // whatever the environment says to sh. Even with such a folder in
+        // place, the part has no shape.
+        let home = owner_home(STOP_PARTS);
+        let local = home.path().join(".local");
+        std::os::unix::fs::symlink(local.join("bin"), local.join("$OTHER")).unwrap();
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        let part = stop_d.join("10-tmux-attention.sh");
+        let other = "#!/bin/sh\nexec \"$HOME/.local/$OTHER/claude-tmux-status\" attention\n";
+        let backquote =
+            "#!/bin/sh\nexec `echo \"$HOME/.local/bin/claude-tmux-status\"` attention\n";
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let state = home.path().join("state");
+        let at = || {
+            prepare(
+                &stop_plan(),
+                home.path(),
+                "/opt/rune",
+                &state.join("hooks").join("plans"),
+                &state.join("manifest.json"),
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+        };
+        let unshaped = format!(
+            "claude: Stop reads no part of `{dispatcher}`, because {} has a shape rune does not read; every handler runs",
+            part.display()
+        );
+        for text in [other, backquote] {
+            fs::write(&part, text).unwrap();
+            let prepared = at();
+            assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+            assert_eq!(
+                prepared.report.warnings,
+                std::slice::from_ref(&unshaped),
+                "{text}"
+            );
+        }
+        // Installed with the plain part, then edited: the firing refuses.
+        fs::write(&part, STOP_PARTS[0].2).unwrap();
+        let prepared = at();
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        write(&prepared).unwrap();
+        let generation = generation_in(&prepared, Harness::Claude, "Stop").unwrap();
+        let installed = Installed {
+            cover: cover::read(
+                &state.join("hooks/cover/claude-Stop.json"),
+                Harness::Claude,
+                "Stop",
+            ),
+            plan: serde_json::from_str(&generation.text).unwrap(),
+            state: state.clone(),
+            home,
+        };
+        let env = cover::Environment::under(installed.home.path());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(())
+        );
+        for text in [other, backquote] {
+            fs::write(&part, text).unwrap();
+            assert_eq!(
+                holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+                Err(format!("{} has a shape rune does not read", part.display())),
+                "{text}"
+            );
+        }
+        // An entry that expands past `$HOME` is read by no install, and a
+        // record that names one holds at no firing.
+        let mut coverage = installed.cover.handlers["tmux"].clone();
+        coverage.command = "sh $HOME/.config/$JUST/hook Stop".to_string();
+        let planned = installed.plan.event(Harness::Claude, "Stop").unwrap();
+        let tmux = planned.handlers.iter().find(|h| h.id == "tmux").unwrap();
+        let table = installed.home.path().join(".claude/settings.json");
+        let mut value: Value = serde_json::from_str(&fs::read_to_string(&table).unwrap()).unwrap();
+        value["hooks"]["Stop"][0]["hooks"][0]["command"] = json!(coverage.command);
+        fs::write(&table, value.to_string()).unwrap();
+        assert_eq!(
+            cover::holds(
+                &coverage,
+                tmux,
+                Harness::Claude,
+                "turn.finish",
+                "Stop",
+                &env,
+                &mut cover::Cache::default(),
+            ),
+            Err("the entry's command expands past $HOME".to_string())
+        );
+    }
+
+    #[test]
+    fn a_first_part_without_the_shape_covers_nothing_and_is_named() {
+        // The first part has no exec line, so the folder covers nothing,
+        // even when a later part runs a handler's command: rune reads the
+        // first part alone. Install names the part. A `-e` guard is not a
+        // shape.
+        let home = owner_home(&[
+            (
+                "Stop",
+                "05-log.sh",
+                "#!/bin/sh\nif [ -n \"$DEBUG\" ]; then echo stop; fi\nexit 0\n",
+            ),
+            STOP_PARTS[0],
+            STOP_PARTS[2],
+        ]);
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let manifest = home.path().join("state").join("manifest.json");
+        let at = |home: &Path| {
+            prepare(
+                &stop_plan(),
+                home,
+                "/opt/rune",
+                Path::new(PLAN),
+                &manifest,
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+        };
+        let prepared = at(home.path());
+        assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+        assert!(prepared.covers.is_empty(), "{:?}", prepared.covers);
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        let names = |prepared: &Prepared, part: &str| {
+            prepared.report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.ends_with(&format!(
+                        "because {} has a shape rune does not read; every handler runs",
+                        stop_d.join(part).display()
+                    ))
+            })
+        };
+        assert!(names(&prepared, "05-log.sh"), "{:?}", prepared.report);
+        // The unshaped part goes: the tmux part is first and covers tmux.
+        fs::remove_file(stop_d.join("05-log.sh")).unwrap();
+        let prepared = at(home.path());
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        assert!(prepared.report.covered[0].contains("covers tmux"));
+        assert!(prepared.report.warnings.is_empty(), "{:?}", prepared.report);
+        // A guard that is not `-x` or `-f` on the exec program is no
+        // shape: the first part has none, so the folder covers nothing.
+        fs::write(
+            stop_d.join("10-tmux-attention.sh"),
+            "#!/bin/sh\n[ -e \"$HOME/.local/bin/claude-tmux-status\" ] || exit 0\nexec \"$HOME/.local/bin/claude-tmux-status\" attention\n",
+        )
+        .unwrap();
+        let prepared = at(home.path());
+        assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+        assert!(
+            names(&prepared, "10-tmux-attention.sh"),
+            "{:?}",
+            prepared.report
+        );
+        // A `*.sh` entry that is no regular file first counts the folder as
+        // nothing too.
+        fs::remove_file(stop_d.join("10-tmux-attention.sh")).unwrap();
+        fs::create_dir(stop_d.join("15-dir.sh")).unwrap();
+        let prepared = at(home.path());
+        assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+        assert!(
+            prepared.report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains("15-dir.sh is no regular file; every handler runs")
+            }),
+            "{:?}",
+            prepared.report
+        );
+        // The snapshot part is first once the folder is gone: it covers
+        // turn, and a part behind it that the dispatcher runs with `nohup`
+        // blocks nothing, because rune never reads it.
+        fs::remove_dir(stop_d.join("15-dir.sh")).unwrap();
+        fs::write(
+            stop_d.join("40-nohup.sh"),
+            "#!/bin/sh\nnohup \"$HOME/.local/bin/slow\" >/dev/null 2>&1 &\n",
+        )
+        .unwrap();
+        let prepared = at(home.path());
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        assert!(
+            prepared.report.covered[0].contains("covers turn"),
+            "{:?}",
+            prepared.report
+        );
+        assert!(prepared.report.warnings.is_empty(), "{:?}", prepared.report);
+    }
+
+    /// The legacy dispatcher on Stop, as the owner's Claude table holds it
+    /// twice: once behind a `Bash` matcher and once joined with a second
+    /// command.
+    const DISPATCHER: &str = "sh ~/.config/just/hook Stop";
+    const COMPOUND: &str = "sh ~/.config/just/hook Stop && /owner/after-stop";
+
+    /// An install over a home whose Claude table holds [`DISPATCHER`] and
+    /// [`COMPOUND`] on Stop, whose Codex table holds the dispatcher on Stop
+    /// and `PostToolUse`, and whose plan runs the Stop handlers and the
+    /// git-ai checkpoint on both harnesses.
+    struct Mixed {
+        home: tempfile::TempDir,
+        codex: PathBuf,
+        both: Plan,
+        prepared: Prepared,
+    }
+
+    fn mixed_install() -> Mixed {
+        let home = owner_home(STOP_PARTS);
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": DISPATCHER}]},
+                {"hooks": [{"type": "command", "command": COMPOUND}]},
+            ]}})
+            .to_string(),
+        );
+        // Codex parts run the git-ai checkpoint for each harness; only the
+        // codex one is what the Codex handler runs, and a shaped adapter
+        // such as tmux is coverable on Claude alone.
+        let posttool = home.path().join(".config/just/hooks/PostToolUse.d");
+        fs::create_dir_all(&posttool).unwrap();
+        fs::write(
+            posttool.join("10-git-ai-claude.sh"),
+            "#!/bin/sh\nexec git-ai checkpoint claude --hook-input stdin\n",
+        )
+        .unwrap();
+        fs::write(
+            posttool.join("20-git-ai-codex.sh"),
+            "#!/bin/sh\nexec git-ai checkpoint codex --hook-input stdin\n",
+        )
+        .unwrap();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(&codex).unwrap();
+        fs::write(
+            codex.join("hooks.json"),
+            json!({"hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": DISPATCHER}]}],
+                "PostToolUse": [{"hooks": [{"type": "command", "command": "sh ~/.config/just/hook PostToolUse"}]}],
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let mut both = stop_plan();
+        let git_ai = plan();
+        for harness in [Harness::Claude, Harness::Codex] {
+            let events = both.harnesses.entry(harness).or_default();
+            let source = git_ai.harnesses.get(&harness).unwrap();
+            events.insert(
+                "PostToolUse".to_string(),
+                source.get("PostToolUse").unwrap().clone(),
+            );
+        }
+        let state = home.path().join("state");
+        let manifest = state.join("manifest.json");
+        let plans = state.join("hooks").join("plans");
+        let prepared = prepare(
+            &both,
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        Mixed {
+            home,
+            codex,
+            both,
+            prepared,
+        }
+    }
+
+    #[test]
+    fn a_matcher_covers_nothing() {
+        let mixed = mixed_install();
+        let report = &mixed.prepared.report;
+        assert_eq!(
+            handlers_in(&mixed.prepared, Harness::Claude, "Stop"),
+            Some(every_stop_handler()),
+            "{report:?}"
+        );
+        assert_eq!(cover_in(&mixed.prepared, Harness::Claude, "Stop"), None);
+        let claude = commands_in(&mixed.prepared, "settings.json", "Stop");
+        assert_eq!(claude[0], DISPATCHER, "the entry stays: {claude:?}");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains(DISPATCHER)
+                    && w.contains("because its matcher does not cover every call")
+                    && w.contains("10-tmux-attention.sh")
+            }),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn a_compound_line_covers_nothing() {
+        let mixed = mixed_install();
+        let report = &mixed.prepared.report;
+        assert_eq!(
+            handlers_in(&mixed.prepared, Harness::Claude, "Stop"),
+            Some(every_stop_handler()),
+            "{report:?}"
+        );
+        assert_eq!(cover_in(&mixed.prepared, Harness::Claude, "Stop"), None);
+        let claude = commands_in(&mixed.prepared, "settings.json", "Stop");
+        assert_eq!(&claude[..2], [DISPATCHER, COMPOUND], "both entries stay");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains(COMPOUND)
+                    && w.contains("split it by hand")
+            }),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn a_codex_entry_covers_nothing() {
+        // Codex loads its hooks and their trust once per session, and rune
+        // reads trust per firing: a handler skipped at a firing could be
+        // one the session never runs. So no Codex record is written, with
+        // no trust line to wait on, and the registration is the same.
+        let mixed = mixed_install();
+        let home = mixed.home.path();
+        let report = &mixed.prepared.report;
+        assert_eq!(
+            handlers_in(&mixed.prepared, Harness::Codex, "Stop"),
+            Some(every_stop_handler()),
+            "{report:?}"
+        );
+        assert_eq!(
+            commands_in(&mixed.prepared, "hooks.json", "Stop")[0],
+            DISPATCHER
+        );
+        assert_eq!(cover_in(&mixed.prepared, Harness::Codex, "Stop"), None);
+        assert_eq!(
+            cover_in(&mixed.prepared, Harness::Codex, "PostToolUse"),
+            None,
+            "the codex part runs what git-ai runs, and still covers nothing"
+        );
+        assert!(
+            !report.covered.iter().any(|c| c.starts_with("codex:")),
+            "{:?}",
+            report.covered
+        );
+        assert!(
+            !report.trust.iter().any(|t| t.contains("skips no handler")),
+            "{:?}",
+            report.trust
+        );
+        write(&mixed.prepared).unwrap();
+        assert!(
+            !home
+                .join("state/hooks/cover/codex-PostToolUse.json")
+                .exists(),
+            "no codex cover file"
+        );
+        // A Codex record written by hand, trusted at its slot, holds at no
+        // firing: the check refuses the harness before it reads a file.
+        trust_codex_slot(home, "PostToolUse", (0, 0));
+        let folder = home.join(".config/just/hooks/PostToolUse.d");
+        let runs = ["git-ai", "checkpoint", "codex", "--hook-input", "stdin"]
+            .map(str::to_string)
+            .to_vec();
+        let coverage = cover::Coverage {
+            home: home.to_path_buf(),
+            handler_exec: vec!["rune-hook-git-ai".to_string()],
+            file: mixed.codex.join("hooks.json"),
+            slot: (0, 0),
+            command: "sh ~/.config/just/hook PostToolUse".to_string(),
+            script: home.join(".config/just/hook"),
+            shell: Some("sh".to_string()),
+            folder: folder.clone(),
+            part: folder.join("20-git-ai-codex.sh"),
+            exec: runs.clone(),
+            runs,
+        };
+        let planned = mixed.both.event(Harness::Codex, "PostToolUse").unwrap();
+        let handler = planned.handlers.iter().find(|h| h.id == "git-ai").unwrap();
+        assert_eq!(
+            cover::holds(
+                &coverage,
+                handler,
+                Harness::Codex,
+                "tool.after",
+                "PostToolUse",
+                &cover::Environment::under(home),
+                &mut cover::Cache::default(),
+            ),
+            Err("codex loads its hooks once per session, so nothing is skipped there".to_string())
+        );
+    }
+
+    #[test]
+    fn a_gone_dispatcher_entry_an_earlier_install_adopted_is_named() {
+        let home = owner_home(STOP_PARTS);
+        let dispatcher = "sh ~/.config/just/hook Stop";
+        settings(home.path(), &json!({"hooks": {}}).to_string());
+        let state = home.path().join("state");
+        let manifest = state.join("manifest.json");
+        let plans = state.join("hooks").join("plans");
+        let table = home.path().join(".claude/settings.json");
+        let earlier = Manifest {
+            version: 1,
+            harnesses: BTreeMap::from([(
+                Harness::Claude,
+                HarnessManifest {
+                    adopted: vec![Recorded {
+                        event: "Stop".to_string(),
+                        command: dispatcher.to_string(),
+                        hash: None,
+                        by: Some(LEGACY_SD_HOOK.to_string()),
+                        source: Some(table.display().to_string()),
+                    }],
+                    ..HarnessManifest::default()
+                },
+            )]),
+            ..Manifest::default()
+        };
+        fs::create_dir_all(&state).unwrap();
+        fs::write(&manifest, serde_json::to_string_pretty(&earlier).unwrap()).unwrap();
+        let prepared = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let warning = format!(
+            "claude: Stop no longer has the legacy dispatcher entry `{dispatcher}`, which an earlier install removed; rune keeps that entry now, so put it back by hand if its parts should run"
+        );
+        assert!(
+            prepared.report.warnings.contains(&warning),
+            "{:?}",
+            prepared.report.warnings
+        );
+        let next: Manifest = serde_json::from_str(
+            &prepared
+                .files
+                .iter()
+                .find(|staged| staged.target == manifest)
+                .unwrap()
+                .text,
+        )
+        .unwrap();
+        assert_eq!(
+            next.harnesses[&Harness::Claude].adopted.len(),
+            1,
+            "the record stays until the entry is back"
+        );
+        // The entry is back: the record is dropped, with no warning.
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let prepared = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &manifest,
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            !prepared
+                .report
+                .warnings
+                .iter()
+                .any(|w| w.contains("no longer has")),
+            "{:?}",
+            prepared.report.warnings
+        );
+        let next: Manifest = serde_json::from_str(
+            &prepared
+                .files
+                .iter()
+                .find(|staged| staged.target == manifest)
+                .unwrap()
+                .text,
+        )
+        .unwrap();
+        let adopted = &next.harnesses[&Harness::Claude].adopted;
+        assert!(adopted.is_empty(), "the record is dropped: {adopted:?}");
+    }
+
+    /// An install over [`STOP_PARTS`] with `entry` alone on Claude's Stop,
+    /// written, with the cover it wrote and the Stop generation's plan.
+    struct Installed {
+        home: tempfile::TempDir,
+        state: PathBuf,
+        cover: cover::Cover,
+        plan: Plan,
+    }
+
+    fn installed(entry: &Value) -> Installed {
+        let home = owner_home(STOP_PARTS);
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [entry]}]}}).to_string(),
+        );
+        let state = home.path().join("state");
+        let prepared = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &state.join("hooks").join("plans"),
+            &state.join("manifest.json"),
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        write(&prepared).unwrap();
+        let cover = cover::read(
+            &state.join("hooks/cover/claude-Stop.json"),
+            Harness::Claude,
+            "Stop",
+        );
+        let generation = generation_in(&prepared, Harness::Claude, "Stop").unwrap();
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        Installed {
+            home,
+            state,
+            cover,
+            plan,
+        }
+    }
+
+    /// Whether the cover of `installed` holds for the Stop handler `id`
+    /// at a Claude firing under `env`.
+    fn holds_for(
+        installed: &Installed,
+        id: &str,
+        env: &cover::Environment,
+        cache: &mut cover::Cache,
+    ) -> Result<(), String> {
+        let planned = installed.plan.event(Harness::Claude, "Stop").unwrap();
+        let handler = planned.handlers.iter().find(|h| h.id == id).unwrap();
+        cover::holds(
+            &installed.cover.handlers[id],
+            handler,
+            Harness::Claude,
+            "turn.finish",
+            "Stop",
+            env,
+            cache,
+        )
+    }
+
+    const PLAIN_ENTRY: &str = "sh ~/.config/just/hook Stop";
+
+    #[test]
+    fn an_entry_with_a_key_rune_does_not_read_covers_nothing() {
+        // Claude reads `if`, `args`, and `async` on a hook, and each
+        // changes whether and how the command runs. Install names the key.
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        for (key, value) in [
+            ("if", json!("Bash(git *)")),
+            ("args", json!([])),
+            ("async", json!(true)),
+        ] {
+            let mut entry = json!({"type": "command", "command": dispatcher});
+            entry[key] = value;
+            let home = owner_home(STOP_PARTS);
+            settings(
+                home.path(),
+                &json!({"hooks": {"Stop": [{"hooks": [entry]}]}}).to_string(),
+            );
+            let manifest = home.path().join("state").join("manifest.json");
+            let prepared = prepare(
+                &stop_plan(),
+                home.path(),
+                "/opt/rune",
+                Path::new(PLAN),
+                &manifest,
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+            assert!(
+                prepared.report.covered.is_empty(),
+                "{key}: {:?}",
+                prepared.report
+            );
+            assert!(prepared.covers.is_empty(), "{key}: {:?}", prepared.covers);
+            let why = format!("because the entry has the key `{key}`, which rune does not read");
+            assert!(
+                prepared.report.warnings.iter().any(|w| {
+                    w.starts_with("claude: Stop reads no part of")
+                        && w.contains(&why)
+                        && w.contains("may run what tmux runs twice")
+                }),
+                "{key}: {:?}",
+                prepared.report.warnings
+            );
+        }
+        // The keys Claude documents on a command hook are read. A key added
+        // by hand after the install stops the cover at the next firing, on
+        // the hook and on its group alike.
+        let installed = installed(&json!({
+            "type": "command",
+            "command": PLAIN_ENTRY,
+            "timeout": 30,
+            "statusMessage": "stop hooks",
+        }));
+        let env = cover::Environment::under(installed.home.path());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(())
+        );
+        let table = installed.home.path().join(".claude/settings.json");
+        let mut value: Value = serde_json::from_str(&fs::read_to_string(&table).unwrap()).unwrap();
+        value["hooks"]["Stop"][0]["hooks"][0]["if"] = json!("Bash(git *)");
+        fs::write(&table, value.to_string()).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err("the entry has the key `if`, which rune does not read".to_string())
+        );
+        value["hooks"]["Stop"][0]["hooks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("if");
+        value["hooks"]["Stop"][0]["disabled"] = json!(true);
+        fs::write(&table, value.to_string()).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err("the entry's group has the key `disabled`, which rune does not read".to_string())
+        );
+    }
+
+    #[test]
+    fn a_firing_covers_nothing_unless_home_and_the_harness_folder_are_install_s() {
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let home = installed.home.path();
+        let check = |env: &cover::Environment| {
+            holds_for(&installed, "tmux", env, &mut cover::Cache::default())
+        };
+        assert_eq!(check(&cover::Environment::under(home)), Ok(()));
+        // HOME from the environment only: unset or empty, the dispatcher
+        // stops at `set -u`, so there is no home to read under.
+        let unset = "HOME is unset or empty, so the dispatcher runs no part".to_string();
+        let mut env = cover::Environment::under(home);
+        env.home = None;
+        assert_eq!(check(&env), Err(unset.clone()));
+        env.home = Some(std::ffi::OsString::new());
+        assert_eq!(check(&env), Err(unset));
+        let other = tempfile::tempdir().unwrap();
+        env.home = Some(other.path().as_os_str().to_os_string());
+        assert_eq!(
+            check(&env),
+            Err(format!(
+                "the home is {} and install read {}",
+                other.path().display(),
+                home.display()
+            ))
+        );
+        // Claude reads another folder under `CLAUDE_CONFIG_DIR`: the table
+        // the record names is not the one read, so nothing holds.
+        let mut env = cover::Environment::under(home);
+        env.claude_config_dir = Some(other.path().as_os_str().to_os_string());
+        assert_eq!(
+            check(&env),
+            Err(format!(
+                "claude reads its hooks under {} now, not {}",
+                other.path().display(),
+                home.join(".claude/settings.json").display()
+            ))
+        );
+        env.claude_config_dir = Some(std::ffi::OsString::from("relative"));
+        assert_eq!(
+            check(&env),
+            Err("claude reads its hooks from a folder rune cannot name".to_string())
+        );
+        env.claude_config_dir = Some(home.join(".claude").into_os_string());
+        assert_eq!(check(&env), Ok(()), "the override names the same folder");
+        // A Claude record copied to Codex's name covers nothing on Codex:
+        // the record names its harness.
+        let claude_text =
+            fs::read_to_string(installed.state.join("hooks/cover/claude-Stop.json")).unwrap();
+        let codex_path = installed.state.join("hooks/cover/codex-Stop.json");
+        fs::write(&codex_path, &claude_text).unwrap();
+        let copied = cover::read(&codex_path, Harness::Codex, "Stop");
+        assert!(copied.handlers.is_empty(), "{copied:?}");
+    }
+
+    #[test]
+    fn a_handler_that_is_not_the_recorded_one_is_not_covered() {
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let home = installed.home.path();
+        let env = cover::Environment::under(home);
+        let planned = installed.plan.event(Harness::Claude, "Stop").unwrap();
+        let tmux = planned.handlers.iter().find(|h| h.id == "tmux").unwrap();
+        let coverage = &installed.cover.handlers["tmux"];
+        let check =
+            |handler: &rune::hooks::PlannedHandler, harness: Harness, event: &str, native: &str| {
+                cover::holds(
+                    coverage,
+                    handler,
+                    harness,
+                    event,
+                    native,
+                    &env,
+                    &mut cover::Cache::default(),
+                )
+            };
+        assert_eq!(check(tmux, Harness::Claude, "turn.finish", "Stop"), Ok(()));
+        // The handler as this firing runs it: a plan that now denies on
+        // failure, or runs the adapter with arguments, is another handler.
+        let mut deny = tmux.clone();
+        deny.on_failure = OnFailure::Deny;
+        assert_eq!(
+            check(&deny, Harness::Claude, "turn.finish", "Stop"),
+            Err("the handler denies on failure".to_string())
+        );
+        // A rewriter's output feeds the handlers after it; a part's does
+        // not, so a skipped rewriter would leave them the raw call.
+        let mut rewriter = tmux.clone();
+        rewriter.rewrites = true;
+        assert_eq!(
+            check(&rewriter, Harness::Claude, "turn.finish", "Stop"),
+            Err(
+                "the handler rewrites the tool call, which no part does for the handlers after it"
+                    .to_string()
+            )
+        );
+        let mut with_args = tmux.clone();
+        with_args.exec.push("--quiet".to_string());
+        assert_eq!(
+            check(&with_args, Harness::Claude, "turn.finish", "Stop"),
+            Err("the handler's command changed".to_string())
+        );
+        let mut other = tmux.clone();
+        other.exec = vec!["rune-hook-dcg".to_string()];
+        assert_eq!(
+            check(&other, Harness::Claude, "turn.finish", "Stop"),
+            Err("the handler's command changed".to_string())
+        );
+        // The record binds to its event and harness: on another event the
+        // adapter runs another command, and on Codex nothing is skipped.
+        assert_eq!(
+            check(tmux, Harness::Claude, "session.end", "SessionEnd"),
+            Err("tmux-status runs another command here".to_string())
+        );
+        assert_eq!(
+            check(tmux, Harness::Codex, "turn.finish", "Stop"),
+            Err("codex loads its hooks once per session, so nothing is skipped there".to_string())
+        );
+        assert_eq!(
+            check(tmux, Harness::Gemini, "turn.finish", "Stop"),
+            Err("gemini reads its hooks from a folder rune cannot name".to_string())
+        );
+    }
+
+    #[test]
+    fn one_firing_reads_the_table_the_script_and_the_parts_once() {
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let home = installed.home.path();
+        let env = cover::Environment::under(home);
+        let mut cache = cover::Cache::default();
+        assert_eq!(holds_for(&installed, "tmux", &env, &mut cache), Ok(()));
+        // Everything the checks read goes: the firing's cache still answers
+        // for the same handler, and a fresh firing reads nothing.
+        fs::remove_file(home.join(".claude/settings.json")).unwrap();
+        fs::remove_file(home.join(".config/just/hook")).unwrap();
+        fs::remove_dir_all(home.join(".config/just/hooks/Stop.d")).unwrap();
+        assert_eq!(holds_for(&installed, "tmux", &env, &mut cache), Ok(()));
+        assert!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()).is_err(),
+            "a fresh firing finds no table"
+        );
+    }
+
+    #[test]
+    fn a_cover_that_holds_past_the_budget_still_skips_its_handler() {
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let home = installed.home.path().to_path_buf();
+        // The clock started long before the cover was read: the cover
+        // holds, and the deadline passed during the checks. The part runs
+        // the command either way, so the covered handler is skipped with
+        // its part, and only the uncovered ones record the budget.
+        let record = installed.state.join("record");
+        let (mut runner, seen) = covered_runner(&home, &record, installed.cover.clone());
+        runner.started = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(600))
+            .unwrap();
+        let raw = json!({"hook_event_name": "Stop", "session_id": "s", "cwd": "/"});
+        let _ =
+            super::super::run::dispatch(&installed.plan, Harness::Claude, "Stop", Ok(raw), &runner);
+        assert!(
+            seen.borrow().is_empty(),
+            "nothing is spawned past the budget: {:?}",
+            seen.borrow()
+        );
+        let records = super::super::record::load(&record).unwrap();
+        let stop_d = home.join(".config/just/hooks/Stop.d");
+        let tmux = records.iter().find(|r| r.hook == "tmux").unwrap();
+        assert_eq!(
+            tmux.skipped.as_deref(),
+            Some(stop_d.join("10-tmux-attention.sh").to_str().unwrap()),
+            "tmux is skipped with its part: {records:?}"
+        );
+        assert_eq!(tmux.failure, None);
+        for id in ["capture", "turn"] {
+            let line = records.iter().find(|r| r.hook == id).unwrap();
+            assert_eq!(line.skipped, None, "{records:?}");
+            assert_eq!(line.failure.as_deref(), Some("budget"), "{id}");
+        }
+    }
+
+    #[test]
+    fn the_slot_is_the_entry_s_place_in_the_table_install_writes() {
+        // An adopted entry before the dispatcher goes at this install, so
+        // the dispatcher's slot is read from the table as written, and
+        // the first firing after the install skips the covered handler.
+        let home = owner_home(&[STOP_PARTS[2]]);
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        let tmux = "~/.local/bin/claude-tmux-status attention";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [
+                {"hooks": [{"type": "command", "command": tmux}]},
+                {"hooks": [{"type": "command", "command": dispatcher}]},
+            ]}})
+            .to_string(),
+        );
+        let state = home.path().join("state");
+        let prepared = prepare(
+            &stop_plan(),
+            home.path(),
+            "/opt/rune",
+            &state.join("hooks").join("plans"),
+            &state.join("manifest.json"),
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            prepared
+                .report
+                .adopted
+                .iter()
+                .any(|(_, e, c)| e == "Stop" && c == tmux),
+            "{:?}",
+            prepared.report.adopted
+        );
+        let claude = commands_in(&prepared, "settings.json", "Stop");
+        assert_eq!(
+            claude[0], dispatcher,
+            "the dispatcher is first now: {claude:?}"
+        );
+        let cover = cover_in(&prepared, Harness::Claude, "Stop").unwrap();
+        assert_eq!(cover.handlers["turn"].slot, (0, 0), "{cover:?}");
+        write(&prepared).unwrap();
+        let generation = generation_in(&prepared, Harness::Claude, "Stop").unwrap();
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        let cover = cover::read(
+            &state.join("hooks/cover/claude-Stop.json"),
+            Harness::Claude,
+            "Stop",
+        );
+        let (runner, seen) = covered_runner(home.path(), &state.join("record"), cover);
+        let raw = json!({"hook_event_name": "Stop", "session_id": "s", "cwd": "/"});
+        let answer = super::super::run::dispatch(&plan, Harness::Claude, "Stop", Ok(raw), &runner);
+        assert_eq!(answer.exit, 0, "{answer:?}");
+        assert_eq!(
+            seen.borrow().clone(),
+            ["capture", "tmux"],
+            "turn is skipped at the first firing"
+        );
+    }
+
+    #[test]
+    fn a_codex_toml_hook_is_named_by_the_line_of_its_command_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        // A multi-line string above quotes the command: the line named is
+        // the command value's own.
+        fs::write(
+            &config,
+            "developer_instructions = \"\"\"\nNever call /Users/x/.local/bin/dcg by hand.\n\"\"\"\n\n[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"/Users/x/.local/bin/dcg\"\n",
+        )
+        .unwrap();
+        let hooks = codex_toml_hooks(&config);
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].command, "/Users/x/.local/bin/dcg");
+        assert_eq!(hooks[0].line, Some(9));
+        // Trust state beside the events, and a hook in an inline table.
+        fs::write(
+            &config,
+            "[hooks.state.\"/x/hooks.json:stop:0:0\"]\ntrusted_hash = \"sha256:0\"\n[[hooks.Stop]]\nhooks = [{ type = \"command\", command = 'sh /x/.sd/hook Stop' }]\n",
+        )
+        .unwrap();
+        let hooks = codex_toml_hooks(&config);
+        assert_eq!(hooks.len(), 1, "hooks.state is no event");
+        assert_eq!(hooks[0].event, "Stop");
+        assert_eq!(hooks[0].line, Some(4));
+    }
+
+    #[test]
+    fn a_shell_word_that_finds_a_fake_sh_first_covers_nothing_at_install() {
+        let home = owner_home(STOP_PARTS);
+        let fake_dir = home.path().join("fake");
+        fs::create_dir_all(&fake_dir).unwrap();
+        fs::write(fake_dir.join("sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(fake_dir.join("sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let plan = stop_plan();
+        let planned = plan.event(Harness::Claude, "Stop").unwrap();
+        let with = |dispatcher: &str, path_env: Option<std::ffi::OsString>| {
+            let table = settings(
+                home.path(),
+                &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                    .to_string(),
+            );
+            let groups = Table::read(&table).unwrap().groups("Stop");
+            let dispatchers = Dispatchers {
+                home: home.path(),
+                harness: Harness::Claude,
+                table: &table,
+                path_env,
+                shell_variable: None,
+            };
+            let mut report = Report::default();
+            let covered = dispatchers.covered("Stop", planned, &groups, &mut report);
+            covered.keys().cloned().collect::<Vec<_>>()
+        };
+        let bare = "sh $HOME/.config/just/hook Stop";
+        let absolute = "/bin/sh $HOME/.config/just/hook Stop";
+        let system = std::env::join_paths([Path::new("/bin")]).unwrap();
+        if legacy::resolve_shell("sh", Some(&system)).is_some() {
+            assert_eq!(with(bare, Some(system.clone())), ["tmux"]);
+            assert_eq!(with(absolute, Some(system.clone())), ["tmux"]);
+        }
+        let fake_first = std::env::join_paths([fake_dir.as_path(), Path::new("/bin")]).unwrap();
+        assert!(
+            with(bare, Some(fake_first.clone())).is_empty(),
+            "a file named sh first in PATH is no shell rune knows"
+        );
+        assert!(
+            with(absolute, Some(fake_first)).is_empty(),
+            "the dispatcher runs each part with the sh on PATH, whatever runs the dispatcher"
+        );
+        assert!(with(bare, None).is_empty(), "no PATH resolves no bare word");
+        assert!(
+            with(absolute, None).is_empty(),
+            "no PATH resolves no inner sh either"
+        );
+        assert!(
+            with(
+                "/bin/zsh $HOME/.config/just/hook Stop",
+                Some(system.clone())
+            )
+            .is_empty(),
+            "zsh reads ~/.zshenv, which rune never reads"
+        );
+        assert!(
+            with("bash $HOME/.config/just/hook Stop", Some(system)).is_empty(),
+            "bash reads BASH_ENV, which rune never reads"
+        );
+    }
+
+    #[test]
+    fn a_firing_whose_sh_is_not_bin_sh_runs_every_handler() {
+        let installed =
+            installed(&json!({"type": "command", "command": "/bin/sh ~/.config/just/hook Stop"}));
+        let home = installed.home.path();
+        assert_eq!(
+            installed.cover.handlers["tmux"].shell.as_deref(),
+            Some("/bin/sh")
+        );
+        let fake_dir = home.join("fake");
+        fs::create_dir_all(&fake_dir).unwrap();
+        fs::write(fake_dir.join("sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(fake_dir.join("sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut env = cover::Environment::under(home);
+        env.path = Some(std::env::join_paths([fake_dir.as_path(), Path::new("/bin")]).unwrap());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(
+                "`sh` on PATH is not /bin/sh, and the dispatcher runs each part with it"
+                    .to_string()
+            )
+        );
+        env.path = None;
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(
+                "`sh` on PATH is not /bin/sh, and the dispatcher runs each part with it"
+                    .to_string()
+            )
+        );
+        env.path = Some(std::env::join_paths([Path::new("/bin"), fake_dir.as_path()]).unwrap());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(()),
+            "a fake sh after /bin is never run"
+        );
+    }
+
+    #[test]
+    fn a_folder_past_a_limit_covers_nothing_at_install_and_at_the_firing() {
+        let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
+        let home = installed.home.path();
+        let env = cover::Environment::under(home);
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(())
+        );
+        let stop_d = home.join(".config/just/hooks/Stop.d");
+        let too_many = Err(format!(
+            "{} holds more than {} entries",
+            stop_d.display(),
+            legacy::MAX_ENTRIES
+        ));
+        // One entry over the count, of any kind: the firing reads no part.
+        let extra = legacy::MAX_ENTRIES + 1 - STOP_PARTS.len();
+        for index in 0..extra {
+            fs::write(stop_d.join(format!("note-{index:02}.txt")), "x\n").unwrap();
+        }
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            too_many
+        );
+        fs::remove_file(stop_d.join(format!("note-{:02}.txt", extra - 1))).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(()),
+            "the count itself is read"
+        );
+        for index in 0..extra - 1 {
+            fs::remove_file(stop_d.join(format!("note-{index:02}.txt"))).unwrap();
+        }
+        // A first part past the bytes one firing reads: the firing reads
+        // no part. A later part of any size is never read.
+        let big = format!("# {}\nexec true\n", "x".repeat(60 * 1024));
+        fs::write(stop_d.join("40-big.sh"), &big).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(()),
+            "a later part is not read"
+        );
+        fs::write(stop_d.join("05-big.sh"), &big).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(format!(
+                "{} is not the first part of {} now",
+                stop_d.join("10-tmux-attention.sh").display(),
+                stop_d.display()
+            )),
+            "a first part under the read limit is read, and is another part"
+        );
+        let huge = format!("# {}\nexec true\n", "x".repeat(70 * 1024));
+        fs::write(stop_d.join("05-big.sh"), &huge).unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(format!(
+                "{} is no regular file under {} bytes",
+                stop_d.join("05-big.sh").display(),
+                legacy::READ_LIMIT
+            ))
+        );
+        // The next install covers nothing over such a folder, and says so.
+        let state = installed.state.clone();
+        let again = prepare(
+            &stop_plan(),
+            home,
+            "/opt/rune",
+            &state.join("hooks").join("plans"),
+            &state.join("manifest.json"),
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(again.report.covered.is_empty(), "{:?}", again.report);
+        assert!(
+            again.report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains("05-big.sh is no regular file under")
+            }),
+            "{:?}",
+            again.report.warnings
+        );
+        let cover = cover_in(&again, Harness::Claude, "Stop").unwrap();
+        assert!(cover.handlers.is_empty(), "the cover is cleared: {cover:?}");
+    }
+
+    #[test]
+    fn a_first_part_with_an_unquoted_glob_covers_nothing_and_a_later_one_blocks_nothing() {
+        // `b[ab]` names one word to rune and the files it matches to the
+        // shell, so a part that holds one has no shape rune reads. First
+        // in its folder it covers nothing; after the first part it is
+        // never read.
+        let glob = "#!/bin/sh\nexec \"$HOME/.local/bin/claude-tmux-status\" b[ab]\n";
+        let mut parts = STOP_PARTS.to_vec();
+        parts.push(("Stop", "40-glob.sh", glob));
+        let home = owner_home(&parts);
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": PLAIN_ENTRY}]}]}})
+                .to_string(),
+        );
+        let state = home.path().join("state");
+        let at = || {
+            prepare(
+                &stop_plan(),
+                home.path(),
+                "/opt/rune",
+                &state.join("hooks").join("plans"),
+                &state.join("manifest.json"),
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+        };
+        let later = at();
+        assert_eq!(
+            later.report.covered.len(),
+            1,
+            "a later glob part blocks nothing: {:?}",
+            later.report
+        );
+        assert!(later.report.warnings.is_empty(), "{:?}", later.report);
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        fs::rename(stop_d.join("40-glob.sh"), stop_d.join("05-glob.sh")).unwrap();
+        let first = at();
+        assert!(first.report.covered.is_empty(), "{:?}", first.report);
+        assert!(
+            first.report.warnings.iter().any(|w| {
+                w.starts_with("claude: Stop reads no part of")
+                    && w.contains("05-glob.sh has a shape rune does not read")
+            }),
+            "{:?}",
+            first.report.warnings
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_direct_dispatcher_entry_needs_an_executable_script_with_a_plain_shebang() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let home = owner_home(STOP_PARTS);
+        let script = home.path().join(".config/just/hook");
+        let entry = "$HOME/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": entry}]}]}})
+                .to_string(),
+        );
+        let state = home.path().join("state");
+        let at = || {
+            prepare(
+                &stop_plan(),
+                home.path(),
+                "/opt/rune",
+                &state.join("hooks").join("plans"),
+                &state.join("manifest.json"),
+                false,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+        };
+        // Written without a mode, the entry runs nothing.
+        let prepared = at();
+        assert!(prepared.report.covered.is_empty(), "{:?}", prepared.report);
+        assert!(prepared.covers.is_empty(), "no cover is staged");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        if super::super::legacy::tests::system_sh().is_none() {
+            return;
+        }
+        let prepared = at();
+        assert_eq!(prepared.report.covered.len(), 1, "{:?}", prepared.report);
+        let cover = cover_in(&prepared, Harness::Claude, "Stop").unwrap();
+        assert_eq!(cover.handlers["tmux"].shell, None, "{cover:?}");
+        write(&prepared).unwrap();
+        let generation = generation_in(&prepared, Harness::Claude, "Stop").unwrap();
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        let installed = Installed {
+            cover: cover::read(
+                &state.join("hooks/cover/claude-Stop.json"),
+                Harness::Claude,
+                "Stop",
+            ),
+            plan,
+            state,
+            home,
+        };
+        let env = cover::Environment::under(installed.home.path());
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Ok(())
+        );
+        // An option on the shebang after the install: `sh -n` runs no part,
+        // so the next firing runs the handler, and the next install covers
+        // nothing.
+        fs::write(
+            &script,
+            super::super::legacy::tests::SCRIPT.replacen("#!/bin/sh", "#!/bin/sh -n", 1),
+        )
+        .unwrap();
+        assert_eq!(
+            holds_for(&installed, "tmux", &env, &mut cover::Cache::default()),
+            Err(format!(
+                "the shebang of {} is not `#!/bin/sh`",
+                script.display()
+            ))
+        );
+        let state = installed.state.clone();
+        let again = prepare(
+            &stop_plan(),
+            installed.home.path(),
+            "/opt/rune",
+            &state.join("hooks").join("plans"),
+            &state.join("manifest.json"),
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(again.report.covered.is_empty(), "{:?}", again.report);
+        let cover = cover_in(&again, Harness::Claude, "Stop").unwrap();
+        assert!(cover.handlers.is_empty(), "the cover is cleared: {cover:?}");
     }
 }

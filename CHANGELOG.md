@@ -75,7 +75,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse an exempt tool that the line keeps inside the sandbox, such as `cd DIR && jj log`, and name the one command to run, such as `jj -R DIR log`.
 - Advise a Bash line that joins separate commands to split them, and pass every line that holds no exempt tool.
 - Read the exempt patterns from the handler's arguments, else from `sandbox.excludedCommands` while `sandbox.enabled` is on.
-- Adopt `sh ~/.config/just/hook <Event>`, where the dotfiles moved the legacy dispatcher, as the legacy dispatcher on install.
+- Keep a legacy dispatcher entry (`sh ~/.config/just/hook <Event>`, `sh ~/.sd/hook <Event>`, `sd hook <Event>`) on install, and never advise its removal.
+- Record, per handler, the part of a kept dispatcher that runs its whole command in `hooks/cover/<harness>-<event>.json`, report it as `covered:`, and keep every handler in the generation.
+- Skip a covered handler in `rune hook run` only while the entry, the dispatcher script, the part, and the command still hold at that firing, and record the skip with its part as `skipped`.
+- Count a dispatcher only behind `sh` or `/bin/sh` that resolves to `/bin/sh`, with the known script content, and resolve the `sh` that runs each part the same way at each firing.
+- Let only the first `*.sh` part of a folder cover, under names every locale sorts one way, in the accepted shape, with at most 16 entries and 256 KiB. Never cover a `deny` handler or a rewriter.
+- Cover nothing when a hook carries a key rune does not read, the harness reads another table, `HOME` is unset, or a file is special or too large. A cover that holds past the budget still skips.
+- Cover nothing when a part expands anything but `$HOME`, or while `SHELLOPTS`, `BASH_ENV`, `IFS`, an exported function, or another variable that changes how `sh` reads a script is set.
+- Cover nothing under a matcher other than `*` or in a compound line, and warn where a part may then run twice. On Codex, cover nothing, because Codex loads its hooks once per session.
+- Read Codex `config.toml` hooks with the TOML parser, and name a tool's entry there with the real line of its command.
+- Warn when an earlier install adopted a legacy dispatcher entry that is gone from its table now, and name the entry.
 - Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
