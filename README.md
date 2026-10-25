@@ -462,7 +462,7 @@ hooks:
   handlers:
     - id: postbox
       exec: [rune-hook-postbox]
-      events: [session.start, prompt.before, turn.finish]
+      events: [prompt.before, turn.finish]
 ```
 
 Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
