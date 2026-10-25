@@ -10,6 +10,8 @@ use rune::hooks::{Canonical, Harness, Mode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::run::visible;
+
 /// What a handler returns on stdout, one JSON object. A field this shape
 /// does not know is an error, so a harness-native answer such as Claude's
 /// `hookSpecificOutput` fails instead of reading as a pass.
@@ -139,10 +141,13 @@ pub(crate) fn encode(
     } else {
         result
     };
-    let reason = result
-        .reason
-        .clone()
-        .unwrap_or_else(|| "denied by a rune hook handler".to_string());
+    // The reason reaches the harness as the dispatcher's own words, on a
+    // stderr line or in a decision field, so it is shown the way a
+    // handler's message is: no control or format character gets through.
+    let reason = result.reason.as_deref().map_or_else(
+        || "denied by a rune hook handler".to_string(),
+        |why| visible(why, true),
+    );
     let context = (!result.context.is_empty()).then(|| result.context.join("\n"));
     let message = result
         .message

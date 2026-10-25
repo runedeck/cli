@@ -8,8 +8,10 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use regex::Regex;
 use rune::hooks::{Canonical, Harness, Mode, OnFailure, Plan, PlannedEvent, PlannedHandler};
 use serde_json::Value;
 
@@ -464,13 +466,25 @@ fn merge(
     }
 }
 
-/// The text with every control character shown as an escape, so a
-/// handler cannot fake another handler's prefix with a carriage return,
-/// a backspace, or a terminal escape sequence. A tab stays. A newline
-/// stays when the field carries lines, as context does; a message line
-/// has none left after the split.
+/// The characters that show nothing of themselves yet change how the rest
+/// reads: Unicode's format category (Cf), which holds the zero-width
+/// characters, the byte-order mark, the soft hyphen, and the tag
+/// characters, and the bidi controls, which Cf also holds and which are
+/// named on their own because a right-to-left override is the one that
+/// reverses a line on the screen.
+static FORMAT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{Cf}\p{Bidi_Control}]").expect("format character regex"));
+
+/// The text with every control and format character shown as an escape,
+/// so a handler cannot fake another handler's prefix with a carriage
+/// return, a backspace, or a terminal escape sequence, nor hide or
+/// reverse a line with a zero-width character or a bidi override. A
+/// control shows as `\xNN`, a format character as `\u{NNNN}`. A tab
+/// stays. A newline stays when the field carries lines, as context does;
+/// a message line has none left after the split.
 pub(super) fn visible(text: &str, keep_newline: bool) -> String {
     let mut out = String::with_capacity(text.len());
+    let mut utf8 = [0u8; 4];
     for c in text.chars() {
         match c {
             '\t' => out.push(c),
@@ -479,6 +493,9 @@ pub(super) fn visible(text: &str, keep_newline: bool) -> String {
             '\r' => out.push_str("\\r"),
             c if c.is_control() => {
                 let _ = write!(out, "\\x{:02x}", u32::from(c));
+            }
+            c if !c.is_ascii() && FORMAT.is_match(c.encode_utf8(&mut utf8)) => {
+                let _ = write!(out, "\\u{{{:04x}}}", u32::from(c));
             }
             c => out.push(c),
         }

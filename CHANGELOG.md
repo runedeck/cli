@@ -88,7 +88,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
 - Accept `message` in a hook result and pass it as `systemMessage` to Claude Code and Gemini CLI on the events their references document, each line named for its handler.
-- Show a control character in a hook message or context line as a visible escape such as `\r` or `\x1b` before the handler's name is added, so no handler fakes another's line.
+- Show a control character in a hook message, context line, or deny reason as a visible escape such as `\r` or `\x1b`, and a Unicode format character or bidi control such as the right-to-left override as `\u{202e}`, before the handler's name is added, so no handler fakes, hides, or reverses another's line.
 - Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
 - Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
@@ -322,8 +322,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Pass a hook `message` as `systemMessage` on Gemini `BeforeAgent`, `BeforeTool`, `AfterTool`, and `AfterAgent`, where the reference lists it as a common field and the encoder dropped it.
 - Report an event a harness lacks as `unsupported:` for every harness the plan targets, Antigravity and OpenCode included, where `rune hook install` named it for Claude and Codex alone.
 - Name, at install, each handler whose command a part behind the first part of a legacy `Stop.d` runs, with that part and why it covers nothing, where the output said nothing for it.
-- Write the session's author identity to the jj workspace config, its undescribed working-copy commit, and the git worktree config, and never to the shared `.git/config`.
-- Keep `extensions.worktreeConfig` off while `core.bare` or `core.worktree` is set in the repository config or a dormant `config.worktree`, and name the file in the hook's context.
+- Write the session's author identity to the jj workspace config, the git worktree config, and never to the shared `.git/config`. The working-copy commit takes the identity only while it is empty, undescribed, on one parent, mutable, and this workspace's alone. Any other one keeps its author and the session starts in a new working copy on top of it, and the hook's context names the commit either way.
+- Keep `extensions.worktreeConfig` off while `core.bare` or `core.worktree` is set in the repository config, a dormant `config.worktree`, or a file one includes, or while a `config.worktree` uses `includeIf` or cannot be read with its includes, and name the file in the hook's context.
 - Pass `rune proof run --check` after a signature or reword of the head: a proof records `head_change` and `head_tree`, and an ancestor with both holds.
 - Fix `rune run` and `rune launch` hanging or exiting 1 under another harness: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` names, `CODEX_SANDBOX`) leave the child's environment.
 - Keep owner controls such as `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_CLIENT_CERT` in the child's environment.
