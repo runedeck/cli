@@ -1477,31 +1477,62 @@ fn forget_workspace(workspace: &Workspace) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// Stop tracking the workspace and delete its files, under the repository
-/// lock that guards git's worktree registration. `workspace remove`
-/// refuses `--ignore-working-copy`, so it snapshots the caller's checkout
-/// once more. When it fails, the workspace is at least forgotten, and the
-/// error goes to the outcome.
-fn remove_workspace(workspace: &Workspace) -> Result<(), String> {
-    let _lock = lock_repository(&workspace.lock_path)?;
-    let root = &workspace.root;
-    if let Err(error) = jj_in(
-        root,
+/// `jj workspace remove` of the run's workspace, run from `checkout`.
+/// The command refuses `--ignore-working-copy`, so it snapshots the
+/// checkout it runs from, and refuses a checkout that is stale.
+fn workspace_remove_from(checkout: &Path, name: &str) -> Result<(), String> {
+    jj_in(
+        checkout,
         &[
             OsStr::new("-R"),
-            root.as_os_str(),
+            checkout.as_os_str(),
             OsStr::new("workspace"),
             OsStr::new("remove"),
-            OsStr::new(&workspace.name),
+            OsStr::new(name),
         ],
-    ) {
-        let _ = forget_workspace(workspace);
+    )
+    .map(|_| ())
+}
+
+/// The removal retried from the run's own folder at `path`, or the reason
+/// it was skipped: a folder that is already gone cannot start jj, and the
+/// spawn error for a missing folder would name a missing jj binary
+/// instead, which sends the owner to the wrong cause.
+fn workspace_remove_from_run(path: &Path, name: &str) -> Result<(), String> {
+    if !path.is_dir() {
         return Err(format!(
-            "cannot remove workspace folder {}: {error}",
-            workspace.path.display()
+            "the run's folder {} is already gone",
+            path.display()
         ));
     }
-    Ok(())
+    workspace_remove_from(path, name)
+}
+
+/// Stop tracking the workspace and delete its files, under the repository
+/// lock that guards git's worktree registration. The removal runs from
+/// the caller's checkout first: it snapshots the checkout, so a caller
+/// edit shows in the conflict flag. jj refuses that while the caller's
+/// checkout is stale, which a squash from another workspace of the
+/// repository leaves behind when it rewrites the caller's working copy
+/// with a new tree, and only the caller may update its own files. The
+/// removal then runs from the run's own workspace, which the finish just
+/// recorded and nothing outside the run rewrites: the same jj command,
+/// snapshotting the run's folder instead. A run folder that is already
+/// gone skips that retry and is named as gone. When both fail, the
+/// workspace is at least forgotten, and both errors go to the outcome.
+fn remove_workspace(workspace: &Workspace) -> Result<(), String> {
+    let _lock = lock_repository(&workspace.lock_path)?;
+    let Err(from_caller) = workspace_remove_from(&workspace.root, &workspace.name) else {
+        return Ok(());
+    };
+    let Err(from_run) = workspace_remove_from_run(&workspace.path, &workspace.name) else {
+        return Ok(());
+    };
+    let _ = forget_workspace(workspace);
+    Err(format!(
+        "cannot remove workspace folder {}: {from_caller}; from the run's workspace: {from_run}",
+        workspace.path.display()
+    ))
 }
 
 /// Whether any of the caller's commits recorded at the start is gone or
@@ -1911,6 +1942,21 @@ mod tests {
             let through_alias = alias.join("state/workspaces/repo-1/run-1");
             assert!(refuse_inside_checkout(&through_alias, &checkout).is_err());
         }
+    }
+
+    #[test]
+    fn a_retry_from_a_run_folder_that_is_gone_names_the_folder_not_jj() {
+        let root = tempfile::tempdir().expect("root");
+        let gone = root.path().join("workspaces/repo-1/run-1");
+        let error = workspace_remove_from_run(&gone, "run-1").expect_err("gone folder");
+        assert!(error.contains("already gone"), "{error}");
+        assert!(error.contains(&gone.display().to_string()), "{error}");
+        assert!(!error.contains("PATH"), "{error}");
+        // A folder that is there still goes to jj, whose own refusal is
+        // the error.
+        let present = workspace_remove_from_run(root.path(), "run-1").expect_err("no repository");
+        assert!(present.contains("jj"), "{present}");
+        assert!(!present.contains("already gone"), "{present}");
     }
 
     #[test]

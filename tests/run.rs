@@ -3454,6 +3454,91 @@ fn a_finish_that_fails_at_its_first_step_still_removes_the_guard_folder() {
     assert_eq!(guard_folders(home.path()), Vec::<String>::new());
 }
 
+/// What jj prints when it refuses `args`: the command must fail.
+#[cfg(unix)]
+fn jj_refusal(home: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("jj")
+        .env("HOME", home)
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .current_dir(home)
+        .args(args)
+        .output()
+        .expect("jj runs");
+    assert!(
+        !output.status.success(),
+        "jj {args:?} succeeded: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// The caller is a second workspace of its repository, and during the run
+/// the main checkout squashes an edit into `base`, the parent of the
+/// caller's working copy. jj rebases the caller's working-copy commit onto
+/// a new tree, so the caller's checkout goes stale, and `jj workspace
+/// remove` refuses to run from a stale checkout. Only the caller may update
+/// its own files. The run still takes its workspace, its folder, and its
+/// guard with it, and leaves the caller's checkout as it found it.
+#[cfg(unix)]
+#[test]
+fn a_run_whose_caller_went_stale_meanwhile_still_removes_its_workspace() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let main_dir = jj_repository(home.path());
+    let main = main_dir.path().to_str().expect("main path");
+    jj(home.path(), &["-R", main, "commit", "-m", "base"]);
+    let caller_dir = tempfile::tempdir().expect("caller");
+    let caller = caller_dir.path().to_str().expect("caller path");
+    jj(
+        home.path(),
+        &["-R", main, "workspace", "add", "--name", "caller", caller],
+    );
+    // The harness stands in for the owner's session in the main checkout.
+    let script = format!(
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'squashed\\n' > '{main}/README.md'\njj -R '{main}' squash >/dev/null 2>&1\nprintf 'done\\n'\n"
+    );
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        caller_dir.path(),
+        "fake-stale-maker",
+        &script,
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    assert!(workspace["path"].is_null(), "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), main, change_id), ["A NEW.md"]);
+    // No run folder, no guard folder, no tracked workspace, and no git
+    // worktree stays.
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    assert_eq!(guard_folders(home.path()), Vec::<String>::new());
+    assert_eq!(workspace_names(home.path(), main), ["caller", "default"]);
+    let name = workspace["name"].as_str().expect("workspace name");
+    let worktrees = String::from_utf8_lossy(
+        &std::process::Command::new("git")
+            .args(["-C", main, "worktree", "list", "--porcelain"])
+            .output()
+            .expect("git runs")
+            .stdout,
+    )
+    .into_owned();
+    assert!(worktrees.contains(caller), "{worktrees}");
+    assert!(!worktrees.contains(name), "{worktrees}");
+    // The caller's checkout is still stale, for the caller to update, and
+    // its files are as the caller left them.
+    let refusal = jj_refusal(home.path(), &["-R", caller, "status"]);
+    assert!(refusal.contains("stale"), "{refusal}");
+    assert_eq!(
+        std::fs::read_to_string(caller_dir.path().join("README.md")).expect("README"),
+        "base\n"
+    );
+    assert!(!caller_dir.path().join("NEW.md").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn a_guard_folder_that_cannot_be_removed_is_named_in_the_result_and_on_stderr() {
