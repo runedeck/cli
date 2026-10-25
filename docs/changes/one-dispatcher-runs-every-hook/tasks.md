@@ -114,3 +114,11 @@
 - [x] 16.3 `src/cli/hook/install.rs`: an event a harness lacks is reported for every harness the plan targets, a harness install registers nothing for included
 - [x] 16.4 `src/cli/hook/install.rs` and `legacy.rs`: the parts behind the first are read for one message alone, from a budget of their own, and each handler whose command a later part runs is named with the part and the reason, and covered by nothing
 - [x] 16.5 Tests: context on Claude `SessionStart` reaches `additionalContext`, two handlers' messages reach `systemMessage` in order on Claude `SessionStart` and Gemini `SessionEnd`, Claude `Notification` reports both as not applied, a deny on `SessionStart` is logged while its context stays, Antigravity and OpenCode `session.end` are named unsupported, and the owner's `Stop` parts name turn by its third part
+
+## 17. The commit, the shared config, and the native cap
+
+- [x] 17.1 `src/cli/hook/adapters.rs`: after the jj config write, `jj metaedit --update-author -r @` on the workspace's own undescribed working-copy commit, a described one left alone and named in the context, and no other workspace's commit touched
+- [x] 17.2 `src/cli/hook/adapters.rs`: with `core.bare` or `core.worktree` in the repository config, no git identity is written, and the context names the key and says a raw git commit carries the global git identity and why
+- [x] 17.3 `src/cli/hook/adapters.rs`: `extensions.worktreeConfig` read from the repository config alone, and turned on only when no `config.worktree`, the main worktree's or one under `worktrees/`, sets `core.bare` or `core.worktree` or cannot be read, else no git identity and the file named
+- [x] 17.4 `src/hooks.rs`: a handler subscribed by a native name resolves through `Canonical::from_native` and takes that harness's cap, so `codex:SessionEnd` at 3001 ms renders 3 s and `claude:SessionEnd` at 60001 ms renders 60 s
+- [x] 17.5 Tests: the working-copy author in one and two workspaces, a described commit kept and named, `core.worktree` with no git identity and the note, a dormant `config.worktree` under the main and the linked worktree with the extension off and `git status` alive, a global extension not taken for the repository, and the native cap on every harness and native event

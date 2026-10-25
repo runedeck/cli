@@ -27,7 +27,7 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: Canonical Events Map To Each Harness
 
-The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported, for every harness the plan targets, and never substituted. Each mapping carries the harness's timeout cap. A rendered timeout (whole seconds on Claude and Codex) and the dispatcher deadline stay inside it: Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
+The dispatcher MUST know eight canonical events, `session.start`, `session.end`, `notification` (passive), `prompt.before`, `tool.before`, `turn.finish` (gate), `tool.after`, `compact.before` (collect), each mapped per harness to a native event or none. Install reports an event a harness lacks as unsupported, for every targeted harness, never substituted. Each mapping carries the harness's cap, binding a canonical or native subscription alike: a rendered timeout (whole seconds on Claude and Codex) and the deadline stay inside it. Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
 
 #### Scenario: Event the harness lacks
 
@@ -41,8 +41,8 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 #### Scenario: Session end budget on Codex
 
-- **WHEN** session-capture declares a 5 s timeout on `session.end`
-- **THEN** the Codex entry is rendered with the 3 s cap and `rune hook list` shows the clamp
+- **WHEN** session-capture declares a 5 s timeout on `session.end`, and a second handler 3001 ms on `codex:SessionEnd`
+- **THEN** both Codex entries are rendered with the 3 s cap and `rune hook list` shows the clamp
 
 ### Requirement: The Dispatcher Normalizes And Answers
 

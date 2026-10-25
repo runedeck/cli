@@ -241,13 +241,13 @@ fn author_identity_in(
             )
         }
     };
-    let shared = write_checkout_identity(&cwd, &name, &email, config_home)?;
+    let notes = write_checkout_identity(&cwd, &name, &email, config_home)?;
     let mut result = HandlerResult::default();
     if let Some(warning) = warning {
         result = result.with_warning(&warning);
     }
-    if let Some(shared) = shared {
-        result = result.with_warning(&shared);
+    for note in &notes {
+        result = result.with_warning(note);
     }
     Ok(result)
 }
@@ -275,87 +275,38 @@ pub(crate) fn written_paths(tool: &super::payload::ToolPayload) -> Vec<PathBuf> 
         .collect()
 }
 
-/// The jj config of the workspace the session runs in (jj 0.46 keeps it
-/// under the user's config directory, one file per workspace, so a second
-/// workspace of the repository never reads it), and git's config for that
-/// worktree when the checkout is colocated. The git write needs
-/// `extensions.worktreeConfig`; when git cannot take it, the identity goes
-/// to the shared `.git/config` and the returned note says so.
-pub(crate) fn write_checkout_identity(
-    cwd: &Path,
-    name: &str,
-    email: &str,
-    config_home: Option<&Path>,
-) -> Result<Option<String>, String> {
-    let has_jj = cwd.join(".jj").is_dir() || jj_root(cwd).is_some();
-    let has_git = cwd.join(".git").exists();
-    if !has_jj && !has_git {
-        return Err(format!("{} is not a jj or git checkout", cwd.display()));
-    }
-    let pairs = [("user.name", name), ("user.email", email)];
-    if has_jj {
-        for (key, value) in pairs {
-            let mut command = Command::new("jj");
-            command
-                .args(["config", "set", "--workspace", key, value])
-                .current_dir(cwd);
-            if let Some(home) = config_home {
-                command.env("XDG_CONFIG_HOME", home);
-            }
-            let status = command
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| format!("cannot run jj: {e}"))?;
-            if !status.status.success() {
-                return Err(format!(
-                    "jj config set {key} failed: {}",
-                    String::from_utf8_lossy(&status.stderr).trim()
-                ));
-            }
-        }
-    }
-    let mut note = None;
-    if has_git {
-        let scope = if let Some(scope) = git_worktree_scope(cwd)? {
-            scope
-        } else {
-            note = Some(
-                "git cannot keep a per-worktree config here (core.bare or core.worktree is set); the identity went to the shared .git/config"
-                    .to_string(),
-            );
-            "--local"
-        };
-        for (key, value) in pairs {
-            let status = Command::new("git")
-                .args(["config", scope, key, value])
-                .current_dir(cwd)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| format!("cannot run git: {e}"))?;
-            if !status.status.success() {
-                return Err(format!(
-                    "git config {scope} {key} failed: {}",
-                    String::from_utf8_lossy(&status.stderr).trim()
-                ));
-            }
-        }
-    }
-    Ok(note)
+/// The checkout the adapter writes. `config_home`, when a test gives it,
+/// replaces jj's config directory and git's global config, so no test
+/// reads or writes the owner's files.
+struct Checkout<'a> {
+    cwd: &'a Path,
+    config_home: Option<&'a Path>,
 }
 
-/// `--worktree` once `extensions.worktreeConfig` is on, which this turns
-/// on when git allows it. git-config(1) says a `core.worktree`, or a
-/// `core.bare` that is true, has to move into the main worktree's
-/// `config.worktree` by hand first, so with either set the answer is
-/// `None` and the caller keeps the shared config.
-fn git_worktree_scope(cwd: &Path) -> Result<Option<&'static str>, String> {
-    let get = |args: &[&str]| -> Result<Option<String>, String> {
-        let output = Command::new("git")
-            .arg("config")
-            .args(args)
-            .current_dir(cwd)
+impl Checkout<'_> {
+    fn jj(&self, args: &[&str]) -> Command {
+        let mut command = Command::new("jj");
+        command.args(args).current_dir(self.cwd);
+        if let Some(home) = self.config_home {
+            command.env("XDG_CONFIG_HOME", home);
+        }
+        command
+    }
+
+    fn git(&self, args: &[&str]) -> Command {
+        let mut command = Command::new("git");
+        command.args(args).current_dir(self.cwd);
+        if let Some(home) = self.config_home {
+            command.env("GIT_CONFIG_GLOBAL", home.join("git").join("config"));
+        }
+        command
+    }
+
+    /// `git config` with `args`: the value, `None` when the key is unset
+    /// (exit 1), and the stderr as the error otherwise.
+    fn git_get(&self, args: &[&str]) -> Result<Option<String>, String> {
+        let output = self
+            .git(&[&["config"], args].concat())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -371,17 +322,203 @@ fn git_worktree_scope(cwd: &Path) -> Result<Option<&'static str>, String> {
                 String::from_utf8_lossy(&output.stderr).trim()
             )),
         }
+    }
+}
+
+/// Run a jj or git command: its stdout on success, its stderr as the
+/// error otherwise.
+fn capture(mut command: Command) -> Result<String, String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("cannot run {program}: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// The jj config of the workspace the session runs in (jj 0.46 keeps it
+/// under the user's config directory, one file per workspace, so a second
+/// workspace of the repository never reads it), the author of that
+/// workspace's own working-copy commit, and git's config for that
+/// worktree when the checkout is colocated. The git write needs
+/// `extensions.worktreeConfig`. When git cannot take it, no git identity
+/// is written, because the only file left is the shared `.git/config`,
+/// and the returned notes say so.
+pub(crate) fn write_checkout_identity(
+    cwd: &Path,
+    name: &str,
+    email: &str,
+    config_home: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let checkout = Checkout { cwd, config_home };
+    let has_jj = cwd.join(".jj").is_dir() || jj_root(cwd).is_some();
+    let has_git = cwd.join(".git").exists();
+    if !has_jj && !has_git {
+        return Err(format!("{} is not a jj or git checkout", cwd.display()));
+    }
+    let pairs = [("user.name", name), ("user.email", email)];
+    let mut notes = Vec::new();
+    if has_jj {
+        for (key, value) in pairs {
+            capture(checkout.jj(&["config", "set", "--workspace", key, value]))
+                .map_err(|e| format!("jj config set {key} failed: {e}"))?;
+        }
+        notes.extend(adopt_working_copy_author(&checkout)?);
+    }
+    if has_git {
+        match git_identity_scope(&checkout)? {
+            GitScope::Worktree => {
+                for (key, value) in pairs {
+                    capture(checkout.git(&["config", "--worktree", key, value]))
+                        .map_err(|e| format!("git config --worktree {key} failed: {e}"))?;
+                }
+            }
+            GitScope::Shared(why) => notes.push(format!(
+                "{why}. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's"
+            )),
+        }
+    }
+    Ok(notes)
+}
+
+/// jj sets a commit's author when it creates the commit, so a working-copy
+/// commit made before the session picked its identity keeps the earlier
+/// author through `jj commit`. The workspace's own working-copy commit
+/// takes the identity now while it is undescribed. A described one keeps
+/// its author and is named in the note; another workspace's commit is
+/// never touched, because `@` is this workspace's alone.
+fn adopt_working_copy_author(checkout: &Checkout<'_>) -> Result<Vec<String>, String> {
+    let shown = capture(checkout.jj(&[
+        "log",
+        "-r",
+        "@",
+        "--no-graph",
+        "-T",
+        r#"change_id.short() ++ " " ++ if(description, "described", "undescribed")"#,
+    ]))
+    .map_err(|e| format!("jj log @ failed: {e}"))?;
+    let Some((change, state)) = shown.trim().split_once(' ') else {
+        return Err(format!("jj log @ printed `{}`", shown.trim()));
     };
-    if get(&["--type=bool", "--get", "extensions.worktreeConfig"])?.as_deref() == Some("true") {
-        return Ok(Some("--worktree"));
+    if state == "described" {
+        return Ok(vec![format!(
+            "the working-copy commit {change} is described and keeps its author"
+        )]);
     }
-    if get(&["--type=bool", "--get", "core.bare"])?.as_deref() == Some("true")
-        || get(&["--get", "core.worktree"])?.is_some()
+    match capture(checkout.jj(&["metaedit", "--update-author", "-r", "@"])) {
+        Ok(_) => Ok(Vec::new()),
+        Err(error) => Ok(vec![format!(
+            "the working-copy commit {change} keeps its author: jj metaedit failed: {error}"
+        )]),
+    }
+}
+
+/// Where git keeps a session identity for this worktree.
+enum GitScope {
+    /// `git config --worktree` reaches this worktree's own file.
+    Worktree,
+    /// Only the shared `.git/config` is left, for the reason given.
+    Shared(String),
+}
+
+/// `--worktree` once `extensions.worktreeConfig` is on in the repository
+/// config, turned on here when git allows it. A global
+/// `extensions.worktreeConfig` is ignored by git, so it is read with
+/// `--local`. git-config(1) says a `core.worktree`, or a `core.bare` that
+/// is true, has to move into the main worktree's `config.worktree` by
+/// hand first. And git ignores every `config.worktree` while the extension
+/// is off, so one that already sets either key would apply the moment it
+/// turns on: a dormant `core.bare = true` broke `git status` in review.
+/// With either, the answer names the cause and the caller writes no git
+/// identity.
+fn git_identity_scope(checkout: &Checkout<'_>) -> Result<GitScope, String> {
+    if checkout
+        .git_get(&[
+            "--local",
+            "--type=bool",
+            "--get",
+            "extensions.worktreeConfig",
+        ])?
+        .as_deref()
+        == Some("true")
     {
-        return Ok(None);
+        return Ok(GitScope::Worktree);
     }
-    get(&["--local", "extensions.worktreeConfig", "true"])?;
-    Ok(Some("--worktree"))
+    if checkout
+        .git_get(&["--type=bool", "--get", "core.bare"])?
+        .as_deref()
+        == Some("true")
+        || checkout.git_get(&["--get", "core.worktree"])?.is_some()
+    {
+        return Ok(GitScope::Shared(
+            "git keeps one config for every worktree of this repository: core.bare or core.worktree is set, and extensions.worktreeConfig needs it moved into config.worktree by hand first".to_string(),
+        ));
+    }
+    for file in worktree_config_files(checkout)? {
+        if let Some(fault) = work_tree_fault(checkout, &file) {
+            return Ok(GitScope::Shared(format!(
+                "{} {fault}, and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off",
+                file.display()
+            )));
+        }
+    }
+    capture(checkout.git(&["config", "--local", "extensions.worktreeConfig", "true"]))
+        .map_err(|e| format!("git config --local extensions.worktreeConfig failed: {e}"))?;
+    Ok(GitScope::Worktree)
+}
+
+/// Every `config.worktree` git reads once the extension is on: the main
+/// worktree's under the common dir, then one per linked worktree.
+fn worktree_config_files(checkout: &Checkout<'_>) -> Result<Vec<PathBuf>, String> {
+    let common =
+        capture(checkout.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+            .map_err(|e| format!("git rev-parse --git-common-dir failed: {e}"))?;
+    let common = PathBuf::from(common.trim());
+    let mut files = vec![common.join("config.worktree")];
+    if let Ok(entries) = std::fs::read_dir(common.join("worktrees")) {
+        let mut linked: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path().join("config.worktree"))
+            .collect();
+        linked.sort();
+        files.extend(linked);
+    }
+    Ok(files.into_iter().filter(|file| file.exists()).collect())
+}
+
+/// Why a dormant `config.worktree` keeps the extension off: it sets
+/// `core.bare` or `core.worktree`, the two keys git-config(1) names as
+/// moving where git finds the work tree, or git cannot read it. `None`
+/// when it is safe to wake.
+fn work_tree_fault(checkout: &Checkout<'_>, file: &Path) -> Option<String> {
+    let output = checkout
+        .git(&[
+            "config",
+            "--file",
+            &file.display().to_string(),
+            "--list",
+            "--name-only",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|name| *name == "core.bare" || *name == "core.worktree")
+            .map(|name| format!("sets {name}")),
+        Ok(output) => Some(format!(
+            "cannot be read ({})",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(error) => Some(format!("cannot be read ({error})")),
+    }
 }
 
 fn jj_root(cwd: &Path) -> Option<PathBuf> {
@@ -976,14 +1113,11 @@ mod tests {
             jj_get(dir.path(), home.path(), "user.name"),
             "Claude Fable 5.1 (claude-fable-5-1)"
         );
-        let git = Command::new("git")
-            .args(["config", "user.email"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), FABLE);
         assert_eq!(
-            String::from_utf8_lossy(&git.stdout).trim(),
-            "claude-fable-5-1@claude.noreply.nexus.local"
+            jj_author(dir.path(), home.path()),
+            FABLE,
+            "the working-copy commit takes the identity"
         );
 
         let result = author_identity_in(
@@ -1006,13 +1140,39 @@ mod tests {
         );
     }
 
-    fn git_get(dir: &Path, key: &str) -> String {
+    /// A git value as the adapter's git sees it: the scratch home stands
+    /// in for the global config, so the owner's never leaks in.
+    fn git_get(dir: &Path, home: &Path, key: &str) -> String {
         let out = Command::new("git")
             .args(["config", "--get", key])
             .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", home.join("git").join("config"))
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The author email of the workspace's working-copy commit.
+    fn jj_author(dir: &Path, home: &Path) -> String {
+        let out = Command::new("jj")
+            .args(["log", "-r", "@", "--no-graph", "-T", "author.email()"])
+            .current_dir(dir)
+            .env("XDG_CONFIG_HOME", home)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The git worktree jj made for a workspace: the one entry under the
+    /// main checkout's `.git/worktrees/`.
+    fn linked_worktree_dir(main: &Path) -> PathBuf {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(main.join(".git/worktrees"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        entries.remove(0)
     }
 
     fn write_identity(harness: Harness, dir: &Path, home: &Path, model: &str) -> HandlerResult {
@@ -1057,16 +1217,25 @@ mod tests {
         let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
         assert!(result.context.is_empty(), "{result:?}");
         assert_ne!(jj_get(&b, home.path(), "user.email"), FABLE, "b untouched");
-        assert_ne!(git_get(&b, "user.email"), FABLE, "b's git untouched");
+        assert_ne!(
+            git_get(&b, home.path(), "user.email"),
+            FABLE,
+            "b's git untouched"
+        );
+        assert_ne!(jj_author(&b, home.path()), FABLE, "b's commit untouched");
 
+        // b's working-copy commit was made before b's session picked
+        // Astra, so it carried the earlier author into `jj commit`.
         let result = write_identity(Harness::Codex, &b, home.path(), "gpt-6-astra");
         assert!(result.context.is_empty(), "{result:?}");
         assert_eq!(jj_get(a.path(), home.path(), "user.email"), FABLE);
         assert_eq!(jj_get(&b, home.path(), "user.email"), ASTRA);
-        assert_eq!(git_get(a.path(), "user.email"), FABLE);
-        assert_eq!(git_get(&b, "user.email"), ASTRA);
+        assert_eq!(jj_author(a.path(), home.path()), FABLE);
+        assert_eq!(jj_author(&b, home.path()), ASTRA);
+        assert_eq!(git_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(git_get(&b, home.path(), "user.email"), ASTRA);
         assert_eq!(
-            git_get(a.path(), "extensions.worktreeConfig"),
+            git_get(a.path(), home.path(), "extensions.worktreeConfig"),
             "true",
             "git keeps the identity per worktree"
         );
@@ -1074,7 +1243,34 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_core_keeps_git_identity_in_the_shared_config_and_says_so() {
+    fn a_described_working_copy_commit_keeps_its_author_and_is_named() {
+        let home = config_home();
+        let dir = jj_checkout();
+        std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(jj_author(dir.path(), home.path()), FABLE);
+        let described = Command::new("jj")
+            .args(["describe", "-m", "half done"])
+            .current_dir(dir.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(described, "jj describe");
+        let result = write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-astra");
+        assert_eq!(jj_get(dir.path(), home.path(), "user.email"), ASTRA);
+        assert_eq!(
+            jj_author(dir.path(), home.path()),
+            FABLE,
+            "described, left alone"
+        );
+        assert_eq!(result.context.len(), 1, "{result:?}");
+        assert!(result.context[0].contains("is described"), "{result:?}");
+    }
+
+    #[test]
+    fn a_core_worktree_keeps_the_git_identity_out_of_the_shared_config() {
         let home = config_home();
         let dir = jj_checkout();
         std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
@@ -1086,12 +1282,111 @@ mod tests {
         assert!(set, "git config core.worktree");
         let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
         assert_eq!(result.context.len(), 1, "{result:?}");
+        assert!(result.context[0].contains("core.worktree"), "{result:?}");
         assert!(
-            result.context[0].contains("shared .git/config"),
+            result.context[0].contains("global git identity"),
             "{result:?}"
         );
-        assert_eq!(git_get(dir.path(), "user.email"), FABLE);
-        assert_eq!(git_get(dir.path(), "extensions.worktreeConfig"), "");
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), "");
+        assert_eq!(git_get(dir.path(), home.path(), "user.name"), "");
+        assert_eq!(
+            git_get(dir.path(), home.path(), "extensions.worktreeConfig"),
+            ""
+        );
+        assert_eq!(jj_get(dir.path(), home.path(), "user.email"), FABLE);
+    }
+
+    #[test]
+    fn a_dormant_worktree_config_keeps_the_extension_off() {
+        let home = config_home();
+        let a = jj_checkout();
+        let parent = tempfile::tempdir().unwrap();
+        let b = parent.path().join("b");
+        let added = Command::new("jj")
+            .args(["workspace", "add", "--colocate", &b.display().to_string()])
+            .current_dir(a.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("JJ_CONFIG", "")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(added, "jj workspace add");
+        std::fs::write(a.path().join("authors.yaml"), ROSTER).unwrap();
+        let git_status = |dir: &Path| {
+            Command::new("git")
+                .args(["status", "--short"])
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", home.path().join("git").join("config"))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .code()
+        };
+        // git ignores both files while the extension is off, and would
+        // read them the moment it turns on.
+        let main = a.path().join(".git/config.worktree");
+        let linked = linked_worktree_dir(a.path()).join("config.worktree");
+        for (file, body, key) in [
+            (&main, "[core]\n\tworktree = /elsewhere\n", "core.worktree"),
+            (&linked, "[core]\n\tbare = true\n", "core.bare"),
+        ] {
+            std::fs::write(file, body).unwrap();
+            let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+            assert_eq!(result.context.len(), 1, "{result:?}");
+            assert!(
+                result.context[0].contains(&file.display().to_string()),
+                "{result:?}"
+            );
+            assert!(result.context[0].contains(key), "{result:?}");
+            assert_eq!(
+                git_get(a.path(), home.path(), "extensions.worktreeConfig"),
+                "",
+                "the extension stays off"
+            );
+            assert_eq!(git_get(a.path(), home.path(), "user.email"), "");
+            assert_eq!(jj_get(a.path(), home.path(), "user.email"), FABLE);
+            assert_eq!(git_status(&b), Some(0), "b still works");
+            std::fs::remove_file(file).unwrap();
+        }
+        let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+        assert!(result.context.is_empty(), "{result:?}");
+        assert_eq!(
+            git_get(a.path(), home.path(), "extensions.worktreeConfig"),
+            "true"
+        );
+        assert_eq!(git_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(git_status(&b), Some(0));
+    }
+
+    #[test]
+    fn a_global_worktree_config_extension_is_not_taken_for_the_repository() {
+        let home = config_home();
+        let global = home.path().join("git");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("config"),
+            "[extensions]\n\tworktreeConfig = true\n",
+        )
+        .unwrap();
+        let dir = jj_checkout();
+        std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert!(result.context.is_empty(), "{result:?}");
+        let local = Command::new("git")
+            .args(["config", "--local", "--get", "extensions.worktreeConfig"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&local.stdout).trim(),
+            "true",
+            "the repository config carries the extension, not the global"
+        );
+        let worktree = std::fs::read_to_string(dir.path().join(".git/config.worktree"))
+            .expect("the identity went to config.worktree");
+        assert!(worktree.contains(FABLE), "{worktree}");
     }
 
     #[test]
