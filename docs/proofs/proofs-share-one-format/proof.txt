@@ -1,0 +1,68 @@
+## every-scenario-has-proof#proof-readme-is-the-source/proof-directory-carries-another-change-s-name
+kind: check
+$# the proof README in the directory canvas-a names the change other-change-two
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/two-changes" repo && sed -n 3p repo/docs/proofs/canvas-a/README.md'
+  change: other-change-two
+$# the proof of other-change-two is the README in canvas-a
+$ rune proof run other-change-two --check --source repo
+  /private/tmp/claude-501/rune-proof-39329-every-scenario-has-proof-proof-readme-is-the-source-proof-directory-carries-another-change-s-name-2fe47f80-2-0/repo/docs/proofs/canvas-a/README.md: transcript and head hold
+$# no proof names canvas-a, so canvas-a has none
+$ rune proof run canvas-a --check --source repo
+  fatal: no proof names change `canvas-a`; run `rune proof scaffold canvas-a` first
+$# the graph links the proof to other-change-two, and no node names a change canvas-a
+$ sh -c 'rune graph export --source repo > graph.ttl'
+$ awk '/proof\/canvas-a> a rune:Proof/,/rune:sourcePath/' graph.ttl
+  <https://runedeck.ai/id/proof/canvas-a> a rune:Proof ;
+      dcterms:identifier "canvas-a" ;
+      rune:change <https://runedeck.ai/id/change/other-change-two> ;
+      rune:recorded "2026-09-24"^^xsd:date ;
+      rune:transcript "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ;
+      rune:transcriptMatches true ;
+      rune:sourcePath "docs/proofs/canvas-a/README.md" .
+$ grep -c 'id/change/canvas-a' graph.ttl
+  0
+
+## every-scenario-has-proof#skeleton-is-written-first/readme-already-exists
+kind: check
+$# the README of sample-change-one exists, and the first of its two scenes is filled
+$ sh -s
+< set -e
+< cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/one-change" repo
+< mkdir -p repo/docs/proofs/sample-change-one
+< cat > repo/docs/proofs/sample-change-one/README.md <<'EOF'
+< ---
+< type: proof
+< change: sample-change-one
+< recorded: 2026-10-25
+< transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+< scenes:
+< - scenario: sample-capability-one#thing-holds/version-prints
+<   kind: unproven
+< - scenario: sample-capability-one#thing-holds/missing-tag-fails
+<   kind: unproven
+< ---
+<
+< ## sample-capability-one#thing-holds/version-prints
+<
+< ```console
+< $ rune --version
+< rune [..] built [..]
+< ```
+<
+< ## sample-capability-one#thing-holds/missing-tag-fails
+<
+< ```console
+< ```
+< EOF
+< cp -f repo/docs/proofs/sample-change-one/README.md before.md
+$# the author asks for the skeleton, and the runner refuses and names the file
+$ rune proof scaffold sample-change-one --source repo
+  fatal: /private/tmp/claude-501/rune-proof-39329-every-scenario-has-proof-skeleton-is-written-first-readme-already-exists-33805768-11-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
+$# the README keeps its bytes, and nothing else was written
+$ sh -c 'cmp before.md repo/docs/proofs/sample-change-one/README.md && ls -A repo/docs/proofs repo/docs/proofs/sample-change-one'
+  repo/docs/proofs:
+  sample-change-one
+
+  repo/docs/proofs/sample-change-one:
+  README.md
+

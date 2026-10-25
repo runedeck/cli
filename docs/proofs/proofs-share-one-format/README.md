@@ -1,8 +1,11 @@
 ---
 type: proof
 change: proofs-share-one-format
+head: 3500220fb7495e5dfb90075333827779053ad1ae
+head_change: mwnkmtxvtsrxywwqnusqlqpqnvznlotu
+head_tree: 972cc551d57570b1c0e4044e0495a7620c38b4e5
 recorded: 2026-10-25
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 4fc7e6da7e4ce4e9254d416f2b016a83e398d654278fb0fa91aff744c5b046e5
 scenes:
 - scenario: every-scenario-has-proof#proof-readme-is-the-source/proof-directory-carries-another-change-s-name
   kind: check
