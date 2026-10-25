@@ -354,7 +354,7 @@ fn send(
 /// harnesses a message can be posted for.
 fn unsupported_outcome(options: &PostOptions, tool: &str) -> Outcome {
     let message = format!(
-        "cannot post a message for a {tool} session: rune drives no such harness. Harnesses: {}",
+        "cannot post a message for a session on {tool}: rune drives no such harness. Harnesses: {}",
         HARNESSES.join(", ")
     );
     Outcome {
