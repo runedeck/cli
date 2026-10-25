@@ -27,7 +27,7 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: Canonical Events Map To Each Harness
 
-The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported for that harness and never substituted. Each mapping carries the harness's documented timeout cap, and a rendered timeout or dispatcher deadline never exceeds it: Claude `SessionEnd` shares 1.5 s, Codex `SessionEnd` is 1 s by default and 3 s at most. `rune hook list --events` prints the table.
+The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported and never substituted. Each mapping carries the harness's timeout cap. A rendered timeout (whole seconds on Claude and Codex) and the dispatcher deadline stay inside it: Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
 
 #### Scenario: Event the harness lacks
 

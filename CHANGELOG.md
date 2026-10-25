@@ -312,6 +312,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Clamp a hook budget to the whole seconds of the harness cap, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s, the budget Claude raises for a per-hook timeout.
+- Write the session's author identity to the jj workspace config and the git worktree config, so two workspaces of one repository keep their own model.
 - Pass `rune proof run --check` after a signature or reword of the head: a proof records `head_change` and `head_tree`, and an ancestor with both holds.
 - Fix `rune run` and `rune launch` hanging or exiting 1 under another harness: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` names, `CODEX_SANDBOX`) leave the child's environment.
 - Keep owner controls such as `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_CLIENT_CERT` in the child's environment.

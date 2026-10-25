@@ -356,7 +356,7 @@ fn rendered(
     planned: &PlannedEvent,
     plan: &str,
 ) -> Value {
-    let timeout = planned.budget_ms.div_ceil(1_000).max(1);
+    let timeout = planned.timeout_s();
     let guarded = guarded(harness, planned);
     let mut hook = json!({
         "type": "command",

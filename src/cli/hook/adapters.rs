@@ -241,10 +241,13 @@ fn author_identity_in(
             )
         }
     };
-    write_checkout_identity(&cwd, &name, &email, config_home)?;
+    let shared = write_checkout_identity(&cwd, &name, &email, config_home)?;
     let mut result = HandlerResult::default();
     if let Some(warning) = warning {
         result = result.with_warning(&warning);
+    }
+    if let Some(shared) = shared {
+        result = result.with_warning(&shared);
     }
     Ok(result)
 }
@@ -272,22 +275,29 @@ pub(crate) fn written_paths(tool: &super::payload::ToolPayload) -> Vec<PathBuf> 
         .collect()
 }
 
-/// jj repository config, and git config when the checkout is colocated.
+/// The jj config of the workspace the session runs in (jj 0.46 keeps it
+/// under the user's config directory, one file per workspace, so a second
+/// workspace of the repository never reads it), and git's config for that
+/// worktree when the checkout is colocated. The git write needs
+/// `extensions.worktreeConfig`; when git cannot take it, the identity goes
+/// to the shared `.git/config` and the returned note says so.
 pub(crate) fn write_checkout_identity(
     cwd: &Path,
     name: &str,
     email: &str,
     config_home: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let has_jj = cwd.join(".jj").is_dir() || jj_root(cwd).is_some();
-    if !has_jj && !cwd.join(".git").exists() {
+    let has_git = cwd.join(".git").exists();
+    if !has_jj && !has_git {
         return Err(format!("{} is not a jj or git checkout", cwd.display()));
     }
+    let pairs = [("user.name", name), ("user.email", email)];
     if has_jj {
-        for (key, value) in [("user.name", name), ("user.email", email)] {
+        for (key, value) in pairs {
             let mut command = Command::new("jj");
             command
-                .args(["config", "set", "--repo", key, value])
+                .args(["config", "set", "--workspace", key, value])
                 .current_dir(cwd);
             if let Some(home) = config_home {
                 command.env("XDG_CONFIG_HOME", home);
@@ -305,10 +315,20 @@ pub(crate) fn write_checkout_identity(
             }
         }
     }
-    if cwd.join(".git").exists() {
-        for (key, value) in [("user.name", name), ("user.email", email)] {
+    let mut note = None;
+    if has_git {
+        let scope = if let Some(scope) = git_worktree_scope(cwd)? {
+            scope
+        } else {
+            note = Some(
+                "git cannot keep a per-worktree config here (core.bare or core.worktree is set); the identity went to the shared .git/config"
+                    .to_string(),
+            );
+            "--local"
+        };
+        for (key, value) in pairs {
             let status = Command::new("git")
-                .args(["config", key, value])
+                .args(["config", scope, key, value])
                 .current_dir(cwd)
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
@@ -316,13 +336,52 @@ pub(crate) fn write_checkout_identity(
                 .map_err(|e| format!("cannot run git: {e}"))?;
             if !status.status.success() {
                 return Err(format!(
-                    "git config {key} failed: {}",
+                    "git config {scope} {key} failed: {}",
                     String::from_utf8_lossy(&status.stderr).trim()
                 ));
             }
         }
     }
-    Ok(())
+    Ok(note)
+}
+
+/// `--worktree` once `extensions.worktreeConfig` is on, which this turns
+/// on when git allows it. git-config(1) says a `core.worktree`, or a
+/// `core.bare` that is true, has to move into the main worktree's
+/// `config.worktree` by hand first, so with either set the answer is
+/// `None` and the caller keeps the shared config.
+fn git_worktree_scope(cwd: &Path) -> Result<Option<&'static str>, String> {
+    let get = |args: &[&str]| -> Result<Option<String>, String> {
+        let output = Command::new("git")
+            .arg("config")
+            .args(args)
+            .current_dir(cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        match output.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            )),
+            Some(1) => Ok(None),
+            _ => Err(format!(
+                "git config {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    };
+    if get(&["--type=bool", "--get", "extensions.worktreeConfig"])?.as_deref() == Some("true") {
+        return Ok(Some("--worktree"));
+    }
+    if get(&["--type=bool", "--get", "core.bare"])?.as_deref() == Some("true")
+        || get(&["--get", "core.worktree"])?.is_some()
+    {
+        return Ok(None);
+    }
+    get(&["--local", "extensions.worktreeConfig", "true"])?;
+    Ok(Some("--worktree"))
 }
 
 fn jj_root(cwd: &Path) -> Option<PathBuf> {
@@ -945,6 +1004,138 @@ mod tests {
             jj_get(dir.path(), home.path(), "user.name"),
             "Unlisted codex model (gpt-6-luna)"
         );
+    }
+
+    fn git_get(dir: &Path, key: &str) -> String {
+        let out = Command::new("git")
+            .args(["config", "--get", key])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn write_identity(harness: Harness, dir: &Path, home: &Path, model: &str) -> HandlerResult {
+        author_identity_in(
+            &payload(
+                harness,
+                "session.start",
+                None,
+                &dir.display().to_string(),
+                Some(model),
+            ),
+            None,
+            Some(home),
+            None,
+        )
+        .unwrap()
+    }
+
+    const FABLE: &str = "claude-fable-5-1@claude.noreply.nexus.local";
+    const ASTRA: &str = "gpt-6-astra@codex.noreply.nexus.local";
+
+    #[test]
+    fn two_workspaces_of_one_repository_keep_their_own_identity() {
+        let home = config_home();
+        let a = jj_checkout();
+        let parent = tempfile::tempdir().unwrap();
+        let b = parent.path().join("b");
+        let added = Command::new("jj")
+            .args(["workspace", "add", "--colocate", &b.display().to_string()])
+            .current_dir(a.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("JJ_CONFIG", "")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(added, "jj workspace add");
+        assert!(b.join(".git").is_file(), "the workspace is a git worktree");
+        std::fs::write(a.path().join("authors.yaml"), ROSTER).unwrap();
+        std::fs::write(b.join("authors.yaml"), ROSTER).unwrap();
+
+        let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+        assert!(result.context.is_empty(), "{result:?}");
+        assert_ne!(jj_get(&b, home.path(), "user.email"), FABLE, "b untouched");
+        assert_ne!(git_get(&b, "user.email"), FABLE, "b's git untouched");
+
+        let result = write_identity(Harness::Codex, &b, home.path(), "gpt-6-astra");
+        assert!(result.context.is_empty(), "{result:?}");
+        assert_eq!(jj_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(jj_get(&b, home.path(), "user.email"), ASTRA);
+        assert_eq!(git_get(a.path(), "user.email"), FABLE);
+        assert_eq!(git_get(&b, "user.email"), ASTRA);
+        assert_eq!(
+            git_get(a.path(), "extensions.worktreeConfig"),
+            "true",
+            "git keeps the identity per worktree"
+        );
+        assert!(a.path().join(".git/config.worktree").is_file());
+    }
+
+    #[test]
+    fn a_bare_core_keeps_git_identity_in_the_shared_config_and_says_so() {
+        let home = config_home();
+        let dir = jj_checkout();
+        std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
+        let set = Command::new("git")
+            .args(["config", "--local", "core.worktree", "."])
+            .current_dir(dir.path())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(set, "git config core.worktree");
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(result.context.len(), 1, "{result:?}");
+        assert!(
+            result.context[0].contains("shared .git/config"),
+            "{result:?}"
+        );
+        assert_eq!(git_get(dir.path(), "user.email"), FABLE);
+        assert_eq!(git_get(dir.path(), "extensions.worktreeConfig"), "");
+    }
+
+    #[test]
+    fn the_unlisted_identity_is_refused_by_the_push_gate() {
+        if run_tool("python3", &["--version"], &[], None).is_err() {
+            eprintln!("skipped: python3 is not installed");
+            return;
+        }
+        let home = config_home();
+        let dir = jj_checkout();
+        let roster = dir.path().join("authors.yaml");
+        std::fs::write(&roster, ROSTER).unwrap();
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/author-identity.py");
+        let gate = |model: &str| {
+            let name = jj_get(dir.path(), home.path(), "user.name");
+            let email = jj_get(dir.path(), home.path(), "user.email");
+            assert!(name.contains(model), "{name}");
+            run_tool(
+                "python3",
+                &[
+                    "-I",
+                    script,
+                    "validate",
+                    "--policy",
+                    &roster.display().to_string(),
+                    "--identity",
+                    &format!("{name} <{email}>"),
+                ],
+                &[],
+                None,
+            )
+            .unwrap()
+        };
+        write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-luna");
+        let (code, _, stderr) = gate("gpt-6-luna");
+        assert_eq!(
+            code,
+            Some(1),
+            "the gate refuses the unlisted model: {stderr}"
+        );
+        assert!(stderr.contains("must match"), "{stderr}");
+        write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-astra");
+        let (code, _, stderr) = gate("gpt-6-astra");
+        assert_eq!(code, Some(0), "the gate accepts the listed model: {stderr}");
     }
 
     #[test]

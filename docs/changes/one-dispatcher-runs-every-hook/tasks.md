@@ -20,9 +20,9 @@
 
 ## 4. Handlers
 
-- [x] 4.1 `author-identity`: harness and the payload's `model` against `authors.yaml` (checkout, else deck), identity written into the checkout's jj and git config, the `unlisted@` identity for an unknown model, a missing model warns. Fixture: a captured Claude `SessionStart` payload
+- [x] 4.1 `author-identity`: harness and the payload's `model` against `authors.yaml` (checkout, else deck), identity written into the session's jj workspace config and git worktree config, the `unlisted@` identity for an unknown model, a missing model warns. Fixture: a captured Claude `SessionStart` payload
 - [x] 4.2 Adapters over the existing executables and parts, each declaring what it adopts: dcg (`tool.before`, `deny`), git-ai checkpoint (`tool.before`, `tool.after`, `turn.finish`), rtk (`tool.before`, rewriter), lint-on-write (`tool.after`), session-capture (`session.end`, `compact.before`, detached), turn-checkpoint (`prompt.before`, `turn.finish`, `session.end`), tmux-status (`prompt.before`, `notification`, `turn.finish`, `session.end`), jj-guards (`tool.before`, `deny`: worktree, agent isolation, VCS internals)
-- [x] 4.3 Tests: the identity scenarios including two checkouts and a commit's author, each adapter's translation on a fixture payload, each guard's refusal
+- [x] 4.3 Tests: the identity scenarios including two checkouts, two workspaces of one repository, the push gate on the unlisted identity, and a commit's author, each adapter's translation on a fixture payload, each guard's refusal
 - [ ] 4.4 (deferred to the deck change that gives hook runes their frontmatter; until then a deck hook is declared as any other `exec` handler) A deck hook rune fixture (frontmatter: event, handler, policy) deploys as an executable under the provider's `hooks/<deck>/` and appears in the plan through `.rune` selection
 
 ## 5. Dotfiles and the live migration

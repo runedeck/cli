@@ -8,7 +8,7 @@ Who a commit made by a harness session is attributed to: the model, resolved aga
 
 ### Requirement: Identity Binds To The Checkout
 
-The handler `author-identity` on `session.start` MUST resolve the harness and the payload's model (Claude and Codex carry `model`; a payload without it is a warning and no write) to an identity listed in the checkout's `authors.yaml`, or the deck's when the checkout has none, and write it as the checkout's jj repository author, and git author when colocated, never into a file shared between sessions. A model with no listed identity writes `Unlisted <harness> model (<id>)` with an `unlisted@` address, which the attribution check refuses at push, so the miss is loud and no listed author is borrowed.
+The handler `author-identity` on `session.start` MUST resolve the harness and the payload's model (Claude and Codex carry `model`; a payload without it is a warning and no write) to an identity listed in the checkout's `authors.yaml`, or the deck's when the checkout has none, and write it into the jj workspace and git worktree the session runs in, never into a file shared between sessions. A model with no listed identity writes `Unlisted <harness> model (<id>)` with an `unlisted@` address, which the attribution check refuses at push, so the miss is loud and no listed author is borrowed.
 
 #### Scenario: Listed model at session start
 
@@ -22,5 +22,5 @@ The handler `author-identity` on `session.start` MUST resolve the harness and th
 
 #### Scenario: Two sessions, two checkouts
 
-- **WHEN** a Claude session and a Codex session start in two different checkouts
-- **THEN** each checkout carries its own session's identity and neither write touches the other
+- **WHEN** a Claude session and a Codex session start in two checkouts, two jj workspaces of one colocated repository included
+- **THEN** each checkout, in jj and in git, carries its own session's identity and neither write touches the other
