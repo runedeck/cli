@@ -8,8 +8,9 @@ use crate::cli::run::{EXIT_RUNNER_ERROR, Outcome, Text, print_outcome};
 use serde_json::{Value, json};
 
 /// The variables a harness sets for its children that name its session:
-/// Claude Code's was read in a live desktop session on 2026-10-25, Codex's
-/// is in the parent-session table of `run-works-inside-a-harness`.
+/// Claude Code's was read in a live desktop session on 2026-10-25, and
+/// Codex sets `CODEX_THREAD_ID` to the thread id for every shell command
+/// since openai/codex#10096 (merged 2026-02-03).
 const SESSION_VARIABLES: &[(&str, &str)] = &[
     ("claude", "CLAUDE_CODE_SESSION_ID"),
     ("codex", "CODEX_THREAD_ID"),

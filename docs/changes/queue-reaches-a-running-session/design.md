@@ -40,7 +40,7 @@ A message's state is its last line. An id is the milliseconds since the epoch an
 
 The hook handler is the built-in adapter `postbox`, declared as `exec: [rune-hook-postbox]`. It reads by the payload's session id. Context needs the `context` capability (Claude Code, Gemini, grok) and keeping a turn going needs `turn_continue` (Claude Code, Codex, grok, Antigravity), from the dispatcher's protocol table. On an event where the harness has neither, the handler reads nothing, so no message is marked read and lost. `session.start` is a passive event, and the dispatcher on `main` drops a passive event's answer, so a message read there is marked read and never shown (found on 2026-10-25 in a scratch install). The documented handler therefore subscribes `prompt.before` and `turn.finish` only. The owner chose to fix the dispatcher in the hooks round, so that a passive event keeps its context. With that round installed, `session.start` can join the subscription, and a resumed session gets its messages at once. `rune hook install` writes the Claude Code and Codex hook tables only, and the dispatcher ignores a Claude Code registration that grok fires, so grok reads through the skill today.
 
-`rune queue read` without `--session` finds its own session in `CLAUDE_CODE_SESSION_ID`, which held the session's id in a live Claude Code desktop session on 2026-10-25, or in `CODEX_THREAD_ID`, from the parent-session table of `run-works-inside-a-harness`. The same variables name the sender of a post, as `harness:id`.
+`rune queue read` without `--session` finds its own session in `CLAUDE_CODE_SESSION_ID`, which held the session's id in a live Claude Code desktop session on 2026-10-25, or in `CODEX_THREAD_ID`, which Codex sets to the thread id for every shell command it runs since [openai/codex#10096][CODEXTHREADID], merged 2026-02-03. The same variables name the sender of a post, as `harness:id`.
 
 ## Structure
 
@@ -83,6 +83,6 @@ Running Codex sessions live on its shared local app-server daemon. Without `--re
 - A session without the hook or the skill never reads its messages. `rune queue list --state posted` shows them.
 - Codex changes its receipt line. The post then reports `queued` with null Codex ids and a warning, and a test pins the current line.
 - No Codex daemon runs. Codex then cannot connect to `unix://`, its error passes through, and nothing is recorded.
-- `CODEX_THREAD_ID` is not the thread id in some Codex version. `read` then finds nothing, and `--session` names the thread.
 
 [HARNESS]: ../../specs/glossary/harness.md
+[CODEXTHREADID]: https://github.com/openai/codex/pull/10096
