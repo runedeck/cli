@@ -39,6 +39,7 @@ mod promote;
 mod proof;
 mod provenance;
 mod provider_cmd;
+mod queue;
 mod release;
 mod repair;
 mod review;
@@ -845,6 +846,51 @@ enum Command {
         /// and `output`.
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
+    },
+
+    /// Queue a message for a running harness session, read at its next turn
+    #[command(
+        after_help = "EXAMPLES:\n  rune queue codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 \"Is the deck ready?\"\n  rune queue sol61@codex --session ouroboros --message-file question.md\n  command cat question.md | rune queue codex --session ouroboros\n\nHARNESSES:\n  codex takes the message through `codex queue --remote unix://`, the local\n  app-server daemon that holds the running sessions, and the session reads\n  it at its next turn without interrupting the turn in progress. claude, agy,\n  grok and opencode have no queue for a running session and are refused\n  with exit 125.\n\nPROFILES:\n  A profile's environment applies, so a profile that sets CODEX_HOME\n  reaches the sessions of that home. Its arguments start a session and are\n  not passed; a warning names them.\n\nThe exit status follows rune run: the harness's own status passes through,\n124 is the time limit, 125 an error of rune itself, 126 and 127 a binary\nthat cannot run or is not found."
+    )]
+    Queue {
+        /// Route of the session's harness, such as `codex` or `sol61@codex`.
+        tool: String,
+
+        /// The session to reach: its id or its exact name, as the harness
+        /// knows it.
+        #[arg(long, value_name = "ID|NAME")]
+        session: String,
+
+        /// Message text. Omit to use --message-file or noninteractive stdin.
+        #[arg(value_name = "MESSAGE", conflicts_with = "message_file")]
+        message: Option<String>,
+
+        /// Read the message from a UTF-8 text file.
+        #[arg(long, value_name = "FILE")]
+        message_file: Option<std::path::PathBuf>,
+
+        /// Override the resolved harness binary.
+        #[arg(long, value_name = "FILE")]
+        binary: Option<std::path::PathBuf>,
+
+        /// The app server that holds the session: `ws://host:port`,
+        /// `wss://host:port`, `unix://`, or `unix://PATH`. Passed to codex as
+        /// `--remote`. Defaults to `unix://`, the local daemon's socket.
+        #[arg(long, value_name = "ADDR")]
+        remote: Option<String>,
+
+        /// The environment variable that holds the bearer token for a remote
+        /// websocket app server. Passed to codex by name, never by value.
+        #[arg(long, value_name = "VAR", requires = "remote")]
+        remote_auth_token_env: Option<String>,
+
+        /// Optional deadline for the harness command, such as 30s or 5m.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print the command and its environment without starting it.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -1740,9 +1786,9 @@ pub fn run() -> i32 {
     let args = match Cli::try_parse() {
         Ok(args) => args,
         // A usage error under --json is one JSON object on stdout; help and
-        // version keep their own output. `rune run` answers 125 for a usage
-        // error, as the POSIX timeout utility does for its own errors, and
-        // every other command keeps clap's exit code.
+        // version keep their own output. `rune run` and `rune queue` answer
+        // 125 for a usage error, as the POSIX timeout utility does for its
+        // own errors, and every other command keeps clap's exit code.
         Err(error) if error.use_stderr() => {
             let code = if run_requested(std::env::args_os().skip(1)) {
                 run::EXIT_RUNNER_ERROR
@@ -2276,6 +2322,30 @@ pub fn run() -> i32 {
                 json: args.json,
             });
         }
+        Command::Queue {
+            tool,
+            session,
+            message,
+            message_file,
+            binary,
+            remote,
+            remote_auth_token_env,
+            timeout,
+            dry_run,
+        } => {
+            return queue::execute(&queue::QueueOptions {
+                tool,
+                session,
+                message,
+                message_file,
+                binary,
+                remote,
+                remote_auth_token_env,
+                timeout,
+                dry_run,
+                json: args.json,
+            });
+        }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -2541,13 +2611,13 @@ fn json_requested(args: impl Iterator<Item = OsString>) -> bool {
         .any(|argument| argument == "--json")
 }
 
-/// Whether the command line names the `run` subcommand: the first
-/// argument before `--` that is not a flag. The global flags take no
-/// value, so no flag swallows the word after it.
+/// Whether the command line names the `run` or the `queue` subcommand:
+/// the first argument before `--` that is not a flag. The global flags take
+/// no value, so no flag swallows the word after it.
 fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
-        .is_some_and(|argument| argument == "run")
+        .is_some_and(|argument| argument == "run" || argument == "queue")
 }
 
 #[cfg(test)]
@@ -2917,6 +2987,12 @@ fn plumbing_help(help: &mut String) {
         "run",
         "<TOOL> [PROMPT|--prompt-file <FILE>]",
         "Run a coding tool with supervised output",
+    );
+    help_command(
+        help,
+        "queue",
+        "<TOOL> --session <ID|NAME> [MESSAGE]",
+        "Queue a message for a running session",
     );
     help_command(
         help,

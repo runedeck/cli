@@ -442,6 +442,17 @@ Every run writes a state file beside its folder, `$XDG_STATE_HOME/rune/workspace
 
 A git repository without jj is colocated first (`jj git init --colocate`), once, and the result says so. A folder under neither git nor jj cannot take a workspace-write run: the refusal names read-only mode and the colocation command. Ignored files, such as build output and `.env`, are absent from the workspace, so a build inside a run starts cold. Every workspace-write run needs `jj` on the PATH. A runner killed with SIGKILL cannot clean up. Its workspace then stays in `jj workspace list` with a `run-` name, and `jj workspace forget <name>` removes it.
 
+Send a question to a session that is already running. The message waits in the session's own queue, and the session reads it at its next turn without interrupting the turn in progress:
+
+```sh
+rune queue codex --session ouroboros "Is the deck ready for review?"
+rune queue sol61@codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 --message-file question.md
+```
+
+`--session` takes the session id or its exact name. The route picks the harness, and a profile's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that Codex home. The profile's arguments start a session, so they are not passed, and a warning names them. The queue goes to the local Codex app-server daemon (`--remote unix://`), which holds the running sessions. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. The result names the message id and the thread id that Codex printed, and `--json` makes it one object of kind `queued`. `--dry-run` prints the command with the message as `<message>`.
+
+Codex is the one harness with a queue, through `codex queue`. Claude Code, agy, and grok can only resume a session for a new turn, and OpenCode's `run --attach` waits for the turn, so `rune queue` refuses them with exit 125 and kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
+
 Run a helper script bundled with a skill:
 
 ```sh
