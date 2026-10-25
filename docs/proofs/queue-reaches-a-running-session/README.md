@@ -1,9 +1,9 @@
 ---
 type: proof
 change: queue-reaches-a-running-session
-head: 0c1c0e05153e0caf9ed189e21bfef4c930242d0a
+head: 210d506d8bbdfba746c0ef369a810ff5198f9c2e
 recorded: 2026-10-25
-transcript: 8d46f03e3c2d5f2f0f93c97e96162fc41c8b3a8b0d037648bea94910725a0f65
+transcript: 2466b1ebb277dc26163029f44d39e7c375d338d3ee8118d1487921ec64f6209e
 scenes:
 - scenario: queue-messages-for-sessions#every-message-is-recorded-and-nothing-is-removed/message-for-a-claude-session-is-read-once
   kind: check
