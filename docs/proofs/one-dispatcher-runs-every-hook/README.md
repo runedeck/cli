@@ -55,6 +55,46 @@ scenes:
   kind: check
 - scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/two-sessions-two-checkouts
   kind: check
+- scenario: a-doubt-runs-the-handler#a-counted-line-reads-one-way-to-the-shell/part-with-crlf-line-ends
+  kind: check
+- scenario: a-doubt-runs-the-handler#a-counted-line-reads-one-way-to-the-shell/part-word-carries-an-unquoted-bracket-pair
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-home-expands-in-a-counted-word/part-path-carries-a-second-variable
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/entry-runs-zsh
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/shell-word-finds-another-program
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/firing-whose-sh-is-not-the-system-shell
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/shebang-with-an-option
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-first-part-covers/part-with-nohup-after-the-first-part
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-first-part-covers/first-part-outside-the-shape
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-first-part-covers/part-name-the-locale-may-sort-another-way
+  kind: check
+- scenario: a-doubt-runs-the-handler#a-rewriter-is-never-covered/part-runs-the-rewriter-s-command
+  kind: check
+- scenario: a-doubt-runs-the-handler#a-shell-variable-covers-nothing/install-under-shellopts
+  kind: check
+- scenario: a-doubt-runs-the-handler#a-shell-variable-covers-nothing/firing-with-an-exported-function
+  kind: check
+- scenario: a-doubt-runs-the-handler#only-the-fields-the-harness-reads/entry-with-a-condition-key
+  kind: check
+- scenario: a-doubt-runs-the-handler#the-record-matches-the-firing/claude-reads-another-settings-folder
+  kind: check
+- scenario: a-doubt-runs-the-handler#the-record-matches-the-firing/legacy-dispatcher-in-the-codex-table
+  kind: check
+- scenario: a-doubt-runs-the-handler#the-record-matches-the-firing/record-copied-to-another-harness
+  kind: check
+- scenario: a-doubt-runs-the-handler#cover-checks-are-bounded/checks-end-past-the-deadline
+  kind: check
+- scenario: a-doubt-runs-the-handler#cover-checks-are-bounded/folder-past-a-cap
+  kind: check
+- scenario: a-doubt-runs-the-handler#cover-checks-are-bounded/cover-record-is-a-fifo
+  kind: check
 - scenario: guards-hold-under-failure#a-denial-outranks-every-effect/continuation-before-a-guard
   kind: check
 - scenario: guards-hold-under-failure#a-result-has-the-rune-shape-only/guard-answers-in-the-harness-s-own-shape
@@ -103,9 +143,9 @@ scenes:
   kind: check
 - scenario: install-respects-owner-tables#no-handler-left-takes-rune-s-entries-back/owner-empties-the-handlers
   kind: check
-- scenario: install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/turn-wrap-on-stop
+- scenario: install-respects-owner-tables#the-legacy-dispatcher-keeps-its-entry/owner-s-stop-parts-on-claude
   kind: check
-- scenario: install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/legacy-dispatcher-joined-with-an-owner-s-check
+- scenario: install-respects-owner-tables#the-legacy-dispatcher-keeps-its-entry/legacy-dispatcher-joined-with-an-owner-s-check
   kind: check
 - scenario: install-respects-owner-tables#a-tool-s-entry-goes-where-its-adapter-runs/dcg-replaced-on-claude-only
   kind: check
@@ -132,6 +172,8 @@ scenes:
 # Proof: one-dispatcher-runs-every-hook
 
 One scene per scenario, in closure order. Every scene runs `rune` against a fixture home under `tests/fixtures/hooks/`, whose handlers are shell lines, so the scenes run on any machine. `RUNE_STATE_DIR=state` keeps the plan generations, the compiled plan, and the manifest in the scene's own directory. A scene that installs copies its fixture home into the scene first, so it never writes a fixture or the runner's HOME. `tests/fixtures/hooks/trust-codex.sh` stands in for the owner's `/hooks` step and writes Codex's trust hash into the scene's `config.toml`.
+
+The scenes of the kept legacy dispatcher copy two scripts from this folder. `owner-home.sh` writes a home in the shape of the owner's live dispatcher: the dispatcher script at `~/.config/just/hook`, its `Stop.d` parts, stand-ins for the programs they run, and the tmux, turn, and capture handlers on `turn.finish`. Every value is synthetic. `fire.sh` fires the rune entry that install wrote, as the harness does, then prints the dispatcher log of that firing and the lines the stand-in programs wrote to `ran.log`.
 
 ## one-dispatcher-runs-every-hook#one-config-declares-every-hook/five-handlers-resolve-to-a-plan
 
@@ -360,23 +402,25 @@ codex: PostToolUse registered
 codex: PreToolUse registered
 codex: SessionEnd registered
 claude: PreToolUse adopted `/Users/x/.local/bin/dcg`
-claude: PreToolUse adopted `sh /Users/x/.sd/hook PreToolUse`
 claude: PreToolUse adopted `/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin`
+claude: PreToolUse keeps foreign `sh /Users/x/.sd/hook PreToolUse`
 claude: Notification keeps foreign `cmux hooks claude Notification`
+$# the legacy dispatcher entry stays, before the one rune entry
 $ jq -c '[.hooks.PreToolUse[].hooks[].command, .hooks.Notification[0].hooks[0].command, .model]' home/.claude/settings.json
-["[..]rune hook run --harness claude --native-event PreToolUse --plan [..]","cmux hooks claude Notification","opus"]
+["sh /Users/x/.sd/hook PreToolUse","[..]rune hook run --harness claude --native-event PreToolUse --plan [..]","cmux hooks claude Notification","opus"]
 $# one dispatcher entry per subscribed event, none on the foreign one
 $ jq -c '[.hooks | to_entries[] | {(.key): ([.value[].hooks[].command | select(contains("rune hook run"))] | length)}] | add' home/.claude/settings.json
 {"PreToolUse":1,"Notification":0,"PostToolUse":1,"SessionEnd":1}
 $ jq -c '.harnesses.claude | {owned: [.owned[].event], foreign: [.foreign[].command], adopted: (.adopted | length)}' state/hooks/manifest.json
-{"owned":["PreToolUse","PostToolUse","SessionEnd"],"foreign":["cmux hooks claude Notification"],"adopted":3}
+{"owned":["PreToolUse","PostToolUse","SessionEnd"],"foreign":["sh /Users/x/.sd/hook PreToolUse","cmux hooks claude Notification"],"adopted":2}
 ```
 
 ## one-dispatcher-runs-every-hook#install-owns-its-entries-and-nothing-else/owned-entry-edited-by-hand
 
 ```console
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null'
-$ sh -c 'jq ".hooks.PreToolUse[0].hooks[0].timeout = 99" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json && cp -f home/.claude/settings.json before.json && cp -f home/.codex/hooks.json before-codex.json'
+$# the timeout of rune's own PreToolUse entry changes by hand
+$ sh -c 'jq "(.hooks.PreToolUse[].hooks[] | select(.command | contains(\"rune hook run\")) | .timeout) = 99" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json && cp -f home/.claude/settings.json before.json && cp -f home/.codex/hooks.json before-codex.json'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
 [..]home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
@@ -399,11 +443,30 @@ $ jq -c '.harnesses.claude.adopted[] | select(.by == "git-ai") | .event' state/h
 ## one-dispatcher-runs-every-hook#install-adopts-predecessors-and-migrates-legacy-entries/legacy-dispatcher-in-the-codex-config
 
 ```console
-$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^legacy\|^trust: codex: the rune entry for PreToolUse"'
-legacy: [..]home/.codex/config.toml:7: `sh /Users/x/.sd/hook PreToolUse` is now the legacy sd hook handler; remove it from config.toml by hand, rune does not rewrite that file
+$# config.toml holds the legacy dispatcher on line 7, and the owner adds dcg below it
+$ sh -s
+< set -e
+< cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home
+< cat >> home/.codex/config.toml <<'EOF'
+<
+< [[hooks.PreToolUse]]
+< matcher = "Bash"
+<
+< [[hooks.PreToolUse.hooks]]
+< command = "$HOME/.local/bin/dcg"
+< type = "command"
+< EOF
+< cp -f home/.codex/config.toml config.before
+$# the output names the dcg line and the Codex trust step, and no legacy line names the dispatcher
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > install.out; grep "^legacy\|^trust: codex: the rune entry for PreToolUse" install.out && ! grep "^legacy:" install.out | grep -q "sd/hook" && echo no legacy line names the dispatcher'
+legacy: [..]home/.codex/config.toml:14: `$HOME/.local/bin/dcg` runs dcg with other commands; split it in config.toml by hand, rune does not rewrite that file
 trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+no legacy line names the dispatcher
+$# hooks.json gains the rune entry, and config.toml keeps the dispatcher line word for word
 $ jq -r '.hooks.PreToolUse[0].hooks[0].command' home/.codex/hooks.json
 [..]rune hook run --harness codex --native-event PreToolUse --plan [..]
+$ sh -c 'cmp home/.codex/config.toml config.before && sed -n 7p home/.codex/config.toml'
+command = "sh /Users/x/.sd/hook PreToolUse"
 ```
 
 ## checkout-carries-its-author-identity#identity-binds-to-the-checkout/listed-model-at-session-start
@@ -441,6 +504,388 @@ $ sh -c 'cd b && printf "%s" "{\"v\":1,\"harness\":\"codex\",\"event\":\"session
 $ sh -c 'for r in a b; do (cd $r && XDG_CONFIG_HOME="$PWD/../xdg" jj config get user.email); done'
 claude-fable-5-1@claude.noreply.nexus.local
 gpt-6-astra@codex.noreply.nexus.local
+```
+
+## a-doubt-runs-the-handler#a-counted-line-reads-one-way-to-the-shell/part-with-crlf-line-ends
+
+```console
+$# the tmux attention part gets CRLF line ends
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && awk "{printf \"%s\\r\\n\", \$0}" home/.config/just/hooks/Stop.d/10-tmux-attention.sh > crlf.sh && cat crlf.sh > home/.config/just/hooks/Stop.d/10-tmux-attention.sh'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/10-tmux-attention.sh has a shape rune does not read; every handler runs
+$# no cover record, so no firing skips a handler
+$ sh -c 'test ! -e state/hooks/cover/claude-Stop.json && echo no cover record'
+no cover record
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#a-counted-line-reads-one-way-to-the-shell/part-word-carries-an-unquoted-bracket-pair
+
+```console
+$# the part names its program with an unquoted [ab]: the shell expands it to claude-tmux-status, and rune reads a literal
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && printf "#!/bin/sh\nexec \$HOME/.local/bin/claude-tmux-st[ab]tus attention\n" > home/.config/just/hooks/Stop.d/10-tmux-attention.sh'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/10-tmux-attention.sh has a shape rune does not read; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-home-expands-in-a-counted-word/part-path-carries-a-second-variable
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# after install the part runs tmux through $OTHER, and .local/$OTHER links to .local/bin
+$ sh -c 'ln -s bin home/.local/other && printf "#!/bin/sh\nexec \"\$HOME/.local/\$OTHER/claude-tmux-status\" attention\n" > home/.config/just/hooks/Stop.d/10-tmux-attention.sh'
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop OTHER=other
+capture allow
+tmux not skipped: [..]/Stop.d/10-tmux-attention.sh has a shape rune does not read
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+$# the next install covers nothing and names the part
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/10-tmux-attention.sh has a shape rune does not read; every handler runs
+```
+
+## a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/entry-runs-zsh
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && jq ".hooks.Stop[0].hooks[0].command = \"zsh \$HOME/.config/just/hook Stop\"" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
+$# zsh reads startup files rune never reads, so the entry is no dispatcher line rune counts
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^claude:" -e "^covered:" -e "^warning:"'
+claude: Stop registered
+claude: Stop keeps foreign `zsh $HOME/.config/just/hook Stop`
+$ sh -c 'test ! -e state/hooks/cover/claude-Stop.json && echo no cover record'
+no cover record
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/shell-word-finds-another-program
+
+```console
+$# an executable named sh stands first in PATH
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && mkdir fakebin && printf "#!/bin/sh\nexec /bin/sh \"\$@\"\n" > fakebin/sh && chmod 755 fakebin/sh'
+$ sh -c 'HOME="$PWD/home" PATH="$PWD/fakebin:$PATH" RUNE_STATE_DIR=state rune hook install | grep -e "^claude:" -e "^covered:" -e "^warning:"'
+claude: Stop registered
+claude: Stop keeps foreign `sh $HOME/.config/just/hook Stop`
+$ sh -c 'test ! -e state/hooks/cover/claude-Stop.json && echo no cover record'
+no cover record
+$ sh -c 'RUNE_STATE_DIR=state sh fire.sh home claude Stop PATH="$PWD/fakebin:$PATH"'
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/firing-whose-sh-is-not-the-system-shell
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && jq ".hooks.Stop[0].hooks[0].command = \"/bin/sh \$HOME/.config/just/hook Stop\"" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `/bin/sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# a firing's PATH finds another sh first, and the dispatcher runs each part with a bare sh
+$ sh -c 'mkdir fakebin && printf "#!/bin/sh\nexec /bin/sh \"\$@\"\n" > fakebin/sh && chmod 755 fakebin/sh && RUNE_STATE_DIR=state sh fire.sh home claude Stop PATH="$PWD/fakebin:$PATH"'
+capture allow
+tmux not skipped: `sh` on PATH is not /bin/sh, and the dispatcher runs each part with it
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-the-system-shell-runs-a-counted-part/shebang-with-an-option
+
+```console
+$# the entry runs the dispatcher script itself, with no shell in front
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && jq ".hooks.Stop[0].hooks[0].command = \"\$HOME/.config/just/hook Stop\"" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `$HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# the script's shebang becomes #!/bin/sh -n
+$ sh -c '{ echo "#!/bin/sh -n"; sed 1d home/.config/just/hook; } > hook.new && cat hook.new > home/.config/just/hook && head -n 1 home/.config/just/hook'
+#!/bin/sh -n
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux not skipped: the shebang of [..]/home/.config/just/hook is not `#!/bin/sh`
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+$# the next install clears the cover
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -c "^covered:"; jq -c .handlers state/hooks/cover/claude-Stop.json'
+0
+{}
+```
+
+## a-doubt-runs-the-handler#only-the-first-part-covers/part-with-nohup-after-the-first-part
+
+```console
+$# Stop.d gains 40-nohup.sh, which runs its program with nohup in the background
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && printf "#!/bin/sh\nnohup \"\$HOME/.local/bin/session-sync\" >/dev/null 2>&1 &\n" > home/.config/just/hooks/Stop.d/40-nohup.sh && ls home/.config/just/hooks/Stop.d'
+10-tmux-attention.sh
+20-turn-wrap.sh
+30-turn-snapshot.sh
+40-nohup.sh
+$# install covers tmux with the first part and warns nothing
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$ jq -r '.handlers[].part' state/hooks/cover/claude-Stop.json
+[..]/Stop.d/10-tmux-attention.sh
+```
+
+## a-doubt-runs-the-handler#only-the-first-part-covers/first-part-outside-the-shape
+
+```console
+$# 05-log.sh, with two exec lines, comes before 10-tmux-attention.sh
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && printf "#!/bin/sh\nexec echo one\nexec echo two\n" > home/.config/just/hooks/Stop.d/05-log.sh'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/05-log.sh has a shape rune does not read; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-the-first-part-covers/part-name-the-locale-may-sort-another-way
+
+```console
+$# 11-A.sh stands beside the owner's parts
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && printf "#!/bin/sh\nexec true\n" > home/.config/just/hooks/Stop.d/11-A.sh'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/11-A.sh is not named NN-name.sh, so the shell's locale picks the first part; every handler runs
+$# two parts numbered 10 instead
+$ sh -c 'mv home/.config/just/hooks/Stop.d/11-A.sh home/.config/just/hooks/Stop.d/10-other.sh && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/10-[..].sh and [..]/Stop.d/10-[..].sh share one number, so the shell's locale picks the first part; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#a-rewriter-is-never-covered/part-runs-the-rewriter-s-command
+
+```console
+$# a PreToolUse.d part runs rtk hook claude, and the rtk handler rewrites; tools/rtk stands in for rtk
+$ sh -s
+< set -e
+< cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home
+< mkdir -p home/.config/just/hooks/PreToolUse.d tools
+< printf '#!/bin/sh\nexec rtk hook claude\n' > home/.config/just/hooks/PreToolUse.d/10-rtk.sh
+< printf 'hooks:\n  handlers:\n    - id: rtk\n      exec: [rune-hook-rtk]\n      events: [tool.before]\n      rewrites: true\n' > home/.config/rune/config.yaml
+< printf '%s\n' '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"sh $HOME/.config/just/hook PreToolUse"}]}]}}' > home/.claude/settings.json
+< printf '#!/bin/sh\ncat >/dev/null\necho "rtk $*" >> "$HOME/ran.log"\nprintf "{}"\n' > tools/rtk
+< chmod 755 tools/rtk
+$# install prints no covered line and no warning, and writes no cover record
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > install.out; grep -c -e "^covered:" -e "^warning:" install.out; test ! -e state/hooks/cover/claude-PreToolUse.json && echo no cover record'
+0
+no cover record
+$ sh -c 'RUNE_STATE_DIR=state sh fire.sh home claude PreToolUse PATH="$PWD/tools:$PATH"'
+tool Bash
+rtk allow
+rtk hook claude
+```
+
+## a-doubt-runs-the-handler#a-shell-variable-covers-nothing/install-under-shellopts
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state env SHELLOPTS=noglob rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because SHELLOPTS is set, which changes how sh reads a script; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#a-shell-variable-covers-nothing/firing-with-an-exported-function
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop 'BASH_FUNC_ls%%=() { :; }'
+capture allow
+tmux not skipped: BASH_FUNC_ls%% is set, which changes how sh reads the dispatcher and its parts
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#only-the-fields-the-harness-reads/entry-with-a-condition-key
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# after install the dispatcher hook gains an if key beside its command
+$ sh -c 'jq ".hooks.Stop[0].hooks[0].if = \"Bash(*)\"" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux not skipped: the entry has the key `if`, which rune does not read
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+$# the next install covers nothing and names the key
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because the entry has the key `if`, which rune does not read, so the part [..]/Stop.d/10-tmux-attention.sh may run what tmux runs twice; every handler runs
+```
+
+## a-doubt-runs-the-handler#the-record-matches-the-firing/claude-reads-another-settings-folder
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# the firing's CLAUDE_CONFIG_DIR names another folder
+$ sh -c 'RUNE_STATE_DIR=state sh fire.sh home claude Stop CLAUDE_CONFIG_DIR="$PWD/other-claude"'
+capture allow
+tmux not skipped: claude reads its hooks under [..]/other-claude now, not [..]/home/.claude/settings.json
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#the-record-matches-the-firing/legacy-dispatcher-in-the-codex-table
+
+```console
+$# Codex's Stop holds the same dispatcher entry as Claude's
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && mkdir -p home/.codex && cp -f home/.claude/settings.json home/.codex/hooks.json'
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^codex:" -e "^covered:"'
+codex: Stop registered
+codex: Stop keeps foreign `sh $HOME/.config/just/hook Stop`
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# install writes a cover record for Claude only
+$ ls state/hooks/cover
+claude-Stop.json
+$ RUNE_STATE_DIR=state sh fire.sh home codex Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#the-record-matches-the-firing/record-copied-to-another-harness
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# the Claude Stop record is copied to codex-Stop.json
+$ cp -f state/hooks/cover/claude-Stop.json state/hooks/cover/codex-Stop.json
+$ RUNE_STATE_DIR=state sh fire.sh home codex Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+$# a copy that names codex as its harness covers nothing either
+$ sh -c 'jq ".harness = \"codex\"" state/hooks/cover/claude-Stop.json > state/hooks/cover/codex-Stop.json'
+$ RUNE_STATE_DIR=state sh fire.sh home codex Stop
+capture allow
+tmux not skipped: codex loads its hooks once per session, so nothing is skipped there
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#cover-checks-are-bounded/checks-end-past-the-deadline
+
+```console
+$# turn.finish gets a budget of 1 ms, spent before the first handler starts
+$ sh -s
+< set -e
+< cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home
+< { printf 'hooks:\n  events:\n    turn.finish: {budget_ms: 1}\n'; sed 1d home/.config/rune/config.yaml; } > config.yaml
+< mv config.yaml home/.config/rune/config.yaml
+< HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep '^covered:'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# tmux is skipped, and no program runs, so ran.log stays empty
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+rune hook: capture failed: the 1 ms budget of Stop was spent before it started (warn, proceeding)
+rune hook: turn failed: the 1 ms budget of Stop was spent before it started (warn, proceeding)
+capture failed budget
+tmux skipped: the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop` runs its command
+turn failed budget
+$# the record of tmux names the part, with no exit status and no time spent
+$ sh -c 'jq -c "select(.hook == \"tmux\") | [.skipped, .exit_status, .duration_ms]" state/hooks/record/*.jsonl'
+["[..]/Stop.d/10-tmux-attention.sh",null,0]
+```
+
+## a-doubt-runs-the-handler#cover-checks-are-bounded/folder-past-a-cap
+
+```console
+$# Stop.d holds the three parts and fourteen dot files: seventeen entries
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && for i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14; do : > home/.config/just/hooks/Stop.d/.note-$i; done && ls -A home/.config/just/hooks/Stop.d | wc -l | tr -d " "'
+17
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d holds more than 16 entries; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+$# the dot files go; four dispatcher entries before Stop's own run folders whose first parts hold 64 KiB each
+$ sh -s
+< set -e
+< rm -f home/.config/just/hooks/Stop.d/.note-*
+< for pad in Pad1 Pad2 Pad3 Pad4; do
+<     mkdir -p home/.config/just/hooks/$pad.d
+<     { printf '#!/bin/sh\nexec true\n#'; head -c 65514 /dev/zero | tr '\0' x; echo; } > home/.config/just/hooks/$pad.d/10-pad.sh
+< done
+< jq '.hooks.Stop = [{hooks: [range(1; 5) | {type: "command", command: "sh $HOME/.config/just/hook Pad\(.)"}]}] + .hooks.Stop' home/.claude/settings.json > edited.json
+< mv edited.json home/.claude/settings.json
+< wc -c < home/.config/just/hooks/Pad1.d/10-pad.sh | tr -d ' '
+65536
+$# the four parts spend the 256 KiB of one scan, so no byte is left for the tmux part
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
+warning: claude: Stop reads no part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/10-tmux-attention.sh is longer than the bytes left to one firing; every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
+```
+
+## a-doubt-runs-the-handler#cover-checks-are-bounded/cover-record-is-a-fifo
+
+```console
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "^covered:"'
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# the cover record turns into a FIFO that no process writes
+$ sh -c 'rm -f state/hooks/cover/claude-Stop.json && mkfifo state/hooks/cover/claude-Stop.json && ls -l state/hooks/cover/claude-Stop.json | cut -c1'
+p
+$# the firing does not wait on it: it reads no cover, and every handler runs
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux allow
+turn allow
+tmux attention
+turn snapshot
 ```
 
 ## guards-hold-under-failure#a-denial-outranks-every-effect/continuation-before-a-guard
@@ -791,28 +1236,54 @@ $ sh -c 'test "$(ls state/hooks/plans | wc -l)" -eq "$(jq ".retired | length" st
 [0,true]
 ```
 
-## install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/turn-wrap-on-stop
+## install-respects-owner-tables#the-legacy-dispatcher-keeps-its-entry/owner-s-stop-parts-on-claude
 
 ```console
-$# Stop holds the legacy dispatcher, and no handler subscribes to turn.finish
-$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && jq ".hooks.Stop = [{hooks: [{type: \"command\", command: \"sh /Users/x/.sd/hook Stop\"}]}]" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
-$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep Stop'
-claude: Stop keeps foreign `sh /Users/x/.sd/hook Stop`
-warning: claude: Stop keeps the legacy `sh /Users/x/.sd/hook Stop`, because no handler subscribes to Stop; move what it runs into a handler, then remove it by hand
-$ jq -r '.hooks.Stop[0].hooks[0].command' home/.claude/settings.json
-sh /Users/x/.sd/hook Stop
+$# Stop holds the owner's dispatcher, and Stop.d runs tmux attention first, then turn wrap and turn snapshot
+$ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && ls home/.config/just/hooks/Stop.d'
+10-tmux-attention.sh
+20-turn-wrap.sh
+30-turn-snapshot.sh
+$# the output names tmux as covered with its part, and no cover for turn, whose part is not the first
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^claude:" -e "^covered:" -e "^warning:"'
+claude: Stop registered
+claude: Stop keeps foreign `sh $HOME/.config/just/hook Stop`
+covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+$# the entry stays first, and Claude's Stop generation keeps all three handlers
+$ jq -c '[.hooks.Stop[].hooks[].command]' home/.claude/settings.json
+["sh $HOME/.config/just/hook Stop","[..]rune hook run --harness claude --native-event Stop --plan [..]"]
+$ sh -c 'plan=$(jq -r ".hooks.Stop[].hooks[].command | select(contains(\" hook run \")) | sub(\".* --plan \"; \"\") | sub(\" .*\"; \"\")" home/.claude/settings.json) && jq -c "[.harnesses.claude.Stop.handlers[].id]" "$plan"'
+["capture","tmux","turn"]
+$# rune hook run skips tmux and runs turn and capture
+$ RUNE_STATE_DIR=state sh fire.sh home claude Stop
+capture allow
+tmux skipped: the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop` runs its command
+turn allow
+turn snapshot
+$# once the tmux part is gone, the next firing runs tmux with no install
+$ sh -c 'rm home/.config/just/hooks/Stop.d/10-tmux-attention.sh && RUNE_STATE_DIR=state sh fire.sh home claude Stop'
+capture allow
+tmux not skipped: [..]/Stop.d/10-tmux-attention.sh is not the first part of [..]/Stop.d now
+tmux allow
+turn allow
+tmux attention
+turn snapshot
 ```
 
-## install-respects-owner-tables#the-legacy-dispatcher-goes-where-rune-takes-over/legacy-dispatcher-joined-with-an-owner-s-check
+## install-respects-owner-tables#the-legacy-dispatcher-keeps-its-entry/legacy-dispatcher-joined-with-an-owner-s-check
 
 ```console
 $# the legacy dispatcher and the owner's check share one command line
 $ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && jq ".hooks.PreToolUse[1].hooks[0].command = \"sh ~/.sd/hook PreToolUse && /owner/check-policy\"" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json'
+$# install reads no part of the joined line and warns that a part may run twice
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep check-policy'
 claude: PreToolUse keeps foreign `sh ~/.sd/hook PreToolUse && /owner/check-policy`
-warning: claude: PreToolUse keeps `sh ~/.sd/hook PreToolUse && /owner/check-policy`, because it runs legacy sd hook with other commands; split it by hand, and the next install takes the legacy sd hook part
+warning: claude: PreToolUse reads no part of `sh ~/.sd/hook PreToolUse && /owner/check-policy`, because it runs the legacy dispatcher with other commands, so a part may run what a handler runs twice; split it by hand, and the next install reads its parts
 $ jq -c '[.hooks.PreToolUse[].hooks[].command | select(contains("check-policy"))]' home/.claude/settings.json
 ["sh ~/.sd/hook PreToolUse && /owner/check-policy"]
+$# every handler stays in Claude's PreToolUse generation
+$ sh -c 'plan=$(jq -r ".hooks.PreToolUse[].hooks[].command | select(contains(\" hook run \")) | sub(\".* --plan \"; \"\") | sub(\" .*\"; \"\")" home/.claude/settings.json) && jq -c "[.harnesses.claude.PreToolUse.handlers[].id]" "$plan"'
+["dcg","git-ai"]
 ```
 
 ## install-respects-owner-tables#a-tool-s-entry-goes-where-its-adapter-runs/dcg-replaced-on-claude-only
