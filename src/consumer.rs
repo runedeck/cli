@@ -42,6 +42,14 @@ pub fn is_linked_directory(repo_root: &Path) -> bool {
         && dot_rune.is_dir()
 }
 
+/// The owner's own `.rune` folder under `home`, apart from any repository's:
+/// it holds what every session on the machine shares, such as the postbox
+/// that `rune queue` writes. It is never a consumer manifest.
+#[must_use]
+pub fn user_directory(home: &Path) -> PathBuf {
+    home.join(".rune")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MANIFEST_IN_DIRECTORY, is_linked_directory, manifest_exists, manifest_path};
