@@ -84,16 +84,16 @@ impl RunPlan {
 
 /// One outcome of `rune run`: its exit code, the one JSON object `--json`
 /// prints on stdout, and the text that goes out otherwise.
-struct Outcome {
-    exit_code: i32,
-    json: Value,
-    text: Text,
+pub(crate) struct Outcome {
+    pub(crate) exit_code: i32,
+    pub(crate) json: Value,
+    pub(crate) text: Text,
 }
 
 /// Where the text form of an outcome goes: a plan or an answer on stdout,
 /// an error on stderr, and a configuration error through the CLI's own
 /// `fatal:` printer.
-enum Text {
+pub(crate) enum Text {
     Stdout(String),
     Stderr(String),
     Fatal(String),
@@ -129,20 +129,20 @@ pub(crate) fn execute(options: &RunOptions) -> i32 {
             return deliver(
                 options,
                 None,
-                configuration_outcome(options, message.into()),
+                configuration_outcome(&options.tool, message.into()),
             );
         }
     };
     let outcome = match execute_inner(options) {
         Ok(outcome) => outcome,
-        Err(error) => configuration_outcome(options, error),
+        Err(error) => configuration_outcome(&options.tool, error),
     };
     deliver(options, destination.as_ref(), outcome)
 }
 
 /// A configuration error as an outcome: exit 125, the `configuration_error`
 /// object, and the message for the CLI's fatal printer.
-fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> Outcome {
+pub(crate) fn configuration_outcome(tool: &str, error: launch::ResolveError) -> Outcome {
     let mut details = json!({ "message": error.message });
     if let (Some(profiles), Some(details)) = (error.profiles, details.as_object_mut()) {
         details.insert("profiles".to_string(), json!(profiles));
@@ -152,7 +152,7 @@ fn configuration_outcome(options: &RunOptions, error: launch::ResolveError) -> O
         json: json!({
             "ok": false,
             "kind": "configuration_error",
-            "tool": options.tool,
+            "tool": tool,
             "details": details,
         }),
         text: Text::Fatal(error.message),
@@ -169,24 +169,15 @@ fn deliver(
     destination: Option<&output::Destination>,
     outcome: Outcome,
 ) -> i32 {
+    let Some(destination) = destination else {
+        return print_outcome(options.json, outcome);
+    };
     let Outcome {
         exit_code,
         json,
         text,
     } = outcome;
     let json = with_exit_code(json, exit_code);
-    let Some(destination) = destination else {
-        if options.json {
-            println!("{json}");
-            return exit_code;
-        }
-        match text {
-            Text::Stdout(text) => println!("{text}"),
-            Text::Stderr(text) => eprintln!("{text}"),
-            Text::Fatal(message) => crate::cli::print_fatal(&message),
-        }
-        return exit_code;
-    };
     let body = if options.json {
         format!("{json}\n")
     } else {
@@ -219,6 +210,26 @@ fn deliver(
             EXIT_RUNNER_ERROR
         }
     }
+}
+
+/// Print the outcome on the terminal: the JSON object with its exit code
+/// under `json`, else the text on its stream. The value is the exit code.
+pub(crate) fn print_outcome(json: bool, outcome: Outcome) -> i32 {
+    let Outcome {
+        exit_code,
+        json: object,
+        text,
+    } = outcome;
+    if json {
+        println!("{}", with_exit_code(object, exit_code));
+        return exit_code;
+    }
+    match text {
+        Text::Stdout(text) => println!("{text}"),
+        Text::Stderr(text) => eprintln!("{text}"),
+        Text::Fatal(message) => crate::cli::print_fatal(&message),
+    }
+    exit_code
 }
 
 /// The outcome object with its exit code in it, under `exit_code`.
@@ -518,7 +529,7 @@ fn configuration_with_workspace(
     workspace_json: Value,
     workspace_lines: &[String],
 ) -> Outcome {
-    let mut outcome = configuration_outcome(options, message.into());
+    let mut outcome = configuration_outcome(&options.tool, message.into());
     if let Some(object) = outcome.json.as_object_mut() {
         object.insert("workspace".to_string(), workspace_json);
     }
@@ -912,32 +923,42 @@ fn execute_check(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
 }
 
 fn read_prompt(argument: Option<&str>, file: Option<&Path>) -> Result<String, String> {
-    let prompt = match (argument, file) {
+    read_text(argument, file, "prompt", "--prompt-file")
+}
+
+/// The text of a prompt or a message: the argument, the file `flag` names,
+/// or noninteractive stdin, and never empty. `noun` names it in errors.
+pub(crate) fn read_text(
+    argument: Option<&str>,
+    file: Option<&Path>,
+    noun: &str,
+    flag: &str,
+) -> Result<String, String> {
+    let text = match (argument, file) {
         (Some(_), Some(_)) => {
-            return Err("pass a prompt argument or --prompt-file, not both".to_string());
+            return Err(format!("pass a {noun} argument or {flag}, not both"));
         }
-        (Some(prompt), None) => prompt.to_string(),
+        (Some(text), None) => text.to_string(),
         (None, Some(path)) => std::fs::read_to_string(path)
-            .map_err(|error| format!("cannot read prompt file {}: {error}", path.display()))?,
+            .map_err(|error| format!("cannot read {noun} file {}: {error}", path.display()))?,
         (None, None) => {
             let mut stdin = std::io::stdin();
             if stdin.is_terminal() {
-                return Err(
-                    "provide a prompt argument, --prompt-file, or pipe a prompt on stdin"
-                        .to_string(),
-                );
+                return Err(format!(
+                    "provide a {noun} argument, {flag}, or pipe a {noun} on stdin"
+                ));
             }
-            let mut prompt = String::new();
+            let mut text = String::new();
             stdin
-                .read_to_string(&mut prompt)
-                .map_err(|error| format!("cannot read prompt from stdin: {error}"))?;
-            prompt
+                .read_to_string(&mut text)
+                .map_err(|error| format!("cannot read {noun} from stdin: {error}"))?;
+            text
         }
     };
-    if prompt.trim().is_empty() {
-        return Err("prompt must not be empty".to_string());
+    if text.trim().is_empty() {
+        return Err(format!("{noun} must not be empty"));
     }
-    Ok(prompt)
+    Ok(text)
 }
 
 fn read_optional_text_file(path: Option<&Path>, label: &str) -> Result<String, String> {
@@ -967,7 +988,7 @@ fn resolve_repository(path: &Path) -> Result<PathBuf, String> {
     Ok(repository)
 }
 
-fn parse_duration(value: &str) -> Result<Duration, String> {
+pub(crate) fn parse_duration(value: &str) -> Result<Duration, String> {
     let value = value.trim();
     let (number, multiplier) = if let Some(number) = value.strip_suffix("ms") {
         (number, 1_u64)
@@ -1008,7 +1029,7 @@ fn supervisor_timeout(
         .transpose()
 }
 
-fn duration_label(timeout: Option<Duration>) -> String {
+pub(crate) fn duration_label(timeout: Option<Duration>) -> String {
     timeout.map_or_else(
         || "none".to_string(),
         |duration| format!("{}ms", duration.as_millis()),
@@ -1019,7 +1040,7 @@ fn duration_label(timeout: Option<Duration>) -> String {
 /// harness's own status passes through, and the runner's own codes start
 /// at 124. A harness that exited 0 without an answer keeps 1, because no
 /// row of the table names it.
-fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
+pub(crate) fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
     match failure {
         SurfaceFailure::Process {
             failure: ProcessFailure::Timeout { .. },
@@ -1066,7 +1087,7 @@ fn failure_exit_code(failure: &SurfaceFailure) -> i32 {
 /// output puts its last lines in `details.stdout_tail` and
 /// `details.stderr_tail`; `hint` names an outer sandbox when the output
 /// shows one, else null.
-fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
+pub(crate) fn failure_json(tool: &str, failure: &SurfaceFailure) -> Value {
     if let SurfaceFailure::Noted { inner, note } = failure {
         let mut json = failure_json(tool, inner);
         if let Some(details) = json["details"].as_object_mut() {

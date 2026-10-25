@@ -1868,7 +1868,7 @@ fn redacted_tail(text: &str, secrets: &[String]) -> String {
     output_tail(&redact_text(text, secrets))
 }
 
-fn require_success(
+pub(crate) fn require_success(
     output: ProcessOutput,
     secrets: &[String],
 ) -> Result<ProcessOutput, SurfaceFailure> {

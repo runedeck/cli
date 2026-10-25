@@ -512,7 +512,9 @@ fn split_middleware_list(value: &str) -> Vec<String> {
 
 /// `sol@claude` launches tool `claude` with profile `sol`, mirroring
 /// user@host; a bare name is the tool alone.
-fn split_invocation(invocation: &str) -> (&str, Option<&str>) {
+/// A route as `(tool, profile)`: `sol@claude` is claude with the profile
+/// `sol`, and a bare name has no profile.
+pub(crate) fn split_invocation(invocation: &str) -> (&str, Option<&str>) {
     match invocation.split_once('@') {
         Some((profile, tool)) => (tool, Some(profile)),
         None => (invocation, None),
