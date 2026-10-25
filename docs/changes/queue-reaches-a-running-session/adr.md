@@ -1,12 +1,12 @@
 ---
-title: "A message for a running session goes through the harness's own queue"
-description: "rune queue hands one message to a running session's own queue through the harness, today codex queue, and refuses every harness that has no queue instead of imitating one"
+title: "Messages between sessions go through one plaintext postbox and the harness's own queue where one exists"
+description: "rune queue post records every message in ~/.rune/postbox.tsv, hands it to codex queue where the harness has a queue, and lets every other session read it through a hook or rune queue read"
 type: adr
 category: architecture
 tags:
     - cli
     - queue
-    - launch
+    - hooks
 status: proposed
 created: 2026-10-25
 updated: 2026-10-25
@@ -23,28 +23,29 @@ upstream: []
 change: queue-reaches-a-running-session
 ---
 
-# A message for a running session goes through the harness's own queue
+# Messages between sessions go through one plaintext postbox and the harness's own queue where one exists
 
 ## Context and Problem Statement
 
-The owner runs several harness sessions side by side, and one session sometimes needs to ask another a question. On 2026-10-25 a Claude session sent a question to a running Codex session with `codex queue --thread <id> --message <text>`, and Codex delivered it at that session's next turn without interrupting the turn in progress. Every session that wants to do this today must know which harness the other session runs and that harness's command. `rune` already resolves a route such as `sol61@codex` to a harness binary and an environment. The help of each harness was read on 2026-10-25: Codex has a queue command. Claude Code, agy, and grok have none. OpenCode documents an asynchronous prompt endpoint on its server, but not what it does to a busy session.
+The owner runs several harness sessions side by side, and one session sometimes needs to ask another a question. On 2026-10-25 a Claude session sent a question to a running Codex session with `codex queue --thread <id> --message <text>`, and Codex delivered it at that session's next turn without interrupting the turn in progress. The help of each harness was read the same day: Codex has a queue command. Claude Code, agy, and grok can only resume a session for a new turn. OpenCode documents an asynchronous prompt endpoint on its server, but not what it does to a busy session. The owner asked for a simple message ledger that every session can read, through a hook or a skill where the harness has no queue, with nothing ever deleted.
 
 ## Considered Options
 
-1. One `rune queue` command that hands the message to the harness's own queue and refuses a harness without one.
+1. Only the harness's own queue: Codex works, and every other harness is refused.
 2. Imitate a queue where none exists: resume the session for one more turn (`claude --resume <id> -p`, `agy --conversation <id> -p`, `grok --resume <id> -p`).
-3. A queue inside rune: rune stores messages in its state directory, and each harness reads them at its next turn through a hook.
-4. Leave it to each caller to call the harness command.
+3. One append-only plaintext ledger in the owner's home, read by a hook or by `rune queue read`, with the harness's own queue used where it exists.
+4. A ledger in each repository's `.rune/` folder.
 
 ## Decision Outcome
 
-Option 1. `rune queue <ROUTE> --session <ID|NAME> [MESSAGE]` MUST pass the message to the harness's own queue and MUST start no turn and no model call. For Codex it runs `codex queue --remote=unix://` against the local daemon, with the profile's environment and none of the profile's arguments. Every other harness MUST be refused with exit 125, a reason, and the list of harnesses that have a queue.
+Option 3. `rune queue post` MUST record every message in `~/.rune/postbox.tsv`, one tab-separated line per event. A state change MUST be a new line, and no line is ever removed or rewritten. Codex messages MUST go through `codex queue --remote=unix://` and be recorded as `posted`, then `queued`. Every other harness's messages MUST wait as `posted` until `rune queue read` or the `postbox` hook handler records them as `read`. The hook MUST read nothing on an event where the harness cannot show the messages.
 
-Option 2 starts a second turn on a session that may be running one. The Claude Code help for `--bg` with `--resume` says it starts a copy when the session is already running, so the message does not reach the running session. Option 3 needs a hook in every harness and a delivery guarantee rune cannot give, and would duplicate what Codex already does. Option 4 keeps the harness table in every caller.
+Option 1 leaves four of five harnesses without messages. Option 2 starts a second turn on a session that may be running one, and Claude Code's help for `--bg` with `--resume` says it starts a copy of a running session instead. Option 4 makes the sender know the folder the other session works in, and the owner's sessions work in different repositories.
 
 ## Consequences
 
-- A Claude, agy, grok, or OpenCode session cannot receive a queued message through rune. The refusal says so, and the caller decides what to do.
-- When another harness adds a queue command, the transport table gains a row and a test.
+- A session without the hook or the skill does not see its messages. They stay `posted` and `rune queue list` shows them.
+- The ledger grows without limit, and every read parses the whole file. A rotation needs a later decision, because nothing may be deleted.
+- Every session on the machine can read every message in the file. The ledger is the owner's own file, under the owner's home.
+- The hook reads by session id, so a sender addresses a hooked session by its id.
 - The command name sits beside `rune sign queue`, which queues a head for signing. The two share a word and nothing else.
-- The message travels as one argument to the harness, so other local users can read it in the process list while `codex queue` runs.
