@@ -665,7 +665,8 @@ fn dispatcher_failure(
     answer.stderr.insert(
         0,
         format!(
-            "rune hook: {why}; {}",
+            "rune hook: {}; {}",
+            visible(why, false),
             if denies { "denied" } else { "proceeding" }
         ),
     );
@@ -787,8 +788,10 @@ fn take_metrics(result: &mut HandlerResult, hook: &str, stderr: &mut Vec<String>
     match record::validate_metrics(&metrics) {
         Ok(()) => Some(metrics),
         Err(why) => {
+            // The refusal quotes the handler's own key, so it is shown too.
             stderr.push(format!(
-                "rune hook: {hook} returned metrics the record refuses: {why}; dropped"
+                "rune hook: {hook} returned metrics the record refuses: {}; dropped",
+                visible(&why, false)
             ));
             None
         }
@@ -796,7 +799,11 @@ fn take_metrics(result: &mut HandlerResult, hook: &str, stderr: &mut Vec<String>
 }
 
 /// A failed hook under its policy: warn and proceed, or deny when the
-/// harness can block the event.
+/// harness can block the event. The failure text is the handler's own
+/// stderr tail, a spawn error, or a timeout note, so it goes through
+/// `visible` before the handler's name is put in front of it: a failing
+/// handler that printed a carriage return or an escape sequence once
+/// showed the terminal `guard: all checks passed (warn, proceeding)`.
 fn apply_failure(
     failure: &Failure,
     hook: &str,
@@ -806,21 +813,20 @@ fn apply_failure(
     merged: &mut HandlerResult,
     stderr: &mut Vec<String>,
 ) {
+    let why = visible(&failure.why, false);
     match failure.policy {
         OnFailure::Warn => stderr.push(format!(
-            "rune hook: {hook} failed: {} (warn, proceeding)",
-            failure.why
+            "rune hook: {hook} failed: {why} (warn, proceeding)"
         )),
         OnFailure::Deny if can_deny => {
             if merged.effect != Effect::Deny {
                 merged.effect = Effect::Deny;
-                merged.reason = Some(format!("{hook} failed: {}", failure.why));
+                merged.reason = Some(format!("{hook} failed: {why}"));
             }
-            stderr.push(format!("rune hook: {hook} failed: {} (deny)", failure.why));
+            stderr.push(format!("rune hook: {hook} failed: {why} (deny)"));
         }
         OnFailure::Deny => stderr.push(format!(
-            "rune hook: {hook} failed: {} (deny, but {harness} cannot block {native_event})",
-            failure.why
+            "rune hook: {hook} failed: {why} (deny, but {harness} cannot block {native_event})"
         )),
     }
 }

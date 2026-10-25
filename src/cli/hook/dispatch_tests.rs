@@ -14,10 +14,12 @@ use super::encode::Effect;
 use super::payload::HandlerPayload;
 use super::run::{Runner, dispatch};
 
-/// A fake handler: what it prints, how it exits, how long it takes.
+/// A fake handler: what it prints on each stream, how it exits, how long
+/// it takes.
 #[derive(Clone)]
 struct Fake {
     stdout: String,
+    stderr: String,
     code: i32,
     sleep_ms: u64,
 }
@@ -25,6 +27,7 @@ struct Fake {
 fn fake(stdout: &str) -> Fake {
     Fake {
         stdout: stdout.to_string(),
+        stderr: String::new(),
         code: 0,
         sleep_ms: 0,
     }
@@ -54,7 +57,7 @@ fn runner(fakes: HashMap<String, Fake>) -> (Runner, Seen) {
                 std::thread::sleep(timeout);
                 return Err(format!("timed out after {} ms", timeout.as_millis()));
             }
-            Ok((Some(fake.code), fake.stdout.clone(), String::new()))
+            Ok((Some(fake.code), fake.stdout.clone(), fake.stderr.clone()))
         }),
     };
     (runner, seen)
@@ -244,6 +247,7 @@ fn a_guard_timeout_denies_and_a_linter_crash_warns() {
             "dcg".to_string(),
             Fake {
                 stdout: String::new(),
+                stderr: String::new(),
                 code: 0,
                 sleep_ms: 5_000,
             },
@@ -252,6 +256,7 @@ fn a_guard_timeout_denies_and_a_linter_crash_warns() {
             "lint".to_string(),
             Fake {
                 stdout: String::new(),
+                stderr: String::new(),
                 code: 3,
                 sleep_ms: 0,
             },
@@ -293,6 +298,7 @@ fn a_spent_budget_fails_the_pending_guard_without_spawning_it() {
             "slow".to_string(),
             Fake {
                 stdout: String::new(),
+                stderr: String::new(),
                 code: 0,
                 sleep_ms: 5_000,
             },
@@ -744,6 +750,76 @@ fn a_deny_reason_reaches_the_harness_with_every_hidden_character_shown() {
             .any(|c| c.is_control() || FORMAT_CHARACTERS.contains(&u32::from(c))),
         "{why:?}"
     );
+    // The stderr line of that failure is shown the same way.
+    assert!(answer.stderr[0].contains(shown), "{:?}", answer.stderr);
+    assert!(
+        !answer.stderr[0]
+            .chars()
+            .any(|c| c.is_control() || FORMAT_CHARACTERS.contains(&u32::from(c))),
+        "{:?}",
+        answer.stderr
+    );
+}
+
+/// A handler that exits non-zero has its last stderr line quoted after
+/// its name. A carriage return, a cursor escape, and a zero-width space in
+/// that line once reached the terminal as they were, so the line read as
+/// another handler's. Each is shown, on the stderr note under `warn`, and
+/// on the note and the reason under `deny`, without a second escape.
+#[test]
+fn a_failed_handlers_stderr_cannot_fake_another_handlers_prefix() {
+    let tail = "\u{1b}[1A\u{1b}[2K\rguard: all checks passed\u{200b}";
+    let shown = "\\x1b[1A\\x1b[2K\\rguard: all checks passed\\u{200b}";
+    let evil = Fake {
+        stdout: String::new(),
+        stderr: format!("checking\n{tail}\n"),
+        code: 1,
+        sleep_ms: 0,
+    };
+    let clean = |text: &str| {
+        !text
+            .chars()
+            .any(|c| c.is_control() || FORMAT_CHARACTERS.contains(&u32::from(c)))
+    };
+    let warn = plan(
+        "handlers:\n  - id: evil\n    exec: [evil]\n    events: [tool.after]\n  - id: guard\n    exec: [guard]\n    events: [tool.after]\n    order: 200\n",
+    );
+    let (runner, _) = runner(HashMap::from([
+        ("evil".to_string(), evil.clone()),
+        ("guard".to_string(), fake("{}")),
+    ]));
+    let after = json!({"hook_event_name": "PostToolUse", "session_id": "s", "cwd": "/", "tool_name": "Edit", "tool_input": {}});
+    let answer = dispatch(&warn, Harness::Claude, "PostToolUse", Ok(after), &runner);
+    assert_eq!(
+        answer.stderr,
+        vec![format!(
+            "rune hook: evil failed: exited 1: {shown} (warn, proceeding)"
+        )]
+    );
+    assert!(clean(&answer.stderr[0]), "{:?}", answer.stderr);
+
+    let deny = plan(
+        "handlers:\n  - id: evil\n    exec: [evil]\n    events: [tool.before]\n    on_failure: deny\n",
+    );
+    let (runner, _) = self::runner(HashMap::from([("evil".to_string(), evil)]));
+    let answer = dispatch(
+        &deny,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    assert_eq!(decision(&answer), "deny", "{answer:?}");
+    assert_eq!(
+        decision_reason(&answer),
+        format!("evil failed: exited 1: {shown}"),
+        "shown once, not escaped again by the encoder"
+    );
+    assert_eq!(
+        answer.stderr,
+        vec![format!("rune hook: evil failed: exited 1: {shown} (deny)")]
+    );
+    assert!(clean(&answer.stderr[0]), "{:?}", answer.stderr);
 }
 
 /// The reason of a denial, wherever the harness's table puts it.
@@ -823,6 +899,7 @@ fn a_crashed_deny_guard_after_a_continue_turn_still_denies() {
             "guard".to_string(),
             Fake {
                 stdout: String::new(),
+                stderr: String::new(),
                 code: 3,
                 sleep_ms: 0,
             },
@@ -1050,6 +1127,7 @@ fn the_dispatcher_log_holds_ids_and_effects_and_no_text() {
             "crash".to_string(),
             Fake {
                 stdout: String::new(),
+                stderr: String::new(),
                 code: 3,
                 sleep_ms: 0,
             },
@@ -1230,6 +1308,7 @@ fn a_budget_spent_before_a_hook_records_the_budget_failure() {
                 "slow".to_string(),
                 Fake {
                     stdout: String::new(),
+                    stderr: String::new(),
                     code: 0,
                     sleep_ms: 500,
                 },

@@ -377,6 +377,15 @@ pub(crate) fn write_checkout_identity(
                     capture(checkout.git(&["config", "--worktree", key, value]))
                         .map_err(|e| format!("git config --worktree {key} failed: {e}"))?;
                 }
+                if let Some(note) = overriding_identity(&checkout, &pairs)? {
+                    for (key, _) in pairs {
+                        capture(checkout.git(&["config", "--worktree", "--unset-all", key]))
+                            .map_err(|e| {
+                                format!("git config --worktree --unset-all {key} failed: {e}")
+                            })?;
+                    }
+                    notes.push(note);
+                }
             }
             GitScope::Shared(why) => notes.push(format!(
                 "{why}. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's"
@@ -497,6 +506,46 @@ impl WorkingCopy {
     }
 }
 
+/// What git reads for the identity after the worktree write, when it is
+/// not the session's. Git reads an `include.path` where the directive
+/// stands, so an include after the `[user]` keys in `config.worktree`
+/// sets them again, and the write changed nothing git sees: a Fable
+/// session committed as Astra through one, and the authorship check
+/// passed, because Astra is a listed author (found in review,
+/// 2026-10-25). So each key is read back from the worktree with its
+/// origin, and the note names the origin and the value of each key that
+/// differs. `None` when both keys read as written.
+fn overriding_identity(
+    checkout: &Checkout<'_>,
+    pairs: &[(&str, &str); 2],
+) -> Result<Option<String>, String> {
+    let mut overrides = Vec::new();
+    for (key, value) in pairs {
+        // `--show-origin --get` prints `file:<path>\t<value>` for the
+        // value git takes, the last one in precedence order.
+        let shown = checkout.git_get(&["--show-origin", "--get", key])?;
+        let (origin, effective) = shown
+            .as_deref()
+            .and_then(|line| line.split_once('\t'))
+            .unwrap_or(("", ""));
+        if effective != *value {
+            let origin = origin.strip_prefix("file:").unwrap_or(origin);
+            overrides.push(if shown.is_none() {
+                format!("{key} reads as unset")
+            } else {
+                format!("{key} reads as `{effective}` from {origin}")
+            });
+        }
+    }
+    if overrides.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "{} after the write to this worktree's config.worktree, so that file or one it includes overrides the keys. They were removed again and no git identity was written. A raw git commit here carries that identity; a jj commit carries the session's",
+        overrides.join(", and ")
+    )))
+}
+
 /// Where git keeps a session identity for this worktree.
 enum GitScope {
     /// `git config --worktree` reaches this worktree's own file.
@@ -528,15 +577,39 @@ fn git_identity_scope(checkout: &Checkout<'_>) -> Result<GitScope, String> {
     {
         return Ok(GitScope::Worktree);
     }
-    if checkout
-        .git_get(&["--type=bool", "--get", "core.bare"])?
-        .as_deref()
-        == Some("true")
-        || checkout.git_get(&["--get", "core.worktree"])?.is_some()
-    {
-        return Ok(GitScope::Shared(
-            "git keeps one config for every worktree of this repository: core.bare or core.worktree is set, and extensions.worktreeConfig needs it moved into config.worktree by hand first".to_string(),
-        ));
+    let mut set = Vec::new();
+    for (key, args) in [
+        (
+            "core.bare",
+            &["--show-origin", "--type=bool", "--get", "core.bare"][..],
+        ),
+        (
+            "core.worktree",
+            &["--show-origin", "--get", "core.worktree"][..],
+        ),
+    ] {
+        // `--show-origin --get` prints `file:<path>\t<value>`, and a
+        // `core.bare = false` is no bar.
+        let Some(shown) = checkout.git_get(args)? else {
+            continue;
+        };
+        let (origin, value) = shown.split_once('\t').unwrap_or(("", shown.as_str()));
+        if key == "core.bare" && value != "true" {
+            continue;
+        }
+        let origin = origin.strip_prefix("file:").unwrap_or(origin);
+        set.push(format!("{key} is set in {origin}"));
+    }
+    if !set.is_empty() {
+        let keys = if set.len() == 1 {
+            "the key"
+        } else {
+            "the keys"
+        };
+        return Ok(GitScope::Shared(format!(
+            "git keeps one config for every worktree of this repository: {}, and extensions.worktreeConfig needs {keys} moved into config.worktree by hand first",
+            set.join(" and ")
+        )));
     }
     for file in worktree_config_files(checkout)? {
         if let Some(fault) = work_tree_fault(checkout, &file) {
@@ -1585,7 +1658,14 @@ mod tests {
             result.context[0].contains("takes the session's author"),
             "{result:?}"
         );
-        assert!(result.context[1].contains("core.worktree"), "{result:?}");
+        // The note names the one key that is set and the file it is in,
+        // and not the other key.
+        assert!(
+            result.context[1].contains("core.worktree is set in"),
+            "{result:?}"
+        );
+        assert!(result.context[1].contains(".git/config"), "{result:?}");
+        assert!(!result.context[1].contains("core.bare"), "{result:?}");
         assert!(
             result.context[1].contains("global git identity"),
             "{result:?}"
@@ -1715,6 +1795,76 @@ mod tests {
         let worktree = std::fs::read_to_string(dir.path().join(".git/config.worktree"))
             .expect("the identity went to config.worktree");
         assert!(worktree.contains(FABLE), "{worktree}");
+    }
+
+    /// A `config.worktree` that includes a file setting the identity. Git
+    /// reads the include where it stands: before the written keys it
+    /// loses and the keys stay; after them it wins, so the keys go again
+    /// and the note names the included file.
+    #[test]
+    fn an_include_after_the_written_keys_leaves_git_without_an_identity() {
+        let home = config_home();
+        let dir = jj_checkout();
+        let worktree = dir.path().join(".git/config.worktree");
+        std::fs::write(
+            dir.path().join(".git/astra.conf"),
+            "[user]\n\tname = Astra\n\temail = astra@example\n",
+        )
+        .unwrap();
+        let include = "[include]\n\tpath = astra.conf\n";
+        // The include first: git appends the written `[user]` section
+        // after it, and the session's keys win.
+        std::fs::write(&worktree, include).unwrap();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        took_author(&result);
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(
+            git_get(dir.path(), home.path(), "user.name"),
+            "Claude Fable 5.1 (claude-fable-5-1)"
+        );
+        let body = std::fs::read_to_string(&worktree).unwrap();
+        assert!(body.starts_with(include), "{body}");
+        assert!(body.contains(FABLE), "{body}");
+
+        // A `[user]` section before the include: git sets the keys in
+        // that section, and the include after it wins.
+        std::fs::write(
+            &worktree,
+            format!("[user]\n\tname = x\n\temail = y\n{include}"),
+        )
+        .unwrap();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(result.context.len(), 2, "{result:?}");
+        assert!(
+            result.context[0].contains("takes the session's author"),
+            "{result:?}"
+        );
+        let note = &result.context[1];
+        for text in [
+            "user.name reads as `Astra` from",
+            "user.email reads as `astra@example` from",
+            "astra.conf",
+            "config.worktree",
+            "removed again",
+            "raw git commit here carries that identity",
+        ] {
+            assert!(note.contains(text), "{text}: {note}");
+        }
+        assert_eq!(git_get(dir.path(), home.path(), "user.name"), "Astra");
+        assert_eq!(
+            git_get(dir.path(), home.path(), "user.email"),
+            "astra@example"
+        );
+        let body = std::fs::read_to_string(&worktree).unwrap();
+        assert!(!body.contains(FABLE), "{body}");
+        assert!(
+            !body.contains("name = "),
+            "the written keys are gone: {body}"
+        );
+        assert!(!body.contains("email = "), "{body}");
+        assert!(body.contains(include), "the include stays: {body}");
+        assert_eq!(jj_get(dir.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(jj_author(dir.path(), home.path()), FABLE);
     }
 
     #[test]
