@@ -455,14 +455,14 @@ Every message is recorded in the postbox, `~/.rune/postbox.tsv`, one file for ev
 
 Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed.
 
-Claude Code, agy, grok, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
+Claude Code, agy, grok, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's session start and next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
 
 ```yaml
 hooks:
   handlers:
     - id: postbox
       exec: [rune-hook-postbox]
-      events: [prompt.before, turn.finish]
+      events: [session.start, prompt.before, turn.finish]
 ```
 
 Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
