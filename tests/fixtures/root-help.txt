@@ -59,6 +59,7 @@
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
     run         <TOOL> [PROMPT|--prompt-file <FILE>]                  Run a coding tool with supervised output
+    queue       post <TOOL> --session <ID> [MESSAGE] | read | list    Post and read messages between sessions
     completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 
   Quick start:

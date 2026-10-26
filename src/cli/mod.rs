@@ -39,6 +39,7 @@ mod promote;
 mod proof;
 mod provenance;
 mod provider_cmd;
+mod queue;
 mod release;
 mod repair;
 mod review;
@@ -847,6 +848,15 @@ enum Command {
         output: Option<std::path::PathBuf>,
     },
 
+    /// Post and read messages between harness sessions, read at the next turn
+    #[command(
+        after_help = "EXAMPLES:\n  rune queue post codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 \"Is the deck ready?\"\n  rune queue post claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a --message-file question.md\n  rune queue read\n  rune queue list --state posted\n\nPOSTBOX:\n  Every message is recorded in ~/.rune/postbox.tsv, one tab-separated line\n  per event: timestamp, id, state, sender, harness, session, message.\n  Nothing is removed: a state change (posted, queued, read) is a new line.\n\nDELIVERY:\n  codex takes the message through its own queue, `codex queue --remote\n  unix://`. claude, agy, grok and opencode read it from the postbox: the\n  `postbox` hook handler adds it to the next turn, or the session runs\n  `rune queue read`.\n\nThe exit status follows rune run: the harness's own status passes through,\n124 is the time limit, 125 an error of rune itself, 126 and 127 a binary\nthat cannot run or is not found."
+    )]
+    Queue {
+        #[command(subcommand)]
+        action: QueueAction,
+    },
+
     /// Launch a read-only web dashboard showing rune state, provenance,
     /// and deployment status across all providers
     #[cfg(feature = "dashboard")]
@@ -1317,6 +1327,78 @@ enum KindAction {
 }
 
 #[derive(Subcommand)]
+enum QueueAction {
+    /// Post a message for a session: its harness's own queue, else the postbox
+    Post {
+        /// Route of the session's harness, such as `codex`, `claude`, or
+        /// `sol61@codex`.
+        tool: String,
+
+        /// The session to reach: its id or its exact name, as the harness
+        /// knows it. A hook reads by the session's id.
+        #[arg(long, value_name = "ID|NAME")]
+        session: String,
+
+        /// Message text. Omit to use --message-file or noninteractive stdin.
+        #[arg(value_name = "MESSAGE", conflicts_with = "message_file")]
+        message: Option<String>,
+
+        /// Read the message from a UTF-8 text file.
+        #[arg(long, value_name = "FILE")]
+        message_file: Option<std::path::PathBuf>,
+
+        /// Who posts. Defaults to this harness session as `harness:id`, else
+        /// `user:<login>`.
+        #[arg(long, value_name = "SENDER")]
+        from: Option<String>,
+
+        /// Write to the postbox even where the harness has its own queue.
+        #[arg(long)]
+        postbox: bool,
+
+        /// Override the resolved harness binary (codex queue).
+        #[arg(long, value_name = "FILE")]
+        binary: Option<std::path::PathBuf>,
+
+        /// The app server that holds the session: `ws://host:port`,
+        /// `wss://host:port`, `unix://`, or `unix://PATH`. Passed to codex as
+        /// `--remote`. Defaults to `unix://`, the local daemon's socket.
+        #[arg(long, value_name = "ADDR")]
+        remote: Option<String>,
+
+        /// The environment variable that holds the bearer token for a remote
+        /// websocket app server. Passed to codex by name, never by value.
+        #[arg(long, value_name = "VAR", requires = "remote")]
+        remote_auth_token_env: Option<String>,
+
+        /// Optional deadline for the harness command, such as 30s or 5m.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print what would be posted without posting it.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Read the messages posted for this session and mark them read
+    Read {
+        /// The session to read for, by id or name; repeatable. Defaults to
+        /// this harness session (`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`).
+        #[arg(long, value_name = "ID|NAME")]
+        session: Vec<String>,
+    },
+    /// List the postbox's messages and their states without changing them
+    List {
+        /// Only the messages for this session.
+        #[arg(long, value_name = "ID|NAME")]
+        session: Option<String>,
+
+        /// Only the messages in this state: posted, queued, or read.
+        #[arg(long, value_name = "STATE")]
+        state: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // the record filters are eight optional strings, parsed once
 enum HookAction {
     /// Print the plan the `hooks:` config compiles to, per harness
@@ -1740,9 +1822,9 @@ pub fn run() -> i32 {
     let args = match Cli::try_parse() {
         Ok(args) => args,
         // A usage error under --json is one JSON object on stdout; help and
-        // version keep their own output. `rune run` answers 125 for a usage
-        // error, as the POSIX timeout utility does for its own errors, and
-        // every other command keeps clap's exit code.
+        // version keep their own output. `rune run` and `rune queue` answer
+        // 125 for a usage error, as the POSIX timeout utility does for its
+        // own errors, and every other command keeps clap's exit code.
         Err(error) if error.use_stderr() => {
             let code = if run_requested(std::env::args_os().skip(1)) {
                 run::EXIT_RUNNER_ERROR
@@ -2276,6 +2358,7 @@ pub fn run() -> i32 {
                 json: args.json,
             });
         }
+        Command::Queue { action } => return run_queue(action, args.json),
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -2541,13 +2624,53 @@ fn json_requested(args: impl Iterator<Item = OsString>) -> bool {
         .any(|argument| argument == "--json")
 }
 
-/// Whether the command line names the `run` subcommand: the first
-/// argument before `--` that is not a flag. The global flags take no
-/// value, so no flag swallows the word after it.
+fn run_queue(action: QueueAction, json: bool) -> i32 {
+    match action {
+        QueueAction::Post {
+            tool,
+            session,
+            message,
+            message_file,
+            from,
+            postbox,
+            binary,
+            remote,
+            remote_auth_token_env,
+            timeout,
+            dry_run,
+        } => queue::execute_post(&queue::PostOptions {
+            tool,
+            session,
+            message,
+            message_file,
+            from,
+            postbox,
+            binary,
+            remote,
+            remote_auth_token_env,
+            timeout,
+            dry_run,
+            json,
+        }),
+        QueueAction::Read { session } => queue::execute_read(&queue::ReadOptions {
+            sessions: session,
+            json,
+        }),
+        QueueAction::List { session, state } => queue::execute_list(&queue::ListOptions {
+            session,
+            state,
+            json,
+        }),
+    }
+}
+
+/// Whether the command line names the `run` or the `queue` subcommand:
+/// the first argument before `--` that is not a flag. The global flags take
+/// no value, so no flag swallows the word after it.
 fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
-        .is_some_and(|argument| argument == "run")
+        .is_some_and(|argument| argument == "run" || argument == "queue")
 }
 
 #[cfg(test)]
@@ -2917,6 +3040,12 @@ fn plumbing_help(help: &mut String) {
         "run",
         "<TOOL> [PROMPT|--prompt-file <FILE>]",
         "Run a coding tool with supervised output",
+    );
+    help_command(
+        help,
+        "queue",
+        "post <TOOL> --session <ID> [MESSAGE] | read | list",
+        "Post and read messages between sessions",
     );
     help_command(
         help,

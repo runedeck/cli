@@ -1,6 +1,6 @@
 ---
 name: rune
-description: "Drive the rune CLI to stage, deploy, and verify runes (skills, agents, rules) from a deck into AI harness directories. USE WHEN install runes, add skills to a project, deploy deck content, check drift, .rune manifest, rune validate, spec-driven change, rune spec. Not for authoring deck content (use the deck's build-* skills)."
+description: "Drive the rune CLI to stage, deploy, and verify runes (skills, agents, rules) from a deck into AI harness directories. USE WHEN install runes, add skills to a project, deploy deck content, check drift, .rune manifest, rune validate, spec-driven change, rune spec, message another session, read the postbox, rune queue. Not for authoring deck content (use the deck's build-* skills)."
 version: ${VERSION}
 ---
 
@@ -42,6 +42,20 @@ rune spec context <id>               # agent-ready work order
 rune spec doctor                     # relationship health
 rune spec archive <id>               # refuses on unchecked tasks; --abandon drops
 ```
+
+## Messages Between Sessions
+
+Sessions on this machine message each other through `rune queue`. A message waits in the postbox, `~/.rune/postbox.tsv`, until its session reads it. Codex sessions also get it through their own queue.
+
+```sh
+rune queue post codex --session <thread id> "Is the deck ready?"
+rune queue post claude --session <session id> --message-file question.md
+rune queue read                      # this session's messages; marks them read
+rune queue read --session <name>     # where no session variable names you
+rune queue list --state posted       # look without marking anything read
+```
+
+Claude Code and Codex sessions with the `postbox` hook get their messages at the next turn. Any other session runs `rune queue read --session <its id or name>` when a task starts and between steps. Answer a message by posting to its sender, who is named as `harness:session`.
 
 ## Validation
 
