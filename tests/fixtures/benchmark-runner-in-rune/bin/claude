@@ -1,6 +1,7 @@
 #!/bin/sh
 # Stand-in for Claude Code: answer the readiness probe, write the arguments and
-# standard input of the latest call to claude.log, then print a fixed answer.
+# standard input of the latest call to claude.log, then print a fixed answer as
+# the JSON result object `claude --print --output-format json` prints.
 if [ "$1" = "--version" ]; then
     echo "0.0.0 (proof stub)"
     exit 0
@@ -11,4 +12,4 @@ fi
     done
     IFS= read -r line && echo "stdin: $line"
 } > claude.log
-echo "ollie"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ollie"}'

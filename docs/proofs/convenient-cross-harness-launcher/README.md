@@ -127,6 +127,7 @@ $ HOME=. rune launch
    agy        [..]
    opencode   [..]
    grok       [..]
+   cursor     [..]  fable@cursor
    ollama     [..]
 $ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/convenient-cross-harness-launcher/home.sh"'
 $ HOME=. rune launch

@@ -172,7 +172,7 @@ fatal: no bench workspace found: [..]
 
 ## benchmark-results-stay-compatible#coding-tool-models/claude-code-model-receives-the-suite-system-prompt
 
-The stub `claude` answers `ollie` to every prompt and writes the arguments and standard input of its latest call to `claude.log`.
+The stub `claude` answers every prompt with a JSON result object whose text is `ollie`, the shape `claude --print --output-format json` prints, and writes the arguments and standard input of its latest call to `claude.log`.
 
 ```console
 $ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
@@ -186,7 +186,7 @@ Summary: workspace/bench/results/skate-basics/unversioned/summary-[..].json
 $ cat claude.log
 arg: --print
 arg: --output-format
-arg: text
+arg: json
 arg: --permission-mode
 arg: plan
 arg: --tools

@@ -19,7 +19,7 @@ scenes:
 
 # Proof: kebab-case-skill-deployment
 
-The scenes prove pull request #11 against the real `rune` binary. The fixture `tests/fixtures/skill-casing/` is a module with one PascalCase skill, `BuildSkill`, which holds `SKILL.md`, the Markdown companion `EvalLoop.md` with relative links, the script `scripts/run_eval.py`, and the asset `assets/eval_review.html`. Each scene installs it with `--provider agents`, the provider that enables `kebab-case-skills` in `defaults.yaml`. The validation scene adds a copy of `tests/fixtures/input/runeshell-malformed-name.md`. The link scene stays unproven, because assembly copies a Markdown companion as a passthrough file and never rewrites the links inside it.
+The scenes prove pull request #11 against the real `rune` binary. The fixture `tests/fixtures/skill-casing/` is a module with one PascalCase skill, `BuildSkill`, which holds `SKILL.md`, the Markdown companion `EvalLoop.md` with relative links, the script `scripts/run_eval.py`, and the asset `assets/eval_review.html`. Each scene installs it with `--provider agents`, the provider that enables `kebab-case-skills` in `defaults.yaml`. The validation scene adds a copy of `tests/fixtures/input/runeshell-malformed-name.md`. The link scene shows a Markdown companion, copied as a passthrough file, whose relative links point at the converted paths, fragment included.
 
 ## kebab-case-skill-deployment#skill-paths-deploy-in-kebab-case/pascalcase-skill-deploys
 
@@ -30,9 +30,11 @@ $ rune install --source deck --target out --provider agents
  ✓ agentskills
    skills 4
    ● build-skill
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 4 deployed
-$ ls out/.agents/skills out/.agents/skills/build-skill
+$ sh -c 'LC_ALL=C ls out/.agents/skills out/.agents/skills/build-skill'
 out/.agents/skills:
 build-skill
 
@@ -68,8 +70,6 @@ eval_review.html: same bytes
 
 ## kebab-case-skill-deployment#relative-links-follow-the-converted-paths/companion-links-to-a-converted-file
 
-Unproven: `rune install` deploys `EvalLoop.md` as a passthrough file, so its link `[the setup steps](EvalLoop.md#setup)` keeps the old target and points at a file that is not there.
-
 ```console
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
 $ rune install --source deck --target out --provider agents
@@ -100,6 +100,8 @@ $ rune install --source again --target second --provider agents
  ✓ agentskills
    skills 4
    ● build-skill
+   hooks
+     skipped: a proof scene runs with the runner's HOME [..], so it installs no hook there; give the scene a HOME of its own
 
  ● 4 deployed
 $ sh -c 'diff -r -x .provenance first/.agents/skills second/.agents/skills && echo "second deployment: no difference"'
