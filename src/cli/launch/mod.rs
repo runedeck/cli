@@ -1318,7 +1318,14 @@ pub(crate) fn redact_structural(text: &str) -> String {
 /// URL's password and credential-named query parameters, which a harness
 /// echoes when it reports the endpoint it could not reach.
 pub(crate) fn redact_text(text: &str, secrets: &[String]) -> String {
-    redact_urls(&redact_structural(&redact_credentials(text, secrets)))
+    // Each pass copies the text once. The copy a pass made is dropped
+    // before the next pass starts on its result, so a stream near the
+    // capture limit costs two copies beside the capture, never three.
+    let structural = {
+        let credentials = redact_credentials(text, secrets);
+        redact_structural(&credentials)
+    };
+    redact_urls(&structural)
 }
 
 /// Every URL in `text` with its userinfo password and its credential-named

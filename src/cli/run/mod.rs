@@ -442,35 +442,43 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
                             eprintln!("{line}");
                         }
                     }
+                    // The usage object is always there, each count null until
+                    // the harness reports it. The models and claude's per-model
+                    // usage are there only when the harness reported them.
+                    let mut json = json!({
+                        "ok": true,
+                        "kind": "success",
+                        "tool": resolved.tool,
+                        "requested_route": options.tool,
+                        "requested_provider": options.tool,
+                        "resolved_route": resolved.tool,
+                        "resolved_model": invocation.model,
+                        "resolved_binary": invocation.binary.to_string_lossy(),
+                        "model": invocation.model,
+                        "text": reply.text,
+                        "duration_ms": started.elapsed().as_millis(),
+                        "clean": options.clean,
+                        "session_name": options.session_name.as_deref(),
+                        "session_name_flag": session_name_flag(invocation.surface),
+                        "usage": reply.usage.unwrap_or_default(),
+                        "completion_tokens": reply.completion_tokens,
+                        "warnings": filtered.warnings,
+                        "artifacts": artifacts,
+                        "workspace": workspace_json,
+                    });
+                    if let Some(object) = json.as_object_mut() {
+                        if !reply.models.is_empty() {
+                            object.insert("models".to_string(), json!(reply.models));
+                        }
+                        if let Some(model_usage) =
+                            reply.model_usage.as_ref().filter(|usage| !usage.is_empty())
+                        {
+                            object.insert("model_usage".to_string(), json!(model_usage));
+                        }
+                    }
                     Outcome {
                         exit_code: 0,
-                        json: json!({
-                            "ok": true,
-                            "kind": "success",
-                            "tool": resolved.tool,
-                            "requested_route": options.tool,
-                            "requested_provider": options.tool,
-                            "resolved_route": resolved.tool,
-                            "resolved_model": invocation.model,
-                            "resolved_binary": invocation.binary.to_string_lossy(),
-                            "model": invocation.model,
-                            "text": reply.text,
-                            "duration_ms": started.elapsed().as_millis(),
-                            "clean": options.clean,
-                            "session_name": options.session_name.as_deref(),
-                            "session_name_flag": session_name_flag(invocation.surface),
-                            "usage": {
-                                "input_tokens": Value::Null,
-                                "cache_creation_input_tokens": Value::Null,
-                                "cache_read_input_tokens": Value::Null,
-                                "output_tokens": reply.completion_tokens,
-                                "total_tokens": Value::Null,
-                            },
-                            "completion_tokens": reply.completion_tokens,
-                            "warnings": filtered.warnings,
-                            "artifacts": artifacts,
-                            "workspace": workspace_json,
-                        }),
+                        json,
                         text: Text::Stdout(reply.text),
                     }
                 }

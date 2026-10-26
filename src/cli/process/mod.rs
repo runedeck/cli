@@ -16,7 +16,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+/// The bytes one stream of a supervised process may hold before the run
+/// stops. A surface whose output wraps the answer in an envelope may raise
+/// its own capture limit and judge the decoded answer against this one.
+pub(crate) const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -125,8 +128,10 @@ impl fmt::Display for ProcessFailure {
 }
 
 /// Every stop and every supervision failure carries what the process
-/// wrote before it.
-fn with_streams(mut failure: ProcessFailure, stdout: &str, stderr: &str) -> ProcessFailure {
+/// wrote before it. The captures move in: a stop at the output limit
+/// carries a capture of the limit's size, and a copy of it would double
+/// the memory of the run at its peak.
+fn with_streams(mut failure: ProcessFailure, stdout: String, stderr: String) -> ProcessFailure {
     match &mut failure {
         ProcessFailure::Timeout {
             stdout: partial_stdout,
@@ -148,8 +153,8 @@ fn with_streams(mut failure: ProcessFailure, stdout: &str, stderr: &str) -> Proc
             stderr: partial_stderr,
             ..
         } => {
-            *partial_stdout = stdout.to_string();
-            *partial_stderr = stderr.to_string();
+            *partial_stdout = stdout;
+            *partial_stderr = stderr;
         }
         ProcessFailure::Spawn(_)
         | ProcessFailure::NotFound(_)
@@ -205,8 +210,11 @@ struct CapturedStream {
 }
 
 impl CapturedStream {
+    /// The captured bytes as text, in place: the buffer becomes the string
+    /// when its bytes are UTF-8, and only an invalid sequence costs a copy.
     fn into_string(self) -> String {
-        String::from_utf8_lossy(&self.tail.into_iter().collect::<Vec<_>>()).into_owned()
+        String::from_utf8(Vec::from(self.tail))
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
     }
 }
 
@@ -831,15 +839,15 @@ pub(crate) fn run_process_request(
     let stderr = stderr_capture.into_string();
     let (status, stop_failure) = match wait_result {
         Ok(outcome) => outcome,
-        Err(failure) => return Err(with_streams(failure, &stdout, &stderr)),
+        Err(failure) => return Err(with_streams(failure, stdout, stderr)),
     };
     let drain_signal = match readers_result {
         Ok(signal) => signal,
-        Err(failure) => return Err(with_streams(failure, &stdout, &stderr)),
+        Err(failure) => return Err(with_streams(failure, stdout, stderr)),
     };
     stdin_result?;
     if let Some(failure) = stop_failure {
-        return Err(with_streams(failure, &stdout, &stderr));
+        return Err(with_streams(failure, stdout, stderr));
     }
     // The leader exited on its own, then a signal cut the drain: the
     // answer may be short of what a group member still wrote, so the run

@@ -77,7 +77,7 @@ webpki-root-certs = "1"
 signal-hook = "=0.3.18"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["fs", "process", "signal"] }
+nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
 
 # git
 gix = { version = "0.66", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }

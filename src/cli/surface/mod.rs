@@ -7,9 +7,12 @@ use crate::cli::launch::{
     REDACTED_VALUE, credential_values, inherited_env, redact_credentials, redact_text,
 };
 use crate::cli::process::{
-    ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination, run_process_request,
+    DEFAULT_OUTPUT_LIMIT_BYTES, ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination,
+    run_process_request,
 };
 use serde::Deserialize;
+use serde_json::value::RawValue;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -110,7 +113,7 @@ pub(crate) struct SurfaceInvocation {
     pub(crate) session_name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct SurfaceReply {
     pub(crate) text: String,
     pub(crate) stderr: String,
@@ -118,6 +121,102 @@ pub(crate) struct SurfaceReply {
     /// The id agy gives the conversation, which names the folder its
     /// generated files land in. `None` from every other surface.
     pub(crate) conversation_id: Option<String>,
+    /// The token counts the harness reported for the run. `None` when it
+    /// reported none (grok).
+    pub(crate) usage: Option<TokenUsage>,
+    /// The models the harness reported it used, in its order. Empty when
+    /// it names none: only claude's result names its models.
+    pub(crate) models: Vec<String>,
+    /// Claude's per-model usage object, as reported. `None` from every
+    /// other surface.
+    pub(crate) model_usage: Option<ModelUsage>,
+}
+
+/// Claude's `modelUsage` result object: the counts and the cost of each
+/// model the run used, keyed by the model name. Its keys mirror claude's
+/// stdout and are kept as given.
+pub(crate) type ModelUsage = BTreeMap<String, serde_json::Map<String, serde_json::Value>>;
+
+/// The token counts a harness reported for a run, under one set of keys.
+/// A count the harness did not report stays `None`: the result says null,
+/// never zero. `input_tokens` carries the count as the harness defines it:
+/// claude's leaves the cached tokens out, codex's includes them.
+// The field names mirror the keys of the JSON result, `tokens` postfix included.
+#[allow(clippy::struct_field_names)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Deserialize,
+    serde::Serialize
+)]
+pub(crate) struct TokenUsage {
+    pub(crate) input_tokens: Option<u64>,
+    pub(crate) cache_creation_input_tokens: Option<u64>,
+    pub(crate) cache_read_input_tokens: Option<u64>,
+    pub(crate) output_tokens: Option<u64>,
+    pub(crate) reasoning_output_tokens: Option<u64>,
+    pub(crate) total_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// The total of a harness whose input count leaves the cached tokens
+    /// out (claude): the four counts added. Unknown when one of them is
+    /// missing, or the sum overflows.
+    fn summed_total(&self) -> Option<u64> {
+        self.input_tokens?
+            .checked_add(self.cache_creation_input_tokens?)?
+            .checked_add(self.cache_read_input_tokens?)?
+            .checked_add(self.output_tokens?)
+    }
+
+    /// The output count as the bench and the result's `completion_tokens`
+    /// take it.
+    // Token counts stay far below 2^53, where the conversion is exact.
+    #[allow(clippy::cast_precision_loss)]
+    pub(crate) fn completion_tokens(&self) -> Option<f64> {
+        self.output_tokens.map(|tokens| tokens as f64)
+    }
+}
+
+/// One count summed over events: unknown when no event reported it, and
+/// unknown when the sum overflows. An overflow never wraps into a number
+/// the next event resets.
+fn sum_counts(counts: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
+    let mut sum: Option<u64> = None;
+    for count in counts.into_iter().flatten() {
+        sum = Some(sum.unwrap_or(0).checked_add(count)?);
+    }
+    sum
+}
+
+/// A token count as a harness prints it: a non-negative integer. Any other
+/// value (a negative number, a string, a float, a number out of range) is
+/// an unknown count, never a reason to drop the event it sits in. The value
+/// is taken as text, because serde's own number parse rejects `1e999`, and
+/// that rejection would take the event with it. `#[serde(deserialize_with)]`
+/// on an `Option<u64>` field.
+fn lenient_count<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Box<RawValue>>::deserialize(deserializer)?;
+    Ok(raw.and_then(|raw| raw.get().parse::<u64>().ok()))
+}
+
+/// A nested counts object as a harness prints it: parsed when it can be,
+/// unknown when it cannot. The event around it still parses, so a number
+/// out of range inside the object costs the object, not the event.
+fn lenient_object<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let raw = Option::<Box<RawValue>>::deserialize(deserializer)?;
+    Ok(raw.and_then(|raw| serde_json::from_str(raw.get()).ok()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,16 +263,71 @@ pub(crate) enum SurfaceFailure {
 const TAIL_LINES: usize = 40;
 const TAIL_CHARS: usize = 4000;
 
+/// The bytes of a stream a stop keeps around its tail once the harness's
+/// errors are read from it: a tail is under 16 KiB of text, and a value
+/// cut at the start of the window is further from the tail than that, so
+/// it can never reach it. Beyond the window, the capture is dropped.
+const TAIL_WINDOW_BYTES: usize = 64 * 1024;
+
+/// The last [`TAIL_WINDOW_BYTES`] of `text`, on a character boundary.
+fn tail_window_of(text: &str) -> &str {
+    if text.len() <= TAIL_WINDOW_BYTES {
+        return text;
+    }
+    let mut start = text.len() - TAIL_WINDOW_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
+
+/// [`tail_window_of`] in place: the text before the window is dropped.
+fn tail_window(mut text: String) -> String {
+    let start = text.len() - tail_window_of(&text).len();
+    text.drain(..start);
+    text.shrink_to_fit();
+    text
+}
+
+/// The characters one harness error keeps, the size of a tail. The text of
+/// a failed claude result is a whole answer at worst, and each carrier of
+/// the message (the list, its clones, the redaction pass, the JSON output)
+/// would cost that much again. Past the cap the text is cut and ends with
+/// [`CUT_MARK`]. The mark fits inside the cap, so a cut text passes the cap
+/// again unchanged.
+const HARNESS_ERROR_CHARS: usize = TAIL_CHARS;
+const CUT_MARK: &str = "…[cut]";
+
+/// `text` trimmed and within [`HARNESS_ERROR_CHARS`]. The walk stops at the
+/// cap, so a text of any length costs the cap and no more.
+fn harness_error(text: &str) -> String {
+    let text = text.trim();
+    if text.char_indices().nth(HARNESS_ERROR_CHARS).is_none() {
+        return text.to_string();
+    }
+    let keep = HARNESS_ERROR_CHARS - CUT_MARK.chars().count();
+    let end = text
+        .char_indices()
+        .nth(keep)
+        .map_or(text.len(), |(index, _)| index);
+    format!("{}{CUT_MARK}", &text[..end])
+}
+
 pub(crate) fn output_tail(text: &str) -> String {
     let text = text.trim_end();
-    let lines: Vec<&str> = text.lines().collect();
-    let from_line = lines.len().saturating_sub(TAIL_LINES);
-    let by_lines = lines[from_line..].join("\n");
-    let chars = by_lines.chars().count();
-    if chars <= TAIL_CHARS {
-        return by_lines;
-    }
-    by_lines.chars().skip(chars - TAIL_CHARS).collect()
+    // Both cuts are found from the end, so the text before the tail is
+    // never held: a flood of short lines costs nothing beyond the text.
+    let from_line = text
+        .rmatch_indices('\n')
+        .nth(TAIL_LINES - 1)
+        .map_or(0, |(index, _)| index + 1);
+    let window = &text[from_line..];
+    let from_char = window
+        .char_indices()
+        .rev()
+        .nth(TAIL_CHARS)
+        .map_or(0, |(index, character)| index + character.len_utf8());
+    window[from_char..].lines().collect::<Vec<_>>().join("\n")
 }
 
 /// Where a sandbox signature counts. Free model text on stdout never does:
@@ -253,11 +407,7 @@ const AGY_SOFT_DENY: &str = "soft-denying tool confirmation";
 fn agy_soft_denials(log: &str) -> Vec<String> {
     log.lines()
         .filter(|line| line.contains(AGY_SOFT_DENY))
-        .map(|line| {
-            line.find("Print mode:")
-                .map_or(line.trim(), |at| line[at..].trim())
-                .to_string()
-        })
+        .map(|line| harness_error(line.find("Print mode:").map_or(line, |at| &line[at..])))
         .collect()
 }
 
@@ -659,9 +809,13 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
 impl SurfaceFailure {
     /// The failure with every credential value hidden in its message and
     /// its tails. The tails are built redacted already; this is the last
-    /// word for the process layer's partial output and for messages.
+    /// word for the process layer's partial output and for messages. The
+    /// process layer's output is cut to the window around its tail first:
+    /// a stop at the output limit carries a capture of the limit's size,
+    /// and only its tail is ever shown.
     fn redacted(self, secrets: &[String]) -> Self {
         let hide = |text: String| redact_text(&text, secrets);
+        let hide_window = |text: String| hide(tail_window(text));
         match self {
             Self::Process {
                 failure,
@@ -675,8 +829,8 @@ impl SurfaceFailure {
                         stderr,
                     } => ProcessFailure::Timeout {
                         timeout,
-                        stdout: hide(stdout),
-                        stderr: hide(stderr),
+                        stdout: hide_window(stdout),
+                        stderr: hide_window(stderr),
                     },
                     ProcessFailure::OutputLimit {
                         stream,
@@ -686,8 +840,8 @@ impl SurfaceFailure {
                     } => ProcessFailure::OutputLimit {
                         stream,
                         limit,
-                        stdout: hide(stdout),
-                        stderr: hide(stderr),
+                        stdout: hide_window(stdout),
+                        stderr: hide_window(stderr),
                     },
                     ProcessFailure::ForwardedSignal {
                         signal,
@@ -695,8 +849,8 @@ impl SurfaceFailure {
                         stderr,
                     } => ProcessFailure::ForwardedSignal {
                         signal,
-                        stdout: hide(stdout),
-                        stderr: hide(stderr),
+                        stdout: hide_window(stdout),
+                        stderr: hide_window(stderr),
                     },
                     ProcessFailure::Spawn(message) => ProcessFailure::Spawn(hide(message)),
                     ProcessFailure::NotFound(message) => ProcessFailure::NotFound(hide(message)),
@@ -706,8 +860,8 @@ impl SurfaceFailure {
                         stderr,
                     } => ProcessFailure::Wait {
                         message: hide(message),
-                        stdout: hide(stdout),
-                        stderr: hide(stderr),
+                        stdout: hide_window(stdout),
+                        stderr: hide_window(stderr),
                     },
                     ProcessFailure::Stdin(message) => ProcessFailure::Stdin(hide(message)),
                     ProcessFailure::Stdout(message) => ProcessFailure::Stdout(hide(message)),
@@ -803,8 +957,15 @@ impl SurfaceFailure {
     }
 
     /// The same failure with the harness's own error messages attached,
-    /// where the failure can carry them.
+    /// where the failure can carry them. Each message is cut to
+    /// [`HARNESS_ERROR_CHARS`] here, whatever its source: the readers cut
+    /// as they collect, so no copy of a long text is made, and this is the
+    /// one place every carrier passes.
     fn with_harness_errors(self, errors: Vec<String>) -> Self {
+        let errors: Vec<String> = errors
+            .into_iter()
+            .map(|error| harness_error(&error))
+            .collect();
         match self {
             Self::Process { failure, .. } => Self::Process {
                 failure,
@@ -1863,9 +2024,12 @@ pub(crate) fn planned_request(
 
 /// The tail of one stream with the credentials hidden first (beside their
 /// names, then the known values), so a value cut by the tail boundary
-/// cannot leak in part.
+/// cannot leak in part. Only the window around the tail passes through
+/// redaction, which copies its text twice: a value cut at the start of the
+/// window can never reach the tail, and a capture near its limit costs no
+/// copy beyond the window.
 fn redacted_tail(text: &str, secrets: &[String]) -> String {
-    output_tail(&redact_text(text, secrets))
+    output_tail(&redact_text(tail_window_of(text), secrets))
 }
 
 pub(crate) fn require_success(
@@ -1947,10 +2111,12 @@ fn clean_system_prompt(system_prompt: &str) -> String {
 }
 
 fn claude_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
+    // The JSON result is the one output that carries the token counts and
+    // the models of the run beside the text.
     let mut args = vec![
         OsString::from("--print"),
         OsString::from("--output-format"),
-        OsString::from("text"),
+        OsString::from("json"),
         OsString::from("--permission-mode"),
         OsString::from(match invocation.mode {
             AccessMode::ReadOnly | AccessMode::AnswerOnly => "plan",
@@ -2036,57 +2202,335 @@ fn invoke_claude(
     invocation: &SurfaceInvocation,
     secrets: &[String],
 ) -> Result<SurfaceReply, SurfaceFailure> {
-    // `claude --print` reports its own failures as `API Error:` lines on
-    // stdout, beside the model's text; they are harness errors, not text,
-    // and a forced stop keeps the ones reported before it.
-    let output = run_process_request(&process_request(
+    // `claude --print --output-format json` writes one result object on
+    // stdout: the text, the token counts and the models of a run that
+    // answered, or the errors of one that failed. A request that fails
+    // can also leave an `API Error:` line beside it. Both are harness
+    // errors, not text, and a forced stop keeps the ones reported before it.
+    let mut request = process_request(
         invocation,
         claude_args(invocation),
         Some(format!("{}\n", invocation.prompt).into_bytes()),
-    ))
-    .map_err(|failure| stopped_with_errors(failure, claude_error_messages))?;
-    let reported_errors = claude_error_messages(&output.stdout);
+    );
+    // The JSON envelope and its escaping grow the stdout beyond the
+    // answer; the answer itself keeps the ordinary limit once decoded.
+    request.output_limit = CLAUDE_OUTPUT_LIMIT_BYTES;
+    let output = run_process_request(&request)
+        .map_err(|failure| stopped_with_errors(failure, claude_error_messages))?;
+    // One read of the result serves the verdict and the messages.
+    let result = claude_result(&output.stdout);
+    let reported_errors = claude_messages_beside(&output.stdout, result.as_ref().ok());
     let output = require_success(output, secrets)
         .map_err(|failure| failure.with_harness_errors(reported_errors.clone()))?;
+    let with_output = |failure: SurfaceFailure| {
+        failure
+            .with_output(&output, secrets)
+            .with_harness_errors(reported_errors.clone())
+    };
+    let result = result.map_err(with_output)?;
+    if result.failed() {
+        // The text of a failed result is in the messages already, cut to
+        // the cap. The result goes before the tails are cut, so the
+        // redaction pass never sits beside its text.
+        let message = result.failure_message();
+        drop(result);
+        return Err(with_output(SurfaceFailure::Reported(message)));
+    }
+    // The answer is judged before it is copied: one over the limit costs
+    // no memory beyond the result it came in.
+    let answer = result.result.as_deref().unwrap_or_default().trim();
+    if answer.len() > DEFAULT_OUTPUT_LIMIT_BYTES {
+        return Err(SurfaceFailure::from(ProcessFailure::OutputLimit {
+            stream: "stdout",
+            limit: DEFAULT_OUTPUT_LIMIT_BYTES,
+            stdout: redacted_tail(&output.stdout, secrets),
+            stderr: redacted_tail(&output.stderr, secrets),
+        })
+        .with_harness_errors(reported_errors.clone()));
+    }
+    let text = nonempty_text(answer, "claude print").map_err(with_output)?;
+    // An empty map names no model: both keys stay out of the result.
+    let model_usage = result.model_usage.filter(|usage| !usage.is_empty());
+    let models: Vec<String> = model_usage
+        .as_ref()
+        .map(|usage| usage.keys().cloned().collect())
+        .unwrap_or_default();
+    if models.iter().any(|model| model.trim().is_empty()) {
+        return Err(with_output(SurfaceFailure::Reported(
+            "claude print reported a model without a name".to_string(),
+        )));
+    }
+    let usage = result.usage.map(|usage| TokenUsage {
+        total_tokens: usage.summed_total(),
+        ..usage
+    });
     Ok(SurfaceReply {
-        text: nonempty_text(&output.stdout, "claude print").map_err(|failure| {
-            failure
-                .with_output(&output, secrets)
-                .with_harness_errors(reported_errors)
-        })?,
+        text,
         stderr: output.stderr,
-        completion_tokens: None,
+        completion_tokens: usage.as_ref().and_then(TokenUsage::completion_tokens),
         conversation_id: None,
+        usage,
+        models,
+        model_usage,
     })
 }
 
-/// The `API Error:` lines `claude --print` writes on stdout when the request
-/// itself fails: the harness's report, apart from any model text.
+/// The bytes claude's stdout may hold. JSON escaping turns one byte of the
+/// answer into six at worst (`\u0000`), and the envelope around the answer,
+/// or the message array `--verbose` makes of it, takes the rest. The
+/// decoded answer keeps [`DEFAULT_OUTPUT_LIMIT_BYTES`].
+///
+/// The memory of a claude run stays under four times this capture: the
+/// captured stdout, the text of the last element when the output is a
+/// message array, the strings of the result object, the model map under
+/// [`MODEL_USAGE_LIMIT_BYTES`], and the answer under the output limit. A
+/// field of the result rune does not report is skipped as it is read,
+/// never held.
+const CLAUDE_OUTPUT_LIMIT_BYTES: usize = DEFAULT_OUTPUT_LIMIT_BYTES * 7;
+
+/// The bytes claude's `modelUsage` may take on stdout. The map is kept as
+/// a JSON tree for the result, and a tree costs up to 48 bytes of memory
+/// per byte of text, by this reckoning: a JSON value takes 32 bytes (a test
+/// asserts it), a flat array spends two bytes of text (`0,`) on each value,
+/// and a vector that grows by doubling holds three times its final size
+/// while it grows. Under this cap the tree stays under the output limit.
+const MODEL_USAGE_LIMIT_BYTES: usize = DEFAULT_OUTPUT_LIMIT_BYTES / 64;
+
+/// The result object of `claude --print --output-format json`: fields it
+/// does not set on every subtype default, so a failed run's object parses
+/// too. The names mirror claude's stdout.
+#[derive(Debug, Deserialize)]
+struct ClaudeResult {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    subtype: String,
+    #[serde(default)]
+    is_error: bool,
+    #[serde(default)]
+    result: Option<String>,
+    #[serde(default)]
+    errors: Vec<String>,
+    #[serde(default)]
+    usage: Option<TokenUsage>,
+    #[serde(
+        default,
+        rename = "modelUsage",
+        deserialize_with = "bounded_model_usage"
+    )]
+    model_usage: Option<ModelUsage>,
+}
+
+/// Claude's `modelUsage` map, read from its text once the text fits
+/// [`MODEL_USAGE_LIMIT_BYTES`]: the tree a larger map would make is the one
+/// allocation of a result that its text does not bound.
+fn bounded_model_usage<'de, D>(deserializer: D) -> Result<Option<ModelUsage>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(raw) = Option::<Box<RawValue>>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let text = raw.get();
+    if text.len() > MODEL_USAGE_LIMIT_BYTES {
+        return Err(serde::de::Error::custom(format!(
+            "modelUsage is {} bytes, over the {MODEL_USAGE_LIMIT_BYTES} rune reads",
+            text.len()
+        )));
+    }
+    serde_json::from_str(text)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// The last element of a JSON array, as text. The elements before it are
+/// checked as JSON and dropped as they pass: the message array `--verbose`
+/// prints costs the text of one element beyond the capture, never a tree.
+struct LastElement(Option<Box<RawValue>>);
+
+impl<'de> Deserialize<'de> for LastElement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Elements;
+
+        impl<'de> serde::de::Visitor<'de> for Elements {
+            type Value = LastElement;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a JSON array")
+            }
+
+            fn visit_seq<A>(self, mut elements: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut last = None;
+                while let Some(element) = elements.next_element::<Box<RawValue>>()? {
+                    last = Some(element);
+                }
+                Ok(LastElement(last))
+            }
+        }
+
+        deserializer.deserialize_seq(Elements)
+    }
+}
+
+impl ClaudeResult {
+    /// Whether the result reports a failed run: the error flag, a subtype
+    /// other than `success`, or errors beside a success. The one predicate
+    /// for the run's verdict and for the messages it carries.
+    fn failed(&self) -> bool {
+        self.is_error || self.subtype != "success" || !self.errors.is_empty()
+    }
+
+    /// What a failed result is called in the run's message.
+    fn failure_message(&self) -> String {
+        match self.subtype.as_str() {
+            "success" if self.is_error => {
+                "claude print reported a success flagged as an error".to_string()
+            }
+            "success" => "claude print reported errors beside a success".to_string(),
+            "" => "claude print reported a result without a subtype".to_string(),
+            subtype => format!("claude print reported {subtype}"),
+        }
+    }
+}
+
+/// The result object on claude's stdout: the whole output when it is one
+/// JSON value, else the last line that holds one (after an `API Error:`
+/// line). A value that is an array is the message list `--verbose` prints,
+/// whose last element is the result. A negative count or a model entry
+/// that is no object is a malformed result, never a number to keep. A JSON
+/// line before the result that rune cannot read fails the read, named by
+/// its line: it is never skipped in silence.
+fn claude_result(stdout: &str) -> Result<ClaudeResult, SurfaceFailure> {
+    let whole = stdout.trim();
+    let mut error = match claude_result_value(whole) {
+        Ok(result) => return claude_result_of_kind(result),
+        Err(error) => error,
+    };
+    let json_lines: Vec<(usize, &str)> = stdout
+        .lines()
+        .map(str::trim)
+        .enumerate()
+        .filter(|(_, line)| line.starts_with('{') || line.starts_with('['))
+        .collect();
+    if let Some(((_, last), before)) = json_lines.split_last() {
+        for (index, line) in before {
+            if let Err(error) = serde_json::from_str::<serde::de::IgnoredAny>(line) {
+                return Err(unreadable_line_failure(
+                    "claude print",
+                    &unreadable_line(*index, &error),
+                ));
+            }
+        }
+        match claude_result_value(last) {
+            Ok(result) => return claude_result_of_kind(result),
+            Err(last_error) => error = last_error,
+        }
+    }
+    Err(SurfaceFailure::Reported(format!(
+        "claude print returned no JSON result: {error}"
+    )))
+}
+
+/// The object read from claude's stdout, when it is a result.
+fn claude_result_of_kind(result: ClaudeResult) -> Result<ClaudeResult, SurfaceFailure> {
+    if result.kind == "result" {
+        Ok(result)
+    } else {
+        Err(SurfaceFailure::Reported(format!(
+            "claude print returned a {} object, not a result",
+            result.kind
+        )))
+    }
+}
+
+/// One candidate for the result: the object itself, or the last element
+/// of an array of message objects. Both are read straight into the result
+/// type, so a field rune does not report is skipped, never held.
+fn claude_result_value(candidate: &str) -> Result<ClaudeResult, String> {
+    let reason = |error: serde_json::Error| error.to_string();
+    if !candidate.starts_with('[') {
+        return serde_json::from_str(candidate).map_err(reason);
+    }
+    let LastElement(last) = serde_json::from_str(candidate).map_err(reason)?;
+    let last = last.ok_or_else(|| "the message array is empty".to_string())?;
+    serde_json::from_str(last.get()).map_err(reason)
+}
+
+/// The errors claude reports on stdout: the `API Error:` lines `claude
+/// --print` writes when the request itself fails, and the errors of a
+/// result object that says the run failed (its `errors`, and its text).
+/// The harness's report, apart from any model text, each message once.
 fn claude_error_messages(stdout: &str) -> Vec<String> {
-    stdout
+    claude_messages_beside(stdout, claude_result(stdout).ok().as_ref())
+}
+
+/// The messages of `stdout` and of the result read from it, when it holds
+/// one: the `API Error:` lines first, then the result's errors and the
+/// text of a failed result, each once, each cut to the cap before it is
+/// compared or kept.
+fn claude_messages_beside(stdout: &str, result: Option<&ClaudeResult>) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+    let mut push = |message: &str| {
+        let message = harness_error(message);
+        if !message.is_empty() && !messages.contains(&message) {
+            messages.push(message);
+        }
+    };
+    for line in stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.starts_with("API Error:"))
-        .map(str::to_string)
-        .collect()
+    {
+        push(line);
+    }
+    if let Some(result) = result {
+        for error in &result.errors {
+            push(error);
+        }
+        if result.failed()
+            && let Some(text) = result.result.as_deref()
+        {
+            push(text);
+        }
+    }
+    messages
 }
 
 // Codex reports usage limits, auth failures, and turn errors as JSONL events on
 // stdout, so a nonzero exit alone leaves the actionable reason invisible.
+// A failure event counts whatever its message holds: one with a null,
+// missing, or blank message is named for the event, as opencode's
+// `session.error` is, so a failed turn never passes as no error.
 fn codex_error_messages(events: &[CodexEvent]) -> Vec<String> {
+    let named = |message: Option<&str>, event: &str| {
+        message
+            .filter(|message| !message.trim().is_empty())
+            .map_or_else(|| format!("{event} names no message"), harness_error)
+    };
     events
         .iter()
         .filter_map(|event| match event.kind.as_deref() {
-            Some("error") => event.message.clone(),
-            Some("turn.failed") => event.error.as_ref().and_then(|error| error.message.clone()),
+            Some("error") => Some(named(event.message.as_deref(), "error event")),
+            Some("turn.failed") => Some(named(
+                event
+                    .error
+                    .as_ref()
+                    .and_then(|error| error.message.as_deref()),
+                "turn.failed",
+            )),
             Some("item.completed") => event
                 .item
                 .as_ref()
                 .filter(|item| item.kind.as_deref() == Some("error"))
-                .and_then(|item| item.message.clone()),
+                .map(|item| named(item.message.as_deref(), "error item")),
             _ => None,
         })
-        .filter(|message| !message.trim().is_empty())
         .collect()
 }
 
@@ -2197,8 +2641,8 @@ fn invoke_codex(
         .map_err(|failure| {
             stopped_with_errors(failure, |stdout| codex_error_messages(&parse_jsonl(stdout)))
         })?;
-        let events: Vec<CodexEvent> = parse_jsonl(&output.stdout);
-        let reported_errors = codex_error_messages(&events);
+        let lines = JsonLines::<CodexEvent>::read(&output.stdout);
+        let reported_errors = codex_error_messages(&lines.events);
         // The harness's own messages stay apart from the raw stream tails.
         let with_output = |failure: SurfaceFailure| {
             failure
@@ -2215,21 +2659,26 @@ fn invoke_codex(
                 "codex exec reported an error and no final agent message".to_string(),
             )));
         }
+        // A clean exit leaves no event line unread: the one rune cannot
+        // read may be the one that names a failure.
+        let events = lines.require_all("codex exec").map_err(with_output)?;
         let final_message =
             read_codex_final_message(&final_message_path, &events).map_err(with_output)?;
         let text = nonempty_text(&final_message, "codex exec").map_err(with_output)?;
-        let completion_tokens = events
+        // The last turn's usage is the run's: `codex exec` runs one turn.
+        let usage = events
             .iter()
             .filter(|event| event.kind.as_deref() == Some("turn.completed"))
             .filter_map(|event| event.usage.as_ref())
-            .filter_map(|usage| usage.output_tokens)
             .next_back()
-            .map(|tokens| tokens.max(0.0));
+            .map(CodexUsage::token_usage);
         Ok(SurfaceReply {
             text,
             stderr: output.stderr,
-            completion_tokens,
+            completion_tokens: usage.as_ref().and_then(TokenUsage::completion_tokens),
             conversation_id: None,
+            usage,
+            ..SurfaceReply::default()
         })
     })();
     finish_scratch(result, &scratch)
@@ -2322,12 +2771,13 @@ fn invoke_grok(
             ))?,
             secrets,
         )?;
+        // Grok's JSON output names no token count and no model: the
+        // result keeps both unknown.
         Ok(SurfaceReply {
             text: grok_final_text(&output.stdout)
                 .map_err(|failure| failure.with_output(&output, secrets))?,
             stderr: output.stderr,
-            completion_tokens: None,
-            conversation_id: None,
+            ..SurfaceReply::default()
         })
     })();
     finish_scratch(result, &scratch)
@@ -2406,14 +2856,23 @@ fn invoke_agy(
                 "agy returned invalid JSON output: {error}"
             )))
         })?;
+        // agy's JSON output names its output count and nothing else: no
+        // input count, no total, no model. A zero is no report.
+        let usage = response
+            .usage
+            .and_then(|usage| usage.output_tokens)
+            .filter(|tokens| *tokens > 0)
+            .map(|output_tokens| TokenUsage {
+                output_tokens: Some(output_tokens),
+                ..TokenUsage::default()
+            });
         Ok(SurfaceReply {
             text: nonempty_text(&response.response, "agy print").map_err(with_output)?,
             stderr: output.stderr,
-            completion_tokens: response
-                .usage
-                .and_then(|usage| usage.output_tokens)
-                .filter(|tokens| *tokens > 0.0),
+            completion_tokens: usage.as_ref().and_then(TokenUsage::completion_tokens),
             conversation_id: response.conversation_id.filter(|id| !id.trim().is_empty()),
+            usage,
+            ..SurfaceReply::default()
         })
     })();
     finish_scratch(result, &scratch)
@@ -2430,8 +2889,8 @@ struct AgyResponse {
 
 #[derive(Deserialize)]
 struct AgyUsage {
-    #[serde(default)]
-    output_tokens: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    output_tokens: Option<u64>,
 }
 
 fn opencode_args(invocation: &SurfaceInvocation) -> Vec<OsString> {
@@ -2480,28 +2939,41 @@ fn invoke_opencode(
 ) -> Result<SurfaceReply, SurfaceFailure> {
     let request = process_request(invocation, opencode_args(invocation), None);
     let output = require_success(run_process_request(&request)?, secrets)?;
-    let events: Vec<OpencodeEvent> = parse_jsonl(&output.stdout);
-    if let Some(message) = opencode_session_error(&events) {
-        return Err(
-            SurfaceFailure::Reported(format!("opencode session error: {message}"))
-                .with_output(&output, secrets),
-        );
+    let lines = JsonLines::<OpencodeEvent>::read(&output.stdout);
+    if let Some(message) = opencode_session_error(&lines.events) {
+        return Err(SurfaceFailure::Reported(format!(
+            "opencode session error: {}",
+            harness_error(message)
+        ))
+        .with_output(&output, secrets));
     }
+    // A clean exit leaves no event line unread: the one rune cannot read
+    // may be the one that names a failure.
+    let events = lines
+        .require_all("opencode run")
+        .map_err(|failure| failure.with_output(&output, secrets))?;
     let text =
         opencode_final_text(&events).map_err(|failure| failure.with_output(&output, secrets))?;
-    let completion_tokens = events
+    // Each step reports its own counts; the run's are their sum. A run
+    // whose steps report no counts, or only zeros, reports none.
+    let steps: Vec<&OpencodeTokens> = events
         .iter()
         .filter(|event| event.kind.as_deref() == Some("step_finish"))
         .filter_map(|event| event.part.as_ref())
         .filter_map(|part| part.tokens.as_ref())
-        .filter_map(|tokens| tokens.output)
-        .map(|tokens| tokens.max(0.0))
-        .sum::<f64>();
+        .collect();
+    let usage = OpencodeTokens::sum(&steps);
+    let usage = usage
+        .output_tokens
+        .is_some_and(|tokens| tokens > 0)
+        .then_some(usage);
     Ok(SurfaceReply {
         text,
         stderr: output.stderr,
-        completion_tokens: (completion_tokens > 0.0).then_some(completion_tokens),
+        completion_tokens: usage.as_ref().and_then(TokenUsage::completion_tokens),
         conversation_id: None,
+        usage,
+        ..SurfaceReply::default()
     })
 }
 
@@ -2634,14 +3106,69 @@ pub(crate) fn invoke_surface(
     // The answer passes too: a model that echoes a key is still a leak. It
     // loses only the known values, though: the structural and URL passes
     // that fit a failure tail turned `Primary key: user_id` into `Primary
-    // key: <redacted>` in an ordinary coding answer.
+    // key: <redacted>` in an ordinary coding answer. The model names and
+    // the per-model usage pass the same way: a harness can echo a key there.
     match result {
         Ok(reply) => Ok(SurfaceReply {
             text: redact_credentials(&reply.text, &secrets),
             stderr: redact_text(&reply.stderr, &secrets),
+            models: reply
+                .models
+                .iter()
+                .map(|model| redact_credentials(model, &secrets))
+                .collect(),
+            model_usage: reply
+                .model_usage
+                .map(|usage| redact_model_usage(usage, &secrets)),
             ..reply
         }),
         Err(failure) => Err(failure.redacted(&secrets)),
+    }
+}
+
+/// Claude's per-model usage with every credential value hidden: in the
+/// model names, and in every key and string value under them.
+fn redact_model_usage(usage: ModelUsage, secrets: &[String]) -> ModelUsage {
+    usage
+        .into_iter()
+        .map(|(model, counts)| {
+            (
+                redact_credentials(&model, secrets),
+                redact_json_map(counts, secrets),
+            )
+        })
+        .collect()
+}
+
+fn redact_json_map(
+    map: serde_json::Map<String, serde_json::Value>,
+    secrets: &[String],
+) -> serde_json::Map<String, serde_json::Value> {
+    map.into_iter()
+        .map(|(key, value)| {
+            (
+                redact_credentials(&key, secrets),
+                redact_json_strings(value, secrets),
+            )
+        })
+        .collect()
+}
+
+/// `value` with every credential value hidden in its strings and its keys,
+/// at any depth. Numbers, booleans and nulls carry no text.
+fn redact_json_strings(value: serde_json::Value, secrets: &[String]) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(text) => {
+            serde_json::Value::String(redact_credentials(&text, secrets))
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_json_strings(item, secrets))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(redact_json_map(map, secrets)),
+        other => other,
     }
 }
 
@@ -2662,13 +3189,15 @@ pub(crate) fn filter_surface_args(invocation: &SurfaceInvocation) -> FilteredArg
     }
 }
 
+// A malformed `usage` never drops the event: an error event still reports
+// its error, and a count that is no non-negative integer is unknown.
 #[derive(Deserialize)]
 struct CodexEvent {
     #[serde(default, rename = "type")]
     kind: Option<String>,
     #[serde(default)]
     item: Option<CodexItem>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_object")]
     usage: Option<CodexUsage>,
     #[serde(default)]
     message: Option<String>,
@@ -2692,24 +3221,111 @@ struct CodexItem {
     message: Option<String>,
 }
 
+/// The `usage` of codex's `turn.completed` event. Its `input_tokens`
+/// includes the cached ones, as the `OpenAI` API counts them, so the total
+/// is the input and the output added.
+// The field names mirror the keys of the event, `tokens` postfix included.
+#[allow(clippy::struct_field_names)]
 #[derive(Deserialize)]
 struct CodexUsage {
-    #[serde(default)]
-    output_tokens: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    cached_input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    cache_write_input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    output_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    reasoning_output_tokens: Option<u64>,
 }
 
-fn parse_jsonl<T: serde::de::DeserializeOwned>(stdout: &str) -> Vec<T> {
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with('{') {
-                serde_json::from_str(trimmed).ok()
-            } else {
-                None
+impl CodexUsage {
+    fn token_usage(&self) -> TokenUsage {
+        TokenUsage {
+            input_tokens: self.input_tokens,
+            cache_creation_input_tokens: self.cache_write_input_tokens,
+            cache_read_input_tokens: self.cached_input_tokens,
+            output_tokens: self.output_tokens,
+            reasoning_output_tokens: self.reasoning_output_tokens,
+            total_tokens: self
+                .input_tokens
+                .and_then(|input| input.checked_add(self.output_tokens?)),
+        }
+    }
+}
+
+/// The events a harness prints as JSON lines, one per line that starts an
+/// object. Other lines (a banner, a progress note) are not events.
+struct JsonLines<T> {
+    events: Vec<T>,
+    /// The first object line rune cannot read: its line and column on
+    /// stdout, and serde's reason. The lines around it still read, so a
+    /// run that already failed keeps the errors they name.
+    unreadable: Option<String>,
+}
+
+impl<T: serde::de::DeserializeOwned> JsonLines<T> {
+    fn read(stdout: &str) -> Self {
+        let mut events = Vec::new();
+        let mut unreadable = None;
+        for (index, line) in stdout.lines().enumerate() {
+            let line = line.trim();
+            if !line.starts_with('{') {
+                continue;
             }
-        })
-        .collect()
+            match serde_json::from_str(line) {
+                Ok(event) => events.push(event),
+                Err(error) => {
+                    if unreadable.is_none() {
+                        unreadable = Some(unreadable_line(index, &error));
+                    }
+                }
+            }
+        }
+        Self { events, unreadable }
+    }
+
+    /// The events of a run that exited clean, where every object line must
+    /// read: a line rune cannot read may be the one that names a failure,
+    /// and a dropped line would let the run pass.
+    fn require_all(self, tool: &str) -> Result<Vec<T>, SurfaceFailure> {
+        match self.unreadable {
+            Some(unreadable) => Err(unreadable_line_failure(tool, &unreadable)),
+            None => Ok(self.events),
+        }
+    }
+}
+
+/// The readable events of a stream, for a run that already failed.
+fn parse_jsonl<T: serde::de::DeserializeOwned>(stdout: &str) -> Vec<T> {
+    JsonLines::read(stdout).events
+}
+
+/// Where a JSON line on stdout failed to read, and serde's reason: the
+/// line (counted from one) and the column of the error.
+fn unreadable_line(index: usize, error: &serde_json::Error) -> String {
+    format!(
+        "stdout line {}, column {}: {}",
+        index + 1,
+        error.column(),
+        json_error_reason(error)
+    )
+}
+
+/// The failure of a run whose stdout holds a JSON line rune cannot read.
+fn unreadable_line_failure(tool: &str, unreadable: &str) -> SurfaceFailure {
+    SurfaceFailure::Reported(format!(
+        "{tool} printed a JSON line rune cannot read ({unreadable})"
+    ))
+}
+
+/// Serde's reason for a JSON error without the position it appends, for
+/// a message that names the position on stdout itself.
+fn json_error_reason(error: &serde_json::Error) -> String {
+    let text = error.to_string();
+    text.rsplit_once(" at line ")
+        .map_or_else(|| text.clone(), |(reason, _)| reason.to_string())
 }
 
 #[derive(Deserialize)]
@@ -2725,16 +3341,45 @@ struct OpencodeEvent {
 #[derive(Deserialize)]
 struct OpencodeProperties {
     #[serde(default)]
-    error: Option<serde_json::Value>,
+    error: Option<OpencodeError>,
 }
 
+/// The error of a `session.error` event: its message sits in `data`, or
+/// beside it for an error without data. Typed, so the event holds no
+/// copy of the fields rune does not read.
+#[derive(Deserialize)]
+struct OpencodeError {
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    data: Option<OpencodeErrorData>,
+}
+
+#[derive(Deserialize)]
+struct OpencodeErrorData {
+    #[serde(default)]
+    message: Option<String>,
+}
+
+impl OpencodeError {
+    fn message(&self) -> Option<&str> {
+        self.data
+            .as_ref()
+            .and_then(|data| data.message.as_deref())
+            .or(self.message.as_deref())
+    }
+}
+
+// A malformed `tokens` never drops the part: a session error still
+// reports its message, and a count that is no non-negative integer is
+// unknown.
 #[derive(Deserialize)]
 struct OpencodePart {
     #[serde(default, rename = "messageID")]
     message_id: Option<String>,
     #[serde(default)]
     text: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_object")]
     tokens: Option<OpencodeTokens>,
 }
 
@@ -2765,23 +3410,68 @@ fn opencode_final_text(events: &[OpencodeEvent]) -> Result<String, SurfaceFailur
     nonempty_text(&text, "opencode run")
 }
 
+/// The `tokens` of an opencode `step_finish` part: the step's counts, with
+/// the cache counts nested and the total optional.
 #[derive(Deserialize)]
 struct OpencodeTokens {
-    #[serde(default)]
-    output: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    total: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    input: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    output: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    reasoning: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_object")]
+    cache: Option<OpencodeCacheTokens>,
 }
 
+#[derive(Deserialize)]
+struct OpencodeCacheTokens {
+    #[serde(default, deserialize_with = "lenient_count")]
+    read: Option<u64>,
+    #[serde(default, deserialize_with = "lenient_count")]
+    write: Option<u64>,
+}
+
+impl OpencodeTokens {
+    fn cache_write(&self) -> Option<u64> {
+        self.cache.as_ref().and_then(|cache| cache.write)
+    }
+
+    fn cache_read(&self) -> Option<u64> {
+        self.cache.as_ref().and_then(|cache| cache.read)
+    }
+
+    /// The steps' counts added field by field. A field no step reported,
+    /// or whose sum overflows, is unknown.
+    fn sum(steps: &[&Self]) -> TokenUsage {
+        let field =
+            |count: fn(&Self) -> Option<u64>| sum_counts(steps.iter().map(|step| count(step)));
+        TokenUsage {
+            input_tokens: field(|step| step.input),
+            cache_creation_input_tokens: field(Self::cache_write),
+            cache_read_input_tokens: field(Self::cache_read),
+            output_tokens: field(|step| step.output),
+            reasoning_output_tokens: field(|step| step.reasoning),
+            total_tokens: field(|step| step.total),
+        }
+    }
+}
+
+/// The message of the first `session.error` event, or a stand-in for one
+/// that names none: the event fails the run either way.
 fn opencode_session_error(events: &[OpencodeEvent]) -> Option<&str> {
     events
         .iter()
         .find(|event| event.kind.as_deref() == Some("session.error"))
-        .and_then(|event| event.properties.as_ref())
-        .and_then(|properties| properties.error.as_ref())
-        .and_then(|error| {
-            error
-                .pointer("/data/message")
-                .or_else(|| error.pointer("/message"))
-                .and_then(serde_json::Value::as_str)
+        .map(|event| {
+            event
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.error.as_ref())
+                .and_then(OpencodeError::message)
+                .unwrap_or("the event names no message")
         })
 }
 

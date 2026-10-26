@@ -297,7 +297,7 @@ fn claude_read_only_limits_available_tools() {
         [
             "--print",
             "--output-format",
-            "text",
+            "json",
             "--permission-mode",
             "plan",
             "--tools",
@@ -306,6 +306,592 @@ fn claude_read_only_limits_available_tools() {
             "Read,Glob,Grep",
         ]
         .map(OsString::from)
+    );
+}
+
+#[test]
+fn claude_result_keeps_the_text_the_counts_and_the_models() {
+    let stdout = concat!(
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,",
+        "\"result\":\"Final text.\",\"session_id\":\"s1\",\"total_cost_usd\":0.01,",
+        "\"usage\":{\"input_tokens\":11,\"cache_creation_input_tokens\":3,",
+        "\"cache_read_input_tokens\":5,\"output_tokens\":7,\"server_tool_use\":{}},",
+        "\"modelUsage\":{\"claude-opus-4-6\":{\"inputTokens\":11,\"outputTokens\":7}}}"
+    );
+    let result = claude_result(stdout).expect("a result");
+
+    assert_eq!(result.result.as_deref(), Some("Final text."));
+    let usage = result.usage.expect("usage");
+    assert_eq!(usage.summed_total(), Some(26));
+    assert_eq!(usage.completion_tokens(), Some(7.0));
+    assert_eq!(usage.total_tokens, None, "claude reports no total itself");
+    let models: Vec<&String> = result
+        .model_usage
+        .as_ref()
+        .expect("models")
+        .keys()
+        .collect();
+    assert_eq!(models, ["claude-opus-4-6"]);
+}
+
+#[test]
+fn claude_result_is_read_after_an_api_error_line() {
+    let stdout = concat!(
+        "API Error: 429 rate limited\n",
+        "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,",
+        "\"errors\":[\"Provider quota exhausted\"],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}\n"
+    );
+    let result = claude_result(stdout).expect("a result");
+    assert!(result.is_error);
+    assert_eq!(result.errors, ["Provider quota exhausted"]);
+    assert_eq!(
+        claude_error_messages(stdout),
+        ["API Error: 429 rate limited", "Provider quota exhausted"]
+    );
+    assert_eq!(
+        claude_error_messages("API Error: 400 bad\nplain text\n"),
+        ["API Error: 400 bad"]
+    );
+}
+
+#[test]
+fn claude_result_rejects_malformed_output() {
+    for (stdout, expected) in [
+        ("", "claude print returned no JSON result"),
+        ("plain text", "claude print returned no JSON result"),
+        ("{}", "claude print returned no JSON result"),
+        (
+            "{\"type\":\"system\",\"subtype\":\"init\"}",
+            "claude print returned a system object, not a result",
+        ),
+        (
+            "{\"type\":\"result\",\"subtype\":\"success\",\"usage\":{\"output_tokens\":-1}}",
+            "claude print returned no JSON result",
+        ),
+        (
+            "{\"type\":\"result\",\"subtype\":\"success\",\"modelUsage\":{\"model\":3}}",
+            "claude print returned no JSON result",
+        ),
+    ] {
+        let failure = claude_result(stdout).expect_err(stdout);
+        let SurfaceFailure::Reported(message) = failure else {
+            panic!("{failure:?}");
+        };
+        assert!(message.starts_with(expected), "{stdout}: {message}");
+    }
+}
+
+#[test]
+fn token_usage_keeps_incomplete_and_overflowing_totals_unknown() {
+    let complete = TokenUsage {
+        input_tokens: Some(1),
+        cache_creation_input_tokens: Some(2),
+        cache_read_input_tokens: Some(3),
+        output_tokens: Some(4),
+        ..TokenUsage::default()
+    };
+    assert_eq!(complete.summed_total(), Some(10));
+    let incomplete = TokenUsage {
+        cache_read_input_tokens: None,
+        ..complete
+    };
+    assert_eq!(incomplete.summed_total(), None);
+    let overflowing = TokenUsage {
+        input_tokens: Some(u64::MAX),
+        ..complete
+    };
+    assert_eq!(overflowing.summed_total(), None);
+    assert_eq!(sum_counts([None, None]), None);
+    assert_eq!(sum_counts([Some(1), None]), Some(1));
+    assert_eq!(sum_counts([None, Some(2)]), Some(2));
+    assert_eq!(sum_counts([Some(u64::MAX), Some(1)]), None);
+}
+
+/// An overflowing sum is unknown even when a later step would fit: the
+/// wrapped number never reports as the run's count.
+#[test]
+fn opencode_overflowing_step_sum_stays_unknown() {
+    assert_eq!(sum_counts([Some(u64::MAX), Some(1), Some(7)]), None);
+    let events: Vec<OpencodeEvent> = parse_jsonl(&format!(
+        concat!(
+            "{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":{max},\"output\":1}}}}}}\n",
+            "{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":1,\"output\":1}}}}}}\n",
+            "{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":7,\"output\":1}}}}}}\n",
+        ),
+        max = u64::MAX
+    ));
+    let steps: Vec<&OpencodeTokens> = events
+        .iter()
+        .filter_map(|event| event.part.as_ref())
+        .filter_map(|part| part.tokens.as_ref())
+        .collect();
+    let usage = OpencodeTokens::sum(&steps);
+    assert_eq!(usage.input_tokens, None, "overflow wrapped");
+    assert_eq!(usage.output_tokens, Some(3));
+}
+
+/// A malformed count is an unknown count: the event around it still
+/// parses, so an error event with a negative count still reports its error.
+#[test]
+fn malformed_counts_never_drop_the_event_around_them() {
+    let events: Vec<CodexEvent> = parse_jsonl(concat!(
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"turn aborted\"},\"usage\":{\"input_tokens\":-1,\"output_tokens\":2}}\n",
+        "{\"type\":\"turn.completed\",\"usage\":\"none\"}\n",
+    ));
+    assert_eq!(codex_error_messages(&events), ["turn aborted"]);
+    let usage = events[0].usage.as_ref().expect("usage").token_usage();
+    assert_eq!(usage.input_tokens, None);
+    assert_eq!(usage.output_tokens, Some(2));
+    assert!(events[1].usage.is_none(), "a usage that is no object");
+
+    let events: Vec<OpencodeEvent> = parse_jsonl(concat!(
+        "{\"type\":\"session.error\",\"properties\":{\"error\":{\"data\":{\"message\":\"route failed\"}}},",
+        "\"part\":{\"tokens\":{\"input\":-1,\"output\":\"3\",\"cache\":\"none\"}}}\n",
+    ));
+    assert_eq!(opencode_session_error(&events), Some("route failed"));
+    let tokens = events[0]
+        .part
+        .as_ref()
+        .and_then(|part| part.tokens.as_ref());
+    let tokens = tokens.expect("tokens");
+    assert_eq!(tokens.input, None);
+    assert_eq!(tokens.output, None);
+    assert!(tokens.cache.is_none());
+}
+
+/// A number out of range (`1e999`) fails serde's own number parse. It is
+/// an unknown count like a negative one, and the event around it, which
+/// may name a failure, still reads.
+#[test]
+fn counts_out_of_range_never_drop_the_event_around_them() {
+    let lines = JsonLines::<CodexEvent>::read(
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"turn aborted\"},\"usage\":{\"input_tokens\":1e999,\"output_tokens\":2}}\n",
+    );
+    assert!(lines.unreadable.is_none(), "{:?}", lines.unreadable);
+    assert_eq!(codex_error_messages(&lines.events), ["turn aborted"]);
+    let usage = lines.events[0].usage.as_ref().expect("usage").token_usage();
+    assert_eq!(usage.input_tokens, None);
+    assert_eq!(usage.output_tokens, Some(2));
+
+    let lines = JsonLines::<OpencodeEvent>::read(concat!(
+        "{\"type\":\"session.error\",\"properties\":{\"error\":{\"data\":{\"message\":\"route failed\"}}},",
+        "\"part\":{\"tokens\":{\"input\":1e999,\"output\":3}}}\n",
+    ));
+    assert!(lines.unreadable.is_none(), "{:?}", lines.unreadable);
+    assert_eq!(opencode_session_error(&lines.events), Some("route failed"));
+    let tokens = lines.events[0]
+        .part
+        .as_ref()
+        .and_then(|part| part.tokens.as_ref())
+        .expect("tokens");
+    assert_eq!(tokens.input, None);
+    assert_eq!(tokens.output, Some(3));
+}
+
+/// An object line rune cannot read is never dropped in silence: a clean
+/// run fails on it, named by its line on stdout, while the lines around
+/// it still read for the errors a failed run reports.
+#[test]
+fn unreadable_event_lines_fail_a_clean_read_and_keep_the_rest() {
+    let lines = JsonLines::<CodexEvent>::read(concat!(
+        "banner line\n",
+        "{\"type\":\"error\",\"message\":\"quota gone\"}\n",
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"turn aborted\"\n",
+        "{\"type\":\"turn.completed\",\"usage\":\"none\"}\n",
+    ));
+    assert_eq!(codex_error_messages(&lines.events), ["quota gone"]);
+    assert_eq!(lines.events.len(), 2, "the readable lines");
+    let failure = lines
+        .require_all("codex exec")
+        .err()
+        .expect("an unreadable line");
+    assert_eq!(
+        failure.to_string(),
+        "codex exec printed a JSON line rune cannot read (stdout line 3, column 55: EOF while parsing an object)"
+    );
+
+    let lines = JsonLines::<OpencodeEvent>::read(
+        "{\"type\":\"text\",\"part\":{\"messageID\":\"m1\",\"text\":5}}\n",
+    );
+    assert!(lines.events.is_empty());
+    let failure = lines
+        .require_all("opencode run")
+        .err()
+        .expect("an unreadable line");
+    assert!(
+        failure.to_string().starts_with(
+            "opencode run printed a JSON line rune cannot read (stdout line 1, column "
+        ),
+        "{failure}"
+    );
+
+    let clean =
+        JsonLines::<CodexEvent>::read("plain text\n{\"type\":\"error\",\"message\":\"x\"}\n");
+    assert_eq!(clean.require_all("codex exec").expect("readable").len(), 1);
+}
+
+/// A `session.error` event fails the run whatever its shape: one without
+/// a message names that lack instead of passing as no error.
+#[test]
+fn opencode_session_error_without_a_message_still_fails() {
+    for stdout in [
+        "{\"type\":\"session.error\"}",
+        "{\"type\":\"session.error\",\"properties\":{}}",
+        "{\"type\":\"session.error\",\"properties\":{\"error\":{\"name\":\"UnknownError\"}}}",
+    ] {
+        let events: Vec<OpencodeEvent> = parse_jsonl(stdout);
+        assert_eq!(
+            opencode_session_error(&events),
+            Some("the event names no message"),
+            "{stdout}"
+        );
+    }
+    let events: Vec<OpencodeEvent> = parse_jsonl(
+        "{\"type\":\"session.error\",\"properties\":{\"error\":{\"message\":\"beside the data\"}}}",
+    );
+    assert_eq!(opencode_session_error(&events), Some("beside the data"));
+}
+
+/// A codex failure event fails the run whatever its message holds: a null,
+/// missing, or blank message is named for the event. Claude has no such
+/// gap, as its verdict comes from the result's flags, not its messages.
+#[test]
+fn codex_failure_events_without_a_message_still_fail() {
+    let events: Vec<CodexEvent> = parse_jsonl(concat!(
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":null}}\n",
+        "{\"type\":\"turn.failed\",\"error\":null}\n",
+        "{\"type\":\"turn.failed\"}\n",
+        "{\"type\":\"error\",\"message\":null}\n",
+        "{\"type\":\"error\",\"message\":\"  \"}\n",
+        "{\"type\":\"item.completed\",\"item\":{\"type\":\"error\"}}\n",
+        "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"partial\"}}\n",
+    ));
+    assert_eq!(
+        codex_error_messages(&events),
+        [
+            "turn.failed names no message",
+            "turn.failed names no message",
+            "turn.failed names no message",
+            "error event names no message",
+            "error event names no message",
+            "error item names no message",
+        ]
+    );
+
+    let silent = "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":null}";
+    let result = claude_result(silent).expect("a result");
+    assert!(result.failed());
+    assert_eq!(claude_error_messages(silent), [] as [String; 0]);
+}
+
+/// Every harness error text is cut to the cap with a mark at the cut, at
+/// the reader that collects it and again where a failure takes the list:
+/// a failed claude result's text, a codex message, and a list handed to a
+/// failure all come out the same size, and a cut text passes the cap
+/// again unchanged.
+#[test]
+fn harness_error_texts_are_cut_at_the_cap() {
+    let long = "a".repeat(HARNESS_ERROR_CHARS + 1);
+    let cut = harness_error(&long);
+    assert_eq!(cut.chars().count(), HARNESS_ERROR_CHARS);
+    assert!(cut.ends_with(CUT_MARK), "{cut}");
+    assert_eq!(harness_error(&cut), cut, "a cut text is cut no further");
+    let short = "a".repeat(HARNESS_ERROR_CHARS);
+    assert_eq!(harness_error(&format!("  {short} \n")), short);
+    // The cut lands on a character boundary.
+    let wide = "é".repeat(HARNESS_ERROR_CHARS + 1);
+    assert_eq!(harness_error(&wide).chars().count(), HARNESS_ERROR_CHARS);
+
+    let stdout = format!(
+        "{{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"result\":\"{long}\",\"errors\":[\"{long}\"]}}"
+    );
+    assert_eq!(claude_error_messages(&stdout), std::slice::from_ref(&cut));
+
+    let events: Vec<CodexEvent> =
+        parse_jsonl(&format!("{{\"type\":\"error\",\"message\":\"{long}\"}}\n"));
+    assert_eq!(codex_error_messages(&events), std::slice::from_ref(&cut));
+
+    let failure = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    }
+    .with_harness_errors(vec![long]);
+    assert_eq!(failure.harness_errors(), [cut]);
+}
+
+/// A field of the result rune does not report is skipped as it is read,
+/// never held, and an array is judged by its last element alone: a number
+/// out of range in an earlier message costs nothing.
+#[test]
+fn claude_result_skips_the_fields_it_does_not_report() {
+    let padding = "0,".repeat(1024 * 1024);
+    let object = format!(
+        "{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"reply\",\"padding\":[{padding}0]}}"
+    );
+    let result = claude_result(&object).expect("a result");
+    assert_eq!(result.result.as_deref(), Some("reply"));
+    assert!(!result.failed());
+
+    let array = format!(
+        "[{{\"type\":\"system\",\"subtype\":\"init\",\"ratio\":1e999,\"padding\":[{padding}0]}},{object}]"
+    );
+    let result = claude_result(&array).expect("a result");
+    assert_eq!(result.result.as_deref(), Some("reply"));
+}
+
+/// A JSON line before claude's result that rune cannot read fails the
+/// read, named by its line on stdout. A line that reads, whatever it
+/// holds, and a line that is no JSON (an `API Error:` note) stay
+/// harmless, and a number out of range in a field rune does not report
+/// is skipped with the field.
+#[test]
+fn claude_unreadable_line_before_the_result_fails_the_read() {
+    let result =
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"ok\"}";
+    for (stdout, expected) in [
+        (
+            format!(
+                "API Error: 429 slow down\n{{\"type\":\"system\",\"subtype\":\"init\"\n{result}\n"
+            ),
+            "claude print printed a JSON line rune cannot read (stdout line 2, column 33: EOF while parsing an object)",
+        ),
+        (
+            format!("[{{\"type\":\"system\"}}\n{result}"),
+            "claude print printed a JSON line rune cannot read (stdout line 1, column 18: EOF while parsing a list)",
+        ),
+    ] {
+        let failure = claude_result(&stdout).expect_err(&stdout);
+        assert_eq!(failure.to_string(), expected, "{stdout}");
+    }
+
+    let readable = format!("{{\"type\":\"system\",\"ratio\":1e999}}\nnot json {{\n{result}");
+    let result = claude_result(&readable).expect("a result after readable lines");
+    assert_eq!(result.result.as_deref(), Some("ok"));
+
+    let skipped = "{\"type\":\"result\",\"subtype\":\"success\",\"ratio\":1e999,\"result\":\"ok\"}";
+    let result = claude_result(skipped).expect("a result with a skipped field");
+    assert_eq!(result.result.as_deref(), Some("ok"));
+}
+
+/// The model map is the one allocation of a result its text does not
+/// bound, so its text is capped, and the reckoning behind the cap holds:
+/// a JSON value takes 32 bytes.
+#[test]
+fn claude_model_usage_over_its_limit_is_rejected() {
+    assert_eq!(std::mem::size_of::<serde_json::Value>(), 32);
+    assert_eq!(MODEL_USAGE_LIMIT_BYTES, 128 * 1024);
+    let note = "x".repeat(MODEL_USAGE_LIMIT_BYTES);
+    let over = format!(
+        "{{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"modelUsage\":{{\"claude-opus-4-6\":{{\"note\":\"{note}\"}}}}}}"
+    );
+    let failure = claude_result(&over).expect_err("an oversized map");
+    assert!(
+        failure.to_string().starts_with(&format!(
+            "claude print returned no JSON result: modelUsage is {} bytes, over the {MODEL_USAGE_LIMIT_BYTES} rune reads",
+            MODEL_USAGE_LIMIT_BYTES + "{\"claude-opus-4-6\":{\"note\":\"\"}}".len()
+        )),
+        "{failure}"
+    );
+    let within = format!(
+        "{{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"modelUsage\":{{\"claude-opus-4-6\":{{\"note\":\"{}\"}}}}}}",
+        &note[..MODEL_USAGE_LIMIT_BYTES - 64]
+    );
+    let result = claude_result(&within).expect("a result");
+    assert_eq!(
+        result.model_usage.map(|usage| usage.len()),
+        Some(1),
+        "a map within the limit"
+    );
+}
+
+/// The array `--verbose` prints holds every session message; the result
+/// is its last element.
+#[test]
+fn claude_result_is_read_from_a_verbose_message_array() {
+    let stdout = concat!(
+        "[{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\"},",
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"PING\"}]}},",
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"PING\",",
+        "\"usage\":{\"output_tokens\":2}}]\n"
+    );
+    let result = claude_result(stdout).expect("a result");
+    assert_eq!(result.result.as_deref(), Some("PING"));
+    assert!(!result.failed());
+    assert_eq!(result.usage.and_then(|usage| usage.output_tokens), Some(2));
+    let result = claude_result("API Error: 429 slow down\n[{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}]")
+        .expect("a result after the error line");
+    assert_eq!(result.result.as_deref(), Some("ok"));
+
+    for (stdout, expected) in [
+        (
+            "[]",
+            "claude print returned no JSON result: the message array is empty",
+        ),
+        (
+            "[{\"type\":\"result\",\"subtype\":\"success\"},{\"type\":\"assistant\"}]",
+            "claude print returned a assistant object, not a result",
+        ),
+    ] {
+        let failure = claude_result(stdout).expect_err(stdout);
+        assert_eq!(failure.to_string(), expected, "{stdout}");
+    }
+}
+
+/// One predicate decides the verdict and the messages: a success that
+/// lists errors fails, and a failed subtype keeps its text as a message
+/// whatever its error flag says.
+#[test]
+fn claude_result_fails_on_errors_whatever_the_flags_say() {
+    let with_errors = concat!(
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,",
+        "\"result\":\"done\",\"errors\":[\"tool denied\"]}"
+    );
+    let result = claude_result(with_errors).expect("a result");
+    assert!(result.failed());
+    assert_eq!(
+        result.failure_message(),
+        "claude print reported errors beside a success"
+    );
+    assert_eq!(claude_error_messages(with_errors), ["tool denied", "done"]);
+
+    let flagged =
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"x\"}";
+    let result = claude_result(flagged).expect("a result");
+    assert!(result.failed());
+    assert_eq!(
+        result.failure_message(),
+        "claude print reported a success flagged as an error"
+    );
+
+    let unflagged = concat!(
+        "{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":false,",
+        "\"result\":\"Reached the turn limit\"}"
+    );
+    let result = claude_result(unflagged).expect("a result");
+    assert!(result.failed());
+    assert_eq!(
+        result.failure_message(),
+        "claude print reported error_max_turns"
+    );
+    assert_eq!(claude_error_messages(unflagged), ["Reached the turn limit"]);
+
+    let clean = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"ok\",\"errors\":[]}";
+    assert!(!claude_result(clean).expect("a result").failed());
+    assert_eq!(claude_error_messages(clean), [] as [String; 0]);
+}
+
+/// Each message once: a repeated `API Error:` line, an error repeated in
+/// the list, and a text the list already carries all collapse.
+#[test]
+fn claude_error_messages_are_deduplicated_in_order() {
+    let stdout = concat!(
+        "API Error: 429 rate limited\n",
+        "API Error: 429 rate limited\n",
+        "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,",
+        "\"result\":\"quota gone\",",
+        "\"errors\":[\"API Error: 429 rate limited\",\"quota gone\",\"quota gone\",\"  \"]}\n"
+    );
+    assert_eq!(
+        claude_error_messages(stdout),
+        ["API Error: 429 rate limited", "quota gone"]
+    );
+}
+
+/// Credential values leave the model names and the per-model usage the
+/// same way they leave the text: known values only, at any depth.
+#[test]
+fn model_usage_redaction_hides_known_values_in_keys_and_strings() {
+    let secrets = vec!["fake-route-secret".to_string()];
+    let usage: ModelUsage = serde_json::from_str(concat!(
+        "{\"claude-opus-4-6\":{\"inputTokens\":11,\"note\":\"token fake-route-secret here\",",
+        "\"nested\":{\"fake-route-secret\":[\"fake-route-secret\",1,null]}},",
+        "\"fake-route-secret\":{\"outputTokens\":7}}"
+    ))
+    .expect("usage");
+    let redacted = redact_model_usage(usage, &secrets);
+    let text = serde_json::to_string(&redacted).expect("json");
+    assert!(!text.contains("fake-route-secret"), "{text}");
+    assert_eq!(
+        text,
+        concat!(
+            "{\"<redacted>\":{\"outputTokens\":7},",
+            "\"claude-opus-4-6\":{\"inputTokens\":11,\"nested\":{\"<redacted>\":[\"<redacted>\",1,null]},",
+            "\"note\":\"token <redacted> here\"}}"
+        )
+    );
+}
+
+/// The claude capture limit leaves room for the JSON escaping of an
+/// answer at the ordinary limit, and stays bounded.
+#[test]
+fn claude_capture_limit_covers_the_escaped_answer_and_stays_bounded() {
+    let answer = "\u{1}".repeat(DEFAULT_OUTPUT_LIMIT_BYTES);
+    let escaped = serde_json::to_string(&answer).expect("json");
+    assert!(
+        escaped.len() <= CLAUDE_OUTPUT_LIMIT_BYTES,
+        "{}",
+        escaped.len()
+    );
+    // Bounded: one more escaped answer of that size would not fit.
+    assert!(
+        escaped.len() * 2 > CLAUDE_OUTPUT_LIMIT_BYTES,
+        "{}",
+        escaped.len()
+    );
+}
+
+#[test]
+fn codex_usage_maps_the_cache_counts_and_adds_the_total() {
+    let events: Vec<CodexEvent> = parse_jsonl(concat!(
+        "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":60,",
+        "\"cache_write_input_tokens\":10,\"output_tokens\":20,\"reasoning_output_tokens\":5}}\n"
+    ));
+    let usage = events[0].usage.as_ref().expect("usage").token_usage();
+
+    assert_eq!(
+        usage,
+        TokenUsage {
+            input_tokens: Some(100),
+            cache_creation_input_tokens: Some(10),
+            cache_read_input_tokens: Some(60),
+            output_tokens: Some(20),
+            reasoning_output_tokens: Some(5),
+            total_tokens: Some(120),
+        }
+    );
+    let events: Vec<CodexEvent> =
+        parse_jsonl("{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":20}}\n");
+    let partial = events[0].usage.as_ref().expect("usage").token_usage();
+    assert_eq!(partial.input_tokens, None);
+    assert_eq!(partial.total_tokens, None);
+    assert_eq!(partial.output_tokens, Some(20));
+}
+
+#[test]
+fn opencode_usage_sums_the_steps() {
+    let events: Vec<OpencodeEvent> = parse_jsonl(concat!(
+        "{\"type\":\"step_finish\",\"part\":{\"messageID\":\"m\",\"tokens\":{\"total\":30,\"input\":20,\"output\":5,\"reasoning\":2,\"cache\":{\"read\":3,\"write\":0}}}}\n",
+        "{\"type\":\"step_finish\",\"part\":{\"messageID\":\"m\",\"tokens\":{\"input\":10,\"output\":7}}}\n",
+    ));
+    let steps: Vec<&OpencodeTokens> = events
+        .iter()
+        .filter_map(|event| event.part.as_ref())
+        .filter_map(|part| part.tokens.as_ref())
+        .collect();
+    let usage = OpencodeTokens::sum(&steps);
+
+    assert_eq!(
+        usage,
+        TokenUsage {
+            input_tokens: Some(30),
+            cache_creation_input_tokens: Some(0),
+            cache_read_input_tokens: Some(3),
+            output_tokens: Some(12),
+            reasoning_output_tokens: Some(2),
+            total_tokens: Some(30),
+        }
     );
 }
 
@@ -652,7 +1238,7 @@ fn agy_json_returns_only_the_final_message_from_a_multi_turn_run() {
     assert_eq!(response.response, "Final rewritten text.");
     assert_eq!(
         response.usage.and_then(|usage| usage.output_tokens),
-        Some(17.0)
+        Some(17)
     );
 }
 
@@ -2570,6 +3156,39 @@ fn a_scratch_cleanup_failure_keeps_the_run_failure_and_its_tails() {
         matches!(after_success, SurfaceFailure::Io(_)),
         "{after_success}"
     );
+}
+
+/// A stop's redaction keeps the window around the tail and drops the rest
+/// of the capture, with a value near the end still hidden: the window is
+/// cut before the redaction, and the tail is read from the window.
+#[test]
+fn a_redacted_stop_keeps_the_window_around_its_tail() {
+    let early = "early line\n".repeat(20_000);
+    let stdout = format!("{early}API_KEY=hunter2secret\nlast line");
+    assert!(stdout.len() > TAIL_WINDOW_BYTES, "{}", stdout.len());
+    let failure = SurfaceFailure::from(ProcessFailure::OutputLimit {
+        stream: "stdout",
+        limit: 64,
+        stdout,
+        stderr: "x".repeat(TAIL_WINDOW_BYTES),
+    });
+
+    let redacted = failure.redacted(&["hunter2secret".to_string()]);
+
+    let (stdout, stderr) = redacted.tails().expect("tails");
+    assert_eq!(
+        stdout.len(),
+        TAIL_WINDOW_BYTES + "<redacted>".len() - "hunter2secret".len()
+    );
+    assert!(stdout.starts_with("early line\n"), "{stdout:.30}");
+    assert!(
+        stdout.ends_with("API_KEY=<redacted>\nlast line"),
+        "{stdout:.30}"
+    );
+    assert_eq!(stderr.len(), TAIL_WINDOW_BYTES);
+    assert_eq!(tail_window("short".to_string()), "short");
+    let multibyte = "é".repeat(TAIL_WINDOW_BYTES);
+    assert_eq!(tail_window(multibyte).len(), TAIL_WINDOW_BYTES);
 }
 
 #[test]

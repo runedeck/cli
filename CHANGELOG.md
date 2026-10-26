@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Report the token counts a harness prints in `rune run --json`: claude's result `usage` and `modelUsage` (as `models` and `model_usage`, redacted like the text), codex's turn usage, opencode's step sums. Claude's `--verbose` message array is read by its last element, a result with errors fails, and the output limit judges claude's decoded answer. A JSON line rune cannot read fails a clean run with a message that names the line, and a count out of range is unknown without dropping its event. The memory of a run stays under four times claude's stdout capture: a field of the result rune does not report is skipped as it is read, and a stop carries only the window around its tail. A codex failure event without a message still fails the run, named for the event. Each harness error text is cut to 4,000 characters with `…[cut]` at the cut.
 - Print `rune run --dry-run --json` as one JSON object: model, tool, argv, base URL, environment (credentials `<redacted>`), removed and withheld keys, repository, mode, timeout, session name.
 - List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld inherited key names the route key of its family that displaced it.
 - Print one `configuration_error` JSON object for a usage error under `--json`, with exit 125, and add `details.profiles` for an unknown profile.

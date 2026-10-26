@@ -111,7 +111,7 @@ fn json_reports_requested_and_resolved_routes() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nprintf 'provider reply\\n'\n",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"provider reply\"}\\n'\n",
     );
 
     let output = rune(home.path())
@@ -246,6 +246,875 @@ printf '%s\n' '{"response":"provider reply","usage":{"output_tokens":17}}'
     assert!(total_tokens.is_null());
 }
 
+/// Run one fake harness through `rune --json run` and return the exit code
+/// and the JSON object on stdout.
+#[cfg(unix)]
+fn json_run(
+    home: &std::path::Path,
+    route: &str,
+    name: &str,
+    script: &str,
+) -> (Option<i32>, serde_json::Value) {
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(home, name, script);
+    let output = rune(home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
+        .env("RUNE_STATE_DIR", home.join("state"))
+        .args([
+            "--json",
+            "run",
+            route,
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    (output.status.code(), confirmation_of(&output))
+}
+
+/// A fake claude that prints one JSON result whose text is `answer`,
+/// read from a file beside it: a long answer stays out of the script.
+#[cfg(unix)]
+fn claude_result_fake(home: &std::path::Path, answer: &str) -> String {
+    let result = home.join("result.json");
+    let object = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": answer,
+    });
+    std::fs::write(&result, object.to_string()).expect("result file");
+    format!("#!/bin/sh\ncat '{}'\n", result.display())
+}
+
+/// A credential a fake claude echoes into `modelUsage` leaves the JSON
+/// result and the result file like one echoed into the text.
+#[cfg(unix)]
+#[test]
+fn claude_json_redacts_a_credential_echoed_in_the_model_usage() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "launch:\n  profiles:\n    claude:\n      tokened:\n        env:\n          ANTHROPIC_AUTH_TOKEN: fake-route-secret\n",
+    )
+    .expect("config");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf '{"type":"result","subtype":"success","is_error":false,"result":"reply","modelUsage":{"%s":{"outputTokens":7,"note":"token %s"}}}\n' "$ANTHROPIC_AUTH_TOKEN" "$ANTHROPIC_AUTH_TOKEN"
+"#,
+    );
+    let seat = repository.path().join("seat.json");
+
+    let output = rune(home.path())
+        .env("XDG_CONFIG_HOME", home.path().join(".config"))
+        .env("GIT_CONFIG_GLOBAL", home.path().join(".gitconfig"))
+        .env("RUNE_STATE_DIR", home.path().join("state"))
+        .args([
+            "--json",
+            "run",
+            "tokened@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    let written = std::fs::read_to_string(&seat).expect("seat file");
+    assert!(!printed.contains("fake-route-secret"), "{printed}");
+    assert!(!written.contains("fake-route-secret"), "{written}");
+    // The result lives in the file; stdout confirms the write.
+    let result: serde_json::Value =
+        serde_json::from_str(&written).expect("one JSON object in the file");
+    assert_eq!(
+        result["models"],
+        serde_json::json!(["<redacted>"]),
+        "{result}"
+    );
+    assert_eq!(
+        result["model_usage"]["<redacted>"]["note"], "token <redacted>",
+        "{result}"
+    );
+    assert_eq!(
+        result["model_usage"]["<redacted>"]["outputTokens"], 7,
+        "{result}"
+    );
+}
+
+/// A failed turn whose usage holds a negative count still fails the run:
+/// the malformed count is unknown, the error event stays.
+#[cfg(unix)]
+#[test]
+fn codex_failed_turn_with_a_negative_count_still_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "codex",
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"turn.failed","error":{"message":"turn aborted"},"usage":{"input_tokens":-1,"output_tokens":2}}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["turn aborted"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_session_error_with_a_negative_count_still_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "opencode",
+        "fake-opencode",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"text","part":{"messageID":"m1","text":"partial"}}'
+printf '%s\n' '{"type":"session.error","properties":{"error":{"data":{"message":"route failed"}}},"part":{"tokens":{"input":-1}}}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["message"], "opencode session error: route failed",
+        "{result}"
+    );
+}
+
+/// A count out of range (`1e999`) fails serde's number parse where a
+/// negative one fails its own check. The failure event around it still
+/// fails the run.
+#[cfg(unix)]
+#[test]
+fn codex_failed_turn_with_a_count_out_of_range_still_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "codex",
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+printf '%s\n' '{"type":"turn.failed","error":{"message":"turn aborted"},"usage":{"input_tokens":1e999,"output_tokens":2}}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["turn aborted"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_session_error_with_a_count_out_of_range_still_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "opencode",
+        "fake-opencode",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"text","part":{"messageID":"m1","text":"partial"}}'
+printf '%s\n' '{"type":"session.error","properties":{"error":{"data":{"message":"route failed"}}},"part":{"tokens":{"input":1e999}}}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["message"], "opencode session error: route failed",
+        "{result}"
+    );
+}
+
+/// A JSON line rune cannot read at all fails a clean run, named by its
+/// line on stdout: the line may be the one that names a failure.
+#[cfg(unix)]
+#[test]
+fn codex_unreadable_event_line_fails_a_clean_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "codex",
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+printf '%s\n' '{"type":"turn.failed","error":{"message":"turn aborted"'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_unreadable_line(&result, "codex exec", 2);
+}
+
+/// A failed turn fails the run whatever its message holds: one that names
+/// no message is reported for the event, and the partial text never passes
+/// as the answer.
+#[cfg(unix)]
+#[test]
+fn codex_failed_turn_without_a_message_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "codex",
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+printf '%s\n' '{"type":"turn.failed","error":{"message":null}}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["message"], "codex exec reported an error and no final agent message",
+        "{result}"
+    );
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["turn.failed names no message"]),
+        "{result}"
+    );
+}
+
+/// The message of a run that failed on a JSON line rune cannot read: the
+/// tool, the line on stdout, and serde's reason for the truncated object.
+fn assert_unreadable_line(result: &serde_json::Value, tool: &str, line: usize) {
+    let message = result["details"]["message"].as_str().unwrap_or_default();
+    let prefix =
+        format!("{tool} printed a JSON line rune cannot read (stdout line {line}, column ");
+    assert!(message.starts_with(&prefix), "{result}");
+    assert!(
+        message.ends_with(": EOF while parsing an object)"),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_unreadable_event_line_fails_a_clean_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "opencode",
+        "fake-opencode",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"text","part":{"messageID":"m1","text":"reply"}}'
+printf '%s\n' '{"type":"session.error","properties":{"error":{"data":{"message":"route failed"'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_unreadable_line(&result, "opencode run", 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_unreadable_line_before_the_result_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"system","subtype":"init"'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"reply"}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_unreadable_line(&result, "claude print", 1);
+}
+
+/// A field of claude's result rune does not report is skipped as it is
+/// read, never held: 24 MiB of padding passes with no tree built of it.
+/// The memory bound itself is checked by hand.
+#[cfg(unix)]
+#[test]
+fn claude_result_padding_passes_within_the_capture() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"reply","padding":[0'
+yes ',0' | tr -d '\n' | head -c 25165824
+printf '%s\n' ']}'
+"#,
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "reply", "{result}");
+}
+
+#[cfg(unix)]
+const MIB: usize = 1024 * 1024;
+
+/// The fake claude bodies the memory test runs, from the smallest expected
+/// peak to the largest, each with the failure kind it ends in: an answer at
+/// the output limit, a result padded with a flat array near the capture, a
+/// `--verbose` array whose first element is that padding, stderr near the
+/// capture, a failed result whose text fills the capture, and a flood of
+/// each stream.
+#[cfg(unix)]
+fn claude_memory_cases() -> [(&'static str, String, Option<&'static str>); 9] {
+    let result_prefix = "printf '%s' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"reply\"";
+    let padding = |bytes: usize| format!("yes ',0' | tr -d '\\n' | head -c {bytes}\n");
+    let flat = |bytes: usize| {
+        format!(
+            "{result_prefix},\"padding\":[0'\n{}printf '%s\\n' ']}}'\n",
+            padding(bytes)
+        )
+    };
+    let flood = "exec yes xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    [
+        ("baseline", format!("{result_prefix}}}'\n"), None),
+        (
+            "answer_8MiB",
+            format!(
+                "printf '%s' '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"'\nyes a | tr -d '\\n' | head -c {}\nprintf '%s\\n' '\"}}'\n",
+                8 * MIB - 1
+            ),
+            None,
+        ),
+        ("flat_array_24MiB", flat(24 * MIB), None),
+        ("flat_array_48MiB", flat(48 * MIB), None),
+        (
+            "verbose_array_48MiB",
+            format!(
+                "printf '%s' '[{{\"type\":\"system\",\"subtype\":\"init\",\"padding\":[0'\n{}printf '%s\\n' ']}},{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"reply\"}}]'\n",
+                padding(48 * MIB)
+            ),
+            None,
+        ),
+        (
+            "stderr_48MiB",
+            format!(
+                "yes 'warning: still working' | head -c {} >&2\n{result_prefix}}}'\n",
+                48 * MIB
+            ),
+            None,
+        ),
+        (
+            "failed_result_54MiB",
+            format!(
+                "printf '%s' '{{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"'\nyes a | tr -d '\\n' | head -c {}\nprintf '%s\\n' '\"}}'\n",
+                54 * MIB
+            ),
+            Some("surface_error"),
+        ),
+        ("flood_stdout", format!("{flood}\n"), Some("output_limit")),
+        (
+            "flood_stderr",
+            format!("{flood} >&2\n"),
+            Some("output_limit"),
+        ),
+    ]
+}
+
+/// The peak memory of a claude run, as `getrusage` reports it for the
+/// children of this process, over the outputs that cost the most. The bound
+/// is four times claude's stdout capture of seven output limits, as the
+/// surface states. The kernel reports the largest resident set among the
+/// children reaped so far, so each case prints the peak of every case up
+/// to it, and the cases run from the smallest expected peak to the largest.
+/// Ignored by default: each case takes seconds, so it is a check by hand,
+/// run alone with `--ignored --nocapture`.
+#[cfg(unix)]
+#[test]
+#[ignore = "measures the peak memory of its children; run alone by hand with --ignored --nocapture"]
+fn claude_run_memory_stays_under_four_times_the_capture() {
+    const CAPTURE: usize = 7 * 8 * MIB;
+    const BOUND: usize = 4 * CAPTURE;
+    // Apple reports the peak in bytes, the other unix systems in KiB.
+    const RSS_UNIT: usize = if cfg!(target_vendor = "apple") {
+        1
+    } else {
+        1024
+    };
+    for (name, body, failure_kind) in claude_memory_cases() {
+        let home = tempfile::tempdir().expect("home");
+        let repository = plain_repository();
+        let provider =
+            executable_provider(home.path(), "fake-claude", &format!("#!/bin/sh\n{body}"));
+        let output = support::rune_process()
+            .env("HOME", home.path())
+            .env("CLIPROXY_API_KEY", "test-token")
+            .env("XDG_CONFIG_HOME", home.path().join(".config"))
+            .env("GIT_CONFIG_GLOBAL", home.path().join(".gitconfig"))
+            .env("RUNE_STATE_DIR", home.path().join("state"))
+            .args(["--json", "run", "sol@claude", "Review", "--repo"])
+            .arg(repository.path())
+            .arg("--binary")
+            .arg(&provider)
+            .args(["--timeout", "60s"])
+            .output()
+            .expect("run rune");
+        let status = output.status;
+        let usage = nix::sys::resource::getrusage(nix::sys::resource::UsageWho::RUSAGE_CHILDREN)
+            .expect("getrusage");
+        let peak = usize::try_from(usage.max_rss()).unwrap_or(0) * RSS_UNIT;
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        println!(
+            "{name}: peak {} MiB, exit {:?}, kind {}, bound {} MiB",
+            peak / MIB,
+            status.code(),
+            result["kind"],
+            BOUND / MIB
+        );
+        if let Some(kind) = failure_kind {
+            assert_eq!(result["kind"], kind, "{name}: {result}");
+        } else {
+            assert_eq!(status.code(), Some(0), "{name}: {result}");
+            assert!(
+                result["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("reply") || text.starts_with("aaaa")),
+                "{name}: {}",
+                result["kind"]
+            );
+        }
+        assert!(
+            peak < BOUND,
+            "{name}: peak {} MiB is over the {} MiB bound",
+            peak / MIB,
+            BOUND / MIB
+        );
+    }
+}
+
+/// The message array `--verbose` makes of claude's output (also set by a
+/// `viewMode` of `verbose` in the user's settings) ends with the result.
+#[cfg(unix)]
+#[test]
+fn claude_verbose_array_output_passes_with_its_terminal_result() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '[{"type":"system","subtype":"init","session_id":"s1"},{"type":"assistant","message":{"content":[{"type":"text","text":"PING"}]}},{"type":"result","subtype":"success","is_error":false,"result":"PING","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2},"modelUsage":{"claude-opus-4-6":{"outputTokens":2}}}]'
+"#,
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "PING", "{result}");
+    assert_eq!(result["usage"]["total_tokens"], 3, "{result}");
+    assert_eq!(
+        result["models"],
+        serde_json::json!(["claude-opus-4-6"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_success_result_with_errors_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","errors":["tool denied"]}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["message"], "claude print reported errors beside a success",
+        "{result}"
+    );
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["tool denied", "done"]),
+        "{result}"
+    );
+}
+
+/// An answer that fits the output limit passes whatever its JSON
+/// escaping costs on stdout: the limit judges the decoded answer.
+#[cfg(unix)]
+#[test]
+fn claude_answer_that_fits_the_limit_passes_whatever_its_escaping_costs() {
+    let home = tempfile::tempdir().expect("home");
+    let answer = "\\".repeat(4_300_000);
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        &claude_result_fake(home.path(), &answer),
+    );
+    assert_eq!(code, Some(0), "{}", result["kind"]);
+    assert_eq!(result["text"].as_str().map(str::len), Some(answer.len()));
+}
+
+/// The limit stays bounded: a decoded answer over it fails the run the
+/// way a plain stream over it did, with the ordinary limit named.
+#[cfg(unix)]
+#[test]
+fn claude_decoded_answer_over_the_limit_fails_as_output_limit() {
+    let home = tempfile::tempdir().expect("home");
+    let answer = "x".repeat(8 * 1024 * 1024 + 1);
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        &claude_result_fake(home.path(), &answer),
+    );
+    assert_eq!(code, Some(125), "{}", result["kind"]);
+    assert_eq!(result["kind"], "output_limit", "{}", result["kind"]);
+    assert_eq!(result["details"]["stream"], "stdout");
+    assert_eq!(result["details"]["limit"], 8 * 1024 * 1024);
+}
+
+/// A sum that overflows is unknown, never the wrapped number a later
+/// step lands on.
+#[cfg(unix)]
+#[test]
+fn opencode_overflowing_step_sum_reports_an_unknown_count() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "opencode",
+        "fake-opencode",
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' '{{\"type\":\"text\",\"part\":{{\"messageID\":\"m1\",\"text\":\"opencode reply\"}}}}'\n",
+                "printf '%s\\n' '{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":{max},\"output\":1}}}}}}'\n",
+                "printf '%s\\n' '{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":1,\"output\":1}}}}}}'\n",
+                "printf '%s\\n' '{{\"type\":\"step_finish\",\"part\":{{\"tokens\":{{\"input\":7,\"output\":1}}}}}}'\n",
+            ),
+            max = u64::MAX
+        ),
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert!(result["usage"]["input_tokens"].is_null(), "{result}");
+    assert_eq!(result["usage"]["output_tokens"], 3, "{result}");
+}
+
+/// A failed subtype keeps its text as a harness error whatever the error
+/// flag says: one predicate decides the verdict and the messages.
+#[cfg(unix)]
+#[test]
+fn claude_failed_subtype_without_the_error_flag_keeps_its_text_as_a_harness_error() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":false,"result":"Reached the turn limit"}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(
+        result["details"]["message"], "claude print reported error_max_turns",
+        "{result}"
+    );
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["Reached the turn limit"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_duplicate_error_messages_appear_once() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' 'API Error: 429 rate limited'
+printf '%s\n' 'API Error: 429 rate limited'
+printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"quota gone","errors":["API Error: 429 rate limited","quota gone","quota gone"]}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["API Error: 429 rate limited", "quota gone"]),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_empty_model_usage_names_no_models() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"provider reply","modelUsage":{}}'
+"#,
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert!(result.get("models").is_none(), "{result}");
+    assert!(result.get("model_usage").is_none(), "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_json_reports_the_usage_and_the_models_it_used() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = plain_repository();
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"provider reply","usage":{"input_tokens":11,"cache_creation_input_tokens":3,"cache_read_input_tokens":5,"output_tokens":7},"modelUsage":{"claude-opus-4-6":{"inputTokens":11,"outputTokens":7}},"session_id":"s-1"}'
+"#,
+    );
+    let seat = repository.path().join("seat.json");
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "sol@claude",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+            "--output",
+        ])
+        .arg(&seat)
+        .output()
+        .expect("run output");
+    assert!(output.status.success(), "{output:?}");
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&seat).expect("seat file"))
+            .expect("one JSON object in the file");
+    assert_eq!(written["text"], "provider reply", "{written}");
+    assert_eq!(
+        written["usage"],
+        serde_json::json!({
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 5,
+            "output_tokens": 7,
+            "reasoning_output_tokens": null,
+            "total_tokens": 26,
+        }),
+        "{written}"
+    );
+    assert_eq!(written["completion_tokens"], 7.0, "{written}");
+    assert_eq!(
+        written["models"],
+        serde_json::json!(["claude-opus-4-6"]),
+        "{written}"
+    );
+    assert_eq!(
+        written["model_usage"]["claude-opus-4-6"]["outputTokens"], 7,
+        "{written}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_json_names_no_models_when_the_result_reports_none() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"provider reply\"}\\n'\n",
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "provider reply", "{result}");
+    assert!(result.get("models").is_none(), "{result}");
+    assert!(result.get("model_usage").is_none(), "{result}");
+    assert!(result["usage"]["output_tokens"].is_null(), "{result}");
+    assert!(result["usage"]["total_tokens"].is_null(), "{result}");
+    assert!(result["completion_tokens"].is_null(), "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_error_result_with_a_clean_exit_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Provider quota exhausted","errors":["Provider quota exhausted"]}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert_eq!(
+        result["details"]["message"], "claude print reported error_during_execution",
+        "{result}"
+    );
+    assert_eq!(
+        result["details"]["harness_errors"],
+        serde_json::json!(["Provider quota exhausted"]),
+        "{result}"
+    );
+}
+
+/// The text of a failed result is a harness error, cut to 4,000 characters
+/// with a mark at the cut: the JSON output never repeats a long answer.
+#[cfg(unix)]
+#[test]
+fn claude_failed_result_text_is_cut_at_the_harness_error_cap() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        r#"#!/bin/sh
+printf '%s' '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"'
+yes a | tr -d '\n' | head -c 10000
+printf '%s\n' '"}'
+"#,
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    let errors = result["details"]["harness_errors"]
+        .as_array()
+        .expect("harness errors");
+    assert_eq!(errors.len(), 1, "{result}");
+    let error = errors[0].as_str().expect("one text");
+    let ends: String = error
+        .chars()
+        .skip(error.chars().count().saturating_sub(12))
+        .collect();
+    assert_eq!(error.chars().count(), 4000, "ends with {ends:?}");
+    assert!(error.starts_with("aaaa"), "ends with {ends:?}");
+    assert!(error.ends_with("a…[cut]"), "ends with {ends:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_output_without_a_result_object_fails_the_run() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "sol@claude",
+        "fake-claude",
+        "#!/bin/sh\nprintf 'plain text\\n'\n",
+    );
+    assert_eq!(code, Some(1), "{result}");
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    assert!(
+        result["details"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("claude print returned no JSON result")),
+        "{result}"
+    );
+    assert_eq!(result["details"]["stdout_tail"], "plain text", "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_json_reports_the_turn_usage_and_no_models() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "codex",
+        "fake-codex",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"codex reply"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":10,"output_tokens":20,"reasoning_output_tokens":5}}'
+"#,
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "codex reply", "{result}");
+    assert_eq!(
+        result["usage"],
+        serde_json::json!({
+            "input_tokens": 100,
+            "cache_creation_input_tokens": 10,
+            "cache_read_input_tokens": 60,
+            "output_tokens": 20,
+            "reasoning_output_tokens": 5,
+            "total_tokens": 120,
+        }),
+        "{result}"
+    );
+    assert_eq!(result["completion_tokens"], 20.0, "{result}");
+    assert!(result.get("models").is_none(), "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_json_sums_the_step_usage_and_names_no_models() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "opencode",
+        "fake-opencode",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"text","part":{"messageID":"m1","text":"opencode reply"}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"total":10,"input":5,"output":4,"reasoning":1,"cache":{"read":2,"write":0}}}}'
+printf '%s\n' '{"type":"step_finish","part":{"tokens":{"total":20,"input":10,"output":8,"reasoning":1,"cache":{"read":3,"write":1}}}}'
+"#,
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "opencode reply", "{result}");
+    assert_eq!(
+        result["usage"],
+        serde_json::json!({
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 1,
+            "cache_read_input_tokens": 5,
+            "output_tokens": 12,
+            "reasoning_output_tokens": 2,
+            "total_tokens": 30,
+        }),
+        "{result}"
+    );
+    assert!(result.get("models").is_none(), "{result}");
+}
+
+#[cfg(unix)]
+#[test]
+fn grok_json_reports_no_usage_and_no_models() {
+    let home = tempfile::tempdir().expect("home");
+    let (code, result) = json_run(
+        home.path(),
+        "grok",
+        "fake-grok",
+        "#!/bin/sh\nprintf '%s\\n' '{\"text\":\"grok reply\"}'\n",
+    );
+    assert_eq!(code, Some(0), "{result}");
+    assert_eq!(result["text"], "grok reply", "{result}");
+    assert!(result.get("models").is_none(), "{result}");
+    assert!(result.get("model_usage").is_none(), "{result}");
+    let usage = result["usage"].as_object().expect("usage object");
+    assert!(usage.values().all(serde_json::Value::is_null), "{result}");
+    assert!(result["completion_tokens"].is_null(), "{result}");
+}
+
 #[test]
 fn dry_run_reports_the_session_name_and_the_flag_that_carries_it() {
     let home = tempfile::tempdir().expect("home");
@@ -350,7 +1219,7 @@ fn answer_only_run_starts_claude_with_no_tools() {
         "fake-claude",
         r#"#!/bin/sh
 printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
-printf 'answer reply\n'
+printf '{"type":"result","subtype":"success","is_error":false,"result":"answer reply"}\n'
 "#,
     );
 
@@ -389,7 +1258,7 @@ fn env_recording_provider(home: &std::path::Path, name: &str) -> std::path::Path
         name,
         r#"#!/bin/sh
 env > "$(dirname "$0")/env.txt"
-printf 'ok\n'
+printf '{"type":"result","subtype":"success","is_error":false,"result":"ok"}\n'
 "#,
     )
 }
@@ -711,7 +1580,7 @@ fn dry_run_text_names_the_endpoint_from_the_environment_and_the_removed_keys() {
         .stdout(predicate::str::contains("base_url: http://127.0.0.1:8317"))
         .stdout(predicate::str::contains("base_url: <none>").not())
         .stdout(predicate::str::contains(
-            "--print --output-format text --permission-mode plan",
+            "--print --output-format json --permission-mode plan",
         ))
         .stdout(predicate::str::contains("stdin: <prompt>"))
         .stdout(predicate::str::contains("env_removed:\n"))
@@ -906,7 +1775,7 @@ fn workspace_write_run_starts_claude_with_the_shell_in_the_sandbox() {
         "fake-claude",
         r#"#!/bin/sh
 printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
-printf 'built\n'
+printf '{"type":"result","subtype":"success","is_error":false,"result":"built"}\n'
 "#,
     );
 
@@ -2048,7 +2917,7 @@ const FAKE_EDITOR: &str = r#"#!/bin/sh
 pwd -P > "$(dirname "$0")/cwd.txt"
 printf 'edited\n' > README.md
 printf 'new\n' > NEW.md
-printf 'done\n'
+printf '{"type":"result","subtype":"success","is_error":false,"result":"done"}\n'
 "#;
 
 #[cfg(unix)]
@@ -2163,7 +3032,7 @@ fn workspace_write_run_that_changes_nothing_leaves_no_trace() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nprintf 'looked only\\n'\n",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"looked only\"}\\n'\n",
     );
     let before = change_ids(home.path(), repo);
 
@@ -2575,7 +3444,7 @@ fn two_isolated_runs_at_once_each_keep_their_own_change() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nsleep 1\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\nprintf 'seat %s\\n' \"$SEAT\"\n",
+        "#!/bin/sh\nsleep 1\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"seat %s\"}\\n' \"$SEAT\"\n",
     );
     let binary = provider.to_str().expect("provider path");
     let parent = change_ids(home.path(), repo);
@@ -2641,7 +3510,7 @@ fn caller_keeps_working_while_a_seat_runs_and_a_second_seat_starts() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\n[ \"$SEAT\" = a ] && touch \"$HOME/seat-a-started\" && sleep 3\nprintf 'seat %s\\n' \"$SEAT\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$SEAT\" > \"seat-$SEAT.md\"\n[ \"$SEAT\" = a ] && touch \"$HOME/seat-a-started\" && sleep 3\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"seat %s\"}\\n' \"$SEAT\"\n",
     );
     let binary = provider.to_str().expect("provider path");
     let before = change_ids(home.path(), repo);
@@ -2748,11 +3617,11 @@ fn harness_that_commits_its_own_work_still_leaves_one_change() {
     let fakes = [
         (
             "fake-jj-committer",
-            "#!/bin/sh\nprintf 'harness\\n' > h.txt\njj commit -m 'harness work' >/dev/null 2>&1\nprintf 'done\\n'\n",
+            "#!/bin/sh\nprintf 'harness\\n' > h.txt\njj commit -m 'harness work' >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
         (
             "fake-git-committer",
-            "#!/bin/sh\nprintf 'harness\\n' > h.txt\ngit add h.txt\ngit -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false commit -qm 'harness git work'\nprintf 'done\\n'\n",
+            "#!/bin/sh\nprintf 'harness\\n' > h.txt\ngit add h.txt\ngit -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false commit -qm 'harness git work'\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     ];
     for (name, script) in fakes {
@@ -2827,7 +3696,7 @@ fn a_large_new_file_is_recorded_and_ignored_output_goes_with_the_folder() {
     let big = executable_provider(
         home.path(),
         "fake-big",
-        "#!/bin/sh\nhead -c 2000000 /dev/zero > big.bin\nprintf 'done\\n'\n",
+        "#!/bin/sh\nhead -c 2000000 /dev/zero > big.bin\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let output = rune_isolated(home.path(), state.path())
         .args([
@@ -2859,7 +3728,7 @@ fn a_large_new_file_is_recorded_and_ignored_output_goes_with_the_folder() {
     let builder = executable_provider(
         home.path(),
         "fake-builder",
-        "#!/bin/sh\nmkdir -p dist\nprintf 'out\\n' > dist/report.html\nprintf 'built\\n'\n",
+        "#!/bin/sh\nmkdir -p dist\nprintf 'out\\n' > dist/report.html\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"built\"}\\n'\n",
     );
     let output = rune_isolated(home.path(), state.path())
         .args([
@@ -2898,7 +3767,7 @@ fn finish_error_after_the_change_is_known_still_names_it() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\npwd -P > \"$(dirname \"$0\")/cwd.txt\"\nprintf 'new\\n' > NEW.md\nchmod 555 \"$(dirname \"$(pwd -P)\")\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\npwd -P > \"$(dirname \"$0\")/cwd.txt\"\nprintf 'new\\n' > NEW.md\nchmod 555 \"$(dirname \"$(pwd -P)\")\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
 
     let output = rune_isolated(home.path(), state.path())
@@ -3060,7 +3929,7 @@ fn a_state_directory_inside_the_checkout_refuses_the_isolated_run() {
     let repository = jj_repository(home.path());
     let repo = repository.path().to_str().expect("repository path");
     let marker = home.path().join("harness-started");
-    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let provider = marking_provider(home.path(), "fake-claude", CLAUDE_RAN);
     let binary = provider.to_str().expect("provider path");
     // The state directory inside the repository, then a symlink outside it
     // that leads inside.
@@ -3201,12 +4070,12 @@ fn a_harness_that_squashes_into_its_base_still_leaves_its_work_in_one_change() {
     for (name, script, expected) in [
         (
             "fake-squash-u",
-            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash --use-destination-message >/dev/null 2>&1\nprintf 'done\\n'\n",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash --use-destination-message >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
             vec!["A NEW.md"],
         ),
         (
             "fake-squash-m",
-            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash -m 'harness work' >/dev/null 2>&1\nprintf 'done\\n'\n",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj squash -m 'harness work' >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
             vec!["A NEW.md"],
         ),
         // absorb moves the edited line into the copy, the only mutable
@@ -3214,7 +4083,7 @@ fn a_harness_that_squashes_into_its_base_still_leaves_its_work_in_one_change() {
         // reach, and the fold still keeps the line.
         (
             "fake-absorb",
-            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two HARNESS\\n' > README.md\njj absorb >/dev/null 2>&1\nprintf 'done\\n'\n",
+            "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two HARNESS\\n' > README.md\njj absorb >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
             vec!["A NEW.md", "M README.md"],
         ),
     ] {
@@ -3258,7 +4127,7 @@ fn a_harness_that_squashes_into_its_base_still_leaves_its_work_in_one_change() {
 /// refuses an explicit revision, and `--ignore-immutable` is the harness's
 /// own choice to make.
 #[cfg(unix)]
-const FAKE_REWRITER: &str = "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj describe --ignore-immutable -r 'description(exact:\"base\\n\")' -m 'rewritten by the harness' >/dev/null 2>&1\nprintf 'done\\n'\n";
+const FAKE_REWRITER: &str = "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj describe --ignore-immutable -r 'description(exact:\"base\\n\")' -m 'rewritten by the harness' >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n";
 
 #[cfg(unix)]
 #[test]
@@ -3364,7 +4233,7 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
             "jj edit default@ >/dev/null 2>&1; echo \"edit $?\" >> \"$out\"\n",
             "jj abandon @- >/dev/null 2>&1; echo \"abandon $?\" >> \"$out\"\n",
             "jj commit -m 'harness commit' >/dev/null 2>&1; echo \"commit $?\" >> \"$out\"\n",
-            "printf 'two\\n' > TWO.md\nprintf 'done\\n'\n",
+            "printf 'two\\n' > TWO.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let probed = std::fs::read_to_string(home.path().join("guard.txt")).expect("probe record");
@@ -3438,7 +4307,7 @@ fn a_finish_that_fails_at_its_first_step_still_removes_the_guard_folder() {
         state.path(),
         repository.path(),
         "fake-forgetter",
-        "#!/bin/sh\nprintf 'one\\n' > ONE.md\njj workspace forget >/dev/null 2>&1\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'one\\n' > ONE.md\njj workspace forget >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     let name = workspace["name"]
@@ -3496,7 +4365,7 @@ fn a_run_whose_caller_went_stale_meanwhile_still_removes_its_workspace() {
     );
     // The harness stands in for the owner's session in the main checkout.
     let script = format!(
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'squashed\\n' > '{main}/README.md'\njj -R '{main}' squash >/dev/null 2>&1\nprintf 'done\\n'\n"
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'squashed\\n' > '{main}/README.md'\njj -R '{main}' squash >/dev/null 2>&1\nprintf '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}}\\n'\n"
     );
     let result = run_rewriting_harness(
         home.path(),
@@ -3559,7 +4428,7 @@ fn a_guard_folder_that_cannot_be_removed_is_named_in_the_result_and_on_stderr() 
         state.path(),
         repository.path(),
         "fake-parent-locker",
-        "#!/bin/sh\nprintf 'one\\n' > ONE.md\nchmod 555 \"$HOME/.config/jj/workspaces\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'one\\n' > ONE.md\nchmod 555 \"$HOME/.config/jj/workspaces\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
         .expect("chmod back");
@@ -3712,7 +4581,7 @@ fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
         state.path(),
         repository.path(),
         "fake-hooker",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\ngit config core.hooksPath /nonexistent/hooks\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\ngit config core.hooksPath /nonexistent/hooks\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["outside_changes"], true, "{result}");
@@ -3739,7 +4608,7 @@ fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
         state.path(),
         second.path(),
         "fake-hook-dropper",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nhooks=\"$(git rev-parse --git-common-dir)/hooks\"\nmkdir -p \"$hooks\"\nprintf '#!/bin/sh\\n' > \"$hooks/pre-commit\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nhooks=\"$(git rev-parse --git-common-dir)/hooks\"\nmkdir -p \"$hooks\"\nprintf '#!/bin/sh\\n' > \"$hooks/pre-commit\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
     assert_eq!(result["workspace"]["kept"], true, "{result}");
@@ -3752,7 +4621,7 @@ fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
         state.path(),
         third.path(),
         "fake-hook-linker",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nhooks=\"$(git rev-parse --git-common-dir)/hooks\"\nmkdir -p \"$hooks\"\nln -s /bin/sh \"$hooks/pre-commit\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nhooks=\"$(git rev-parse --git-common-dir)/hooks\"\nmkdir -p \"$hooks\"\nln -s /bin/sh \"$hooks/pre-commit\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
     let fourth = jj_repository(home.path());
@@ -3772,7 +4641,7 @@ fn a_git_setting_that_runs_commands_changed_during_the_run_is_reported() {
         state.path(),
         fourth.path(),
         "fake-hook-enabler",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nchmod +x \"$(git rev-parse --git-common-dir)/hooks/pre-commit\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nchmod +x \"$(git rev-parse --git-common-dir)/hooks/pre-commit\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     assert_eq!(result["workspace"]["outside_changes"], true, "{result}");
 }
@@ -3805,7 +4674,7 @@ fn a_bookmarked_caller_branch_the_harness_builds_on_survives_the_run() {
             "jj -R \"$CALLER\" edit \"$orig\" >/dev/null 2>&1\n",
             "jj rebase -s 'bookmarks(exact:\"user-side\")' -d @ >/dev/null 2>&1\n",
             "jj new 'bookmarks(exact:\"user-side\")' >/dev/null 2>&1\n",
-            "printf 'more\\n' > MORE.md\nprintf 'done\\n'\n",
+            "printf 'more\\n' > MORE.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let workspace = &result["workspace"];
@@ -3862,7 +4731,7 @@ fn a_branch_the_harness_leaves_on_the_copy_keeps_the_unpushed_files_below() {
         state.path(),
         repository.path(),
         "fake-side-then-other",
-        "#!/bin/sh\nprintf 'A\\n' > A.md\njj commit -m 'side A' >/dev/null 2>&1\njj new 'description(substring:\"base copy for\")' -m 'other' >/dev/null 2>&1\nprintf 'B\\n' > B.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'A\\n' > A.md\njj commit -m 'side A' >/dev/null 2>&1\njj new 'description(substring:\"base copy for\")' -m 'other' >/dev/null 2>&1\nprintf 'B\\n' > B.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], true, "{result}");
@@ -3926,7 +4795,7 @@ fn a_caller_that_edits_the_runs_head_gets_nothing_snapshotted_into_it() {
             "#!/bin/sh\nprintf 'harness\\n' > NEW.md\n",
             "head=$(jj --ignore-working-copy log -r @ --no-graph -T commit_id)\n",
             "jj -R \"$CALLER\" edit \"$head\" > \"$HOME/edit.log\" 2>&1\n",
-            "printf 'evil\\n' > EVIL.md\nprintf 'done\\n'\n",
+            "printf 'evil\\n' > EVIL.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let workspace = &result["workspace"];
@@ -3975,7 +4844,7 @@ fn a_cleanup_that_fails_still_measures_the_conflict() {
             "printf 'caller\\n' > \"$CALLER/README.md\"\n",
             "jj commit -m 'harness work' >/dev/null 2>&1\n",
             "jj config set --repo 'revset-aliases.\"immutable_heads()\"' 'description(exact:\"harness work\\n\")' >/dev/null 2>&1\n",
-            "printf 'done\\n'\n",
+            "printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let workspace = &result["workspace"];
@@ -4032,7 +4901,7 @@ fn a_signal_during_a_failed_setup_is_the_outcome() {
     let state = tempfile::tempdir().expect("state");
     let repository = jj_repository(home.path());
     let repo = repository.path().to_str().expect("repository path");
-    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let provider = marking_provider(home.path(), "fake-claude", CLAUDE_RAN);
     // A first run makes the repository's workspace folder under the state
     // directory. Made read-only, it refuses the next run's `jj workspace
     // add` after the copy exists, and the runner takes the copy down. A
@@ -4168,7 +5037,7 @@ fn a_process_that_outlives_the_run_keeps_the_folder_and_says_so() {
             "if command -v setsid >/dev/null 2>&1; then setsid sleep 6 & \n",
             "elif command -v python3 >/dev/null 2>&1; then python3 -c 'import os, time; os.setsid(); time.sleep(6)' & \n",
             "else perl -e 'use POSIX; setsid(); sleep 6' & fi\n",
-            "printf 'done\\n'\n",
+            "printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let workspace = &result["workspace"];
@@ -4213,7 +5082,7 @@ fn a_caller_that_squashes_during_the_run_does_not_stall_the_workspace() {
         state.path(),
         repository.path(),
         "fake-caller-squash",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two CALLER\\n' > \"$CALLER/README.md\"\njj -R \"$CALLER\" squash >/dev/null 2>&1\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'line one\\nline two CALLER\\n' > \"$CALLER/README.md\"\njj -R \"$CALLER\" squash >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], true, "{result}");
@@ -4266,7 +5135,7 @@ fn a_harness_that_leaves_the_copy_keeps_its_work_as_a_separate_change() {
         state.path(),
         repository.path(),
         "fake-trunk",
-        "#!/bin/sh\njj new main -m 'harness: start from main' >/dev/null 2>&1\nprintf 'harness\\n' > NEW.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\njj new main -m 'harness: start from main' >/dev/null 2>&1\nprintf 'harness\\n' > NEW.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], false, "{result}");
@@ -4359,7 +5228,7 @@ fn a_harness_that_commits_and_then_leaves_the_copy_keeps_its_commit() {
         state.path(),
         repository.path(),
         "fake-commit-then-leave",
-        "#!/bin/sh\nprintf 'A\\n' > A.md\njj commit -m 'harness A' >/dev/null 2>&1\njj new main -m 'harness B' >/dev/null 2>&1\nprintf 'B\\n' > B.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'A\\n' > A.md\njj commit -m 'harness A' >/dev/null 2>&1\njj new main -m 'harness B' >/dev/null 2>&1\nprintf 'B\\n' > B.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], false, "{result}");
@@ -4443,7 +5312,7 @@ fn a_branch_the_caller_makes_during_the_run_survives_a_harness_rebase() {
             "printf 'user\\n' > \"$CALLER/USER.md\"\n",
             "jj -R \"$CALLER\" new 'description(exact:\"base\\n\")' >/dev/null 2>&1\n",
             "jj rebase -r 'description(exact:\"caller side\\n\")' -o @ >/dev/null 2>&1\n",
-            "printf 'done\\n'\n",
+            "printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
         ),
     );
     let workspace = &result["workspace"];
@@ -4494,7 +5363,7 @@ fn a_harness_that_edits_the_callers_change_without_the_guard_records_nothing_the
         state.path(),
         repository.path(),
         "fake-seat-one-unguarded",
-        "#!/bin/sh\nprintf 'one\\n' > SEAT1.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'one\\n' > SEAT1.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     assert_eq!(first["workspace"]["guard"], false, "{first}");
     assert_eq!(first["workspace"]["kept"], true, "{first}");
@@ -4507,7 +5376,7 @@ fn a_harness_that_edits_the_callers_change_without_the_guard_records_nothing_the
         state.path(),
         repository.path(),
         "fake-seat-two-unguarded",
-        "#!/bin/sh\njj edit 'default@' >/dev/null 2>&1\nprintf 'evil\\n' > EVIL.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\njj edit 'default@' >/dev/null 2>&1\nprintf 'evil\\n' > EVIL.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
         .expect("chmod back");
@@ -4569,7 +5438,7 @@ fn a_caller_edit_that_the_removal_snapshots_is_reported_as_a_conflict() {
         state.path(),
         repository.path(),
         "fake-collider",
-        "#!/bin/sh\nprintf 'harness\\n' > README.md\nprintf 'caller\\n' > \"$CALLER/README.md\"\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > README.md\nprintf 'caller\\n' > \"$CALLER/README.md\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], true, "{result}");
@@ -4608,7 +5477,7 @@ fn a_harness_that_edits_the_callers_change_is_refused_and_keeps_its_own_work() {
         state.path(),
         repository.path(),
         "fake-seat-one",
-        "#!/bin/sh\nprintf 'one\\n' > SEAT1.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'one\\n' > SEAT1.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let seat_one = first["workspace"]["change_id"]
         .as_str()
@@ -4622,7 +5491,7 @@ fn a_harness_that_edits_the_callers_change_is_refused_and_keeps_its_own_work() {
         state.path(),
         repository.path(),
         "fake-seat-two",
-        "#!/bin/sh\njj edit 'default@' >/dev/null 2>&1\nprintf 'evil\\n' > EVIL.md\nprintf 'done\\n'\n",
+        "#!/bin/sh\njj edit 'default@' >/dev/null 2>&1\nprintf 'evil\\n' > EVIL.md\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &second["workspace"];
     assert_eq!(workspace["outside_changes"], false, "{second}");
@@ -4677,7 +5546,7 @@ fn a_caller_branch_a_harness_rebased_onto_its_work_is_not_abandoned() {
         state.path(),
         repository.path(),
         "fake-rebaser",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj rebase -r 'description(exact:\"side branch\\n\")' -o @ >/dev/null 2>&1\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj rebase -r 'description(exact:\"side branch\\n\")' -o @ >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["kept"], true, "{result}");
@@ -4794,7 +5663,7 @@ fn a_caller_that_describes_its_change_during_the_run_is_reported() {
         state.path(),
         repository.path(),
         "fake-caller-describe",
-        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj -R \"$CALLER\" describe -m 'caller renamed its change' >/dev/null 2>&1\nprintf 'done\\n'\n",
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\njj -R \"$CALLER\" describe -m 'caller renamed its change' >/dev/null 2>&1\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
     );
     let workspace = &result["workspace"];
     assert_eq!(workspace["outside_changes"], true, "{result}");
@@ -4865,7 +5734,7 @@ fn a_sigint_to_the_process_group_during_the_finish_lets_the_finish_complete() {
         home.path(),
         "fake-claude",
         &format!(
-            "#!/bin/sh\nmkdir many\ni=0\nwhile [ $i -lt 20000 ]; do echo $i > many/f$i.txt; i=$((i+1)); done\ntouch '{}'\nprintf 'done\\n'\n",
+            "#!/bin/sh\nmkdir many\ni=0\nwhile [ $i -lt 20000 ]; do echo $i > many/f$i.txt; i=$((i+1)); done\ntouch '{}'\nprintf '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}}\\n'\n",
             marker.display()
         ),
     );
@@ -4936,7 +5805,12 @@ fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
     let repository = jj_repository(home.path());
     let briefs = tempfile::tempdir().expect("briefs");
     std::fs::write(briefs.path().join("brief.md"), "The brief text.\n").expect("brief");
-    let provider = executable_provider(home.path(), "fake-claude", "#!/bin/sh\ncat\n");
+    // The fake echoes the prompt it read from stdin as its result text.
+    let provider = executable_provider(
+        home.path(),
+        "fake-claude",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"%s\"}\\n' \"$(cat)\"\n",
+    );
 
     rune_isolated(home.path(), state.path())
         .current_dir(briefs.path())
@@ -4959,6 +5833,10 @@ fn prompt_file_resolves_against_the_callers_directory_in_an_isolated_run() {
 
 /// A fake harness that leaves a marker beside itself when it starts, so a
 /// refusal "before anything starts" is checked, not assumed.
+/// The one JSON result line a fake claude prints to answer `ran`.
+#[cfg(unix)]
+const CLAUDE_RAN: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"ran"}"#;
+
 #[cfg(unix)]
 fn marking_provider(home: &std::path::Path, name: &str, reply: &str) -> std::path::PathBuf {
     executable_provider(
@@ -5001,7 +5879,7 @@ fn output_file_holds_the_result_and_stdout_confirms_it() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nprintf 'provider reply\\n'\n",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"provider reply\"}\\n'\n",
     );
     let binary = provider.to_str().expect("provider path");
     let seat = repository.path().join("council/seat.json");
@@ -5133,7 +6011,7 @@ fn timed_out_run_with_an_output_file_writes_the_timeout_object() {
 #[test]
 fn a_protected_folder_named_as_the_repository_opens_no_file_there() {
     let home = tempfile::tempdir().expect("home");
-    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let provider = marking_provider(home.path(), "fake-claude", CLAUDE_RAN);
     let binary = provider.to_str().expect("provider path");
     let marker = home.path().join("harness-started");
     let claude = home.path().join(".claude");
@@ -5175,7 +6053,7 @@ fn output_path_in_a_protected_place_is_refused_before_the_harness_starts() {
     let home = tempfile::tempdir().expect("home");
     let repository = plain_repository();
     let repo = repository.path().to_str().expect("repository path");
-    let provider = marking_provider(home.path(), "fake-claude", "ran");
+    let provider = marking_provider(home.path(), "fake-claude", CLAUDE_RAN);
     let binary = provider.to_str().expect("provider path");
     let marker = home.path().join("harness-started");
 
@@ -5289,7 +6167,11 @@ fn every_json_outcome_carries_the_exit_code_the_process_ends_with() {
     let home = tempfile::tempdir().expect("home");
     let repository = plain_repository();
     let repo = repository.path().to_str().expect("repository path");
-    let answers = executable_provider(home.path(), "fake-ok", "#!/bin/sh\nprintf 'fine\\n'\n");
+    let answers = executable_provider(
+        home.path(),
+        "fake-ok",
+        "#!/bin/sh\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"fine\"}\\n'\n",
+    );
     let fails = executable_provider(home.path(), "fake-three", "#!/bin/sh\nexit 3\n");
     for (binary, code, kind) in [(&answers, 0, "success"), (&fails, 3, "exit")] {
         let seat = repository.path().join(format!("seat-{code}.json"));
@@ -5399,7 +6281,7 @@ fn a_folder_swapped_for_a_symlink_during_the_run_moves_no_write() {
         home.path(),
         "fake-claude",
         &format!(
-            "#!/bin/sh\nrm -rf '{out}'\nln -s '{claude}' '{out}'\nprintf 'payload\\n'\n",
+            "#!/bin/sh\nrm -rf '{out}'\nln -s '{claude}' '{out}'\nprintf '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"payload\"}}\\n'\n",
             out = out.display(),
             claude = claude.display()
         ),
@@ -5510,7 +6392,7 @@ fn result_file_that_cannot_be_written_prints_the_full_result_and_exits_74() {
     let provider = executable_provider(
         home.path(),
         "fake-claude",
-        "#!/bin/sh\nchmod 555 \"$RUNE_TEST_OUT\"\nprintf 'provider reply\\n'\n",
+        "#!/bin/sh\nchmod 555 \"$RUNE_TEST_OUT\"\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"provider reply\"}\\n'\n",
     );
     let seat = folder.join("seat.json");
 
@@ -5877,8 +6759,15 @@ fn an_ordinary_answer_passes_the_redaction_unchanged() {
         "Hotkey: Ctrl+Shift+P\n",
         "Docs: https://example.com/api?token=abc123&page=2\n",
     );
-    let text = home.path().join("answer.txt");
-    std::fs::write(&text, answer).expect("answer");
+    // The fake prints the answer as the text of one claude JSON result.
+    let text = home.path().join("answer.json");
+    let result = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": answer,
+    });
+    std::fs::write(&text, result.to_string()).expect("answer");
     let provider = executable_provider(
         home.path(),
         "fake-claude",
