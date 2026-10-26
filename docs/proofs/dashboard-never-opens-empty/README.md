@@ -1,19 +1,22 @@
 ---
 type: proof
 change: dashboard-never-opens-empty
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: e940355900cb86a8c4e8ccf2ea7850b7ce6b32bd8d77369509c8177ff49980de
 scenes:
 - scenario: dashboard-never-opens-empty#theme-derived-tui-palette/light-theme-selected
   kind: unproven
 - scenario: dashboard-never-opens-empty#status-bar-context/provider-needs-repair
-  kind: unproven
+  kind: check
 - scenario: dashboard-never-opens-empty#first-run-panel/tui-opens-on-an-unconfigured-root
   kind: unproven
 - scenario: dashboard-never-opens-empty#first-run-panel/scan-fails-on-a-root-without-providers
-  kind: unproven
+  kind: check
 - scenario: dashboard-never-opens-empty#help-overlay-close-keys/user-opens-help
-  kind: unproven
+  kind: check
 ---
 
 # Proof: dashboard-never-opens-empty

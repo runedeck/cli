@@ -1,27 +1,30 @@
 ---
 type: proof
 change: convenient-cross-harness-launcher
+head: 8919cb32b0673cfab6e8c3f052fbc3000266a7de
+head_change: uytrtrrrwuvsvmrmzvwzmtwmwqqmrrpr
+head_tree: b7f4ede29878a7db517e43ab52e13861cd40e8df
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 46b7700c19f4103f1cc822d0c5c36a1b23d2da059151dcedb60b4c76f44fd10d
 scenes:
 - scenario: convenient-cross-harness-launcher#named-launch-profiles/built-in-proxy-profile
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#named-launch-profiles/profile-environment-and-arguments
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#named-launch-profiles/secret-reference
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#named-launch-profiles/bare-launch-lists-profiles
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#named-launch-profiles/ollama-model-fallback
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#route-specific-model-metadata/claude-model-route
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#route-specific-model-metadata/generated-setting-conflict
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#route-specific-model-metadata/configured-route-replacement
-  kind: unproven
+  kind: check
 - scenario: convenient-cross-harness-launcher#interactive-execution/native-session-behavior
-  kind: unproven
+  kind: check
 ---
 
 # Proof: convenient-cross-harness-launcher

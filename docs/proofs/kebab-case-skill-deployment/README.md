@@ -1,16 +1,18 @@
 ---
 type: proof
 change: kebab-case-skill-deployment
-head: e7753ba532d57269b4f943cb55d51576759836d7
-recorded: 2026-10-06
-transcript: a721d336b59d4c23ff2039603f5e6543d221d12e4fccfd53b396a5d081379eda
+head: 8919cb32b0673cfab6e8c3f052fbc3000266a7de
+head_change: uytrtrrrwuvsvmrmzvwzmtwmwqqmrrpr
+head_tree: b7f4ede29878a7db517e43ab52e13861cd40e8df
+recorded: 2026-10-26
+transcript: ac98287c7185f3e2b3026e805f23a3def966c30a74eed853bc19a9ba0fa81d2b
 scenes:
 - scenario: kebab-case-skill-deployment#skill-paths-deploy-in-kebab-case/pascalcase-skill-deploys
   kind: check
 - scenario: kebab-case-skill-deployment#the-entrypoint-and-non-markdown-files-keep-their-names/skill-carries-a-script-and-an-asset
   kind: check
 - scenario: kebab-case-skill-deployment#relative-links-follow-the-converted-paths/companion-links-to-a-converted-file
-  kind: unproven
+  kind: check
 - scenario: kebab-case-skill-deployment#kebab-case-input-passes-through-unchanged/deployed-skill-deploys-again
   kind: check
 - scenario: kebab-case-skill-deployment#validation-accepts-the-casing-the-rule-can-normalize/skill-name-has-stray-separators

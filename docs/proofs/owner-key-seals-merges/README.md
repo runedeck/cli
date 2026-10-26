@@ -1,19 +1,22 @@
 ---
 type: proof
 change: owner-key-seals-merges
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: eb4a03197352144865564cd2690513ca8625a6e5672ebf6a7defbefa6e025cd9
 scenes:
 - scenario: owner-key-seals-merges#seal-commit/sealing-a-pull-request-branch
-  kind: unproven
+  kind: check
 - scenario: owner-key-seals-merges#seal-commit/unsigned-environment
-  kind: unproven
+  kind: check
 - scenario: owner-key-seals-merges#seal-freshness/push-after-seal
-  kind: unproven
+  kind: check
 - scenario: owner-key-seals-merges#tag-sealing/release-tag
-  kind: unproven
+  kind: check
 - scenario: owner-key-seals-merges#verification/foreign-signature
-  kind: unproven
+  kind: check
 ---
 
 # Proof: owner-key-seals-merges

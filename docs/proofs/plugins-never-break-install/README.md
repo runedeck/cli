@@ -1,17 +1,20 @@
 ---
 type: proof
 change: plugins-never-break-install
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 5e7621bb07aa2576c68583ac9cbe5ff379e5480c9f24d609162cfafe101330fa
 scenes:
 - scenario: plugins-never-break-install#manifest-listing/manifests-list
-  kind: unproven
+  kind: check
 - scenario: plugins-never-break-install#post-install-event/subscribed-plugin-receives-the-event
-  kind: unproven
+  kind: check
 - scenario: plugins-never-break-install#fault-isolation/failing-plugin-cannot-break-the-install
-  kind: unproven
+  kind: check
 - scenario: plugins-never-break-install#executable-confinement/escaping-executable-is-rejected
-  kind: unproven
+  kind: check
 ---
 
 # Proof: plugins-never-break-install

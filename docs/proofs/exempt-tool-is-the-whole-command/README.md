@@ -1,11 +1,11 @@
 ---
 type: proof
 change: exempt-tool-is-the-whole-command
-head: c01467f3beebf8109a7ec620af1b791507bf9be9
-head_change: qzouzsvqzzwlynxklorxwozpqummkzky
-head_tree: 1e1e7bc51a40b8225b4c826c65e5c9c0233883b1
+head: 8919cb32b0673cfab6e8c3f052fbc3000266a7de
+head_change: uytrtrrrwuvsvmrmzvwzmtwmwqqmrrpr
+head_tree: b7f4ede29878a7db517e43ab52e13861cd40e8df
 recorded: 2026-10-26
-transcript: 377896a749970b9e3adce699a8c3b06a4c23db848981bc99618f66f9ba1f261c
+transcript: 2bf5bf12870c347ef10272ed90732b80590b1f96794f3d53afbc4e34e7671ecb
 scenes:
 - scenario: exempt-tool-is-the-whole-command#a-sandbox-off-request-for-an-exempt-command-is-refused/sandbox-off-request-for-a-jj-command
   kind: check

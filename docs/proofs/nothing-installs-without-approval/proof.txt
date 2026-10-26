@@ -1,0 +1,475 @@
+## approve-plan-before-execution#setup-plan-review/user-approves-the-printed-plan
+kind: check
+$ sh -s
+< bin=$(mktemp -d) && ln -s "$(command -v rune)" "$bin/rune"
+< export HOME="$PWD/home" SHELL=/bin/bash PATH="$bin:/usr/bin:/bin"
+< mkdir -p home/.agents home/Developer/demo && echo "name: demo" > home/Developer/demo/deck.yaml
+< printf 'y\ny\ny\ny\ny\n' | rune setup
+< find . -type f | sort
+  use deck /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/Developer/demo? [Y/n] use the detected provider set (agentskills)? [Y/n] install bash shell completions? [Y/n] install the Rune agent skill? [Y/n]  Setup plan
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.config/rune/config.yaml (set deck)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/config.yaml (set provider selection)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.local/share/bash-completion/completions/rune (install bash completion)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.agents/skills/rune/SKILL.md (install agent skill)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.config/rune/config.yaml (write verified setup record)
+
+   Provider selection
+     agentskills  enabled
+     claude       disabled
+     codex        disabled
+     gemini       disabled
+     opencode     disabled
+
+   Notes
+     ⚡ deck selected: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/Developer/demo
+     ⚡ providers detected: agentskills
+     ⚡ no target bound. Use rune target <slug-or-path> after setup.
+  Apply this plan? [y/N]
+   Apply
+     ✓ wrote deck: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.config/rune/config.yaml
+     ✓ wrote provider selection: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/config.yaml
+     ✓ agentskills enabled
+     ✓ claude disabled
+     ✓ codex disabled
+     ✓ gemini disabled
+     ✓ opencode disabled
+     ✓ wrote shell completion: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.local/share/bash-completion/completions/rune
+     ✓ wrote agent skill: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.agents/skills/rune/SKILL.md
+
+   Verification
+     ✓ user config parses: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.config/rune/config.yaml
+     ✓ provider agentskills: enabled
+     ✓ provider claude: disabled
+     ✓ provider codex: disabled
+     ✓ provider gemini: disabled
+     ✓ provider opencode: disabled
+     ✓ shell completion is current: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.local/share/bash-completion/completions/rune
+     ✓ agent skill is current: 1 current
+     ✓ wrote setup record: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-setup-plan-review-user-approves-the-printed-plan-2513ddf8-2-0/home/.config/rune/config.yaml
+
+   Next
+     stage        rune add <id> && rune install
+  ./config.yaml
+  ./home/.agents/skills/rune/SKILL.md
+  ./home/.config/rune/config.yaml
+  ./home/.local/share/bash-completion/completions/rune
+  ./home/Developer/demo/deck.yaml
+
+## approve-plan-before-execution#plan-only-mode/plan-mode-runs-in-automation
+kind: check
+$ sh -s
+< bin=$(mktemp -d) && ln -s "$(command -v rune)" "$bin/rune"
+< export HOME="$PWD/home" SHELL=/bin/bash PATH="$bin:/usr/bin:/bin"
+< mkdir -p home/.agents home/Developer/demo && echo "name: demo" > home/Developer/demo/deck.yaml
+< rune setup --plan --json </dev/null
+< find . | sort
+  {"version":1,"completed_steps":["deck","providers","shell_completion","agent_skill"],"writes":[{"step":"set deck","path":"/private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/home/.config/rune/config.yaml"},{"step":"set provider selection","path":"/private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/config.yaml"},{"step":"install bash completion","path":"/private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/home/.local/share/bash-completion/completions/rune"},{"step":"install agent skill","path":"/private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/home/.agents/skills/rune/SKILL.md"},{"step":"write verified setup record","path":"/private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/home/.config/rune/config.yaml"}],"removals":[],"provider_toggles":[{"provider":"agentskills","enabled":true},{"provider":"claude","enabled":false},{"provider":"codex","enabled":false},{"provider":"gemini","enabled":false},{"provider":"opencode","enabled":false}],"notes":["deck selected: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-plan-only-mode-plan-mode-runs-in-automation-2edf4098-6-0/home/Developer/demo","providers detected: agentskills","no target bound. Use rune target <slug-or-path> after setup."]}
+  .
+  ./home
+  ./home/.agents
+  ./home/Developer
+  ./home/Developer/demo
+  ./home/Developer/demo/deck.yaml
+
+## approve-plan-before-execution#verified-completion-record/verification-check-fails
+kind: check
+$ sh -s
+< bin=$(mktemp -d) && ln -s "$(command -v rune)" "$bin/rune"
+< export HOME="$PWD/home" SHELL=/bin/fish PATH="$bin:/usr/bin:/bin"
+< mkdir -p home/.config/rune home/.config/fish/completions
+< echo "deck: /tmp/deck" > home/.config/fish/completions/rune.fish
+< ln -s ../fish/completions/rune.fish home/.config/rune/config.yaml
+< rune setup --yes </dev/null
+< echo "exit $?"
+< grep -q '^setup:' home/.config/rune/config.yaml || echo "no setup record"
+   Setup plan
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/config.yaml (set provider selection)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/home/.config/fish/completions/rune.fish (install fish completion)
+     write        /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/home/.config/rune/config.yaml (write verified setup record)
+
+   Provider selection
+     agentskills  disabled
+     claude       disabled
+     codex        disabled
+     gemini       disabled
+     opencode     disabled
+
+   Notes
+     ⚡ deck already configured: /tmp/deck
+     ⚡ no providers detected
+     ⚡ no target bound. Use rune target <slug-or-path> after setup.
+
+   Apply
+     ✓ wrote provider selection: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/config.yaml
+     ✓ agentskills disabled
+     ✓ claude disabled
+     ✓ codex disabled
+     ✓ gemini disabled
+     ✓ opencode disabled
+     ✓ wrote shell completion: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/home/.config/fish/completions/rune.fish
+
+   Verification
+     ✗ user config parses: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/home/.config/rune/config.yaml is malformed: invalid type: string "function __fish_rune_global_optspecs string join \\n json no-color h/help V/version end\nfunction __fish_rune_needs_command", expected struct Config at line 2 column 1
+     ✓ provider agentskills: disabled
+     ✓ provider claude: disabled
+     ✓ provider codex: disabled
+     ✓ provider gemini: disabled
+     ✓ provider opencode: disabled
+     ✓ shell completion is current: /private/tmp/claude-501/rune-proof-15877-approve-plan-before-execution-verified-completion-record-verification-check-fails-32b95a00-10-0/home/.config/fish/completions/rune.fish
+     ✓ agent skill is current: 0 current
+  fatal: Setup verification failed. Rune did not write the setup record.
+  fix: rune setup --yes
+  exit 2
+  no setup record
+
+## approve-plan-before-execution#first-run-nudge/bare-invocation-finds-no-user-config
+kind: check
+$ sh -s
+< export HOME="$PWD/home" && mkdir home && unset RUNE_DECK
+< rune </dev/null
+< echo "exit $?"
+< find . | sort
+    ᚱᚢᚾᛖ rune · your runes, deployed
+    0.6.0 (8919cb32b) built 2026-10-26T21:38:02Z
+
+    Flow:
+      setup       [--plan | --yes]                                      Guided first-run configuration
+      init        <SLUG_OR_DIR> [--with <NAMES>] | --module <DIR>       Scaffold a project from a skeleton, or a deck module
+      target      [SLUG_OR_PATH|-] [--list]                             Bind or show the working repository
+      add         <ID[,ID...]>                                          Add runes to the consumer manifest
+      skill       add <NAME[,NAME...]> | install | show                 List or stage skills; ship the rune agent skill
+      agent       [add <NAME[,NAME...]>]                                List or stage agents by name
+      rule        [add <NAME[,NAME...]>]                                List or stage rules by name
+      hook        [list | record [stats|import] | add <NAME[,NAME...]>] Print the hook plan, read the hook record, or stage hook runes
+      context     [--json]                                              Agent-ready brief of the working context
+      tui         [--source <DIR>] [--edit]                             Launch the terminal dashboard
+      dashboard   [--source <DIR>] [--port <PORT>]                      Launch the read-only web dashboard
+      install     [--source <DIR>] [--target <DIR>]                     Assemble and deploy rune content
+      review      list | export [--target <DIR>]                        Inspect or export TUI review comments
+
+    Spec:
+      spec        propose | list | glossary | fix | doctor | archive    Spec-driven change lifecycle under docs/
+
+    Deck:
+      discover    [QUERY]                                               Find community decks by GitHub topic
+      status      [--source <DIR>]                                      Show deck, spec, change, and deploy status
+      doctor      [--target <DIR>] [--verify]                           Check deployment integrity
+      repair      [--root <DIR>] [--target <DIR>] [--dry-run]           Repair doctor findings: trash orphans, rename subjects, restore files
+      draft       <KIND> <NAME> | --list | --drop <NAME>                Write an unmanaged rune into the provider trees and register it in .drafts
+      promote     <NAME> --domain <DOMAIN> --change <ID>                Move a draft into the deck and open its change
+      validate    [--source <DIR>]                                      Validate deck or rune files against schemas
+      graph       export [--source <DIR>]                               Export the artifact graph as Turtle for SHACL validation
+      proof       scaffold <CHANGE> | run <CHANGE> [--check | --instruction <KEY>]Scaffold, run, and check a change's behavior proof
+      drift       [--source <DIR>] [--upstream <DIR> | --target <DIR>]  Compare source, build, and deployment drift
+      provenance  [--target <DIR_OR_FILE>]                              Show deployed-file provenance
+      clean       [--source <DIR>] [--target <DIR>]                     Remove stale installed files
+      release     [DOMAIN] [--source <DIR>]                             Package rune release tarballs
+      sign        [--amend | --tag <TAG> | --verify [REF] [--seal]]     Seal the branch, sign tags, verify against KEYS
+      sign queue  [<BOOKMARK> --receipt <FILE>] [--prune]               Queue a validated head for the key, or list the queue
+      sign open   <BOOKMARK> [--body-file <FILE>] [--queue]             Open-seal a draft pull request into the owner's name
+      sign submit <BOOKMARK> --receipt <FILE>                           Queue a reviewed head for the merge-seal
+      sign next   | all | show | drop <BOOKMARK> | adopt <N>            Sign from the queue base first; inspect, withdraw, adopt
+      import      <URL> [--module <DIR>]                                Import an upstream rune with provenance
+      adopt       start|...|finalize|abandon|reseal|doctor              Adopt an upstream rune through block-by-block review
+      move        <FROM> <TO> [--root <DIR>]                            Move a reviewed artifact with its provenance
+      bench       run|report|list|dashboard|doctor|audit                Run and report SkateBench-compatible benchmark suites
+      provider    [enable|disable <name>]                               List or toggle deploy providers
+      todo        [add|do|ls|obsidian|import]                           Repo tasks in TODO.txt with an Obsidian transform
+      adr         new|list|supersede|index                              Architecture decision records under docs/decisions
+      docs        check|dev                                             Docs tree checks and a local mint preview
+      watch       <COMMAND>                                             Manage monitored rune locations
+
+    Plumbing:
+      plugin      [list]                                                List declared plugins and their events
+      update      --check                                               Check for a newer release (read-only)
+      assemble    [--source <DIR>]                                      Assemble rune content into build/
+      deploy      [--source <DIR>] [--target <DIR>]                     Deploy assembled runes
+      copy        --source <DIR> --target <DIR>                         Copy runes without transforms
+      config      [set <KEY> <VALUE>]                                   Resolved configuration (deck, targets, lore, artifacts)
+      find        <QUERY>                                               Find local runes by relevance
+      exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
+      launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
+      run         <TOOL> [PROMPT|--prompt-file <FILE>]                  Run a coding tool with supervised output
+      queue       post <TOOL> --session <ID> [MESSAGE] | read | list    Post and read messages between sessions
+      completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
+
+    Quick start:
+      rune init N4M3Z/demo --with rust,tool
+      rune target N4M3Z/demo
+      rune add development
+      rune tui --edit
+      rune install
+
+    rune <command> --help for flags and details
+     next         rune setup
+  exit 0
+  .
+  ./home
+
+## approve-plan-before-execution#agent-guide/guide-orders-its-steps
+kind: check
+$ sh -s
+< export HOME="$PWD/home" PATH="$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< mkdir home work && cd work
+< guide="$RUNE_PROOF_ROOT/docs/agent-guide.md"
+< sed -n '/^## Read-only first steps/,/^## Setup path/p' "$guide" | grep '^rune ' | while read -r step; do sh -c "$step" </dev/null >/dev/null 2>&1; echo "ran: $step (exit $?)"; done
+< grep -n -m 1 'approval' "$guide"
+< cd .. && find . | sort
+  ran: rune --version (exit 0)
+  ran: rune context --json (exit 0)
+  ran: rune status (exit 0)
+  ran: rune provider (exit 0)
+  ran: rune doctor --target . (exit 2)
+  45:Ask the human for approval before every write step.
+  .
+  ./home
+  ./work
+
+## config-validation-provides-hints#config-check-reporting/unknown-key-appears-in-source-config
+kind: check
+$ sh -c 'printf "providrs:\n    claude:\n        enabled: false\n" > config.yaml'
+$ rune config check --scope source
+     ⚡ /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-config-check-reporting-unknown-key-appears-in-source-config-1ba3a730-22-0/config.yaml [config.unknown_key]
+     key          providrs
+     impact       Rune ignores this key, so it has no effect.
+     fix          rune config reference --json
+
+## config-validation-provides-hints#config-check-is-read-only/check-runs-on-a-broken-config
+kind: check
+$ sh -s
+< export HOME="$PWD/home" && mkdir -p home/.config/rune
+< printf 'deck: [unclosed\n' > home/.config/rune/config.yaml
+< printf 'providers: {codex: \n' > config.yaml
+< before=$(cksum home/.config/rune/config.yaml config.yaml)
+< rune config check
+< echo "exit $?"
+< [ "$(cksum home/.config/rune/config.yaml config.yaml)" = "$before" ] && echo "both files byte-identical"
+< find . -type f | sort
+     ✗ /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-config-check-is-read-only-check-runs-on-a-broken-config-1e034210-27-0/home/.config/rune/config.yaml [config.invalid]
+     impact       Rune cannot load this configuration file.
+     fix          rune config defaults --scope user
+     ✗ /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-config-check-is-read-only-check-runs-on-a-broken-config-1e034210-27-0/config.yaml [config.invalid]
+     impact       Rune cannot load this configuration file.
+     fix          rune config defaults --scope source
+  exit 1
+  both files byte-identical
+  ./config.yaml
+  ./home/.config/rune/config.yaml
+
+## config-validation-provides-hints#commented-defaults/defaults-print-for-the-user-scope
+kind: check
+$ sh -s
+< export HOME="$PWD/home" && mkdir -p home/.config/rune
+< rune config defaults --scope user > home/.config/rune/config.yaml
+< head -n 5 home/.config/rune/config.yaml
+< rune config check --scope user
+  # This file shows the Rune user configuration defaults.
+  # Copy only the values that you must override.
+  # Paths can start with a tilde.
+  deck: null
+  env: ~/.env
+     ✓ Configuration is clean.
+
+## config-validation-provides-hints#scoped-key-reset/reset-removes-an-unknown-key
+kind: check
+$ sh -c 'printf "# local overlay\nprovidrs:\n    claude:\n        enabled: false\nvalidate:\n    exclude: [build]\n" > config.yaml'
+$ rune config reset providrs --scope source
+     ✓ removed providrs
+     backup       /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-scoped-key-reset-reset-removes-an-unknown-key-244ec108-35-0/config.yaml.rune-backup-20261026T214009Z
+     restore      command cp /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-scoped-key-reset-reset-removes-an-unknown-key-244ec108-35-0/config.yaml.rune-backup-20261026T214009Z /private/tmp/claude-501/rune-proof-15877-config-validation-provides-hints-scoped-key-reset-reset-removes-an-unknown-key-244ec108-35-0/config.yaml
+$ sh -c 'diff config.yaml.rune-backup-* config.yaml'
+  2,4d1
+  < providrs:
+  <     claude:
+  <         enabled: false
+$ cat config.yaml
+  # local overlay
+  validate:
+      exclude: [build]
+
+## config-validation-provides-hints#config-reference-output/reference-covers-a-new-key
+kind: check
+$ sh -c 'HOME="$PWD" rune config reference --json | grep -B 1 -A 1 "\"key\": \"setup"'
+        "default": null,
+        "key": "setup",
+        "type": "object | null"
+  --
+        "default": null,
+        "key": "setup.completed",
+        "type": "array<string>"
+  --
+        "default": null,
+        "key": "setup.version",
+        "type": "integer"
+
+## every-error-names-its-fix#fix-commands-in-errors/error-names-its-repair
+kind: check
+$ sh -s
+< export HOME="$PWD/home" && mkdir home
+< printf 'providers: [codex]\n' > config.yaml
+< rune provider enable codex
+< echo "exit $?"
+< rune provider enable codex --json 2>/dev/null
+< human=$(rune provider enable codex 2>&1 | sed -n 's/^fix: //p')
+< fix=$(rune provider enable codex --json 2>/dev/null | sed -n 's/.*"fix_command":"\([^"]*\)".*/\1/p')
+< [ "$human" = "$fix" ] && echo "human and JSON fix commands match"
+< echo "running: $fix" && sh -c "$fix"
+< echo "exit $?"
+  warning: config key `providers` has incompatible types (defaults: mapping, override: sequence); keeping default
+  fatal: config.yaml providers: is not a map
+  fix: cd /private/tmp/claude-501/rune-proof-15877-every-error-names-its-fix-fix-commands-in-errors-error-names-its-repair-28f0cdf0-46-0 && rune config check --scope source
+  exit 2
+  {"code":"provider.config_invalid","fix_command":"cd /private/tmp/claude-501/rune-proof-15877-every-error-names-its-fix-fix-commands-in-errors-error-names-its-repair-28f0cdf0-46-0 && rune config check --scope source","message":"config.yaml providers: is not a map"}
+  human and JSON fix commands match
+  running: cd /private/tmp/claude-501/rune-proof-15877-every-error-names-its-fix-fix-commands-in-errors-error-names-its-repair-28f0cdf0-46-0 && rune config check --scope source
+     ✗ /private/tmp/claude-501/rune-proof-15877-every-error-names-its-fix-fix-commands-in-errors-error-names-its-repair-28f0cdf0-46-0/config.yaml [config.invalid]
+     impact       Rune cannot load this configuration file.
+     fix          rune config defaults --scope source
+  exit 1
+
+## one-registry-for-harnesses#provider-lifecycle-states/managed-file-is-missing
+kind: check
+$ sh -s
+< cp -Rf "$RUNE_PROOF_ROOT/tests/support/deck/runes/writing" src && cd src
+< export HOME="$PWD" PATH="$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< rune install --provider codex >/dev/null
+< rune provider status codex
+< rm -f .agents/skills/OnlyWriting/SKILL.md
+< rune provider status codex
+< rune repair --target .agents
+< rune provider status codex
+   providers
+     codex        current          /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-lifecycle-states-managed-file-is-missing-302c8cd0-50-0/src/.codex
+   providers
+     codex        needs repair     /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-lifecycle-states-managed-file-is-missing-302c8cd0-50-0/src/.agents  fix: rune repair --target /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-lifecycle-states-managed-file-is-missing-302c8cd0-50-0/src/.agents
+   repaired 0 source finding(s), 1 deployment finding(s)
+     ✓ restored skills/OnlyWriting/SKILL.md → .agents/skills/OnlyWriting/SKILL.md
+   providers
+     codex        current          /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-lifecycle-states-managed-file-is-missing-302c8cd0-50-0/src/.codex
+
+## one-registry-for-harnesses#modified-state-protection/repair-meets-a-modified-file
+kind: check
+$ sh -s
+< cp -Rf "$RUNE_PROOF_ROOT/tests/support/deck/runes/writing" src && cd src
+< export HOME="$PWD" PATH="$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< rune install --provider codex >/dev/null
+< echo "my own notes" >> .agents/skills/OnlyWriting/SKILL.md
+< before=$(cksum < .agents/skills/OnlyWriting/SKILL.md)
+< rune repair --json
+< [ "$(cksum < .agents/skills/OnlyWriting/SKILL.md)" = "$before" ] && echo "SKILL.md unchanged"
+< tail -n 1 .agents/skills/OnlyWriting/SKILL.md
+< rune provider status codex
+  {
+    "source_repairs": [],
+    "source_faults": [],
+    "deployment": [],
+    "remaining": [
+      {
+        "provider": "codex",
+        "target": "./.agents",
+        "findings": [
+          {
+            "path": "skills/OnlyWriting/SKILL.md",
+            "status": "modified"
+          }
+        ]
+      },
+      {
+        "provider": "codex",
+        "target": "./.codex",
+        "findings": []
+      }
+    ]
+  }
+  SKILL.md unchanged
+  my own notes
+   providers
+     codex        modified         /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-modified-state-protection-repair-meets-a-modified-file-aad0c28-54-0/src/.agents  review: rune doctor --target /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-modified-state-protection-repair-meets-a-modified-file-aad0c28-54-0/src/.agents
+
+## one-registry-for-harnesses#provider-explanation/explain-reports-one-provider
+kind: check
+$ sh -s
+< cp -Rf "$RUNE_PROOF_ROOT/tests/support/deck/runes/writing" src && cd src
+< mkdir bin && printf '#!/bin/sh\n' > bin/codex && chmod +x bin/codex
+< export HOME="$PWD" PATH="$PWD/bin:$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< rune install --provider codex >/dev/null
+< rune provider explain codex --json
+  {
+    "provider": "codex",
+    "config_source": "bundled",
+    "target": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.codex",
+    "evidence": [
+      {
+        "kind": "executable",
+        "value": "codex",
+        "result": "found"
+      },
+      {
+        "kind": "config_directory",
+        "value": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.codex",
+        "result": "found"
+      },
+      {
+        "kind": "deployment_manifest",
+        "value": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.agents/.manifest",
+        "result": "found"
+      },
+      {
+        "kind": "managed_file",
+        "value": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.agents/skills/OnlyWriting/SKILL.md",
+        "result": "current"
+      },
+      {
+        "kind": "deployment_manifest",
+        "value": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.codex/.manifest",
+        "result": "found"
+      },
+      {
+        "kind": "managed_file",
+        "value": "/private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-provider-explanation-explain-reports-one-provider-3475330-58-0/src/.codex/AGENTS.md",
+        "result": "current"
+      }
+    ],
+    "deployment_state": "current",
+    "fix_command": null,
+    "recommended_action": "none"
+  }
+
+## one-registry-for-harnesses#bounded-detection-evidence/detection-runs-on-a-clean-machine
+kind: check
+$ sh -s
+< mkdir bin && printf '#!/bin/sh\n/usr/bin/touch "%s/codex-ran"\n' "$PWD" > bin/codex && chmod +x bin/codex
+< printf 'version: 1\nproviders:\n    codex:\n        executable: sh\n' > provider-detection.yaml
+< export HOME="$PWD" PATH="$PWD/bin:$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< rune provider explain codex
+< [ -e codex-ran ] || echo "codex never ran"
+   codex
+     config       bundled
+     target       /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-bounded-detection-evidence-detection-runs-on-a-clean-machine-5022e48-62-0/.codex
+     state        not installed
+
+   evidence
+     executable           codex  found
+     config directory     /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-bounded-detection-evidence-detection-runs-on-a-clean-machine-5022e48-62-0/.codex  not found
+     deployment manifest  /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-bounded-detection-evidence-detection-runs-on-a-clean-machine-5022e48-62-0/.agents/.manifest  not found
+     deployment manifest  /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-bounded-detection-evidence-detection-runs-on-a-clean-machine-5022e48-62-0/.codex/.manifest  not found
+
+  review: rune context
+  codex never ran
+
+## one-registry-for-harnesses#shared-detection-registry/doctor-discovers-providers
+kind: check
+$ sh -s
+< export HOME="$PWD" PATH="$(dirname "$(command -v rune)"):/usr/bin:/bin"
+< mkdir .unknown && printf 'skills: {}\n' > .unknown/.manifest
+< rune doctor --target .unknown
+< rune provider status
+  fatal: cannot infer provider for .unknown; expected one of .agents, .claude, .agents, .codex, .gemini, .opencode
+  fix: rune provider status
+   providers
+     agentskills  disabled         /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-shared-detection-registry-doctor-discovers-providers-6fdcf68-66-0/.agents  fix: rune provider enable agentskills
+     claude       not installed    /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-shared-detection-registry-doctor-discovers-providers-6fdcf68-66-0/.claude  review: rune context
+     codex        not installed    /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-shared-detection-registry-doctor-discovers-providers-6fdcf68-66-0/.codex  review: rune context
+     gemini       not installed    /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-shared-detection-registry-doctor-discovers-providers-6fdcf68-66-0/.gemini  review: rune context
+     opencode     not installed    /private/tmp/claude-501/rune-proof-15877-one-registry-for-harnesses-shared-detection-registry-doctor-discovers-providers-6fdcf68-66-0/.opencode  review: rune context
+

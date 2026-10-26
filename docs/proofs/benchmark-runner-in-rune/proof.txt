@@ -1,0 +1,160 @@
+## benchmark-results-stay-compatible#skatebench-compatible-qa-runner/resume-reuses-prior-runs
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ HOME=. rune bench run --suite skate-basics --models echo
+  [plan] echo: total 2, reuse 0, execute 2
+  [done] echo test 1.1 correct in 0ms
+  [done] echo test 2.1 incorrect in 0ms
+  Results: workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-617Z.json
+  Report:  workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-617Z.md
+  Summary: workspace/bench/results/skate-basics/unversioned/summary-2026-10-26T21-39-43-617Z.json
+$ sh -s
+< cd workspace/bench/results/cache/skate-basics/unversioned
+< for entry in *.json; do jq '.result.correct = true' "$entry" > "$entry.edit"; mv -f "$entry.edit" "$entry"; done
+$ HOME=. rune bench run --suite skate-basics --models echo --runs 2
+  [plan] echo: total 4, reuse 2, execute 2
+  [done] echo test 1.2 correct in 0ms
+  [done] echo test 2.2 incorrect in 0ms
+  Results: workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-674Z.json
+  Report:  workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-674Z.md
+  Summary: workspace/bench/results/skate-basics/unversioned/summary-2026-10-26T21-39-43-674Z.json
+$ sh -s
+< cd workspace/bench/results/skate-basics/unversioned
+< jq -c '.results[] | select(.result.reused) | {test: (.testIndex + 1), run: .runNumber, correct: .result.correct}' "$(ls test-results-*.json | tail -n 1)"
+  {"test":1,"run":1,"correct":true}
+  {"test":2,"run":1,"correct":false}
+
+## benchmark-results-stay-compatible#skatebench-compatible-qa-runner/stale-cache-is-rejected
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ HOME=. rune bench run --suite skate-basics --models echo
+  [plan] echo: total 2, reuse 0, execute 2
+  [done] echo test 1.1 correct in 0ms
+  [done] echo test 2.1 incorrect in 0ms
+  Results: workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-753Z.json
+  Report:  workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-753Z.md
+  Summary: workspace/bench/results/skate-basics/unversioned/summary-2026-10-26T21-39-43-753Z.json
+$ sh -s
+< cd workspace/suites
+< jq '.system_prompt = "Name the trick in one word."' skate-basics.json > edited.json
+< mv -f edited.json skate-basics.json
+$ HOME=. rune bench run --suite skate-basics --models echo
+  fatal: Cached entry system prompt mismatch for echo__run1__10aa9632c8a5__2026-10-26T21-39-43-749Z.json. Expected current suite system prompt. Delete 'workspace/bench/results/cache/skate-basics/unversioned' to reset cache.
+
+## benchmark-results-stay-compatible#output-format-parity/cross-runner-diff-is-clean
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ sh -s
+< harness="$HOME/Developer/runedeck/bench/bench"
+< mkdir -p bun
+< cp -Rf "$harness/src" bun/src
+< cp -f "$harness/package.json" bun/package.json
+< ln -s "$harness/node_modules" bun/node_modules
+$ bun run bun/src/cli.ts run --suite workspace/suites/skate-basics.json --models echo --config workspace/bench/models.yaml --results bun-results
+  [plan] echo: total 2, reuse 0, execute 2
+  [done] echo test 1.1 correct in 0ms
+  [done] echo test 2.1 incorrect in 0ms
+  Results: bun-results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-971Z.json
+  Report:  bun-results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-971Z.md
+  Summary: bun-results/skate-basics/unversioned/summary-2026-10-26T21-39-43-971Z.json
+$ HOME=. rune bench run --suite workspace/suites/skate-basics.json --models echo --results rune-results
+  [plan] echo: total 2, reuse 0, execute 2
+  [done] echo test 1.1 correct in 0ms
+  [done] echo test 2.1 incorrect in 0ms
+  Results: rune-results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-995Z.json
+  Report:  rune-results/skate-basics/unversioned/test-results-2026-10-26T21-39-43-995Z.md
+  Summary: rune-results/skate-basics/unversioned/summary-2026-10-26T21-39-43-995Z.json
+$ sh -s
+< for doc in 'skate-basics/unversioned/test-results-*.json' 'skate-basics/unversioned/summary-*.json' 'cache/skate-basics/unversioned/echo__run1__10aa9632c8a5__*.json' 'cache/skate-basics/unversioned/echo__run1__cc8ccedb8b8a__*.json'; do
+<   stamps=$(diff bun-results/$doc rune-results/$doc | rg -c '^[<>] +"timestamp": ')
+<   others=$(diff bun-results/$doc rune-results/$doc | rg '^[<>] ' | rg -c -v '"(timestamp|duration|averageDuration|tokensPerSecond)": ')
+<   echo "$doc: ${stamps:-0} timestamp lines, ${others:-0} other changed lines"
+< done
+  skate-basics/unversioned/test-results-*.json: 2 timestamp lines, 0 other changed lines
+  skate-basics/unversioned/summary-*.json: 2 timestamp lines, 0 other changed lines
+  cache/skate-basics/unversioned/echo__run1__10aa9632c8a5__*.json: 2 timestamp lines, 0 other changed lines
+  cache/skate-basics/unversioned/echo__run1__cc8ccedb8b8a__*.json: 2 timestamp lines, 0 other changed lines
+
+## benchmark-results-stay-compatible#suite-tiers/bare-suite-name-resolution
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ HOME=. rune bench list
+  enabled   echo  provider=echo  model=echo  runs=1  concurrency=1
+  disabled  claude-stub  provider=claude-cli  model=sonnet  runs=1  concurrency=1
+  disabled  opencode-stub  provider=opencode-cli  model=proof/stub  runs=1  concurrency=1
+
+  suite  committed skate-basics
+  suite  private   skate-held-out
+$ HOME=. rune bench run --suite s --models echo
+  fatal: suite prefix 's' is too short: use at least two characters or the full name
+$ HOME=. rune bench run --suite sk --models echo
+  fatal: suite prefix 'sk' is ambiguous: skate-basics (committed), skate-held-out (private)
+$ HOME=. rune bench run --suite skate-h --models echo
+  [plan] echo: total 1, reuse 0, execute 1
+  [done] echo test 1.1 incorrect in 0ms
+  Results: workspace/bench/results/skate-held-out/unversioned/test-results-2026-10-26T21-39-44-134Z.json
+  Report:  workspace/bench/results/skate-held-out/unversioned/test-results-2026-10-26T21-39-44-134Z.md
+  Summary: workspace/bench/results/skate-held-out/unversioned/summary-2026-10-26T21-39-44-134Z.json
+
+## benchmark-results-stay-compatible#model-registry/unknown-model-id
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ HOME=. rune bench run --suite skate-basics --models nope
+  fatal: --models: unknown model id 'nope' (see 'rune bench list')
+
+## benchmark-results-stay-compatible#workspace-diagnostics/missing-workspace
+kind: check
+$ HOME=. rune bench doctor
+   Bench
+     ✗ no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+$ HOME=. rune bench list
+  fatal: no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+$ HOME=. rune bench run --suite skate-basics
+  fatal: no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+$ HOME=. rune bench report --suite skate-basics
+  fatal: no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+$ HOME=. rune bench dashboard
+  fatal: no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+$ HOME=. rune bench audit
+  fatal: no bench workspace found: add a checkout to `bench` in ~/.config/rune/config.yaml (e.g. `rune config set bench ~/Developer/runedeck/bench`)
+
+## benchmark-results-stay-compatible#coding-tool-models/claude-code-model-receives-the-suite-system-prompt
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. exec rune bench run --suite skate-basics --models claude-stub'
+  [plan] claude-stub: total 2, reuse 0, execute 2
+  [done] claude-stub test 1.1 correct in 29ms
+  [done] claude-stub test 2.1 incorrect in 29ms
+  Results: workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-44-843Z.json
+  Report:  workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-44-843Z.md
+  Summary: workspace/bench/results/skate-basics/unversioned/summary-2026-10-26T21-39-44-843Z.json
+$ cat claude.log
+  arg: --print
+  arg: --output-format
+  arg: json
+  arg: --permission-mode
+  arg: plan
+  arg: --tools
+  arg: Read,Glob,Grep
+  arg: --allowedTools
+  arg: Read,Glob,Grep
+  arg: --model
+  arg: sonnet
+  arg: --append-system-prompt
+  arg: Name the skateboard trick. Reply with the trick name only.
+  stdin: The front foot flicks off the toe edge and the board spins once along its length. Which trick is it?
+
+## benchmark-results-stay-compatible#coding-tool-models/opencode-reply-keeps-the-last-assistant-message
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/benchmark-runner-in-rune/home.sh"'
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. exec rune bench run --suite skate-basics --models opencode-stub'
+  [plan] opencode-stub: total 2, reuse 0, execute 2
+  [done] opencode-stub test 1.1 incorrect in 30ms
+  [done] opencode-stub test 2.1 correct in 27ms
+  Results: workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-45-145Z.json
+  Report:  workspace/bench/results/skate-basics/unversioned/test-results-2026-10-26T21-39-45-145Z.md
+  Summary: workspace/bench/results/skate-basics/unversioned/summary-2026-10-26T21-39-45-145Z.json
+$ sh -c 'jq -c ".results[] | {test: (.testIndex + 1), text: .result.text, correct: .result.correct}" workspace/bench/results/skate-basics/unversioned/test-results-*.json'
+  {"test":1,"text":"kickflip","correct":false}
+  {"test":2,"text":"kickflip","correct":true}
+

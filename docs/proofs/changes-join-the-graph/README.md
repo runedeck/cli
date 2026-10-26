@@ -1,21 +1,24 @@
 ---
 type: proof
 change: changes-join-the-graph
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: e24c83113d9f8f4ba11aed6612263a905a4c489edb6ca49944b225241f71e484
 scenes:
 - scenario: changes-join-the-graph#context-maps-frontmatter-to-triples/record-key-is-mapped
-  kind: unproven
+  kind: check
 - scenario: changes-join-the-graph#context-maps-frontmatter-to-triples/record-key-is-unmapped
-  kind: unproven
+  kind: check
 - scenario: changes-join-the-graph#context-maps-frontmatter-to-triples/context-is-absent
-  kind: unproven
+  kind: check
 - scenario: changes-join-the-graph#references-resolve-by-shape/upstream-lists-three-forms
-  kind: unproven
+  kind: check
 - scenario: changes-join-the-graph#lifecycle-nodes-join-the-graph/change-with-a-delta-and-a-draft
-  kind: unproven
+  kind: check
 - scenario: changes-join-the-graph#lifecycle-nodes-join-the-graph/decisions-entry-is-a-title
-  kind: unproven
+  kind: check
 ---
 
 # Proof: changes-join-the-graph

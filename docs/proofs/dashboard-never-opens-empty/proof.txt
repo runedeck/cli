@@ -1,0 +1,44 @@
+## dashboard-never-opens-empty#status-bar-context/provider-needs-repair
+kind: check
+$ mkdir .claude
+$ touch .claude/.manifest
+$ sh -c 'HOME="$PWD" rune provider explain claude'
+   claude
+     config       bundled
+     target       /private/tmp/claude-501/rune-proof-492-dashboard-never-opens-empty-status-bar-context-provider-needs-repair-18be55d8-2-0/.claude
+     state        needs repair
+
+   evidence
+     executable           claude  found
+     config directory     /private/tmp/claude-501/rune-proof-492-dashboard-never-opens-empty-status-bar-context-provider-needs-repair-18be55d8-2-0/.claude  found
+     deployment manifest  /private/tmp/claude-501/rune-proof-492-dashboard-never-opens-empty-status-bar-context-provider-needs-repair-18be55d8-2-0/.claude/.manifest  invalid
+
+  review: rune doctor --target /private/tmp/claude-501/rune-proof-492-dashboard-never-opens-empty-status-bar-context-provider-needs-repair-18be55d8-2-0/.claude
+$ sh -c 'HOME="$PWD" rune tui --snapshot --width 140 --height 4'
+   rune  no deck  · claude ✗ codex · gemini · opencode ·                              ready · ok 0 stale 0 modified 0 new 0 · 1 modules | ✗ 5
+  ┌ Sections ──────┐┌ Overview · 1/2 ──────┐┌ Detail ────────────────────────────────────────────────────────────────────────────────────────┐
+  └────────────────┘└──────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────┘
+   NORMAL    j/k sections  ·  l list  ·  1-6 tabs  ·  ? help
+
+## dashboard-never-opens-empty#first-run-panel/scan-fails-on-a-root-without-providers
+kind: check
+$ sh -c 'HOME="$PWD" rune tui --snapshot --width 100 --height 6'
+   rune  no deck  · claude · codex · gemini · ready · ok 0 stale 0 modified 0 new 0 · 0 modules | ✗ 5
+  ┌ Sections ──────┐┌ Overview · 1/2 ──────┐┌ Detail ────────────────────────────────────────────────┐
+  │o Overview      ││· Summary …atus counts││Status summary                                          │
+  │s Skills        ││· Nested view …toggles││unchanged 0 · stale 0 · modified 0 · new 0              │
+  └────────────────┘└──────────────────────┘└────────────────────────────────────────────────────────┘
+   NORMAL    error: no deployed provider directories found at ~ or .
+
+## dashboard-never-opens-empty#help-overlay-close-keys/user-opens-help
+kind: check
+$ sh -c 'HOME="$PWD" rune tui --snapshot --width 100 --height 8 --keys "?"'
+  ┌ Help · rune 0.6.0 · ? or Esc closes ─────────────────────────────────────────────────────────────┐
+  │Navigation                                       Sections                                         │
+  │h/j/k/l     move, drill, and go back             j/k         move between sections                │
+  │arrows      move, drill, and go back             o s a r     overview, skills, agents, rules      │
+  │Tab/BackTab cycle panel focus                    R d p v     repositories, ADRs, provenance, varia│
+  │BackTab     previous column                      f t h c m   search, settings, hooks, config, sche│
+  │Enter       drill or expand detail               n x y       decks, casts, deck history           │
+  └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+

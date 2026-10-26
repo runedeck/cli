@@ -1,0 +1,24 @@
+## find-decks-by-topic#topic-search/community-decks-list
+kind: check
+$ rune discover
+   Community decks
+     — none
+$ sh -c 'curl -s "https://api.github.com/search/repositories?q=topic:runedeck-deck" | jq .total_count'
+  0
+
+## find-decks-by-topic#bounded-read-only-search/feed-stays-silent
+kind: check
+$ sh -c 'HOME="$PWD" python3 "$RUNE_PROOF_ROOT/tests/fixtures/find-decks-by-topic/silent-proxy.py" rune discover --json'
+  {"code":"discover.feed_unreachable","fix_command":"curl -sI 'https://api.github.com/search/repositories?q=topic:runedeck-deck'","message":"cannot reach the discovery feed: timeout: global"}
+  proxy received: CONNECT api.github.com:443 HTTP/1.1
+  proxy answered: nothing
+  command returned after: 10 seconds
+$ ls -A
+
+## find-decks-by-topic#machine-output/json-mirrors-the-table
+kind: check
+$ rune discover --json
+  {"decks":[],"query":null}
+$ sh -c 'rune discover --json "rust tooling" | jq -c "{query, decks: (.decks | type)}"'
+  {"query":"rust tooling","decks":"array"}
+

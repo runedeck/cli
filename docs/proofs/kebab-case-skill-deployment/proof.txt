@@ -6,10 +6,12 @@ $ rune install --source deck --target out --provider agents
    ✓ agentskills
      skills 4
      ● build-skill
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 4 deployed
 
-$ ls out/.agents/skills out/.agents/skills/build-skill
+$ sh -c 'LC_ALL=C ls out/.agents/skills out/.agents/skills/build-skill'
   out/.agents/skills:
   build-skill
 
@@ -32,6 +34,8 @@ $ rune install --source deck --target out --provider agents
    ✓ agentskills
      skills 4
      ● build-skill
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 4 deployed
 
@@ -45,6 +49,30 @@ $ sh -c 'cmp deck/skills/BuildSkill/scripts/run_eval.py out/.agents/skills/build
 $ sh -c 'cmp deck/skills/BuildSkill/assets/eval_review.html out/.agents/skills/build-skill/assets/eval_review.html && echo "eval_review.html: same bytes"'
   eval_review.html: same bytes
 
+## kebab-case-skill-deployment#relative-links-follow-the-converted-paths/companion-links-to-a-converted-file
+kind: check
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
+$ rune install --source deck --target out --provider agents
+
+   ✓ agentskills
+     skills 4
+     ● build-skill
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
+
+   ● 4 deployed
+
+$ tail -n 1 out/.agents/skills/build-skill/SKILL.md
+  Read [eval-loop.md](eval-loop.md) before the first run.
+$ cat out/.agents/skills/build-skill/eval-loop.md
+  # Eval loop
+
+  ## Setup
+
+  Run [run_eval.py](scripts/run_eval.py) and open [the template](assets/eval_review.html).
+  Repeat [the setup steps](eval-loop.md#setup) for each run.
+  Return to [SKILL.md](SKILL.md), [the top](#eval-loop), or [the spec](https://agentskills.io/specification).
+
 ## kebab-case-skill-deployment#kebab-case-input-passes-through-unchanged/deployed-skill-deploys-again
 kind: check
 $ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/skill-casing" deck'
@@ -53,6 +81,8 @@ $ rune install --source deck --target first --provider agents
    ✓ agentskills
      skills 4
      ● build-skill
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 4 deployed
 
@@ -62,6 +92,8 @@ $ rune install --source again --target second --provider agents
    ✓ agentskills
      skills 4
      ● build-skill
+     hooks
+       skipped: a proof scene runs with the runner's HOME /Users/N4M3Z, so it installs no hook there; give the scene a HOME of its own
 
    ● 4 deployed
 

@@ -1,17 +1,20 @@
 ---
 type: proof
 change: find-decks-by-topic
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: c1468ccb205939cfece3674466256bb18517b50ba5e30f3610941ca77dc14b21
 scenes:
 - scenario: find-decks-by-topic#topic-search/community-decks-list
-  kind: unproven
+  kind: check
 - scenario: find-decks-by-topic#bounded-read-only-search/feed-stays-silent
-  kind: unproven
+  kind: check
 - scenario: find-decks-by-topic#staging-hint/row-names-the-next-command
   kind: unproven
 - scenario: find-decks-by-topic#machine-output/json-mirrors-the-table
-  kind: unproven
+  kind: check
 ---
 
 # Proof: find-decks-by-topic

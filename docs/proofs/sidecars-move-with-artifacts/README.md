@@ -1,45 +1,48 @@
 ---
 type: proof
 change: sidecars-move-with-artifacts
+head: e8379ef1b4a847d532b59da0521296a882c2f759
+head_change: owquyrkumrqwsxomynstmwsymuykorny
+head_tree: b6da9100fa6232abfb60e238e8228271e4d223ee
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 542a9ca8025fde1ba3939ba56c1c886ac7e864ce028282cf72bbeae9e44daaad
 scenes:
 - scenario: record-provenance-for-adoptions#concise-finalized-provenance/adoption-finalizes
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#concise-finalized-provenance/replacement-store-is-written
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#sidecar-authority/reviewed-tree-has-no-ledger
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#sidecar-authority/orphan-sidecar-enters-reseal
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#sidecar-authority/stale-subject-name-enters-reseal
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#subjects-resolve-through-one-rule/holder-file-and-subject-name-disagree
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#subjects-resolve-through-one-rule/subject-file-is-missing
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#reviewed-artifacts-move-with-their-evidence/skill-moves-between-directories
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#reviewed-artifacts-move-with-their-evidence/destination-sits-under-pending-skill
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#reviewed-artifacts-move-with-their-evidence/source-holds-open-session
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#reviewed-artifacts-move-with-their-evidence/destination-leaves-the-repository
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#repair-is-the-single-write-path/doctor-finds-repairable-fault
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#repair-is-the-single-write-path/repair-meets-digest-mismatch
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#repair-is-the-single-write-path/repair-restores-deployment
   kind: unproven
 - scenario: record-provenance-for-adoptions#adapt-verdicts-carry-their-replacement/adapt-verdict-receives-replacement-file
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#adapt-verdicts-carry-their-replacement/finalize-misses-approved-replacement
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#adapt-verdicts-carry-their-replacement/adapt-verdict-arrives-without-replacement
-  kind: unproven
+  kind: check
 - scenario: record-provenance-for-adoptions#local-directory-sources-record-canonical-attribution/directory-source-arrives-without-source-url
-  kind: unproven
+  kind: check
 ---
 
 # Proof: sidecars-move-with-artifacts

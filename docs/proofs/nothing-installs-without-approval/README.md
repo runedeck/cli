@@ -1,45 +1,48 @@
 ---
 type: proof
 change: nothing-installs-without-approval
+head: 8919cb32b0673cfab6e8c3f052fbc3000266a7de
+head_change: uytrtrrrwuvsvmrmzvwzmtwmwqqmrrpr
+head_tree: b7f4ede29878a7db517e43ab52e13861cd40e8df
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: b956d027e53b68fdfbc4844c70985a55abaf34570198e8cda28fa4cf531b0a5c
 scenes:
 - scenario: approve-plan-before-execution#setup-plan-review/user-approves-the-printed-plan
-  kind: unproven
+  kind: check
 - scenario: approve-plan-before-execution#plan-only-mode/plan-mode-runs-in-automation
-  kind: unproven
+  kind: check
 - scenario: approve-plan-before-execution#verified-completion-record/verification-check-fails
-  kind: unproven
+  kind: check
 - scenario: approve-plan-before-execution#first-run-nudge/bare-invocation-finds-no-user-config
-  kind: unproven
+  kind: check
 - scenario: approve-plan-before-execution#agent-guide/guide-orders-its-steps
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#config-check-reporting/unknown-key-appears-in-source-config
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#config-check-is-read-only/check-runs-on-a-broken-config
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#commented-defaults/defaults-print-for-the-user-scope
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#scoped-key-reset/reset-removes-an-unknown-key
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#config-reference-output/reference-covers-a-new-key
-  kind: unproven
+  kind: check
 - scenario: config-validation-provides-hints#reference-drift-check/committed-reference-drifts
   kind: unproven
 - scenario: every-error-names-its-fix#stable-error-codes/unknown-config-key-fails-twice
   kind: unproven
 - scenario: every-error-names-its-fix#fix-commands-in-errors/error-names-its-repair
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#provider-lifecycle-states/managed-file-is-missing
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#modified-state-protection/repair-meets-a-modified-file
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#provider-explanation/explain-reports-one-provider
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#bounded-detection-evidence/detection-runs-on-a-clean-machine
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#shared-detection-registry/doctor-discovers-providers
-  kind: unproven
+  kind: check
 - scenario: one-registry-for-harnesses#syntax-preserving-provider-edits/toggle-touches-one-key
   kind: unproven
 ---

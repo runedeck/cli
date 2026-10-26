@@ -1,25 +1,28 @@
 ---
 type: proof
 change: benchmark-runner-in-rune
+head: 8919cb32b0673cfab6e8c3f052fbc3000266a7de
+head_change: uytrtrrrwuvsvmrmzvwzmtwmwqqmrrpr
+head_tree: b7f4ede29878a7db517e43ab52e13861cd40e8df
 recorded: 2026-10-26
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: d07e7481f35c5a523540749e2c1ccaaff422e3f1623aee9b95625bc9a53e28c2
 scenes:
 - scenario: benchmark-results-stay-compatible#skatebench-compatible-qa-runner/resume-reuses-prior-runs
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#skatebench-compatible-qa-runner/stale-cache-is-rejected
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#output-format-parity/cross-runner-diff-is-clean
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#suite-tiers/bare-suite-name-resolution
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#model-registry/unknown-model-id
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#workspace-diagnostics/missing-workspace
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#coding-tool-models/claude-code-model-receives-the-suite-system-prompt
-  kind: unproven
+  kind: check
 - scenario: benchmark-results-stay-compatible#coding-tool-models/opencode-reply-keeps-the-last-assistant-message
-  kind: unproven
+  kind: check
 ---
 
 # Proof: benchmark-runner-in-rune
