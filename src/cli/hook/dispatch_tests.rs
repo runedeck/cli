@@ -1413,3 +1413,256 @@ fn a_read_only_record_directory_leaves_the_answer_and_exit_code_alone() {
     assert_eq!(record_lines.len(), 1, "{:?}", answer.stderr);
     assert!(record_lines[0].contains(&dir.display().to_string()));
 }
+
+// ------------------------------------------------------------ turn wrap ----
+
+/// What each handler was given: its timeout and its environment.
+type Observed = Rc<RefCell<Vec<(String, Duration, HashMap<String, String>)>>>;
+
+/// A runner that records the timeout and the environment of every spawn.
+fn observing(fakes: HashMap<String, Fake>) -> (Runner, Observed) {
+    let seen: Observed = Rc::new(RefCell::new(Vec::new()));
+    let log = Rc::clone(&seen);
+    let runner = Runner {
+        record_dir: None,
+        record_error: None,
+        log_dir: None,
+        cover: Cover::default(),
+        env: cover::Environment::default(),
+        started: Instant::now(),
+        spawn: Box::new(move |handler, _stdin, timeout, env, _cwd| {
+            let env = env
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect();
+            log.borrow_mut().push((handler.id.clone(), timeout, env));
+            let fake = fakes.get(&handler.id).expect("a fake for every handler");
+            if Duration::from_millis(fake.sleep_ms) > timeout {
+                std::thread::sleep(timeout);
+                return Err(format!("timed out after {} ms", timeout.as_millis()));
+            }
+            Ok((Some(fake.code), fake.stdout.clone(), fake.stderr.clone()))
+        }),
+    };
+    (runner, seen)
+}
+
+/// The wrapper ahead of a steering handler by order, both on `turn.finish`.
+const WRAP_PLAN: &str = "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n    order: 10\n  - id: steer\n    exec: [steer]\n    events: [turn.finish]\n    order: 20\n    timeout_ms: 1500\n";
+
+fn claude_stop() -> Value {
+    claude_stop_in("/")
+}
+
+fn claude_stop_in(cwd: &str) -> Value {
+    json!({"hook_event_name": "Stop", "session_id": "s", "cwd": cwd, "stop_hook_active": false})
+}
+
+/// A jj workspace with the owner's switch on, for a firing that pays the
+/// wrapper's hold.
+fn armed_workspace() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".jj")).unwrap();
+    std::fs::write(dir.path().join(".jj/turn-wrap"), "on\n").unwrap();
+    dir
+}
+
+#[test]
+fn the_turn_wrapper_runs_last_on_stop_and_hears_the_merged_effect() {
+    let plan = plan(WRAP_PLAN);
+    let (runner, seen) = observing(HashMap::from([
+        ("turn-wrap".to_string(), fake("{}")),
+        (
+            "steer".to_string(),
+            fake(r#"{"effect":"continue_turn","reason":"more"}"#),
+        ),
+    ]));
+    let answer = dispatch(&plan, Harness::Claude, "Stop", Ok(claude_stop()), &runner);
+    let seen = seen.borrow();
+    let ids: Vec<&str> = seen.iter().map(|(id, _, _)| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["steer", "turn-wrap"],
+        "the wrapper runs after a later order"
+    );
+    assert_eq!(seen[0].2["RUNE_MERGED_EFFECT"], "allow");
+    assert_eq!(seen[1].2["RUNE_MERGED_EFFECT"], "stop");
+    assert_eq!(seen[1].2["RUNE_FAILED_HANDLERS"], "", "every handler ran");
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        out["decision"], "block",
+        "the steering handler still continues the turn"
+    );
+}
+
+#[test]
+fn a_slow_handler_before_the_wrapper_cannot_starve_it_where_the_switch_is_on() {
+    let workspace = armed_workspace();
+    let plan = plan(WRAP_PLAN);
+    let (runner, seen) = observing(HashMap::from([
+        ("turn-wrap".to_string(), fake("{}")),
+        (
+            "steer".to_string(),
+            Fake {
+                sleep_ms: 5_000,
+                ..fake("{}")
+            },
+        ),
+    ]));
+    let answer = dispatch(
+        &plan,
+        Harness::Claude,
+        "Stop",
+        Ok(claude_stop_in(&workspace.path().display().to_string())),
+        &runner,
+    );
+    let seen = seen.borrow();
+    // The hold is the wrapper's 1200 ms timeout capped at half the 2000
+    // ms budget: 1000 ms. The budget less the 50 ms reserve, the 150 ms
+    // stop allowance, and the hold leaves the steering handler at most
+    // 800 ms of its 1500.
+    assert_eq!(seen[0].0, "steer");
+    assert!(seen[0].1 <= Duration::from_millis(800), "{:?}", seen[0].1);
+    assert!(seen[0].1 > Duration::from_millis(600), "{:?}", seen[0].1);
+    // The wrapper gets the hold after the timeout before it, and hears
+    // which handler it was, so it wraps nothing of the unfinished turn.
+    assert_eq!(seen[1].0, "turn-wrap");
+    assert!(seen[1].1 >= Duration::from_millis(900), "{:?}", seen[1].1);
+    assert_eq!(seen[1].2["RUNE_FAILED_HANDLERS"], "steer");
+    assert!(
+        answer.stderr.iter().any(|l| l.contains("timed out")),
+        "{:?}",
+        answer.stderr
+    );
+}
+
+#[test]
+fn the_wrapper_holds_the_card_where_another_session_touched_the_workspace() {
+    let workspace = armed_workspace();
+    let plan = plan(WRAP_PLAN);
+    let fakes = || {
+        HashMap::from([
+            ("turn-wrap".to_string(), fake("{}")),
+            (
+                "steer".to_string(),
+                Fake {
+                    sleep_ms: 5_000,
+                    ..fake("{}")
+                },
+            ),
+        ])
+    };
+    let stop = || Ok(claude_stop_in(&workspace.path().display().to_string()));
+    // Another session's marker: no stop of this session wraps, but the
+    // stop still registers and shows the card that names the reset, so
+    // the steering handler leaves it the 500 ms the card needs. The 2000
+    // ms budget less the 50 ms reserve, the 150 ms stop allowance, and
+    // that hold leaves the steering handler at most 1300 ms of its 1500.
+    let touched = workspace.path().join(".jj/turn-wrap.touched");
+    std::fs::create_dir_all(&touched).unwrap();
+    std::fs::write(touched.join("codex-0123456789abcdef"), "").unwrap();
+    let (runner, seen) = observing(fakes());
+    dispatch(&plan, Harness::Claude, "Stop", stop(), &runner);
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen[0].0, "steer");
+        assert!(seen[0].1 <= Duration::from_millis(1_300), "{:?}", seen[0].1);
+        assert!(seen[0].1 > Duration::from_millis(1_100), "{:?}", seen[0].1);
+        // The wrapper runs after the slow handler's timeout, with the
+        // card's time left.
+        assert_eq!(seen[1].0, "turn-wrap", "the card still shows");
+        assert!(seen[1].1 >= Duration::from_millis(400), "{:?}", seen[1].1);
+    }
+    // This session's own key alone: the whole hold is paid.
+    std::fs::remove_dir_all(&touched).unwrap();
+    let own = super::wrap::session_key(Harness::Claude, Some("s"));
+    std::fs::write(
+        workspace.path().join(".jj/turn-wrap.open"),
+        format!(r#"{{"v":2,"keys":["{own}"]}}"#),
+    )
+    .unwrap();
+    let (runner, seen) = observing(fakes());
+    dispatch(&plan, Harness::Claude, "Stop", stop(), &runner);
+    let given = seen.borrow()[0].1;
+    assert!(given <= Duration::from_millis(800), "{given:?}");
+}
+
+#[test]
+fn the_wrapper_holds_nothing_where_the_switch_is_off() {
+    let plan = plan(WRAP_PLAN);
+    let (runner, seen) = observing(HashMap::from([
+        ("turn-wrap".to_string(), fake("{}")),
+        ("steer".to_string(), fake("{}")),
+    ]));
+    // A directory with no jj workspace: the wrapper does nothing there,
+    // so the steering handler keeps its whole 1500 ms.
+    dispatch(&plan, Harness::Claude, "Stop", Ok(claude_stop()), &runner);
+    let seen = seen.borrow();
+    assert_eq!(seen[0].0, "steer");
+    assert!(seen[0].1 >= Duration::from_millis(1_400), "{:?}", seen[0].1);
+    // A workspace without the switch holds nothing either.
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join(".jj")).unwrap();
+    drop(seen);
+    let (runner, seen) = observing(HashMap::from([
+        ("turn-wrap".to_string(), fake("{}")),
+        ("steer".to_string(), fake("{}")),
+    ]));
+    dispatch(
+        &plan,
+        Harness::Claude,
+        "Stop",
+        Ok(claude_stop_in(&workspace.path().display().to_string())),
+        &runner,
+    );
+    let seen = seen.borrow();
+    assert!(seen[0].1 >= Duration::from_millis(1_400), "{:?}", seen[0].1);
+}
+
+#[test]
+fn the_wrapper_pays_no_hold_and_keeps_its_order_off_turn_finish() {
+    let plan = plan(
+        "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [tool.before]\n    order: 10\n  - id: later\n    exec: [later]\n    events: [tool.before]\n    order: 20\n",
+    );
+    let (runner, seen) = observing(HashMap::from([
+        ("turn-wrap".to_string(), fake("{}")),
+        ("later".to_string(), fake("{}")),
+    ]));
+    dispatch(
+        &plan,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    let seen = seen.borrow();
+    let ids: Vec<&str> = seen.iter().map(|(id, _, _)| id.as_str()).collect();
+    assert_eq!(ids, ["turn-wrap", "later"]);
+    assert_eq!(
+        seen[1].1,
+        Duration::from_millis(500),
+        "no hold off turn.finish"
+    );
+}
+
+#[test]
+fn the_wrapper_defaults_to_its_own_timeout_and_honors_an_explicit_one() {
+    let by_default = plan(
+        "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n  - id: other\n    exec: [other]\n    events: [turn.finish]\n    order: 200\n",
+    );
+    let event = by_default.event(Harness::Claude, "Stop").unwrap();
+    let by_id = |id: &str| event.handlers.iter().find(|h| h.id == id).unwrap();
+    assert_eq!(by_id("turn-wrap").timeout_ms, 1_200);
+    assert_eq!(by_id("other").timeout_ms, 500);
+    assert_eq!(event.handlers.last().unwrap().id, "turn-wrap");
+    let explicit = plan(
+        "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n    timeout_ms: 900\n",
+    );
+    let event = explicit.event(Harness::Claude, "Stop").unwrap();
+    assert_eq!(event.handlers[0].timeout_ms, 900);
+}

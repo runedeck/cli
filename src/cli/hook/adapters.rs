@@ -31,6 +31,7 @@ pub(crate) const NAMES: &[&str] = &[
     "jj-guards",
     "sandbox-guard",
     "postbox",
+    "turn-wrap",
 ];
 
 /// Run one adapter over the payload on stdin; print its result.
@@ -84,6 +85,7 @@ pub(crate) fn dispatch(
         "jj-guards" => jj_guards(payload),
         "postbox" => postbox(payload),
         "sandbox-guard" => super::sandbox_guard::guard(payload, args),
+        "turn-wrap" => super::wrap::adapter(payload),
         other => Err(format!(
             "`{other}` is not a built-in adapter ({})",
             NAMES.join(", ")
@@ -583,12 +585,14 @@ fn author_identity_in(
     Ok(result)
 }
 
-/// The files a write tool touched: `file_path` or `path` in the input,
-/// or the `*** Add File:` and `*** Update File:` lines of a Codex patch.
+/// The files a write tool touched: `file_path`, `path`, or
+/// `notebook_path` in the input, or the `*** Add File:` and
+/// `*** Update File:` lines of a Codex patch.
 pub(crate) fn written_paths(tool: &super::payload::ToolPayload) -> Vec<PathBuf> {
     if let Some(path) = tool.input["file_path"]
         .as_str()
         .or_else(|| tool.input["path"].as_str())
+        .or_else(|| tool.input["notebook_path"].as_str())
     {
         return vec![PathBuf::from(path)];
     }

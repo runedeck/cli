@@ -101,6 +101,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Show control, format, and bidi characters in a hook message, context line, or deny reason as visible escapes, so no handler can fake, hide, or reverse another's line.
 - Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
 - Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
+- Add the `turn-wrap` hook: where the owner ran `rune hook wrap on` in a jj workspace, each session turn becomes one jj change with a card naming the review and the undo.
+- Wrap only when one session touched the workspace after the last wrap: every prompt, stop, and tool event that places a session in the workspace records it under a lock, a payload without a session id records a touch that is nobody's, a stop with any other record wraps nothing and names it, and the owner forgets the record with `rune hook wrap reset`.
+- Refuse `rune hook wrap on`, `off`, and `reset` inside a model session, and recognize the owner's legacy `turn/wrap` script as the `turn-wrap` adapter at install.
+- Run the turn wrapper last on `turn.finish`, pass every handler `RUNE_MERGED_EFFECT` and `RUNE_FAILED_HANDLERS`, wrap nothing after a handler that failed or timed out, and hold back half the budget at most for the wrapper, only where the switch is on and this session is alone.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.

@@ -1,0 +1,9 @@
+# The turn wrapper on every event that shows a session in a workspace.
+# It wraps nothing until the owner runs `rune hook wrap on` in a jj
+# workspace.
+hooks:
+  handlers:
+    - id: turn-wrap
+      exec: [rune-hook-turn-wrap]
+      events: [prompt.before, tool.before, tool.after, turn.finish]
+      order: 50

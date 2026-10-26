@@ -161,6 +161,16 @@ pub(crate) const HANDLER_GRACE: Duration = Duration::from_millis(10);
 /// harness deadline even when the last handler runs to its timeout.
 pub(crate) const STOP_ALLOWANCE: Duration = Duration::from_millis(150);
 
+/// The variable that tells a handler what the handlers before it decided:
+/// `allow`, `deny`, or `stop` (the turn goes on). The turn wrapper runs
+/// last on `turn.finish` and wraps nothing while the turn is not over.
+pub(crate) const MERGED_EFFECT_VAR: &str = "RUNE_MERGED_EFFECT";
+
+/// The variable that names the handlers before this one that failed or
+/// timed out at this firing, comma-separated, empty when every one ran.
+/// The turn wrapper wraps nothing after one: the turn may be unfinished.
+pub(crate) const FAILED_VAR: &str = "RUNE_FAILED_HANDLERS";
+
 /// What spawning a handler yields: its exit code, stdout, stderr.
 pub(crate) type Spawned = Result<(Option<i32>, String, String), String>;
 
@@ -318,6 +328,8 @@ pub(crate) fn dispatch(
     let mut records: Vec<Record> = Vec::new();
     // One firing reads each table, script, and folder once.
     let mut cache = cover::Cache::default();
+    let hold = wrap_hold(event, harness, native_event, &payload, runner, &mut cache);
+    let mut failed: Vec<String> = Vec::new();
     for handler in &event.handlers {
         if let Some(line) = skipped(
             event,
@@ -332,7 +344,7 @@ pub(crate) fn dispatch(
             records.push(line);
             continue;
         }
-        let remaining = remaining(event, runner.started);
+        let remaining = remaining(event, runner.started, handler, hold);
         let handler_started = Instant::now();
         let outcome = if remaining.is_zero() {
             Err(budget_spent(
@@ -342,7 +354,7 @@ pub(crate) fn dispatch(
             ))
         } else {
             let timeout = Duration::from_millis(handler.timeout_ms).min(remaining);
-            run_handler(handler, &payload, timeout, runner)
+            run_handler(handler, &payload, timeout, merged.effect, &failed, runner)
                 .and_then(|result| admit_result(result, handler, event))
         };
         let mut line = record_line(
@@ -370,6 +382,7 @@ pub(crate) fn dispatch(
                 if failure.kind == "budget" {
                     line.duration_ms = Some(0);
                 }
+                failed.push(handler.id.clone());
                 apply_failure(
                     &failure,
                     &handler.id,
@@ -403,13 +416,79 @@ pub(crate) fn dispatch(
     answer
 }
 
+/// What the turn wrapper holds back from every handler before it on
+/// `turn.finish`: its own timeout where it may wrap, capped at
+/// `WRAP_HOLD_SHARE` of the event's budget, so a slow handler cannot
+/// starve the wrap and the wrap cannot starve them. In a workspace
+/// another session touched it holds only what the card needs, so a slow
+/// handler cannot hide the card that names the reset. The wrapper runs
+/// last there. No other event pays the hold, and neither does a firing
+/// the wrapper does nothing on: one outside a workspace with the switch
+/// on, or one where the legacy cover skips the wrapper.
+fn wrap_hold(
+    event: &PlannedEvent,
+    harness: Harness,
+    native_event: &str,
+    payload: &HandlerPayload,
+    runner: &Runner,
+    cache: &mut cover::Cache,
+) -> Duration {
+    if Canonical::from_native(harness, native_event) != Some(Canonical::TurnFinish) {
+        return Duration::ZERO;
+    }
+    let Some(wrapper) = event.handlers.last().filter(|h| h.wraps_turns()) else {
+        return Duration::ZERO;
+    };
+    if let Some(coverage) = runner.cover.handlers.get(&wrapper.id) {
+        let canonical = event
+            .canonical
+            .map_or_else(|| native_event.to_string(), |c| c.as_str().to_string());
+        let held = cover::holds(
+            coverage,
+            wrapper,
+            harness,
+            &canonical,
+            native_event,
+            &runner.env,
+            cache,
+        );
+        if held.is_ok() {
+            return Duration::ZERO;
+        }
+    }
+    let cap = Duration::from_millis(event.budget_ms / WRAP_HOLD_SHARE);
+    let timeout = Duration::from_millis(wrapper.timeout_ms);
+    match super::wrap::hold(payload) {
+        super::wrap::Hold::Nothing => Duration::ZERO,
+        super::wrap::Hold::Card => super::wrap::CARD_HOLD.min(timeout).min(cap),
+        super::wrap::Hold::Turn => timeout.min(cap),
+    }
+}
+
+/// The share of an event's budget the wrapper's hold may take: one part
+/// in this many. The rest stays with the handlers before it.
+const WRAP_HOLD_SHARE: u64 = 2;
+
 /// What the budget leaves a handler started now: the budget less the time
 /// since the clock started, the reserve, and the stop allowance.
-fn remaining(event: &PlannedEvent, started: Instant) -> Duration {
+/// What the budget leaves this handler. The wrapper's hold comes off every
+/// handler but the wrapper itself.
+fn remaining(
+    event: &PlannedEvent,
+    started: Instant,
+    handler: &PlannedHandler,
+    hold: Duration,
+) -> Duration {
+    let taken = if handler.wraps_turns() {
+        Duration::ZERO
+    } else {
+        hold
+    };
     Duration::from_millis(event.budget_ms)
         .saturating_sub(started.elapsed())
         .saturating_sub(Duration::from_millis(event.response_reserve_ms))
         .saturating_sub(STOP_ALLOWANCE)
+        .saturating_sub(taken)
 }
 
 /// Fold one handler's result into the effective input and the answer.
@@ -540,6 +619,8 @@ fn run_handler(
     handler: &PlannedHandler,
     payload: &HandlerPayload,
     timeout: Duration,
+    merged: Effect,
+    failed: &[String],
     runner: &Runner,
 ) -> Result<HandlerResult, Failure> {
     let fail = |why: String, kind: &'static str, exit_status: Option<i32>| Failure {
@@ -571,6 +652,11 @@ fn run_handler(
             OsString::from("RUNE_REMAINING_MS"),
             OsString::from(timeout.as_millis().to_string()),
         ),
+        (
+            OsString::from(MERGED_EFFECT_VAR),
+            OsString::from(merged.word()),
+        ),
+        (OsString::from(FAILED_VAR), OsString::from(failed.join(","))),
     ];
     let cwd = payload
         .cwd

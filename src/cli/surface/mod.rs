@@ -24,7 +24,7 @@ mod grok_keys;
 mod isolation;
 pub(crate) use cursor::API_KEY_ENV as CURSOR_API_KEY_ENV;
 pub(crate) use grok_keys::{GrokKeyChoice, model_family, shared_prefix_len};
-pub(crate) use isolation::{Isolation, parent_session_isolation, tmux_removals};
+pub(crate) use isolation::{Isolation, model_session, parent_session_isolation, tmux_removals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Surface {

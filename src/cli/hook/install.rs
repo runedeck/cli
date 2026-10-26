@@ -3839,6 +3839,58 @@ mod tests {
         assert_eq!(cover_in(&prepared, Harness::Codex, "Stop"), None);
     }
 
+    #[test]
+    fn the_owner_s_turn_wrap_part_is_the_wrapper_and_runs_twice_behind_the_first() {
+        let home = owner_home(STOP_PARTS);
+        // The script the part runs, so the part's command resolves.
+        fs::write(
+            home.path().join(".config/just/claude/turn/wrap"),
+            "#!/bin/sh\n",
+        )
+        .unwrap();
+        let dispatcher = "sh $HOME/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: tmux\n    exec: [rune-hook-tmux-status]\n    events: [turn.finish]\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let prepared = prepared_in(home.path(), &plan);
+        let report = &prepared.report;
+        let stop_d = home.path().join(".config/just/hooks/Stop.d");
+        // The first part covers tmux. The wrap part is second, so install
+        // knows it as the wrapper's own command and says it runs twice.
+        assert_eq!(report.covered.len(), 1, "{report:?}");
+        assert!(
+            report.covered[0].starts_with("claude: Stop covers tmux with the part "),
+            "{:?}",
+            report.covered
+        );
+        let (later, other) = later_part_lines(report);
+        assert!(other.is_empty(), "{other:?}");
+        assert_eq!(later.len(), 1, "{later:?}");
+        assert!(
+            later[0].starts_with("claude: Stop does not cover turn-wrap with the part ")
+                && later[0].contains(&stop_d.join("20-turn-wrap.sh").display().to_string())
+                && later[0].contains(dispatcher)
+                && later[0].ends_with(
+                    "because that part is not the first; turn-wrap runs twice while the part runs its command"
+                ),
+            "{later:?}"
+        );
+        // Without the script, the part's command resolves to nothing, and
+        // install says nothing about it.
+        fs::remove_file(home.path().join(".config/just/claude/turn/wrap")).unwrap();
+        let prepared = prepared_in(home.path(), &plan);
+        let (later, _) = later_part_lines(&prepared.report);
+        assert!(later.is_empty(), "{later:?}");
+    }
+
     /// An install of `plan` into `home`, prepared under a fixed plan
     /// directory, with the manifest under `home/state`.
     fn prepared_in(home: &Path, plan: &Plan) -> Prepared {
@@ -4052,6 +4104,89 @@ mod tests {
         assert_eq!(
             generation_in(&second, Harness::Claude, "Stop"),
             Some(&generation)
+        );
+    }
+
+    #[test]
+    fn a_covered_wrapper_holds_no_time_back_from_the_handlers_before_it() {
+        // The wrap part first in the owner's Stop.d, with its script, so
+        // the cover skips the wrapper at each firing.
+        let home = owner_home(&[("Stop", "10-turn-wrap.sh", STOP_PARTS[1].2)]);
+        fs::write(
+            home.path().join(".config/just/claude/turn/wrap"),
+            "#!/bin/sh\n",
+        )
+        .unwrap();
+        let dispatcher = "sh ~/.config/just/hook Stop";
+        settings(
+            home.path(),
+            &json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": dispatcher}]}]}})
+                .to_string(),
+        );
+        let plan = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n    order: 10\n  - id: steer\n    exec: [steer]\n    events: [turn.finish]\n    order: 20\n    timeout_ms: 1500\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let state = home.path().join("state");
+        let plans = state.join("hooks").join("plans");
+        let prepared = prepare(
+            &plan,
+            home.path(),
+            "/opt/rune",
+            &plans,
+            &state.join("manifest.json"),
+            false,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            prepared
+                .report
+                .covered
+                .iter()
+                .any(|line| line.starts_with("claude: Stop covers turn-wrap with the part ")),
+            "{:?}",
+            prepared.report
+        );
+        write(&prepared).unwrap();
+        let generation = generation_in(&prepared, Harness::Claude, "Stop").unwrap();
+        let plan: Plan = serde_json::from_str(&generation.text).unwrap();
+        let cover = super::super::cover::read(
+            &state.join("hooks/cover/claude-Stop.json"),
+            Harness::Claude,
+            "Stop",
+        );
+        // A workspace with the switch on, where an uncovered wrapper would
+        // hold 1000 ms back from the steering handler.
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir_all(workspace.path().join(".jj")).unwrap();
+        fs::write(workspace.path().join(".jj/turn-wrap"), "on\n").unwrap();
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = std::rc::Rc::clone(&seen);
+        let runner = super::super::run::Runner {
+            record_dir: None,
+            record_error: None,
+            log_dir: None,
+            cover,
+            env: cover::Environment::under(home.path()),
+            started: std::time::Instant::now(),
+            spawn: Box::new(move |handler, _, timeout, _, _| {
+                log.borrow_mut().push((handler.id.clone(), timeout));
+                Ok((Some(0), "{}".to_string(), String::new()))
+            }),
+        };
+        let raw = json!({"hook_event_name": "Stop", "session_id": "s", "cwd": workspace.path()});
+        let answer = super::super::run::dispatch(&plan, Harness::Claude, "Stop", Ok(raw), &runner);
+        assert_eq!(answer.exit, 0, "{answer:?}");
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1, "the wrapper is skipped: {seen:?}");
+        assert_eq!(seen[0].0, "steer");
+        assert!(
+            seen[0].1 >= std::time::Duration::from_millis(1_400),
+            "{:?}",
+            seen[0].1
         );
     }
 

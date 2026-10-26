@@ -57,6 +57,10 @@ rune queue list --state posted       # look without marking anything read
 
 Claude Code and Codex sessions with the `postbox` hook get their messages at the next turn. Any other session runs `rune queue read --session <its id or name>` when a task starts and between steps. Answer a message by posting to its sender, who is named as `harness:session`.
 
+## Turn Wrapping
+
+Where the owner switched it on, the `turn-wrap` hook records each of your turns as one jj change. On Claude Code the owner sees a card with the change, the review command, and the undo. You do not see it, and Codex shows nothing on Stop. Read the result with `jj log` when you need it. The switch is `rune hook wrap on`, per jj workspace, and only the owner runs it. Never run it, `off`, or `reset` yourself, and never ask to. A workspace that more than one session touched after the last wrap is not wrapped, and a turn after a Stop hook failed or timed out waits for the next Stop. The owner sorts the working copy out and runs `rune hook wrap reset`. Keep working.
+
 ## Validation
 
 `rune validate` checks schemas and structure. Add `--scan` only in commit and push hooks; it runs gitleaks and semgrep and is slow.

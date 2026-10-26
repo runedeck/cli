@@ -105,6 +105,25 @@ pub(crate) fn is_parent_session_key(key: &str) -> bool {
             .any(|prefix| key.starts_with(prefix))
 }
 
+/// The parent-session variable that marks this process as a harness's
+/// child, when one is set: a model's shell, not the owner's, is running.
+/// An owner-only command refuses on it. Exact names come first, in list
+/// order, so the answer is stable.
+pub(crate) fn model_session() -> Option<String> {
+    PARENT_SESSION_NAMES
+        .iter()
+        .find(|name| std::env::var_os(name).is_some())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let mut keys: Vec<String> = std::env::vars_os()
+                .map(|(key, _)| key.to_string_lossy().into_owned())
+                .filter(|key| is_parent_session_key(key))
+                .collect();
+            keys.sort();
+            keys.into_iter().next()
+        })
+}
+
 fn route_sets(route_keys: &[OsString], key: &str) -> bool {
     route_keys.iter().any(|name| name == key)
 }

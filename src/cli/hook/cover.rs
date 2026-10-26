@@ -374,6 +374,13 @@ pub(crate) fn runs(
             let script = adapters::checkpoint_script(home)?;
             Some((own(&["sh", &script.display().to_string(), mode]), true))
         }
+        "turn-wrap" => {
+            if event != "turn.finish" {
+                return None;
+            }
+            let script = super::wrap::legacy_script(home)?;
+            Some((own(&["sh", &script.display().to_string()]), true))
+        }
         "tmux-status" => {
             let state = match event {
                 "prompt.before" => "working",

@@ -608,6 +608,49 @@ impl fmt::Display for HooksError {
     }
 }
 
+/// The built-in adapter that wraps a turn as one jj change.
+pub const TURN_WRAP_EXEC: &str = "rune-hook-turn-wrap";
+
+/// The events the turn wrapper always subscribes to, whatever its
+/// handler declares: every event that shows a session in a workspace.
+/// A config that left one out would let a touch go unregistered and a
+/// turn wrap over another session's edits.
+pub const TURN_WRAP_EVENTS: [Canonical; 4] = [
+    Canonical::PromptBefore,
+    Canonical::ToolBefore,
+    Canonical::ToolAfter,
+    Canonical::TurnFinish,
+];
+
+impl Handler {
+    /// Whether this handler is the turn wrapper.
+    #[must_use]
+    pub fn wraps_turns(&self) -> bool {
+        self.exec.first().is_some_and(|exec| exec == TURN_WRAP_EXEC)
+    }
+
+    /// The events this handler runs on: the ones it declares, and for the
+    /// turn wrapper the four it needs, each once.
+    #[must_use]
+    pub fn subscriptions(&self) -> Vec<Subscription> {
+        let mut events = self.events.clone();
+        if self.wraps_turns() {
+            for canonical in TURN_WRAP_EVENTS {
+                let event = Subscription::Canonical(canonical);
+                if !events.contains(&event) {
+                    events.push(event);
+                }
+            }
+        }
+        events
+    }
+}
+
+/// The timeout the turn wrapper gets when its handler sets none: a
+/// snapshot and a commit on a large working copy need more than the
+/// 500 ms every other handler defaults to.
+pub const TURN_WRAP_TIMEOUT_MS: u64 = 1_200;
+
 /// One handler of the compiled plan, with every override applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannedHandler {
@@ -617,6 +660,25 @@ pub struct PlannedHandler {
     pub timeout_ms: u64,
     pub on_failure: OnFailure,
     pub rewrites: bool,
+}
+
+impl PlannedHandler {
+    /// Whether this handler is the turn wrapper. On `turn.finish` it runs
+    /// last whatever its order, after every handler that can keep the turn
+    /// going, and the dispatcher holds its timeout back from the others.
+    #[must_use]
+    pub fn wraps_turns(&self) -> bool {
+        self.exec.first().is_some_and(|exec| exec == TURN_WRAP_EXEC)
+    }
+}
+
+/// Order the handlers of one event: by order, then id, and on
+/// `turn.finish` the turn wrapper last of all.
+fn settle(handlers: &mut [PlannedHandler], canonical: Option<Canonical>) {
+    handlers.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
+    if canonical == Some(Canonical::TurnFinish) {
+        handlers.sort_by_key(PlannedHandler::wraps_turns);
+    }
 }
 
 /// One native event of one harness in the compiled plan.
@@ -722,11 +784,12 @@ impl Hooks {
             if handler.exec.is_empty() {
                 errors.push(fault("exec", "names no executable".to_string()));
             }
-            if handler.events.is_empty() {
+            let events = handler.subscriptions();
+            if events.is_empty() {
                 errors.push(fault("events", "subscribes to no event".to_string()));
             }
             let policy = handler.on_failure.unwrap_or(self.defaults.on_failure);
-            for event in &handler.events {
+            for event in &events {
                 let mode = self.mode_of(event);
                 if policy == OnFailure::Deny && mode != Mode::Gate {
                     errors.push(fault(
@@ -746,7 +809,7 @@ impl Hooks {
                 if over.on_failure != Some(OnFailure::Deny) || policy == OnFailure::Deny {
                     continue;
                 }
-                for event in &handler.events {
+                for event in &events {
                     let mode = self.mode_of(event);
                     if mode != Mode::Gate && Self::native_name(event, *harness).is_some() {
                         errors.push(fault(
@@ -822,7 +885,7 @@ impl Hooks {
         for harness in Harness::ALL {
             let mut by_event: BTreeMap<String, (String, Vec<&Handler>)> = BTreeMap::new();
             for handler in &self.handlers {
-                for event in &handler.events {
+                for event in &handler.subscriptions() {
                     if let Some(native) = Self::native_name(event, harness) {
                         by_event
                             .entry(native)
@@ -890,7 +953,10 @@ impl Hooks {
                 let subscribers: Vec<&Handler> = self
                     .handlers
                     .iter()
-                    .filter(|h| h.events.contains(&Subscription::Canonical(canonical)))
+                    .filter(|h| {
+                        h.subscriptions()
+                            .contains(&Subscription::Canonical(canonical))
+                    })
                     .collect();
                 if subscribers.is_empty() {
                     continue;
@@ -918,7 +984,7 @@ impl Hooks {
                     .iter()
                     .map(|h| self.planned(h, harness, budget))
                     .collect();
-                handlers.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
+                settle(&mut handlers, Some(canonical));
                 for handler in &subscribers {
                     for capability in &handler.requires {
                         if !capability.supported(harness) {
@@ -978,9 +1044,7 @@ impl Hooks {
                 event
                     .handlers
                     .push(self.planned(handler, harness, event.budget_ms));
-                event
-                    .handlers
-                    .sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
+                settle(&mut event.handlers, Canonical::from_native(harness, name));
             }
         }
     }
@@ -998,16 +1062,22 @@ impl Hooks {
 
     fn planned(&self, handler: &Handler, harness: Harness, budget_ms: u64) -> PlannedHandler {
         let over = handler.per_harness.get(&harness);
+        let exec = over
+            .and_then(|o| o.exec.clone())
+            .unwrap_or_else(|| handler.exec.clone());
+        let default_timeout = if exec.first().is_some_and(|e| e == TURN_WRAP_EXEC) {
+            TURN_WRAP_TIMEOUT_MS
+        } else {
+            self.defaults.timeout_ms
+        };
         let timeout = over
             .and_then(|o| o.timeout_ms)
             .or(handler.timeout_ms)
-            .unwrap_or(self.defaults.timeout_ms)
+            .unwrap_or(default_timeout)
             .min(budget_ms);
         PlannedHandler {
             id: handler.id.clone(),
-            exec: over
-                .and_then(|o| o.exec.clone())
-                .unwrap_or_else(|| handler.exec.clone()),
+            exec,
             order: handler.order.unwrap_or(self.defaults.order),
             timeout_ms: timeout,
             on_failure: over
@@ -1059,6 +1129,42 @@ handlers:
 ",
         )
         .expect("five handlers parse")
+    }
+
+    #[test]
+    fn the_turn_wrapper_subscribes_to_every_event_that_shows_a_session_in_a_workspace() {
+        let hooks: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: turn-wrap\n    exec: [rune-hook-turn-wrap]\n    events: [turn.finish]\n  - id: lint\n    exec: [lint]\n    events: [turn.finish]\n",
+        )
+        .unwrap();
+        let plan = hooks.compile().expect("compiles");
+        let claude = plan.harnesses.get(&Harness::Claude).expect("claude");
+        // A config that names one event still runs the wrapper on all
+        // four: a touch on a missed event would go unregistered.
+        for native in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+            let event = claude
+                .get(native)
+                .unwrap_or_else(|| panic!("{native} is planned"));
+            assert!(
+                event.handlers.iter().any(|h| h.id == "turn-wrap"),
+                "{native}"
+            );
+        }
+        let ids = |native: &str| -> Vec<String> {
+            claude
+                .get(native)
+                .unwrap()
+                .handlers
+                .iter()
+                .map(|h| h.id.clone())
+                .collect()
+        };
+        assert_eq!(
+            ids("PreToolUse"),
+            ["turn-wrap"],
+            "a plain handler keeps its own events"
+        );
+        assert_eq!(ids("Stop"), ["lint", "turn-wrap"]);
     }
 
     #[test]

@@ -26,6 +26,7 @@ pub(crate) mod run;
 pub(crate) mod sandbox_guard;
 pub(crate) mod stats;
 pub(crate) mod table;
+pub(crate) mod wrap;
 
 #[cfg(test)]
 mod dispatch_tests;

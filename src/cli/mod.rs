@@ -1495,6 +1495,23 @@ enum HookAction {
         #[arg(long = "ref", value_name = "SHA")]
         reference: Option<String>,
     },
+    /// Turn wrapping on or off in the current jj workspace (the owner's switch; off by default)
+    Wrap {
+        #[command(subcommand)]
+        action: WrapAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum WrapAction {
+    /// Wrap each turn of a session in this workspace as one jj change
+    On,
+    /// Stop wrapping turns in this workspace
+    Off,
+    /// Print `on` or `off` for this workspace
+    Status,
+    /// Forget which sessions touched this workspace, once its working copy is sorted out
+    Reset,
 }
 
 #[derive(Subcommand)]
@@ -2543,6 +2560,9 @@ pub fn run() -> i32 {
                     args.no_color,
                     args.json,
                 ),
+                Some(HookAction::Wrap { action }) => {
+                    exit_code(hook::wrap::switch(&action, args.json), args.json)
+                }
             };
         }
         Command::Completion { action } => {
