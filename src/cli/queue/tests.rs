@@ -169,3 +169,26 @@ fn hook_reads_nothing_where_the_harness_cannot_show_it() {
     let (events, _) = ledger::load(&path).expect("load");
     assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
 }
+
+#[test]
+fn the_named_remote_token_is_hidden_whatever_its_name() {
+    let env = [
+        (
+            OsString::from("REMOTE_ACCESS"),
+            OsString::from("fake-remote-token-value"),
+        ),
+        (OsString::from("CODEX_HOME"), OsString::from("/owner/codex")),
+    ];
+    let shown = shown_env(&env, Some("REMOTE_ACCESS"));
+    assert!(
+        shown.contains(&("REMOTE_ACCESS".to_string(), "<redacted>".to_string())),
+        "{shown:?}"
+    );
+    assert!(shown.contains(&("CODEX_HOME".to_string(), "/owner/codex".to_string())));
+    assert_eq!(
+        remote_token(Some("REMOTE_ACCESS"), &env).as_deref(),
+        Some("fake-remote-token-value"),
+        "the route's value is the secret a failure tail hides"
+    );
+    assert_eq!(remote_token(None, &env), None);
+}
