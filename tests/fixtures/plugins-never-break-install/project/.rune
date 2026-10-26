@@ -1,0 +1,7 @@
+version: 1
+sources:
+    mod:
+        local: module
+runes:
+    mod:
+        rules: [Style]

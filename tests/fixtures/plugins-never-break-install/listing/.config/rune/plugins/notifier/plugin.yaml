@@ -1,0 +1,4 @@
+name: notifier
+description: Post a note when runes deploy
+exec: run.sh
+events: [post-install]

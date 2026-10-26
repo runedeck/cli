@@ -1,0 +1,4 @@
+name: broken
+description: Exit 7 on every event
+exec: run.sh
+events: [post-install]

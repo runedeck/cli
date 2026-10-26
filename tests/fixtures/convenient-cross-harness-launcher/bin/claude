@@ -1,0 +1,6 @@
+#!/bin/sh
+# Stand-in for Claude Code: print what rune passed in, then exit 3.
+echo "$(basename "$0") $*"
+echo "PROOF_MODE=$PROOF_MODE"
+IFS= read -r line && echo "stdin: $line"
+exit 3

@@ -6,5 +6,7 @@
 
 ## 2. Verification
 
-- [x] 2.1 Test response parsing and the JSON shape. Map 403 and 429 to `discover.rate_limited`
-- [x] 2.2 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests
+- [x] 2.1 Test response parsing against `tests/fixtures/discover/search.json`, a body without items, an item without a field, and the query encoding
+- [x] 2.2 Map 403 and 429 to `discover.rate_limited`
+- [x] 2.3 Run formatting, `cargo clippy --all-targets --all-features -- -D warnings`, and the tests
+- [x] 2.4 Prove the scenarios in `docs/proofs/find-decks-by-topic/`

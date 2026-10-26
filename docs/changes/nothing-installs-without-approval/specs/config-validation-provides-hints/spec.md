@@ -60,4 +60,5 @@ output of the built binary.
 #### Scenario: Committed reference drifts
 
 - **WHEN** a change edits config structs without regenerating the committed reference
-- **THEN** the reference check fails and names the drifted entries
+- **THEN** the reference test fails, names `docs/config-reference.json`, and prints the command
+  that regenerates it

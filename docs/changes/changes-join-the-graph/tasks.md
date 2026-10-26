@@ -17,4 +17,4 @@
 ## 3. Later
 
 - [ ] 3.1 The deck flips its status shapes to Violation once the installed `rune` emits `rune:status`
-- [ ] 3.2 Proofs and scenes (deck `prove-each-scenario` task 3.2) join the graph in a later change
+- [x] 3.2 Proofs and scenes (deck `prove-each-scenario` task 3.2) join the graph: `render_proofs` in `src/cli/graph/lifecycle.rs`, under the `review-changes-with-proofs` change

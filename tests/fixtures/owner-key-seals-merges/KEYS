@@ -1,0 +1,3 @@
+# Trusted signers for the owner-key-seals-merges proof. The fingerprint is
+# made up: fake-gpg beside this file signs as whatever key git names.
+signer AAAA0000AAAA0000AAAA0000AAAA0000AAAA0000 owner@example.com

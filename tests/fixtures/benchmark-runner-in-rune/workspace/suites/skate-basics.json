@@ -1,0 +1,16 @@
+{
+    "id": "skate-basics",
+    "name": "Skate basics",
+    "system_prompt": "Name the skateboard trick. Reply with the trick name only.",
+    "tests": [
+        {
+            "prompt": "The rider pops the tail and the board rises with the feet: the ollie. Which trick is it?",
+            "answers": ["ollie"]
+        },
+        {
+            "prompt": "The front foot flicks off the toe edge and the board spins once along its length. Which trick is it?",
+            "answers": ["kickflip", "kick flip"],
+            "negative_answers": ["heelflip"]
+        }
+    ]
+}

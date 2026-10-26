@@ -12,13 +12,13 @@
 
 ### Requirement: Modified state protection
 
-Status, setup, and doctor MUST keep user-modified managed files in the `modified` state and MUST
-never replace them without explicit approval.
+Status, setup, doctor, and repair MUST keep user-modified managed files in the `modified` state
+and MUST never replace them without explicit approval.
 
 #### Scenario: Repair meets a modified file
 
 - **WHEN** `rune repair` meets a user-modified managed file
-- **THEN** the file stays unchanged and the report labels it `modified`
+- **THEN** the file stays unchanged and the JSON report lists the file as `modified`
 
 ### Requirement: Provider explanation
 
@@ -49,7 +49,8 @@ registry.
 #### Scenario: Doctor discovers providers
 
 - **WHEN** `rune doctor` scans a target
-- **THEN** its provider set comes from the registry, not from a fixed list
+- **THEN** the provider targets it accepts are the targets of the registry providers that
+  `rune provider status` lists
 
 ### Requirement: Syntax-preserving provider edits
 

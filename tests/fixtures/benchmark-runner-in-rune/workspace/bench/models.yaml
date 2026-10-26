@@ -1,0 +1,22 @@
+# Proof registry: one deterministic echo model and two coding tool models
+# that the scenes start through stub binaries on PATH.
+models:
+    -   id: echo
+        provider: echo
+        model: echo
+        runs: 1
+        concurrency: 1
+
+    -   id: claude-stub
+        provider: claude-cli
+        model: sonnet
+        runs: 1
+        concurrency: 1
+        enabled: false
+
+    -   id: opencode-stub
+        provider: opencode-cli
+        model: proof/stub
+        runs: 1
+        concurrency: 1
+        enabled: false

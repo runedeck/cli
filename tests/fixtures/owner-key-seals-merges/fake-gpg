@@ -1,0 +1,36 @@
+#!/bin/sh
+# A stand-in for the owner's OpenPGP card in the owner-key-seals-merges
+# proof. It speaks the gpg contract git uses: `-bsau KEY` writes a detached
+# signature that names KEY, and `--verify FILE -` reads that key back and
+# reports a good signature from it. It checks nothing, so it belongs in
+# proofs only.
+arguments="$*"
+mode=""
+key=""
+signature=""
+while [ $# -gt 0 ]; do
+    case $1 in
+        -bsau) mode=sign; key=${2#0x}; shift ;;
+        --verify) mode=verify; signature=$2; shift ;;
+    esac
+    shift
+done
+cat >/dev/null
+case $mode in
+    sign)
+        printf '[GNUPG:] KEY_CONSIDERED %s 2\n[GNUPG:] BEGIN_SIGNING H10\n[GNUPG:] SIG_CREATED D 22 10 00 %s %s\n' \
+            "$key" "$(date +%s)" "$key" >&2
+        printf -- '-----BEGIN PGP SIGNATURE-----\n\nfake-gpg %s\n-----END PGP SIGNATURE-----\n' "$key"
+        ;;
+    verify)
+        key=$(awk '$1 == "fake-gpg" { print $2 }' "$signature")
+        printf 'fake-gpg: good signature from %s\n' "$key" >&2
+        printf '[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG %s Test Signer\n' "$(printf '%s' "$key" | cut -c25-40)"
+        printf '[GNUPG:] VALIDSIG %s 2026-10-06 %s 0 4 0 22 10 00 %s\n[GNUPG:] TRUST_UNDEFINED 0 pgp\n' \
+            "$key" "$(date +%s)" "$key"
+        ;;
+    *)
+        echo "fake-gpg: unsupported call: $arguments" >&2
+        exit 2
+        ;;
+esac

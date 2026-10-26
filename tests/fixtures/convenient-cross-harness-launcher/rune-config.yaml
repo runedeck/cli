@@ -1,0 +1,36 @@
+# Rune config for the convenient-cross-harness-launcher proof. home.sh copies
+# it to .config/rune/config.yaml in the scene directory, and the scene runs
+# rune with HOME=. there.
+env: proof.env
+launch:
+    models:
+        sol:
+            id: gpt-5.6-sol-proof
+            context: 128000
+        sol-early:
+            id: gpt-5.6-sol
+            context: 272000
+            compact: 85
+    profiles:
+        claude:
+            review:
+                env:
+                    PROOF_MODE: review
+                args: [--permission-mode, plan]
+                with: [otel]
+            origin:
+                env:
+                    PROOF_ORIGIN:
+                        from_env: PROOF_ORIGIN
+                    ANTHROPIC_AUTH_TOKEN:
+                        from_env: PROOF_TOKEN
+            absent:
+                env:
+                    ANTHROPIC_AUTH_TOKEN:
+                        from_env: PROOF_ABSENT_TOKEN
+            early:
+                model: sol-early
+            clash:
+                model: sol
+                env:
+                    ANTHROPIC_MODEL: gpt-5.6-sol-mini

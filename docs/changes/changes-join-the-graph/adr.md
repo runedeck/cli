@@ -9,7 +9,7 @@ tags:
     - export
 status: proposed
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-10-26
 author: "@N4M3Z"
 project: rune-cli
 related: []
@@ -27,11 +27,11 @@ change: changes-join-the-graph
 
 ## Context and Problem Statement
 
-`rune graph export` writes a Turtle graph that the deck validates with SHACL shapes. It emits decision records and rules, and for a record only the identifier, the title, `related`, and the source path, each predicate a constant in Rust. The deck now keeps `ontology/context.jsonld`, a JSON-LD context that maps every record and proposal key to its term, and its shapes check `status` and `supersedes`. Its inference register needs changes, capabilities, requirements, and scenarios as nodes, so that a record's `upstream` reference and a scene's scenario resolve inside the graph. A frontmatter change today needs a Rust change. The question is who owns the meaning of a key: the exporter or the deck.
+`rune graph export` writes a Turtle graph that the deck validates with SHACL shapes. The deck keeps `ontology/context.jsonld`, a JSON-LD context that maps every record and proposal key to its term, and its shapes check `status` and `supersedes`. Its inference register needs changes, capabilities, requirements, and scenarios as nodes, so that a record's `upstream` reference and a scene's scenario resolve inside the graph. An exporter that holds its own field list needs a Rust change for each new frontmatter key. The question is who owns the meaning of a key: the exporter or the deck.
 
 ## Considered Options
 
-1. Keep the field list in Rust and add the new keys by hand. Every new key is a cli release.
+1. Hold the field list in Rust and add each key by hand. Every new key is a cli release.
 2. Read the deck's JSON-LD context at run time and emit what it maps. The deck owns the meaning, the exporter owns identity and paths.
 3. Emit the whole frontmatter as `rune:<key>` literals and let the deck map them with SPARQL. Every key leaks, and the shapes still need the real terms.
 
@@ -49,7 +49,7 @@ Option 2.
 
 - [+] A new record key is one line in the deck's context, not a cli release.
 - [+] The deck's status and supersession shapes can move from Warning to Violation, because `rune:status` is in the graph.
-- [+] "Is this change proven on this commit" becomes a query over nodes that exist, once a later change adds proofs and scenes.
+- [+] Scenario nodes give a proof a target, so "is this change proven on this commit" is a query over the graph.
 - [-] The exporter parses YAML frontmatter itself for lists, because the shared list helper joins items with a comma and a stem may contain one.
 - [-] A canonical capability and a delta of the same name share one IRI and merge into one node with two source paths. That is the intended identity, and a shape can still see the two paths.
 - [-] A draft record has no identifier, so the deck's record shape reports it until the shape allows a draft or the draft gets its id at proposal time.

@@ -1,0 +1,4 @@
+name: escape
+description: Name an executable outside the plugin directory
+exec: ../outside.sh
+events: [post-install]

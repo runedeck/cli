@@ -7,7 +7,7 @@ Finalize MUST require a verdict for every block. It MUST update each adopted fil
 #### Scenario: Adoption finalizes
 
 - **WHEN** every block has a verdict and the artifact passes validation
-- **THEN** reviewed sidecars contain final digests and the temporary session is removed
+- **THEN** reviewed sidecars hold the final digests and finalize removes the temporary session
 
 #### Scenario: Replacement store is written
 
@@ -41,12 +41,12 @@ Every reader of an adopt sidecar MUST resolve its subject through one function: 
 
 #### Scenario: Holder file and subject name disagree
 
-- **WHEN** a reviewed skill directory is renamed by hand
+- **WHEN** the maintainer renames a reviewed skill directory by hand
 - **THEN** `rune adopt doctor` and `rune provenance` each exit nonzero naming the recorded name and the holder path
 
 #### Scenario: Subject file is missing
 
-- **WHEN** a reviewed sidecar's subject file was deleted
+- **WHEN** the maintainer deletes the subject file of a reviewed sidecar
 - **THEN** doctor reports the missing file and names `rune repair`
 
 ### Requirement: Reviewed artifacts move with their evidence
@@ -55,23 +55,23 @@ Every reader of an adopt sidecar MUST resolve its subject through one function: 
 
 #### Scenario: Skill moves between directories
 
-- **WHEN** a reviewed skill moves to a new path in the same repository
+- **WHEN** the maintainer runs `rune move` on a reviewed skill to a new path in the same repository
 - **THEN** its sidecars follow, each names the new path, each records the old path and commit, and doctor reports no error
 
 #### Scenario: Destination sits under pending skill
 
 - **WHEN** the destination's ancestor `SKILL.md` carries `review: pending`
-- **THEN** the move is refused and nothing changes
+- **THEN** `rune move` refuses and changes nothing
 
 #### Scenario: Source holds open session
 
 - **WHEN** the source artifact has an open review session
-- **THEN** the move is refused and nothing changes
+- **THEN** `rune move` refuses and changes nothing
 
 #### Scenario: Destination leaves the repository
 
 - **WHEN** the destination resolves to another repository
-- **THEN** the move is refused and nothing changes
+- **THEN** `rune move` refuses and changes nothing
 
 ### Requirement: Repair is the single write path
 
@@ -109,7 +109,7 @@ Every reader of an adopt sidecar MUST resolve its subject through one function: 
 #### Scenario: Adapt verdict arrives without replacement
 
 - **WHEN** the maintainer records adapt with a note only
-- **THEN** the verdict records and a deprecation warning names the next release
+- **THEN** the verdict records and a warning says that adapt without a replacement fails in the next release
 
 ### Requirement: Local directory sources record canonical attribution
 

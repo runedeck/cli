@@ -1,0 +1,16 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "rune": "https://runedeck.ai/ns#",
+    "schema": "https://schema.org/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+
+    "title": "dcterms:title",
+    "status": {"@id": "rune:status", "@type": "@vocab"},
+    "created": {"@id": "schema:dateCreated", "@type": "xsd:date"},
+    "related": {"@id": "dcterms:relation", "@type": "@id", "@container": "@set"},
+    "upstream": {"@id": "schema:isBasedOn", "@type": "@id", "@container": "@set"},
+    "supersedes": {"@id": "dcterms:replaces", "@type": "@id", "@container": "@set"}
+  }
+}

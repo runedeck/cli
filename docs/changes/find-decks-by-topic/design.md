@@ -12,7 +12,7 @@ or executes anything it lists.
   parsing, table and JSON rendering.
 - Response parsing is a pure function over the response body, unit-tested with a fixture.
 - Failures carry `discover.feed_unreachable` or `discover.feed_invalid` with a curl diagnosis
-  fix command. A rate-limit response names the wait.
+  fix command. A 403 or 429 response carries `discover.rate_limited` and names the wait.
 
 ## Risks
 

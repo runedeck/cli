@@ -1,30 +1,22 @@
 ---
 adr: "docs/decisions/CLI-0022 Native bench runner.md"
 status: proposed
+decisions: ["Native bench runner"]
 ---
 
-# Bench Port
+# Benchmark runner in rune
 
 ## Why
 
-The rune ecosystem's benchmark harness lives in runedeck/bench as a bun/TypeScript
-runner. Bench is a component of rune, and the rune CLI is a single Rust binary with
-no runtime dependencies. Carrying a bun toolchain requirement for one subcommand
-breaks that install story. The linked ADR records the decision to port the runner
-natively into rune.
+The rune CLI installs as one Rust binary with no runtime dependencies. A benchmark runner that needs bun and a second checkout cannot live inside that binary, and a bun toolchain for one subcommand breaks the install story. The suite format comes from SkateBench ([T3-Content/skatebench](https://github.com/T3-Content/skatebench)), and runedeck/bench `docs/skatebench-compat.md` specifies the cache, results, and summary formats byte for byte. A small, fully specified protocol can run natively in rune and keep the data that the bun harness already wrote. CLI-0022 records why rune runs the benchmark itself.
 
 ## What Changes
 
-- `rune bench` becomes a native command family: `run`, `report`, `list`,
-  `dashboard`, `doctor`, `audit`.
-- The runner reimplements the SkateBench-compatible protocol documented in
-  runedeck/bench `docs/skatebench-compat.md`, byte-compatible with the existing
-  cache, results, and summary formats so prior results stay resumable.
-- Suite tiers are discovered from a bench workspace: committed `suites/`,
-  local `suites/user/`, and `suites/private/` (renamed from `suites/sealed/`)
-  from a private downstream checkout, wired by config with autodetection.
-- The bun harness stays in runedeck/bench as the reference implementation until
-  parity is verified empirically, then retires.
+- `rune bench` is a native command family: `run`, `report`, `list`, `dashboard`, `doctor`, `audit`.
+- The runner implements the SkateBench-compatible protocol of runedeck/bench `docs/skatebench-compat.md`. Its cache, results, and summary documents match the bun harness byte for byte, so either runner resumes from what the other wrote.
+- Suites come from each bench checkout in three tiers: committed `suites/`, local `suites/user/`, and held-out `suites/private/`. The `bench` config key lists the checkouts, and rune looks at two discovery paths when the key is unset.
+- Coding tool models (`claude-cli`, `codex-cli`, `agy-cli`, `grok-cli`, `opencode-cli`) run through the same arguments and reply parsing as `rune run`.
+- The bun harness in runedeck/bench is the reference implementation that the parity check compares against.
 
 ## Capabilities
 
@@ -32,9 +24,6 @@ natively into rune.
 
 ## Impact
 
-- rune: new `src/cli/bench/` module tree, new dependencies for HTTP and SHA-1.
-- runedeck/bench: `suites/sealed/` renamed to `suites/private/`. README, push
-  guard, and downstream runbook updated. Harness marked as reference.
-- N4M3Z/bench (private downstream): tracked sealed content moves to
-  `suites/private/`.
-- docs: Manual Testing gains a bench section. Walkthroughs gain Bench.md.
+- rune: the `src/cli/bench/` module tree, and dependencies for blocking HTTP and SHA-1.
+- runedeck/bench and its private downstream N4M3Z/bench: the held-out tier directory is `suites/private/`, so their README, push guard, and runbook must name it.
+- docs: `docs/Manual Testing.md` has a bench section, and `docs/walkthroughs/Bench.md` walks through the commands.

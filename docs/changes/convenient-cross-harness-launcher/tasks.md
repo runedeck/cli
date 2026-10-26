@@ -8,6 +8,8 @@
 - [x] 1.6 Add typed model routes and atomic Claude environment derivation
 - [x] 1.7 Share launch resolution without changing the interactive process backend
 - [ ] 1.8 Add deployment freshness reporting after manifests record the source commit
+- [x] 1.9 Define the built-in `sol@claude` and `grok@claude` profiles over the `cliproxy` endpoint
+- [x] 1.10 Let `--direct` drop profile middleware and keep profile environment and arguments
 
 ## 2. Verification
 
@@ -16,3 +18,5 @@
 - [x] 2.3 Test route replacement, generated-setting conflicts, provenance, and redaction
 - [x] 2.4 Verify focused formatting, compilation, Clippy, and launch tests
 - [x] 2.5 Run the default-feature suite after the independent docs work compiles
+- [x] 2.6 Test the built-in catalog, the configured overlay, and the `cliproxy` endpoint override
+- [x] 2.7 Record the behavior proof under `docs/proofs/convenient-cross-harness-launcher/`

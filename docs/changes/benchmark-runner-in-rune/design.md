@@ -1,160 +1,80 @@
-# Bench Port Design
+# Benchmark runner in rune design
 
 ## Approach
 
-Native Rust reimplementation of the bench runner inside the rune binary, against
-the verified protocol contract in runedeck/bench `docs/skatebench-compat.md`
-(SkateBench upstream `T3-Content/skatebench` @ a4d54c2). The alternatives were
-wrapping the bun harness as a subprocess (keeps a bun dependency and a second
-repo on the critical path) and auto-fetching the harness into a cache (adds
-network and version-pinning machinery for the same dependency). The port wins
-because rune stays a single static binary and bench data formats are small,
-stable, and fully specified.
+rune runs the benchmark natively inside its own binary, against the protocol contract in runedeck/bench `docs/skatebench-compat.md` (SkateBench upstream `T3-Content/skatebench` @ a4d54c2). The alternatives were to wrap the bun harness as a subprocess, which keeps a bun dependency and a second repository on the critical path, or to fetch the harness into a cache, which adds network and version-pinning work for the same dependency. The native runner wins because rune stays a single static binary and the bench data formats are small, stable, and fully specified.
 
-Concurrency uses OS threads with a work queue (no async runtime). HTTP providers
-use a blocking HTTP client. CLI providers use `std::process::Command`. Both fit
-the existing `Result<T, String>` error style.
+Concurrency uses OS threads with a work queue and no async runtime. HTTP models use a blocking HTTP client. Coding tool models use the process layer of `rune run`. Both fit the `Result<T, String>` error style of the module.
 
-## Command surface
+## Commands
 
 ```text
 rune bench run --suite <path|name> [--models a,b] [--runs N] [--version V]
                [--config models.yaml] [--results DIR] [--timeout SECS]
-               [--stagger MS] [--judge-model ID] [--human-scores PATH]
-rune bench report --suite <path|name> [--models a,b] [--version V] [...]
+               [--stagger MS]
+rune bench report --suite <path|name> [--models a,b] [--version V]
+                  [--config models.yaml] [--results DIR]
 rune bench list [--config models.yaml]           # models and discovered suites
-rune bench dashboard [--out PATH]                # build artifacts/dashboard.html
-rune bench doctor                                # workspace + provider readiness
-rune bench audit [--suite <path|name>]           # suite self-check before shipping
+rune bench dashboard [--results DIR] [--out PATH]
+rune bench doctor                                # workspace and model readiness
+rune bench audit [--suite <path|name>]           # suite self-check
 ```
 
-`--suite` accepts a path or a bare suite name resolved against the discovered
-suite tiers (committed, user, private), with the 2-char prefix-matching rules
-the spec commands already use.
+`--suite` accepts a path or a bare suite name. A value that contains a path separator or ends in `.json` is a path. A bare name matches the exact stem first, then a unique prefix of at least two characters, and an ambiguous prefix lists the candidates with their tiers.
 
 ## Bench workspace resolution
 
-`bench.root` in user config points at a bench checkout (default discovery:
-`~/Developer/runedeck/bench`, then a `bench/` sibling of the deck). Inside it:
+The `bench` key in `~/.config/rune/config.yaml` lists bench checkouts in priority order. When the key is unset, rune uses the first checkout it finds beside the deck (`<deck>/../bench`) or at `~/Developer/runedeck/bench`. A directory counts as a checkout when it holds `suites/` and `bench/`. Inside each checkout:
 
-- `suites/`: committed sample suites (public).
-- `suites/user/`, local, gitignored.
-- `suites/private/`: held-out suites, tracked only in a private downstream
-  checkout. Autodetected when present, or pointed at directly via
-  `bench.private_root` when the private checkout lives elsewhere.
-- `bench/models.yaml`: the model registry (unchanged format).
-- `results/`: cache and outputs (unchanged layout).
+- `suites/`: committed sample suites.
+- `suites/user/`: local suites, ignored by Git.
+- `suites/private/`: held-out suites, tracked only in a private downstream checkout.
+- `bench/models.yaml`: the model registry, read from the first checkout.
+- `bench/results/`: cache and outputs.
 
-rune never copies private suite content into the public workspace: a run of a
-private-tier suite defaults its results root (cache, results, reports) to
-`<private_root>/bench/results` inside the private checkout, and the visualizer
-copy is skipped. The public dashboard scans only the public results root. A
-private dashboard is built explicitly with `--results` and `--out` pointing
-into the private checkout. `suiteId` and `version` are validated as single
-path components (no separators, no dot-navigation) before they become results
-directories.
+A suite stem from an earlier checkout hides the same stem in a later one. rune never copies private suite content into the public workspace. A run of a suite defaults its results root to `bench/results` inside the checkout that owns the suite, and a run of a private-tier suite skips the visualizer copy. The public dashboard scans only the results root of the first checkout. A private dashboard needs `--results` and `--out` that point into the private checkout. rune validates `suiteId` and `version` as single path components (no separators, no dot-navigation, not `cache`) before they become results directories.
 
 ## Protocol parity (QA suites)
 
-Exact reimplementation of the contract, in `src/cli/bench/`:
+The modules in `src/cli/bench/` implement the contract:
 
-- `suite.rs`: serde types + validation matching the zod schema. Unknown fields
-  ignored. SuiteId derivation (id, file stem, slugified name).
-- `scoring.rs`: `is_correct`: lowercase substring, negatives first and
-  overriding. The 11 upstream test cases replicated.
-- `cache.rs`: signature normalization (trim, lowercase+sort answers), SHA-1
-  12-hex hash, cache filename and payload with exact key order, gather/resume
-  from both prior results and cache entries, system-prompt mismatch hard error.
-- `run.rs`: per-model plan (reuse then execute), fair-interleave ordering,
-  worker pool of `concurrency` threads with `stagger_ms` start offsets,
-  per-invoke timeout, errors never cached.
-- `report.rs`: results JSON, markdown report, summary JSON with the upstream
-  field set and sort (successRate desc, averageDuration asc, error runs in the
-  denominator). JSON pretty-printed with 2-space indent to match
-  `JSON.stringify(..., null, 2)`.
-- `registry.rs`: models.yaml parsing with the same hard errors (duplicate ids,
-  temperature on CLI providers, base_url required for openai-compatible,
-  `${ENV}` expansion for enabled models only), provider-specific concurrency
-  defaults.
+- `suite.rs`: serde types and validation that match the zod schema. Unknown fields are ignored. SuiteId comes from the id, then the file stem, then the slugified name.
+- `scoring.rs`: `is_correct` is a lowercase substring match, with negatives checked first and overriding. The 11 upstream test cases are replicated.
+- `cache.rs`: signature normalization (trim, lowercase and sort answers), SHA-1 12-hex hash, cache filename and payload with exact key order, and resume from both prior results and cache entries, with a hard error on a system-prompt mismatch.
+- `run.rs`: per-model plan (reuse, then execute), fair-interleave ordering, a worker pool of `concurrency` threads with `stagger_ms` start offsets, per-invoke timeout, and errors that are never cached.
+- `report.rs`: results JSON, markdown report, and summary JSON with the upstream field set and sort (successRate descending, averageDuration ascending, error runs in the denominator). JSON is pretty-printed with a 2-space indent to match `JSON.stringify(..., null, 2)`.
+- `registry.rs`: models.yaml parsing with the same hard errors (duplicate ids, temperature on coding tool models, `base_url` required for openai-compatible) and provider-specific concurrency defaults. `run` expands `${ENV}` in `base_url` for the models it selects.
 
-JSON byte-compatibility notes: serde_json's pretty printer matches
-`JSON.stringify(..., null, 2)` output for the value shapes used here. The
-optional-field matrix is exact: `version` is always present (null when
-unversioned), `negative_answers`/`negativeAnswers`, `result`, `error`, and
-`humanPending` are omitted when absent, never null. Numbers go through a
-`JsNumber` serializer: integer-valued floats below 1e21 print as plain
-integers (ECMAScript decimal notation), non-integral values use serde_json's
-shortest form: which diverges from ECMAScript only in its exponential zones
-(below ~1e-6, at 1e21 and above). No emitted metric reaches those zones while
-provider costs are zero, and the compat spec records the limitation.
+JSON byte compatibility: the serde_json pretty printer matches `JSON.stringify(..., null, 2)` for the value shapes used here. The optional-field matrix is exact. `version` is always present (null when unversioned), and `negative_answers`/`negativeAnswers`, `result`, `error`, and `humanPending` are omitted when absent (no null placeholder). Numbers go through a `JsNumber` serializer. Integer-valued floats below 1e21 print as plain integers (ECMAScript decimal notation), and other values use the shortest form of serde_json. That form differs from ECMAScript only in its exponential zones (below about 1e-6, and at 1e21 and above). No emitted metric reaches those zones while provider costs are zero, and the compat spec records the limitation.
 
-Two protocol clarifications the port pins down:
+The port pins down two protocol details:
 
-- The parity target is this repo's TS runner, which processes models
-  sequentially with a per-model worker pool (fair-interleave queue by
-  runNumber then testIndex), not upstream's single global queue. Record order
-  under concurrency above one follows completion order in both
-  implementations, so byte parity holds for deterministic fixtures
-  (single-worker or reuse-only runs).
-- Both implementations gather reuse candidates from prior results files and
-  cache entries, and a fresh run appears in both sources, so a candidate list
-  can hold duplicates of one execution. Reuse beyond the actually executed
-  run count serves duplicated samples. Fixing that requires a deduplication
-  identity and changes both runners together (tracked as a follow-up, not
-  fixed unilaterally here).
+- The parity target is the TS runner of runedeck/bench. It processes models one after another with a per-model worker pool (fair-interleave queue by runNumber, then testIndex), where upstream uses one global queue. Under concurrency above one, record order is completion order in both implementations, so byte parity holds for deterministic fixtures (single-worker or reuse-only runs).
+- Both implementations gather reuse candidates from prior results files and cache entries, and one fresh run appears in both sources. rune cancels one results-origin candidate for each cache entry with the same model and text, so it reuses each execution once. The bun harness keeps both candidates, so on resume it can reuse one sample twice where rune executes a new run.
 
-## Providers
+## Coding tool models
 
-`providers/` mirrors the TS set: `echo` (deterministic, for tests and smoke),
-`ollama` and `openai_compat` (blocking HTTP, `/v1/chat/completions`, api key
-from `api_key_env`), and `claude`, `codex`, `agy`, `grok`, `opencode` CLI
-providers (subprocess print modes, same argv as the TS versions, readiness =
-binary on PATH). Timeouts kill the subprocess or abandon the HTTP call.
+`runner.rs` holds the model backends: `echo` (deterministic, for tests and smoke runs), `ollama` and `openai-compatible` (blocking HTTP, `/v1/chat/completions`, API key from `api_key_env`), and the `claude-cli`, `codex-cli`, `agy-cli`, `grok-cli`, and `opencode-cli` coding tools. A coding tool model runs read-only through the same arguments and reply parsing as `rune run`, with the binary from `<TOOL>_BIN` or `PATH`. Readiness runs the tool's version, login, or model-list probe. Timeouts kill the subprocess or abandon the HTTP call.
 
 ## Judged suites
 
-Port of `judged/`: suite schema (`type: "judged"`), artifact collection,
-deterministic check scripts, LLM judge over rubric criteria, `kind: "human"`
-criteria folded from `human/<suiteId>.json`. Same results pipeline and output
-shapes as the TS implementation.
+The judged suite type (`type: "judged"`) with artifact collection, deterministic check scripts, an LLM judge over rubric criteria, and `kind: "human"` criteria stays in the bun harness. `rune bench run` and `rune bench report` refuse a judged suite and name the bun harness, and `rune bench audit` skips it.
 
 ## Dashboard
 
-`dashboard.rs` ports `build-dashboard.ts`: embed the template
-(`dashboard-template.html` carried in the bench workspace, not in the rune
-binary, so the dashboard evolves with the data repo), scan `results/`, inject
-the results JSON, write `artifacts/dashboard.html` (gitignored, it embeds
-answers).
+`dashboard.rs` builds the dashboard as `build-dashboard.ts` does. It reads the template `bench/scripts/dashboard-template.html` from the first checkout, so the dashboard changes with the data repository and the rune binary carries no template. It scans `results/`, injects the results JSON, and writes `artifacts/dashboard.html`, which Git ignores because it embeds answers.
 
 ## Doctor and audit
 
-- `doctor`: bench workspace found, suite tiers readable, models.yaml parses,
-  per-provider readiness (binary on PATH / endpoint reachable), private tier
-  wiring status.
-- `audit`: the README-documented suite checks: canonical answers self-score,
-  negatives must not substring-collide with answers, dangerously short tokens
-  flagged. Run before shipping a suite.
+- `doctor`: the resolved checkouts, the private tier of each, the suites in each tier, registry validity, and the readiness of each enabled model.
+- `audit`: the suite checks the bench README documents. Canonical answers must score as correct, negatives must not be substrings of answers, and tokens shorter than four characters are flagged. Run it before a suite is published.
 
-## Naming: sealed → private
+## Held-out tier name
 
-The held-out tier renames from `suites/sealed/` to `suites/private/` across the
-public repo (gitignore, pre-push guard path regex, README, runbook doc) and the
-private downstream (git mv of tracked content, MANIFEST regenerated). The push
-guard's canary regex matches values, not tier names, so existing canaries stay
-valid. New suites use `canary: rune:bench:private:<uuid>`.
+rune reads the held-out tier from `suites/private/`. The public bench repository (gitignore, pre-push guard path regex, README, runbook) and the private downstream (tracked content, MANIFEST) must use the same directory name. The canary regex of the push guard matches values, not tier names, so existing canaries stay valid.
 
 ## Risks
 
-- **Float formatting drift** between serde_json and JS `JSON.stringify` breaks
-  byte-parity of summaries. Guard: the parity task runs both runners on the
-  same fixtures (echo model) and diffs outputs. Where formatting differs, a
-  custom serializer pins the JS form.
-- **Cache misread corrupts resume**: a wrong signature or filename scheme
-  silently orphans prior results. Guard: cache tests ported from the bun suite
-  plus a cross-runner resume test (bun writes cache, rune resumes from it, and
-  vice versa).
-- **CLI provider drift**: harness argv changes upstream. Guard: providers carry
-  the exact argv in one place each. Doctor reports the binary version.
-- **Scope**: judged suites and dashboard are large. Guard: tasks land QA
-  pipeline first (run/report/list on QA suites is the parity core), judged and
-  dashboard follow behind the same flag surface.
+- **Float formatting drift** between serde_json and JS `JSON.stringify` breaks byte parity of summaries. Guard: the parity task runs both runners on the same fixtures with the echo model and diffs the outputs. Where formatting differs, a custom serializer pins the JS form.
+- **Cache misread corrupts resume**: a wrong signature or filename scheme silently orphans prior results. Guard: cache tests ported from the bun suite and a cross-runner resume test (bun writes the cache and rune resumes from it, and the reverse).
+- **Coding tool drift**: a tool changes its arguments upstream. Guard: each tool keeps its exact arguments in one place, and doctor reports the binary version.

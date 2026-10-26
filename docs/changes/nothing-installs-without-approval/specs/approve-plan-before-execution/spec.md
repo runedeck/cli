@@ -31,17 +31,18 @@ passes.
 
 ### Requirement: First-run nudge
 
-Bare `rune` without a user config MUST print one line that names `rune setup` and MUST write
-nothing.
+Bare `rune` MUST print one line that names `rune setup` when no user config exists and
+`RUNE_DECK` names no deck, and MUST write nothing.
 
 #### Scenario: Bare invocation finds no user config
 
 - **WHEN** `rune` runs without arguments and no user config exists
-- **THEN** the output contains `next: rune setup` and no file changes
+- **THEN** the root help prints, its last line is a `next` row that names `rune setup`, and no
+  file changes
 
 ### Requirement: Agent guide
 
-The repository MUST provide `docs/agent-guide.md` that starts with read-only commands and requires
+The repository MUST hold `docs/agent-guide.md` that starts with read-only commands and requires
 approval before each write step.
 
 #### Scenario: Guide orders its steps

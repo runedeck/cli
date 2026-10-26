@@ -2,12 +2,12 @@
 
 ### Requirement: Seal Commit
 
-The signer MUST create an empty commit signed with the owner's OpenPGP key on the current branch, and push it to the branch's remote. So the owner's key attests the exact state under review.
+The signer MUST create an empty commit signed with the owner's OpenPGP key on the current branch, verify its signature, and push the branch to its push remote, so the owner's key attests the exact state under review.
 
 #### Scenario: Sealing a pull request branch
 
-- **WHEN** the owner seals a pull request branch after reviewing it
-- **THEN** an empty signed commit with the seal subject is added to the branch and pushed, and its signature verifies against the repository's trusted-key file
+- **WHEN** the owner seals a checked-out pull request branch after reviewing it
+- **THEN** an empty commit with the seal subject and the owner's signature heads the branch and its remote copy, and its signature verifies against the repository's trusted-key file
 
 #### Scenario: Unsigned environment
 
@@ -16,27 +16,27 @@ The signer MUST create an empty commit signed with the owner's OpenPGP key on th
 
 ### Requirement: Seal Freshness
 
-A seal MUST attest only the history beneath it. Every verification step MUST treat a branch whose latest commit is not the owner-verified seal as unsealed.
+A seal MUST attest only the history beneath it. The verification step MUST judge a branch by its latest commit alone, so a commit above the seal without a signature from a trusted key leaves the branch unsealed.
 
 #### Scenario: Push after seal
 
-- **WHEN** any commit is added to the branch after the seal commit
-- **THEN** the branch counts as unsealed until the owner seals again
+- **WHEN** an agent commits to the branch above the seal without the owner's signature
+- **THEN** verification of the branch fails until the owner seals again
 
 ### Requirement: Tag Sealing
 
-When the owner names a tag, the signer MUST create the owner-signed annotated tag on the named commit, the current head by default. It MUST verify the tag locally and push only that tag. One ceremony covers release tags and post-merge seals.
+When the owner names a tag, the signer MUST create an annotated tag signed with the owner's key on the named commit, the current head by default. It MUST verify the tag locally and push only that tag.
 
 #### Scenario: Release tag
 
 - **WHEN** the owner tags the release commit as `v1.2.3`
-- **THEN** the annotated tag is created signed, git's tag verification passes, and exactly that one tag reference is pushed
+- **THEN** the signed annotated tag exists, git's tag verification passes, and exactly that one tag reference is pushed
 
 ### Requirement: Verification
 
-The owner's verification step MUST report whether a ref's latest commit or a named tag carries a valid signature. The signature counts only when it matches a key in the repository's trusted-key file. The step MUST exit nonzero when no valid matching signature exists.
+The owner's verification step MUST report whether a ref's latest commit or a named tag carries a valid signature. The signature counts only when it comes from a key that the repository's trusted-key file pins. The step MUST exit nonzero when no valid matching signature exists.
 
 #### Scenario: Foreign signature
 
 - **WHEN** the ref is signed by a key absent from the trusted-key file
-- **THEN** verification fails and names the signing fingerprint
+- **THEN** verification fails and names the primary fingerprint of the signing key

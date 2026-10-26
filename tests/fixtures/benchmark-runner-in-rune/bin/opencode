@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stand-in for OpenCode: answer the readiness probe, then print the JSON events
+# of a session with two assistant messages. The first message names the wrong
+# trick, the last one names the right trick across two text parts.
+if [ "$1" = "--version" ]; then
+    echo "0.0.0 (proof stub)"
+    exit 0
+fi
+echo '{"type":"text","part":{"messageID":"msg-1","text":"heelflip"}}'
+echo '{"type":"text","part":{"messageID":"msg-2","text":"kick"}}'
+echo '{"type":"text","part":{"messageID":"msg-2","text":"flip"}}'
+echo '{"type":"step_finish","part":{"tokens":{"output":3}}}'

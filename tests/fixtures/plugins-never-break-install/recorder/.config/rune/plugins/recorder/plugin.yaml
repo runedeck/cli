@@ -1,0 +1,4 @@
+name: recorder
+description: Append each event to events.jsonl
+exec: run.sh
+events: [post-install]

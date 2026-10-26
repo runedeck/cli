@@ -1,0 +1,4 @@
+name: syncer
+description: Mirror deployed runes to a second machine
+exec: run.sh
+events: [post-install]

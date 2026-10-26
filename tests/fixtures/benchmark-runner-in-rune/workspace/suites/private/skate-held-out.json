@@ -1,0 +1,12 @@
+{
+    "id": "skate-held-out",
+    "name": "Skate held-out",
+    "system_prompt": "Name the skateboard trick. Reply with the trick name only.",
+    "tests": [
+        {
+            "prompt": "The back foot scoops the tail and the board turns half a circle under the rider. Which trick is it?",
+            "answers": ["pop shove-it", "pop shuvit", "shove-it"],
+            "negative_answers": ["frontside"]
+        }
+    ]
+}
