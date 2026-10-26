@@ -1,17 +1,26 @@
 ## every-scenario-has-proof#proof-readme-is-the-source/proof-directory-carries-another-change-s-name
 kind: check
-$# the proof README in the directory canvas-a names the change other-change-two
-$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/two-changes" repo && sed -n 3p repo/docs/proofs/canvas-a/README.md'
+$# the fixture declares the changes canvas-a and other-change-two, and the proof README in the directory canvas-a names other-change-two
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/two-changes" repo && ls repo/docs/changes repo/docs/proofs && sed -n 3p repo/docs/proofs/canvas-a/README.md'
+  repo/docs/changes:
+  canvas-a
+  other-change-two
+  sample-change-one
+
+  repo/docs/proofs:
+  canvas-a
   change: other-change-two
 $# the proof of other-change-two is the README in canvas-a
 $ rune proof run other-change-two --check --source repo
-  /private/tmp/claude-501/rune-proof-39329-every-scenario-has-proof-proof-readme-is-the-source-proof-directory-carries-another-change-s-name-2fe47f80-2-0/repo/docs/proofs/canvas-a/README.md: transcript and head hold
-$# no proof names canvas-a, so canvas-a has none
+  /private/tmp/claude-501/rune-proof-96488-every-scenario-has-proof-proof-readme-is-the-source-proof-directory-carries-another-change-s-name-1703b558-2-0/repo/docs/proofs/canvas-a/README.md: transcript and head hold
+$# canvas-a is a declared change, and no proof names it, so canvas-a has none
 $ rune proof run canvas-a --check --source repo
   fatal: no proof names change `canvas-a`; run `rune proof scaffold canvas-a` first
-$# the graph links the proof to other-change-two, and no node names a change canvas-a
+$# the graph has a node for the change canvas-a, links the one proof to other-change-two, and links no proof to canvas-a
 $ sh -c 'rune graph export --source repo > graph.ttl'
-$ awk '/proof\/canvas-a> a rune:Proof/,/rune:sourcePath/' graph.ttl
+$ grep -c '^<https://runedeck.ai/id/change/canvas-a> a rune:Change ;' graph.ttl
+  1
+$ awk '/ a rune:Proof ;/,/rune:sourcePath/' graph.ttl
   <https://runedeck.ai/id/proof/canvas-a> a rune:Proof ;
       dcterms:identifier "canvas-a" ;
       rune:change <https://runedeck.ai/id/change/other-change-two> ;
@@ -19,8 +28,6 @@ $ awk '/proof\/canvas-a> a rune:Proof/,/rune:sourcePath/' graph.ttl
       rune:transcript "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ;
       rune:transcriptMatches true ;
       rune:sourcePath "docs/proofs/canvas-a/README.md" .
-$ grep -c 'id/change/canvas-a' graph.ttl
-  0
 
 ## every-scenario-has-proof#skeleton-is-written-first/readme-already-exists
 kind: check
@@ -57,7 +64,7 @@ $ sh -s
 < cp -f repo/docs/proofs/sample-change-one/README.md before.md
 $# the author asks for the skeleton, and the runner refuses and names the file
 $ rune proof scaffold sample-change-one --source repo
-  fatal: /private/tmp/claude-501/rune-proof-39329-every-scenario-has-proof-skeleton-is-written-first-readme-already-exists-33805768-11-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
+  fatal: /private/tmp/claude-501/rune-proof-96488-every-scenario-has-proof-skeleton-is-written-first-readme-already-exists-1a25bda8-11-0/repo/docs/proofs/sample-change-one/README.md exists; a filled scene is never overwritten
 $# the README keeps its bytes, and nothing else was written
 $ sh -c 'cmp before.md repo/docs/proofs/sample-change-one/README.md && ls -A repo/docs/proofs repo/docs/proofs/sample-change-one'
   repo/docs/proofs:
@@ -65,4 +72,291 @@ $ sh -c 'cmp before.md repo/docs/proofs/sample-change-one/README.md && ls -A rep
 
   repo/docs/proofs/sample-change-one:
   README.md
+
+## console-fences-prove-scenarios#proof-frontmatter-is-the-record/instruction-scene-without-a-model
+kind: check
+$# the proof in the bad-instruction fixture declares an instruction scene and names no model
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/bad-instruction" repo && sed -n "/^scenes:/,/^---/p" repo/docs/proofs/bad/README.md'
+  scenes:
+    - scenario: sample-capability-one#thing-holds/version-prints
+      kind: instruction
+  ---
+$# the validator fails the proof, and names the scenario key and the missing field
+$ rune spec validate --source repo
+  error[proof-frontmatter-invalid]: repo/docs/proofs/bad/README.md: sample-capability-one#thing-holds/version-prints: an instruction scene names the model that ran it
+$# with a model under that scene, the same proof passes
+$ sh -c 'awk "{print} /^    kind: instruction\$/ {print \"    model: claude-opus-5-5\"}" repo/docs/proofs/bad/README.md > fixed.md && mv fixed.md repo/docs/proofs/bad/README.md && rune spec validate --source repo'
+  specification validation passed
+
+## console-fences-prove-scenarios#run-executes-every-executable-scene/scene-names-a-command-the-runner-cannot-find
+kind: check
+$# the second scene of the filled fixture runs `nonesuch --flag`, which no PATH holds
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled" repo && grep -n nonesuch repo/docs/proofs/sample-change-one/README.md && ! command -v nonesuch'
+  25:$ nonesuch --flag
+$# the run fails, and names the scenario key and the command
+$ rune proof run sample-change-one --source repo
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... unproven: command not found: nonesuch
+  2 scenes, 1 proven, 1 unproven; transcript 234a8d38e1a7
+$# the frontmatter marks that scene unproven and the other one check
+$ sed -n '/^scenes:/,/^---/p' repo/docs/proofs/sample-change-one/README.md
+  scenes:
+  - scenario: sample-capability-one#thing-holds/version-prints
+    kind: check
+  - scenario: sample-capability-one#thing-holds/missing-tag-fails
+    kind: unproven
+  ---
+
+## console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input
+kind: check
+$# a proof whose one fence holds `$ sh -s` and the lines `< echo one` and `< echo two`
+$ sh -s
+< set -e
+< cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/one-change" repo
+< mkdir -p repo/docs/proofs/sample-change-one
+< cat > repo/docs/proofs/sample-change-one/README.md <<'EOF'
+< ---
+< type: proof
+< change: sample-change-one
+< recorded: 2026-10-26
+< transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+< scenes:
+< - scenario: sample-capability-one#thing-holds/version-prints
+<   kind: unproven
+< ---
+<
+< ## sample-capability-one#thing-holds/version-prints
+<
+< ```console
+< $ sh -s
+< < echo one
+< < echo two
+< one
+< two
+< ```
+< EOF
+$# the step prints one and two, so the scene passes
+$ rune proof run sample-change-one --source repo
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  1 scenes, 1 proven, 0 unproven; transcript f634b14f4592
+$# the transcript section records both `<` lines after the command and before the output, shown here behind `| `
+$ sed -e 's/^/| /' -e 's/ *$//' repo/docs/proofs/sample-change-one/proof.txt
+  | ## sample-capability-one#thing-holds/version-prints
+  | kind: check
+  | $ sh -s
+  | < echo one
+  | < echo two
+  |   one
+  |   two
+  |
+
+## console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/input-line-before-any-command
+kind: check
+$# the second fence of the input-first fixture starts with `< echo one`, on line 25 of its README
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/input-first" repo && grep -n "echo one" repo/docs/proofs/sample-change-one/README.md'
+  25:< echo one
+$# the run refuses the fence and names that line
+$ rune proof run sample-change-one --source repo
+  fatal: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-a-step-reads-its-input-from-the-fence-input-line-before-any-command-265840f0-35-0/repo/docs/proofs/sample-change-one/README.md: line 25: an input line `< text` comes after the command it feeds
+$# no scene ran, so no transcript was written
+$ ls repo/docs/proofs/sample-change-one
+  README.md
+
+## console-fences-prove-scenarios#every-scene-starts-clean/scenes-do-not-share-a-directory
+kind: check
+$# in the isolation fixture, the first scene writes note.txt and lists it, and the second scene lists its directory and expects nothing
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/isolation" repo && rune proof run sample-change-one --source repo'
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
+  2 scenes, 2 proven, 0 unproven; transcript d1ead2a8ed95
+$# the transcript shows note.txt in the first scene, and nothing under the second scene's `ls`, shown here behind `| `
+$ sed -e 's/^/| /' -e 's/ *$//' repo/docs/proofs/sample-change-one/proof.txt
+  | ## sample-capability-one#thing-holds/version-prints
+  | kind: check
+  | $ sh -c 'echo x > note.txt && ls'
+  |   note.txt
+  |
+  | ## sample-capability-one#thing-holds/missing-tag-fails
+  | kind: check
+  | $ ls
+  |
+
+## console-fences-prove-scenarios#the-transcript-binds-the-claim/scene-key-edited-after-the-run
+kind: check
+$# the edited-key fixture, recorded: both scenes pass, and the check holds
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/edited-key" repo && rune proof run sample-change-one --source repo && rune proof run sample-change-one --check --source repo'
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
+  2 scenes, 2 proven, 0 unproven; transcript 7f081dd7f2cc
+  /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-the-transcript-binds-the-claim-scene-key-edited-after-the-run-2ba90850-46-0/repo/docs/proofs/sample-change-one/README.md: transcript and head hold
+$# the frontmatter renames the recorded key version-prints to version-printed, and the transcript stays as the run wrote it
+$ sh -s
+< set -e
+< proof=repo/docs/proofs/sample-change-one
+< cp -f "$proof/README.md" recorded.md
+< cp -f "$proof/proof.txt" recorded.txt
+< sed 's|^- scenario: sample-capability-one#thing-holds/version-prints$|- scenario: sample-capability-one#thing-holds/version-printed|' recorded.md > "$proof/README.md"
+< cmp recorded.txt "$proof/proof.txt"
+< sed -n '/^scenes:/,/^---/p' "$proof/README.md"
+  scenes:
+  - scenario: sample-capability-one#thing-holds/version-printed
+    kind: check
+  - scenario: sample-capability-one#thing-holds/missing-tag-fails
+    kind: check
+  ---
+$# the digest still holds, and the check refuses the proof and names the renamed key, whose section the transcript does not hold
+$ rune proof run sample-change-one --check --source repo
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-the-transcript-binds-the-claim-scene-key-edited-after-the-run-2ba90850-46-0/repo/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/version-printed is check but has no section
+$# from the recorded README again, the frontmatter and the headings swap the two recorded keys, and the transcript stays as it was
+$ sh -s
+< set -e
+< proof=repo/docs/proofs/sample-change-one
+< sed -e 's|thing-holds/version-prints|thing-holds/swapped|' -e 's|thing-holds/missing-tag-fails|thing-holds/version-prints|' -e 's|thing-holds/swapped|thing-holds/missing-tag-fails|' recorded.md > "$proof/README.md"
+< cmp recorded.txt "$proof/proof.txt"
+< sed -n '/^scenes:/,/^---/p' "$proof/README.md"
+  scenes:
+  - scenario: sample-capability-one#thing-holds/missing-tag-fails
+    kind: check
+  - scenario: sample-capability-one#thing-holds/version-prints
+    kind: check
+  ---
+$# the check refuses the proof and names each section that disagrees with the scene now under its key
+$ rune proof run sample-change-one --check --source repo
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-the-transcript-binds-the-claim-scene-key-edited-after-the-run-2ba90850-46-0/repo/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/missing-tag-fails runs different commands in the README than its section records
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-the-transcript-binds-the-claim-scene-key-edited-after-the-run-2ba90850-46-0/repo/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/version-prints runs different commands in the README than its section records
+
+## console-fences-prove-scenarios#the-transcript-binds-the-claim/instruction-scene-never-run
+kind: check
+$# in the instruction-pending fixture, missing-tag-fails is an instruction scene with a model, and the transcript holds no section for it
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/instruction-pending" repo && sed -n "/^scenes:/,/^---/p" repo/docs/proofs/sample-change-one/README.md && grep -c missing-tag-fails repo/docs/proofs/sample-change-one/proof.txt'
+  scenes:
+    - scenario: sample-capability-one#thing-holds/version-prints
+      kind: check
+    - scenario: sample-capability-one#thing-holds/missing-tag-fails
+      kind: instruction
+      model: claude-opus-5-5
+  ---
+  0
+$# the check names the scene as one without a section
+$ rune proof run sample-change-one --check --source repo
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-the-transcript-binds-the-claim-instruction-scene-never-run-320269f8-54-0/repo/docs/proofs/sample-change-one/README.md: sample-capability-one#thing-holds/missing-tag-fails is instruction but has no section
+$# the generator emits a proves edge for version-prints alone, and none for the instruction scene
+$ sh -c 'rune graph export --source repo > graph.ttl'
+$ grep 'rune:proves' graph.ttl
+      rune:proves <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+$ awk '/rune:scenario <[^>]*thing-holds\/missing-tag-fails>/,/rune:recordedInTranscript/' graph.ttl
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> ;
+          rune:kind "instruction" ;
+          rune:recordedWith "claude-opus-5-5" ;
+          rune:recordedInTranscript false
+$# a run keeps it out of the transcript and counts it unproven
+$ rune proof run sample-change-one --source repo
+  sample-capability-one#thing-holds/version-prints ... ok (check)
+  sample-capability-one#thing-holds/missing-tag-fails ... instruction (no section yet; run --instruction)
+  2 scenes, 1 proven, 1 unproven; transcript 234a8d38e1a7
+
+## console-fences-prove-scenarios#check-refuses-drift/transcript-drifted-after-the-run
+kind: check
+$# in the drifted fixture, the frontmatter records one digest, and proof.txt hashes to another
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/drifted" repo && sed -n 5p repo/docs/proofs/sample/README.md && shasum -a 256 repo/docs/proofs/sample/proof.txt'
+  transcript: b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09
+  3a4d3e47be601c20ea89e6b7f51e9b07c69f22e14e82be70bec981b1d7406dae  repo/docs/proofs/sample/proof.txt
+$# the check refuses the proof and names both digests, and the scene the drifted file no longer records
+$ rune proof run sample-change-one --check --source repo
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-check-refuses-drift-transcript-drifted-after-the-run-371593e8-63-0/repo/docs/proofs/sample/README.md: transcript drifted: recorded b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09 computed 3a4d3e47be601c20ea89e6b7f51e9b07c69f22e14e82be70bec981b1d7406dae
+  error[proof-check]: /private/tmp/claude-501/rune-proof-96488-console-fences-prove-scenarios-check-refuses-drift-transcript-drifted-after-the-run-371593e8-63-0/repo/docs/proofs/sample/README.md: sample-capability-one#thing-holds/version-prints is check but has no section
+
+## console-fences-prove-scenarios#the-run-records-its-own-cast/cast-written-from-the-captured-output
+kind: check
+$# a proof with one scene declared run and one declared unproven
+$ sh -s
+< set -e
+< cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/one-change" repo
+< mkdir -p repo/docs/proofs/sample-change-one
+< cat > repo/docs/proofs/sample-change-one/README.md <<'EOF'
+< ---
+< type: proof
+< change: sample-change-one
+< recorded: 2026-10-26
+< transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+< scenes:
+< - scenario: sample-capability-one#thing-holds/version-prints
+<   kind: run
+< - scenario: sample-capability-one#thing-holds/missing-tag-fails
+<   kind: unproven
+< ---
+<
+< ## sample-capability-one#thing-holds/version-prints
+<
+< ```console
+< $ printf 'captured line one\n'
+< captured line one
+< ```
+<
+< ## sample-capability-one#thing-holds/missing-tag-fails
+<
+< ```console
+< $ printf 'captured line two\n'
+< captured line two
+< ```
+< EOF
+$# both fences pass on a PATH that holds no asciinema, the interactive recorder
+$ sh -c 'r=$(command -v rune) && PATH=/usr/bin:/bin && export PATH && ! command -v asciinema && "$r" proof run sample-change-one --source repo'
+  sample-capability-one#thing-holds/version-prints ... ok (run)
+  sample-capability-one#thing-holds/missing-tag-fails ... ok (check)
+  2 scenes, 2 proven, 0 unproven; transcript c69596ad8ced
+$# the cast file is beside the README, and its header is asciinema version 2
+$ sh -c 'LC_ALL=C ls repo/docs/proofs/sample-change-one'
+  README.md
+  proof.cast
+  proof.txt
+$ sh -c 'head -n 1 repo/docs/proofs/sample-change-one/proof.cast | jq -c "{version}"'
+  {"version":2}
+$# its events carry the output each scene captured
+$ sh -c 'tail -n +2 repo/docs/proofs/sample-change-one/proof.cast | jq -r ".[2]" | grep -o "captured line [a-z]*"'
+  captured line one
+  captured line two
+$# the scene declared run keeps that kind, and the unproven scene that passed becomes check
+$ sed -n '/^scenes:/,/^---/p' repo/docs/proofs/sample-change-one/README.md
+  scenes:
+  - scenario: sample-capability-one#thing-holds/version-prints
+    kind: run
+  - scenario: sample-capability-one#thing-holds/missing-tag-fails
+    kind: check
+  ---
+
+## console-fences-prove-scenarios#the-graph-shows-only-proven-scenes/proof-transcript-does-not-match
+kind: check
+$# the filled-good fixture, recorded: the transcript matches, and each scene has a proves edge
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/proof/filled-good" repo && rune proof run sample-change-one --source repo > /dev/null && rune graph export --source repo | grep -e transcriptMatches -e "rune:proves"'
+      rune:transcriptMatches true ;
+      rune:proves <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+      rune:proves <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> ;
+$# one more line in proof.txt: both sections are still there, and the file no longer hashes to `transcript`
+$ sh -c 'printf "\n" >> repo/docs/proofs/sample-change-one/proof.txt && grep -c "^## " repo/docs/proofs/sample-change-one/proof.txt'
+  2
+$# the proof node exists, both scenes are recorded in the transcript, and none has a proves edge
+$ sh -c 'rune graph export --source repo > graph.ttl'
+$ awk '/proof\/sample-change-one> a rune:Proof/,/rune:sourcePath/' graph.ttl
+  <https://runedeck.ai/id/proof/sample-change-one> a rune:Proof ;
+      dcterms:identifier "sample-change-one" ;
+      rune:change <https://runedeck.ai/id/change/sample-change-one> ;
+      rune:recorded "2026-10-26"^^xsd:date ;
+      rune:transcript "7f081dd7f2cc8aa12ed74ddf8c8c21195d102e8ff7851e567143d6058db9c5a1" ;
+      rune:transcriptMatches false ;
+      rune:scene [
+          a rune:Scene ;
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/version-prints> ;
+          rune:kind "check" ;
+          rune:recordedInTranscript true
+      ] ;
+      rune:scene [
+          a rune:Scene ;
+          rune:scenario <https://runedeck.ai/id/sample-capability-one#thing-holds/missing-tag-fails> ;
+          rune:kind "check" ;
+          rune:recordedInTranscript true
+      ] ;
+      rune:sourcePath "docs/proofs/sample-change-one/README.md" .
+$ grep -c 'rune:proves' graph.ttl
+  0
 

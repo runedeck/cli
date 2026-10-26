@@ -1,11 +1,11 @@
 ---
 type: proof
 change: proofs-share-one-format
-head: 3500220fb7495e5dfb90075333827779053ad1ae
-head_change: mwnkmtxvtsrxywwqnusqlqpqnvznlotu
-head_tree: 972cc551d57570b1c0e4044e0495a7620c38b4e5
-recorded: 2026-10-25
-transcript: 4fc7e6da7e4ce4e9254d416f2b016a83e398d654278fb0fa91aff744c5b046e5
+head: f1af02b113431cb80b5a33a9d53cea56b8f676ee
+head_change: tqwqsxrzmxqtkswuuulxrowtkxsqnnmk
+head_tree: 2160fb11461107256a69fa5f77672cd50e19937e
+recorded: 2026-10-26
+transcript: 39be23c669d7a865d879005f5f189b4f4168868003a3f1b66fe4f5bca9766bb2
 scenes:
 - scenario: every-scenario-has-proof#proof-readme-is-the-source/proof-directory-carries-another-change-s-name
   kind: check
@@ -24,25 +24,25 @@ scenes:
 - scenario: every-scenario-has-proof#console-proofs-convert-once/console-proof-converts
   kind: unproven
 - scenario: console-fences-prove-scenarios#proof-frontmatter-is-the-record/instruction-scene-without-a-model
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#run-executes-every-executable-scene/scene-names-a-command-the-runner-cannot-find
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/step-feeds-a-script-through-standard-input
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#a-step-reads-its-input-from-the-fence/input-line-before-any-command
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#every-scene-starts-clean/scenes-do-not-share-a-directory
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#the-transcript-binds-the-claim/scene-key-edited-after-the-run
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#the-transcript-binds-the-claim/instruction-scene-never-run
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#check-refuses-drift/transcript-drifted-after-the-run
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#the-run-records-its-own-cast/cast-written-from-the-captured-output
-  kind: unproven
+  kind: check
 - scenario: console-fences-prove-scenarios#the-graph-shows-only-proven-scenes/proof-transcript-does-not-match
-  kind: unproven
+  kind: check
 - scenario: proof-record-binds-evidence#one-record-holds-the-statements/scene-is-recorded
   kind: unproven
 - scenario: proof-record-binds-evidence#provenance-names-every-input/fixture-changes-after-the-recording

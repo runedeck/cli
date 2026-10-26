@@ -1,4 +1,4 @@
-{"version":2,"width":100,"height":30,"timestamp":1792963938,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
+{"version":2,"width":100,"height":30,"timestamp":1792981768,"env":{"SHELL":"/bin/sh","TERM":"xterm-256color"}}
 [0.0,"o","\r\n\u001b[1;36m── review-the-whole-change · 16 scenes ─────────────────────────────────────────────────────────────\u001b[0m\r\n"]
 [1.2,"o","\r\n\u001b[2m┌───────────────────────────────────────┐\u001b[0m\r\n\u001b[2m│\u001b[0m \u001b[1m1/16 · File outside every declaration\u001b[0m \u001b[2m│\u001b[0m\r\n\u001b[2m└───────────────────────────────────────┘\u001b[0m\r\n\u001b[35munproven\u001b[0m  \u001b[2ma target resolves to one head one base and parts\u001b[0m\r\n"]
 [2.4,"o","\u001b[1;31m✗ unproven: the fence holds no command\u001b[0m\r\n"]

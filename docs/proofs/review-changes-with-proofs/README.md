@@ -1,10 +1,10 @@
 ---
 type: proof
 change: review-changes-with-proofs
-head: 3500220fb7495e5dfb90075333827779053ad1ae
-head_change: mwnkmtxvtsrxywwqnusqlqpqnvznlotu
-head_tree: 972cc551d57570b1c0e4044e0495a7620c38b4e5
-recorded: 2026-10-25
+head: f1af02b113431cb80b5a33a9d53cea56b8f676ee
+head_change: tqwqsxrzmxqtkswuuulxrowtkxsqnnmk
+head_tree: 2160fb11461107256a69fa5f77672cd50e19937e
+recorded: 2026-10-26
 transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 scenes:
 - scenario: review-the-whole-change#a-target-resolves-to-one-head-one-base-and-parts/file-outside-every-declaration
