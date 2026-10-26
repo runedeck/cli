@@ -53,7 +53,15 @@ scenes:
   kind: check
 - scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/listed-model-at-session-start
   kind: check
+- scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/model-admitted-by-a-trusted-domain
+  kind: check
 - scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/unlisted-model
+  kind: check
+- scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/model-the-helper-refuses
+  kind: check
+- scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/checkout-without-a-policy
+  kind: check
+- scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/policy-the-helper-refuses
   kind: check
 - scenario: checkout-carries-its-author-identity#identity-binds-to-the-checkout/two-sessions-two-checkouts
   kind: check
@@ -201,7 +209,7 @@ scenes:
 
 # Proof: one-dispatcher-runs-every-hook
 
-One scene per scenario, in closure order. Every scene runs `rune` against a fixture home under `tests/fixtures/hooks/`, whose handlers are shell lines, so the scenes run on any machine. `RUNE_STATE_DIR=state` keeps the plan generations, the compiled plan, and the manifest in the scene's own directory. A scene that installs copies its fixture home into the scene first, so it never writes a fixture or the runner's HOME. `tests/fixtures/hooks/trust-codex.sh` stands in for the owner's `/hooks` step and writes Codex's trust hash into the scene's `config.toml`. The identity scenes build colocated jj and git checkouts in the scene, with HOME, XDG_CONFIG_HOME, and GIT_CONFIG_GLOBAL in the scene's own folders, so jj and git read and write no file of the runner's home.
+One scene per scenario, in closure order. Every scene runs `rune` against a fixture home under `tests/fixtures/hooks/`, whose handlers are shell lines, so the scenes run on any machine. `RUNE_STATE_DIR=state` keeps the plan generations, the compiled plan, and the manifest in the scene's own directory. A scene that installs copies its fixture home into the scene first, so it never writes a fixture or the runner's HOME. Install counts a harness as set up when its folder is in the home or under the XDG config root, so a scene that shows the unsupported lines of an install names its own `XDG_CONFIG_HOME`. `tests/fixtures/hooks/trust-codex.sh` stands in for the owner's `/hooks` step and writes Codex's trust hash into the scene's `config.toml`. The identity scenes build colocated jj and git checkouts in the scene, with HOME, XDG_CONFIG_HOME, and GIT_CONFIG_GLOBAL in the scene's own folders, so jj and git read and write no file of the runner's home. Their roster, `tests/fixtures/hooks/roster/authors.yaml`, lists the owner, Fable 5.1, and Astra, and trusts the claude domain alone under `model_domains`.
 
 The scenes of the kept legacy dispatcher copy two scripts from this folder. `owner-home.sh` writes a home in the shape of the owner's live dispatcher: the dispatcher script at `~/.config/just/hook`, its `Stop.d` parts, stand-ins for the programs they run, and the tmux, turn, and capture handlers on `turn.finish`. Every value is synthetic. `fire.sh` fires the rune entry that install wrote, as the harness does, then prints the dispatcher log of that firing and the lines the stand-in programs wrote to `ran.log`.
 
@@ -330,18 +338,34 @@ $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/passive-deny" RUNE_STATE_DI
 ## one-dispatcher-runs-every-hook#canonical-events-map-to-each-harness/event-the-harness-lacks
 
 ```console
+$# a copy of the home fixture with Antigravity set up as ~/.antigravity, and an XDG config root that holds opencode/
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && mkdir -p home/.antigravity xdg/opencode && ls -A home xdg'
+home:
+.antigravity
+.config
+
+xdg:
+opencode
 $# install keeps its whole output in a file
-$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > install.out'
-$# the output lists session.end as unsupported on antigravity, with the handlers that subscribe to it
-$ grep -c -x -e 'unsupported: antigravity has no session.end for session-capture, turn-checkpoint, tmux-status' install.out
-1
-$# install writes the Claude and Codex tables and no antigravity file
-$ ls -a home
-.
-..
+$ sh -c 'HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" RUNE_STATE_DIR=state rune hook install > install.out'
+$# the output lists session.end as unsupported on Antigravity and on OpenCode, with the handlers that subscribe to it
+$ grep '^unsupported: [a-z]* has no session.end ' install.out
+unsupported: opencode has no session.end for session-capture, turn-checkpoint, tmux-status
+unsupported: antigravity has no session.end for session-capture, turn-checkpoint, tmux-status
+$# install writes the Claude and Codex tables, and no file for Antigravity or OpenCode
+$ ls -A home home/.antigravity xdg/opencode
+home:
+.antigravity
 .claude
 .codex
 .config
+
+home/.antigravity:
+
+xdg/opencode:
+$# a home with neither, under an empty XDG config root: install names the gap of Codex, a registered harness, and says nothing for OpenCode or Antigravity
+$ sh -c 'cp -Rf "$RUNE_PROOF_ROOT/tests/fixtures/hooks/home" bare && mkdir -p bare-xdg && HOME="$PWD/bare" XDG_CONFIG_HOME="$PWD/bare-xdg" RUNE_STATE_DIR=bare-state rune hook install | grep "^unsupported:"'
+unsupported: codex has no notification for tmux-status
 ```
 
 ## one-dispatcher-runs-every-hook#canonical-events-map-to-each-harness/compaction-on-claude
@@ -458,8 +482,8 @@ rune hook: the payload names `Stop` but the registration is for `PreToolUse`; de
 $# no plan at the path the registration names, and the registration carries dcg's deny
 $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse --plan state/hooks/plan.json --on-failure deny
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"rune hook could not run its handlers: no compiled hook plan at state/hooks/plan.json: run `rune install` ([..])"}}
-rune hook: no compiled hook plan at state/hooks/plan.json: run `rune install` ([..]); denied
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"rune hook could not run its handlers: no compiled hook plan at state/hooks/plan.json: run `rune hook install` ([..])"}}
+rune hook: no compiled hook plan at state/hooks/plan.json: run `rune hook install` ([..]); denied
 $# a truncated plan denies the same way
 $ sh -c 'mkdir -p state/hooks && printf "%s" "{\"version\":1,\"harn" > state/hooks/plan.json'
 $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse --plan state/hooks/plan.json --on-failure deny
@@ -473,7 +497,7 @@ rune hook: state/hooks/plan.json is not a hook plan: [..]; denied
 ```console
 $ RUNE_STATE_DIR=state rune hook run --harness claude --native-event SessionEnd
 < {"hook_event_name":"SessionEnd","session_id":"s1","cwd":"."}
-rune hook: no compiled hook plan at [..]state/hooks/plan.json: run `rune install` ([..]); proceeding
+rune hook: no compiled hook plan at [..]state/hooks/plan.json: run `rune hook install` ([..]); proceeding
 ```
 
 ## one-dispatcher-runs-every-hook#handlers-run-in-order-and-fail-by-policy/guard-times-out
@@ -539,7 +563,7 @@ rune hook: late failed: returned a replacement input but does not declare `rewri
 ## one-dispatcher-runs-every-hook#install-owns-its-entries-and-nothing-else/foreign-entries-survive
 
 ```console
-$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -v "^trust\|^legacy"'
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/tables" home && HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/home/.config" RUNE_STATE_DIR=state rune hook install | grep -v "^trust\|^legacy"'
 claude: PreToolUse registered
 claude: PostToolUse registered
 claude: SessionEnd registered
@@ -550,8 +574,6 @@ claude: PreToolUse adopted `/Users/x/.local/bin/dcg`
 claude: PreToolUse adopted `/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin`
 claude: PreToolUse keeps foreign `sh /Users/x/.sd/hook PreToolUse`
 claude: Notification keeps foreign `cmux hooks claude Notification`
-unsupported: opencode has no session.end for session-capture
-unsupported: antigravity has no session.end for session-capture
 $# the legacy dispatcher entry stays, before the one rune entry
 $ jq -c '[.hooks.PreToolUse[].hooks[].command, .hooks.Notification[0].hooks[0].command, .model]' home/.claude/settings.json
 ["sh /Users/x/.sd/hook PreToolUse","[..]rune hook run --harness claude --native-event PreToolUse --plan [..]","cmux hooks claude Notification","opus"]
@@ -570,7 +592,7 @@ $# the timeout of rune's own PreToolUse entry changes by hand
 $ sh -c 'jq "(.hooks.PreToolUse[].hooks[] | select(.command | contains(\"rune hook run\")) | .timeout) = 99" home/.claude/settings.json > edited.json && mv edited.json home/.claude/settings.json && cp -f home/.claude/settings.json before.json && cp -f home/.codex/hooks.json before-codex.json'
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 ? 2
-[..]home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then install again
+[..]home/.claude/settings.json: the rune entry for PreToolUse was changed by hand; restore it or remove it, then run `rune hook install`
 $# both tables are byte for byte what they were before the refused install
 $ sh -c 'cmp home/.claude/settings.json before.json && cmp home/.codex/hooks.json before-codex.json && echo unchanged'
 unchanged
@@ -634,7 +656,7 @@ $ sh -s
 $# the output names the dcg line and the Codex trust step, and no legacy line names the dispatcher
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > install.out; grep "^legacy\|^trust: codex: the rune entry for PreToolUse" install.out && ! grep "^legacy:" install.out | grep -q "sd/hook" && echo no legacy line names the dispatcher'
 legacy: [..]home/.codex/config.toml:14: `$HOME/.local/bin/dcg` runs dcg with other commands; split it in config.toml by hand, rune does not rewrite that file
-trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for PreToolUse at group 1 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 no legacy line names the dispatcher
 $# hooks.json gains the rune entry, and config.toml keeps the dispatcher line word for word
 $ jq -r '.hooks.PreToolUse[0].hooks[0].command' home/.codex/hooks.json
@@ -656,12 +678,13 @@ $ sh -s
 < cd repo
 < jj git init --colocate >/dev/null 2>&1
 < cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/roster/authors.yaml" .
-$# Claude starts with the model claude-fable-5-1[1m], and the working-copy commit holds the roster, so the session starts on top of it
+< jj log -r @ --no-graph -T 'change_id.short()' > ../kept
+$# Claude starts with the model claude-fable-5-1[1m], which the roster lists, and the working-copy commit holds the roster, so the session starts on top of it, and the context names that change, printed here as <kept>
 $ sh -s
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < cd repo
-< printf '%s' '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":".","model":"claude-fable-5-1[1m]"}' | rune hook adapter author-identity
-{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: the working-copy commit [..] keeps its author (it has edits); the session starts in a new working copy on top of it"]}
+< printf '%s' '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":".","model":"claude-fable-5-1[1m]"}' | rune hook adapter author-identity | sed "s/ $(cat ../kept) / <kept> /"
+{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: the working-copy commit <kept> keeps its author (it has edits); the session starts in a new working copy on top of it"]}
 $ sh -c 'cd repo && HOME="$PWD/../home" XDG_CONFIG_HOME="$PWD/../xdg" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" jj config get user.name'
 Claude Fable 5.1 (claude-fable-5-1)
 $# a commit the session makes carries the listed name
@@ -673,6 +696,48 @@ $ sh -s
 < jj commit -m "session work" >/dev/null 2>&1
 < jj log -r @- --no-graph -T 'description.first_line() ++ ": " ++ author.name() ++ " <" ++ author.email() ++ ">\n"'
 session work: Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>
+```
+
+## checkout-carries-its-author-identity#identity-binds-to-the-checkout/model-admitted-by-a-trusted-domain
+
+```console
+$# a checkout with the roster, which lists no claude-opus-5-5 and names claude.noreply.nexus.local under model_domains
+$ sh -s
+< set -e
+< mkdir -p home
+< : > home/gitconfig
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< git init -q -b main repo
+< cd repo
+< jj git init --colocate >/dev/null 2>&1
+< cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/roster/authors.yaml" .
+< JJ_USER="Martin Zeman" JJ_EMAIL="N4M3Z@users.noreply.github.com" jj commit -m roster >/dev/null 2>&1
+< grep -c opus authors.yaml || true
+< sed -n '/^model_domains:/,$p' authors.yaml
+0
+model_domains:
+    - claude.noreply.nexus.local
+$# Claude starts with claude-opus-5-5, and the context carries no warning
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< cd repo
+< printf '%s' '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":".","model":"claude-opus-5-5"}' | rune hook adapter author-identity
+{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author"]}
+$# the checkout's author in jj, in git, and on the working-copy commit is the identity minted under the trusted domain, and the helper's validate accepts it
+$ sh -s
+< set -e
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< cd repo
+< echo "jj: $(jj config get user.name) <$(jj config get user.email)>"
+< echo "git: $(git config user.name) <$(git config user.email)>"
+< author=$(jj log -r @ --no-graph -T 'author.name() ++ " <" ++ author.email() ++ ">"')
+< echo "@: $author"
+< python3 "$RUNE_PROOF_ROOT/scripts/author-identity.py" validate --policy authors.yaml --identity "$author"
+< echo "validate exit $?"
+jj: Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>
+git: Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>
+@: Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>
+validate exit 0
 ```
 
 ## checkout-carries-its-author-identity#identity-binds-to-the-checkout/unlisted-model
@@ -692,12 +757,17 @@ $ sh -s
 < jj log -r @- --no-graph -T commit_id > ../base
 < echo one > owner.txt
 < JJ_USER="Martin Zeman" JJ_EMAIL="N4M3Z@users.noreply.github.com" jj commit -m "owner edit" >/dev/null 2>&1
-$# Codex starts with a model no authors.yaml lists, and one warning names the model
+$# the roster lists no gpt-6-luna and trusts the claude domain alone
+$ sh -c 'grep -c gpt-6-luna repo/authors.yaml; sed -n "/^model_domains:/,\$p" repo/authors.yaml'
+0
+model_domains:
+    - claude.noreply.nexus.local
+$# Codex starts with gpt-6-luna, and one warning names the model and the policy file
 $ sh -s
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < cd repo
 < printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":"gpt-6-luna"}' | rune hook adapter author-identity
-{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: model `gpt-6-luna` is listed in no authors.yaml ([..]authors.yaml); the checkout carries an unlisted identity the push gate refuses","rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author"]}
+{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: model `gpt-6-luna` is admitted by no rule of ./authors.yaml: model domain is not trusted by the policy; the checkout carries an unlisted identity the push gate refuses","rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author"]}
 $# the session makes a commit, and the commit carries the unlisted identity
 $ sh -s
 < set -e
@@ -707,14 +777,127 @@ $ sh -s
 < jj commit -m "change by the session" >/dev/null 2>&1
 < jj log -r @- --no-graph -T commit_id > ../head
 < jj log -r 'root()..@-' --no-graph -T 'description.first_line() ++ ": " ++ author.name() ++ " <" ++ author.email() ++ ">\n"'
-change by the session: Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>
+change by the session: Unlisted codex model (gpt-6-luna) <unlisted_model@codex.noreply.nexus.local>
 owner edit: Martin Zeman <N4M3Z@users.noreply.github.com>
 roster: Martin Zeman <N4M3Z@users.noreply.github.com>
-$# the push gate reads the owner's commit and the session's, and refuses the session's alone
+$# the authorship check reads the owner's commit and the session's, and refuses the session's alone
 $ sh -c 'cd repo && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" bash "$RUNE_PROOF_ROOT/scripts/check-authorship" --from-ref "$(cat ../base)" --to-ref "$(cat ../head)" --authors-file authors.yaml'
 ? 1
-author-identity: display model ID and address model ID must match
-[..]: author 'Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>' does not satisfy authors.yaml
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+[..]: author 'Unlisted codex model (gpt-6-luna) <unlisted_model@codex.noreply.nexus.local>' does not satisfy authors.yaml
+```
+
+## checkout-carries-its-author-identity#identity-binds-to-the-checkout/model-the-helper-refuses
+
+```console
+$# two checkouts with the roster, codex and claude, each committed by the owner
+$ sh -s
+< set -e
+< mkdir -p home
+< : > home/gitconfig
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< for name in codex claude; do
+<     git init -q -b main $name
+<     (cd $name && jj git init --colocate >/dev/null 2>&1 && cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/roster/authors.yaml" . && JJ_USER="Martin Zeman" JJ_EMAIL="N4M3Z@users.noreply.github.com" jj commit -m roster >/dev/null 2>&1)
+< done
+$# Codex starts with ` gpt-6-astra `, the listed Astra wrapped in spaces, and Claude with `unlisted[1m][1m]`, and each first note names the model and the policy file
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< (cd codex && printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":" gpt-6-astra "}' | rune hook adapter author-identity | jq -r '.context[0]')
+< (cd claude && printf '%s' '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":".","model":"unlisted[1m][1m]"}' | rune hook adapter author-identity | jq -r '.context[0]')
+rune hook: model ` gpt-6-astra ` is admitted by no rule of ./authors.yaml: model ID must use lowercase ASCII letters, digits, dots, and hyphens; the checkout carries an unlisted identity the push gate refuses
+rune hook: model `unlisted[1m]` is admitted by no rule of ./authors.yaml: model ID must use lowercase ASCII letters, digits, dots, and hyphens; the checkout carries an unlisted identity the push gate refuses
+$# each checkout's author is the unlisted identity with the unlisted_model@ address
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< for name in codex claude; do (cd $name && echo "$name: $(jj config get user.name) <$(jj config get user.email)>"); done
+codex: Unlisted codex model ( gpt-6-astra ) <unlisted_model@codex.noreply.nexus.local>
+claude: Unlisted claude model (unlisted[1m]) <unlisted_model@claude.noreply.nexus.local>
+$# the helper's validate refuses both identities, and its resolve refuses both models
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< helper="$RUNE_PROOF_ROOT/scripts/author-identity.py"
+< for name in codex claude; do
+<     (cd $name && python3 "$helper" validate --policy authors.yaml --identity "$(jj config get user.name) <$(jj config get user.email)>"; echo "$name validate exit $?")
+< done
+< (cd codex && python3 "$helper" resolve --policy authors.yaml --harness codex --model ' gpt-6-astra '; echo "codex resolve exit $?")
+< (cd claude && python3 "$helper" resolve --policy authors.yaml --harness claude --model 'unlisted[1m][1m]'; echo "claude resolve exit $?")
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+codex validate exit 1
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+claude validate exit 1
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+codex resolve exit 1
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+claude resolve exit 1
+```
+
+## checkout-carries-its-author-identity#identity-binds-to-the-checkout/checkout-without-a-policy
+
+```console
+$# a colocated checkout with no authors.yaml in it or in a folder above it
+$ sh -s
+< set -e
+< mkdir -p home
+< : > home/gitconfig
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< git init -q -b main repo
+< cd repo
+< jj git init --colocate >/dev/null 2>&1
+< d=$PWD
+< while :; do test ! -e "$d/authors.yaml" || echo "found $d/authors.yaml"; [ "$d" = / ] && break; d=$(dirname "$d"); done
+< echo checked every folder up to /
+checked every folder up to /
+$# Claude starts with claude-opus-5-5 there, gets the identity of the claude domain, and the context says the built-in rule was used
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< cd repo
+< printf '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":"%s","model":"claude-opus-5-5"}' "$PWD" | rune hook adapter author-identity | jq -r '.context[]'
+< echo "jj: $(jj config get user.name) <$(jj config get user.email)>"
+rune hook: no authors.yaml above [..]/repo and no roster argument; the identity follows the built-in rule of the claude-agent-identity hook this adapter replaces, which trusts the claude domain alone
+rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author
+jj: Claude Opus 5.5 (claude-opus-5-5) <claude-opus-5-5@claude.noreply.nexus.local>
+$# Codex starts in the same checkout and gets the unlisted identity, because the built-in rule trusts the claude domain alone
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< cd repo
+< printf '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":"%s","model":"gpt-6-astra"}' "$PWD" | rune hook adapter author-identity | jq -r '.context[]'
+< echo "jj: $(jj config get user.name) <$(jj config get user.email)>"
+rune hook: model `gpt-6-astra` is admitted by no rule of the built-in policy (no authors.yaml above [..]/repo and no roster argument): model domain is not trusted by the policy; the checkout carries an unlisted identity the push gate refuses
+rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author
+jj: Unlisted codex model (gpt-6-astra) <unlisted_model@codex.noreply.nexus.local>
+```
+
+## checkout-carries-its-author-identity#identity-binds-to-the-checkout/policy-the-helper-refuses
+
+```console
+$# a checkout whose authors.yaml, the roster-indented fixture, indents its first list entry with two spaces
+$ sh -s
+< set -e
+< mkdir -p home
+< : > home/gitconfig
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< git init -q -b main repo
+< cd repo
+< jj git init --colocate >/dev/null 2>&1
+< cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/roster-indented/authors.yaml" .
+< JJ_USER="Martin Zeman" JJ_EMAIL="N4M3Z@users.noreply.github.com" jj commit -m roster >/dev/null 2>&1
+< sed -n 1,3p authors.yaml
+authors:
+  - Martin Zeman <N4M3Z@users.noreply.github.com>
+    - Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>
+$# the helper refuses that policy and gives its reason
+$ sh -c 'cd repo && python3 "$RUNE_PROOF_ROOT/scripts/author-identity.py" check-policy --policy authors.yaml'
+? 2
+author-identity: line 2: expected a plain list entry with four spaces
+$# Claude starts with claude-fable-5-1, which the file lists, and gets the unlisted identity, and the warning names the file and the helper's reason
+$ sh -s
+< export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
+< cd repo
+< printf '%s' '{"v":1,"harness":"claude","event":"session.start","native_event":"SessionStart","session_id":"s1","cwd":".","model":"claude-fable-5-1"}' | rune hook adapter author-identity | jq -r '.context[0]'
+< echo "jj: $(jj config get user.name) <$(jj config get user.email)>"
+rune hook: ./authors.yaml cannot be read as a policy (line 2: expected a plain list entry with four spaces); the checkout carries an unlisted identity the push gate refuses
+jj: Unlisted claude model (claude-fable-5-1) <unlisted_model@claude.noreply.nexus.local>
 ```
 
 ## checkout-carries-its-author-identity#identity-binds-to-the-checkout/two-sessions-two-checkouts
@@ -863,15 +1046,15 @@ $ sh -s
 < jj log -r @ --no-graph -T 'change_id.short()' > ../kept
 < jj log -r @ --no-graph -T 'description.first_line() ++ ": " ++ if(empty, "empty", "edited") ++ ", by " ++ author.name() ++ "\n"'
 half done: empty, by Claude Fable 5.1 (claude-fable-5-1)
-$# Codex starts, and the context names the kept change and says it is described
+$# Codex starts, and the context names the kept change, printed here as <kept>, and says it is described
 $ sh -s
 < set -e
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < cd repo
 < printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":"gpt-6-astra"}' | rune hook adapter author-identity > ../codex.json
-< jq -r '.context[]' ../codex.json
+< jq -r '.context[]' ../codex.json | sed "s/ $(cat ../kept) / <kept> /"
 < grep -q "the working-copy commit $(cat ../kept) keeps its author (it is described)" ../codex.json && echo the context names the kept change
-rune hook: the working-copy commit [..] keeps its author (it is described); the session starts in a new working copy on top of it
+rune hook: the working-copy commit <kept> keeps its author (it is described); the session starts in a new working copy on top of it
 the context names the kept change
 $# the kept commit keeps Fable as author, and Codex works in a new empty working copy on top of it
 $ sh -s
@@ -914,30 +1097,30 @@ $ sh -s
 < jj config set --repo 'revset-aliases."immutable_heads()"' "builtin_immutable_heads() | $(jj log -r @ --no-graph -T commit_id)"
 < cd ..
 < for name in edits merge shared frozen; do
-<     (cd $name && jj log -r @ --no-graph -T commit_id > ../$name.before && jj log -r @ --no-graph -T '"'"$name"': " ++ if(empty, "empty", "edited") ++ ", " ++ parents.len() ++ " parents, " ++ if(immutable, "immutable", "mutable") ++ ", workspaces [" ++ working_copies ++ "]\n"')
+<     (cd $name && jj log -r @ --no-graph -T commit_id > ../$name.before && jj log -r @ --no-graph -T 'change_id.short()' > ../$name.kept && jj log -r @ --no-graph -T '"'"$name"': " ++ if(empty, "empty", "edited") ++ ", " ++ parents.len() ++ " parents, " ++ if(immutable, "immutable", "mutable") ++ ", workspaces [" ++ working_copies ++ "]\n"')
 < done
 edits: edited, 1 parents, mutable, workspaces []
 merge: empty, 2 parents, mutable, workspaces []
 shared: empty, 1 parents, mutable, workspaces [b@ default@]
 frozen: empty, 1 parents, immutable, workspaces []
-$# Codex starts in each: the context names the change and the reason, the commit keeps its author, and Codex works in a new working copy on top of it
+$# Codex starts in each: the context names the kept change, printed here as <kept>, and the reason, the commit keeps its author, and Codex works in a new working copy on top of it
 $ sh -s
 < set -e
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < for name in edits merge shared frozen; do
 <     (cd $name
 <      printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":"gpt-6-astra"}' | rune hook adapter author-identity > ../$name.json
-<      jq -r '.context[]' ../$name.json
+<      jq -r '.context[]' ../$name.json | sed "s/ $(cat ../$name.kept) / <kept> /"
 <      test "$(jj log -r @- --no-graph -T commit_id)" = "$(cat ../$name.before)"
 <      echo "$name: the parent of @ is the kept commit, by $(jj log -r @- --no-graph -T 'author.name()'); @ is by $(jj log -r @ --no-graph -T 'author.name()')")
 < done
-rune hook: the working-copy commit [..] keeps its author (it has edits); the session starts in a new working copy on top of it
+rune hook: the working-copy commit <kept> keeps its author (it has edits); the session starts in a new working copy on top of it
 edits: the parent of @ is the kept commit, by Martin Zeman; @ is by Codex Gpt 6 Astra (gpt-6-astra)
-rune hook: the working-copy commit [..] keeps its author (it has 2 parents); the session starts in a new working copy on top of it
+rune hook: the working-copy commit <kept> keeps its author (it has 2 parents); the session starts in a new working copy on top of it
 merge: the parent of @ is the kept commit, by Martin Zeman; @ is by Codex Gpt 6 Astra (gpt-6-astra)
-rune hook: the working-copy commit [..] keeps its author (it is the working copy of b@ and default@); the session starts in a new working copy on top of it
+rune hook: the working-copy commit <kept> keeps its author (it is the working copy of b@ and default@); the session starts in a new working copy on top of it
 shared: the parent of @ is the kept commit, by Martin Zeman; @ is by Codex Gpt 6 Astra (gpt-6-astra)
-rune hook: the working-copy commit [..] keeps its author (it is immutable); the session starts in a new working copy on top of it
+rune hook: the working-copy commit <kept> keeps its author (it is immutable); the session starts in a new working copy on top of it
 frozen: the parent of @ is the kept commit, by Martin Zeman; @ is by Codex Gpt 6 Astra (gpt-6-astra)
 $# workspace b still edits the kept commit of shared
 $ sh -s
@@ -965,14 +1148,15 @@ $ sh -s
 < echo half > half.txt
 < jj describe -m "half done" >/dev/null 2>&1
 < jj log -r @ --no-graph -T commit_id > ../base
+< jj log -r @ --no-graph -T 'change_id.short()' > ../kept
 < jj log -r @ --no-graph -T 'description.first_line() ++ ": " ++ author.name() ++ "\n"'
 half done: Claude Fable 5.1 (claude-fable-5-1)
-$# a Codex model no roster lists starts, and the described commit keeps its author
+$# a Codex model no roster lists starts, and the described commit keeps its author: the context names the kept change, printed here as <kept>
 $ sh -s
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < cd repo
-< printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":"gpt-6-luna"}' | rune hook adapter author-identity
-{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: model `gpt-6-luna` is listed in no authors.yaml ([..]authors.yaml); the checkout carries an unlisted identity the push gate refuses","rune hook: the working-copy commit [..] keeps its author (it has edits, it is described); the session starts in a new working copy on top of it"]}
+< printf '%s' '{"v":1,"harness":"codex","event":"session.start","native_event":"SessionStart","session_id":"s2","cwd":".","model":"gpt-6-luna"}' | rune hook adapter author-identity | sed "s/ $(cat ../kept) / <kept> /"
+{"v":1,"effect":"pass","reason":null,"input":null,"context":["rune hook: model `gpt-6-luna` is admitted by no rule of ./authors.yaml: model domain is not trusted by the policy; the checkout carries an unlisted identity the push gate refuses","rune hook: the working-copy commit <kept> keeps its author (it has edits, it is described); the session starts in a new working copy on top of it"]}
 $# the session commits in the new working copy
 $ sh -s
 < set -e
@@ -982,14 +1166,14 @@ $ sh -s
 < jj commit -m "change by the session" >/dev/null 2>&1
 < jj log -r @- --no-graph -T commit_id > ../head
 < jj log -r 'root()..@-' --no-graph -T 'description.first_line() ++ ": " ++ author.name() ++ " <" ++ author.email() ++ ">\n"'
-change by the session: Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>
+change by the session: Unlisted codex model (gpt-6-luna) <unlisted_model@codex.noreply.nexus.local>
 half done: Claude Fable 5.1 (claude-fable-5-1) <claude-fable-5-1@claude.noreply.nexus.local>
 roster: Martin Zeman <N4M3Z@users.noreply.github.com>
 $# the authorship check over the session's commit exits 1 and names the unlisted author
 $ sh -c 'cd repo && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" bash "$RUNE_PROOF_ROOT/scripts/check-authorship" --from-ref "$(cat ../base)" --to-ref "$(cat ../head)" --authors-file authors.yaml'
 ? 1
-author-identity: display model ID and address model ID must match
-[..]: author 'Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>' does not satisfy authors.yaml
+author-identity: model ID must use lowercase ASCII letters, digits, dots, and hyphens
+[..]: author 'Unlisted codex model (gpt-6-luna) <unlisted_model@codex.noreply.nexus.local>' does not satisfy authors.yaml
 $# Fable's described commit is unchanged under the session's
 $ sh -s
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
@@ -1030,9 +1214,10 @@ the note names no core.bare
 $# jj carries the identity
 $ sh -c 'cd repo && HOME="$PWD/../home" XDG_CONFIG_HOME="$PWD/../xdg" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" jj config get user.name'
 Claude Fable 5.1 (claude-fable-5-1)
-$# git carries none, and the extension stays off
-$ sh -c 'cd repo && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" git config user.name'
-? 1
+$# git carries no name and no address, and the extension stays off
+$ sh -c 'cd repo && export HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" && for key in user.name user.email; do git config $key; echo "$key exit $?"; done'
+user.name exit 1
+user.email exit 1
 $ sh -c 'cd repo && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" git config --local --get extensions.worktreeConfig'
 ? 1
 ```
@@ -1103,11 +1288,12 @@ $ sh -s
 < jq -r '.context[]' ../out.json
 rune hook: the working-copy commit [..] is empty, undescribed, and this workspace's alone, so it takes the session's author
 rune hook: [..]/main/.git/worktrees/linked/config.worktree sets core.bare, and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's
-$# the extension stays off, and git carries no identity
+$# the extension stays off, and git carries no name and no address
 $ sh -c 'cd main && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" git config --local --get extensions.worktreeConfig'
 ? 1
-$ sh -c 'cd main && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" git config user.name'
-? 1
+$ sh -c 'cd main && export HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" && for key in user.name user.email; do git config $key; echo "$key exit $?"; done'
+user.name exit 1
+user.email exit 1
 $# git status in the linked worktree still exits 0
 $ sh -c 'cd linked && HOME="$PWD/../home" GIT_CONFIG_GLOBAL="$PWD/../home/gitconfig" git status --porcelain'
 ```
@@ -1142,21 +1328,24 @@ $ sh -s
 rune hook: [..]/include/.git/worktrees/include-linked/config.worktree sets core.bare through [..]/include/.git/worktrees/include-linked/../../bare.conf, and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's
 rune hook: [..]/broken/.git/worktrees/broken-linked/config.worktree cannot be read with its includes (fatal: bad config line 1 in file [..]/broken/.git/worktrees/broken-linked/../../bad.conf), and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's
 rune hook: [..]/cond/.git/worktrees/cond-linked/config.worktree uses includeIf, which git decides per command, and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's
-$# in each, the extension stays off, git carries no identity, and git status in the linked worktree exits 0
+$# in each, the extension stays off, git carries no name and no address, and git status in the linked worktree exits 0
 $ sh -s
 < export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/xdg" GIT_CONFIG_GLOBAL="$PWD/home/gitconfig"
 < for name in include broken cond; do
-<     (cd $name; git config --local --get extensions.worktreeConfig; echo "$name: extension exit $?"; git config user.name; echo "$name: user.name exit $?")
+<     (cd $name; git config --local --get extensions.worktreeConfig; echo "$name: extension exit $?"; git config user.name; echo "$name: user.name exit $?"; git config user.email; echo "$name: user.email exit $?")
 <     (cd $name-linked; git status --porcelain; echo "$name-linked: git status exit $?")
 < done
 include: extension exit 1
 include: user.name exit 1
+include: user.email exit 1
 include-linked: git status exit 0
 broken: extension exit 1
 broken: user.name exit 1
+broken: user.email exit 1
 broken-linked: git status exit 0
 cond: extension exit 1
 cond: user.name exit 1
+cond: user.email exit 1
 cond-linked: git status exit 0
 ```
 
@@ -1372,9 +1561,11 @@ $# Stop.d holds the tmux part and 40-nohup.sh, which runs its program with nohup
 $ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.sh . && sh owner-home.sh home && rm home/.config/just/hooks/Stop.d/20-turn-wrap.sh home/.config/just/hooks/Stop.d/30-turn-snapshot.sh && printf "#!/bin/sh\nnohup \"\$HOME/.local/bin/session-sync\" >/dev/null 2>&1 &\n" > home/.config/just/hooks/Stop.d/40-nohup.sh && ls home/.config/just/hooks/Stop.d'
 10-tmux-attention.sh
 40-nohup.sh
-$# install covers tmux with the first part and warns nothing
+$# install covers tmux with the first part, and its one warning names the nohup part as a later part it cannot read, for no handler
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep -e "^covered:" -e "^warning:"'
 covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
+warning: claude: Stop cannot read a later part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/40-nohup.sh has a shape rune does not read; a handler that part runs is not named
+$# the cover record holds the first part alone
 $ jq -r '.handlers[].part' state/hooks/cover/claude-Stop.json
 [..]/Stop.d/10-tmux-attention.sh
 ```
@@ -1795,7 +1986,7 @@ $ sh -c 'jq -r ".hooks.PreToolUse[0].hooks[0].command" home/.claude/settings.jso
 $# the file is still a valid plan, but not the bytes its name is the digest of, so the registration's deny answers
 $ sh -c 'HOME="$PWD/home" sh -c "$(cat guard.cmd)" | jq -r .hookSpecificOutput.permissionDecision'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"ls"}}
-rune hook: [..] does not hold the plan its name is the digest of: it changed after install; run `rune install`; denied
+rune hook: [..] does not hold the plan its name is the digest of: it changed after install; run `rune hook install`; denied
 deny
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check | grep "changed after install"'
 drift: the plan generation [..] was changed after install; run `rune hook install`
@@ -1816,7 +2007,7 @@ $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 $# the old registration still denies, from its generation's old bytes, and warns that the config moved on
 $ sh -c 'chmod 755 state/hooks && HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
-rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune hook install` to apply it
 no rm -rf
 $ sh -c 'cmp "$(cat old.plan)" old.json && echo the old generation is unchanged'
 the old generation is unchanged
@@ -1839,7 +2030,7 @@ a new generation
 $# the session's old registration still denies from the old generation
 $ sh -c 'HOME="$PWD/home" sh -c "$(cat old.cmd)" | jq -r .hookSpecificOutput.permissionDecisionReason'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
-rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune install` to apply it
+rune hook: [..]home/.config/rune/config.yaml is newer than the compiled plan; run `rune hook install` to apply it
 no rm -rf
 $# the manifest records when the tables stopped naming the old generation
 $ sh -c 'jq -r --arg old "$(cat old.plan)" ".retired[] | select(.generation == \$old) | .since" state/hooks/manifest.json | grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\$"'
@@ -1920,7 +2111,7 @@ $ sh -s
 claude: PreToolUse registered
 codex: PreToolUse registered
 trust: codex: PreToolUse keeps rune's earlier entry, which codex trusts, until codex trusts the new one at group 2 handler 1
-trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for PreToolUse at group 2 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 $# the first group holds the trusted command word for word, and the second group holds the new command alone
 $ sh -c 'jq -c --arg trusted "$(cat trusted.cmd)" "[.hooks.PreToolUse[] | [.hooks[].command | . == \$trusted]]" home/.codex/hooks.json'
 [[true],[false]]
@@ -1932,7 +2123,7 @@ $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check'
 ? 1
 drift: [..]home/.codex/hooks.json: the rune entry for PreToolUse is not trusted yet in codex
 trust: codex: PreToolUse keeps rune's earlier entry, which codex trusts, until codex trusts the new one at group 2 handler 1
-trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for PreToolUse at group 2 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 ```
 
 ## guards-hold-under-failure#a-trusted-codex-entry-stays-until-codex-trusts-its-replacement/replacement-trusted
@@ -1988,7 +2179,7 @@ $ sh -s
 $# removing rune's earlier entry would move the guard from handler 2 to handler 1, so the entry stays and the output names the step
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install'
 codex: PreToolUse keeps foreign `/owner/guard`
-trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune install`
+trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune hook install`
 $# the trusted rune command and the guard keep their group word for word, and the new rune command keeps its own
 $ sh -c 'jq -c --arg trusted "$(cat trusted.cmd)" "[.hooks.PreToolUse[] | [.hooks[].command | if . == \$trusted then \"trusted rune entry\" else . end]]" home/.codex/hooks.json'
 [["trusted rune entry","/owner/guard"],["[..]rune hook run --harness codex --native-event PreToolUse --plan [..]/state/hooks/plans/[..].json"]]
@@ -1997,7 +2188,7 @@ $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check'
 ? 1
 codex: PreToolUse keeps foreign `/owner/guard`
 drift: [..]home/.codex/hooks.json: removing rune's earlier entry from PreToolUse would move `/owner/guard`, which codex trusts where it stands
-trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune install`
+trust: codex: PreToolUse keeps rune's earlier entry, because removing it would move `/owner/guard` from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove it by hand, trust `/owner/guard` in `/hooks` again, then run `rune hook install`
 ```
 
 ## guards-hold-under-failure#a-removal-never-moves-a-trusted-codex-hook/untrusted-hook-in-rune-s-group
@@ -2083,10 +2274,10 @@ $ sh -s
 < mkdir -p home/.codex
 < python3 -c "$hold" home/.codex/.rune-install.lock & holder=$!
 < while [ ! -e held ]; do sleep 0.02; done
-< HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > one.out 2>&1 & one=$!
+< HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/home/.config" RUNE_STATE_DIR=state rune hook install > one.out 2>&1 & one=$!
 < python3 -c "$taken" home/.claude/.rune-install.lock && echo "install one holds the Claude lock"
 < cp -f "$RUNE_PROOF_ROOT/tests/fixtures/hooks/session-only/.config/rune/config.yaml" home/.config/rune/config.yaml
-< HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > two.out 2>&1 & two=$!
+< HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/home/.config" RUNE_STATE_DIR=state rune hook install > two.out 2>&1 & two=$!
 < sleep 1
 < kill -0 $one && kill -0 $two && echo "both installs still run"
 < cmp claude.before home/.claude/settings.json && test ! -e home/.codex/hooks.json && test ! -e state/hooks/manifest.json && echo "no table and no manifest changed while they wait"
@@ -2111,11 +2302,9 @@ claude: PreToolUse adopted `/Users/x/.local/bin/dcg`
 claude: PreToolUse adopted `/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin`
 claude: PreToolUse keeps foreign `sh /Users/x/.sd/hook PreToolUse`
 claude: Notification keeps foreign `cmux hooks claude Notification`
-unsupported: opencode has no session.end for session-capture
-unsupported: antigravity has no session.end for session-capture
-trust: codex: the rune entry for PostToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
-trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
-trust: codex: the rune entry for SessionEnd is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for PostToolUse at group 1 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
+trust: codex: the rune entry for PreToolUse at group 1 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
+trust: codex: the rune entry for SessionEnd at group 1 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 $# install two read the tables install one wrote, and removed the entries its config no longer names
 $ cat two.out
 claude: PreToolUse removed
@@ -2126,9 +2315,7 @@ codex: PreToolUse removed
 codex: SessionEnd registered
 claude: PreToolUse keeps foreign `sh /Users/x/.sd/hook PreToolUse`
 claude: Notification keeps foreign `cmux hooks claude Notification`
-unsupported: opencode has no session.end for capture
-unsupported: antigravity has no session.end for capture
-trust: codex: the rune entry for SessionEnd is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for SessionEnd at group 1 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 $# each table holds what install two wrote, whole
 $ jq -c '.hooks | map_values([.[].hooks[].command])' home/.claude/settings.json home/.codex/hooks.json
 {"PreToolUse":["sh /Users/x/.sd/hook PreToolUse"],"Notification":["cmux hooks claude Notification"],"SessionEnd":["[..]rune hook run --harness claude --native-event SessionEnd --plan [..]/state/hooks/plans/[..].json"]}
@@ -2213,6 +2400,9 @@ $ sh -c 'cp -f "$RUNE_PROOF_ROOT"/docs/proofs/one-dispatcher-runs-every-hook/*.s
 10-tmux-attention.sh
 20-turn-wrap.sh
 30-turn-snapshot.sh
+$# the snapshot part carries a `±` in a comment, as the owner's live part does
+$ sh -c 'printf "#!/bin/sh\n# Snapshot the footprint so the ± segment and review see the turn.\nexec sh \"\$HOME/.config/just/claude/turn/checkpoint\" snapshot\n" > home/.config/just/hooks/Stop.d/30-turn-snapshot.sh && grep -n "±" home/.config/just/hooks/Stop.d/30-turn-snapshot.sh'
+2:# Snapshot the footprint so the ± segment and review see the turn.
 $# install keeps its whole output in a file
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install > install.out'
 $# the output names tmux as covered with its part
@@ -2220,9 +2410,13 @@ $ grep -e '^claude:' -e '^covered: claude: Stop covers tmux ' install.out
 claude: Stop registered
 claude: Stop keeps foreign `sh $HOME/.config/just/hook Stop`
 covered: claude: Stop covers tmux with the part [..]/Stop.d/10-tmux-attention.sh of `sh $HOME/.config/just/hook Stop`; rune hook run skips tmux while that part runs its command
-$# the output names turn as not covered with its part, 30-turn-snapshot.sh, because that part is not the first
-$ grep '^warning: claude: Stop does not cover turn ' install.out
+$# the one warning names turn as not covered with its part, 30-turn-snapshot.sh, because that part is not the first: the comment changes nothing
+$ grep '^warning:' install.out
 warning: claude: Stop does not cover turn with the part [..]/Stop.d/30-turn-snapshot.sh of `sh $HOME/.config/just/hook Stop`, because that part is not the first; turn runs twice while the part runs its command
+$# in a second home of that shape, a part 40-note.sh with a `±` on the line that runs is named as unreadable, for no handler, and turn keeps its line
+$ sh -c 'sh owner-home.sh note && cp -f home/.config/just/hooks/Stop.d/30-turn-snapshot.sh note/.config/just/hooks/Stop.d/ && printf "#!/bin/sh\nexec \"\$HOME/.local/bin/claude-tmux-status\" ±\n" > note/.config/just/hooks/Stop.d/40-note.sh && HOME="$PWD/note" RUNE_STATE_DIR=note-state rune hook install | grep "^warning:"'
+warning: claude: Stop does not cover turn with the part [..]/Stop.d/30-turn-snapshot.sh of `sh $HOME/.config/just/hook Stop`, because that part is not the first; turn runs twice while the part runs its command
+warning: claude: Stop cannot read a later part of `sh $HOME/.config/just/hook Stop`, because [..]/Stop.d/40-note.sh has a shape rune does not read; a handler that part runs is not named
 $# the cover record holds tmux alone
 $ jq -c '.handlers | keys' state/hooks/cover/claude-Stop.json
 ["tmux"]
@@ -2284,7 +2478,7 @@ $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*
 codex: PreToolUse registered
 codex: PreToolUse keeps foreign `/Users/x/.local/bin/dcg`
 trust: codex: PreToolUse keeps `/Users/x/.local/bin/dcg` until codex trusts the rune entry that replaces it
-trust: codex: the rune entry for PreToolUse is not trusted yet: run `/hooks` in codex and trust it, then run `rune install` again; the entries it replaces stay until then
+trust: codex: the rune entry for PreToolUse at group 2 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`; the entries it replaces stay until then
 $ jq -c '[.hooks.PreToolUse[].hooks[].command | contains("bin/dcg")]' home/.codex/hooks.json
 [true,false]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep "^drift:.*PreToolUse" check.out'
@@ -2316,7 +2510,7 @@ $ sh -c 'jq ".hooks.PreToolUse = [{hooks: [.hooks.PreToolUse[0].hooks[0], .hooks
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install | grep "codex.*PreToolUse"'
 codex: PreToolUse keeps foreign `/Users/x/.local/bin/dcg`
 trust: codex: PreToolUse keeps `/Users/x/.local/bin/dcg` until codex trusts the rune entry that replaces it
-trust: codex: removing the entries the rune entry for PreToolUse replaces would move it from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove them by hand, trust the rune entry in `/hooks`, then run `rune install` again
+trust: codex: removing the entries the rune entry for PreToolUse replaces would move it from group 1 handler 2 to group 1 handler 1, where codex does not trust it; remove them by hand, trust the rune entry in `/hooks`, then run `rune hook install`
 $ jq -c '[.hooks.PreToolUse[].hooks[].command | contains("bin/dcg")]' home/.codex/hooks.json
 [true,false]
 $ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install --check > check.out; echo "exit $?"; grep "^drift:.*PreToolUse" check.out'

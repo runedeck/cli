@@ -1,5 +1,0 @@
-## sample-capability-one#thing-holds/version-prints
-kind: check
-$ rune --version
-rune 0.6.0
-

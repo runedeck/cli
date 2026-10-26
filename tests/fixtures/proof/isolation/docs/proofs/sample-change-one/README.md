@@ -15,7 +15,8 @@ scenes:
 ## sample-capability-one#thing-holds/version-prints
 
 ```console
-$ sh -c 'echo x > note.txt'
+$ sh -c 'echo x > note.txt && ls'
+note.txt
 ```
 
 ## sample-capability-one#thing-holds/missing-tag-fails

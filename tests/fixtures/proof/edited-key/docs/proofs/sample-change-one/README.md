@@ -2,28 +2,30 @@
 type: proof
 change: sample-change-one
 recorded: 2026-09-24
-transcript: b76e4c8110f484cec374acf7273df19465ce28f64e177c26304163e529663a09
+transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 scenes:
   - scenario: sample-capability-one#thing-holds/version-prints
-    kind: check
+    kind: unproven
   - scenario: sample-capability-one#thing-holds/missing-tag-fails
-    kind: check
+    kind: unproven
 ---
 
 # Proof: sample-change-one
 
+A proof that a scene records, then edits: it renames a recorded scene key and leaves the transcript as the run wrote it.
+
 ## sample-capability-one#thing-holds/version-prints
+
+```console
+$ rune --version
+rune [..] built [..]
+```
+
+## sample-capability-one#thing-holds/missing-tag-fails
 
 ```console
 $ rune sign list
 ? 2
 error: the following required arguments were not provided:
 ...
-```
-
-## sample-capability-one#thing-holds/missing-tag-fails
-
-```console
-$ rune --version
-rune [..] built [..]
 ```
