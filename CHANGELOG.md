@@ -334,6 +334,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Read no `info/grafts` line in any git the signer runs, so a graft cannot drop a merge parent from the range `rune sign` lists, shows, signs, and verifies.
+- Hide and collect a credential-named query value whose name is percent-encoded (`api%5Fkey`), where only the name as written was checked.
+- Send the view `rune sign next --json` shows before the acknowledgment to stderr, so stdout holds the JSON document alone.
 - Name each commit the queue signs as `commit_id("<id>")` and refuse a `commit_id` alias in any config file jj reads, conditional scopes at any depth included, so a bookmark, tag, or alias named after an id cannot move the owner's signature. Pin the gpg program `jj sign` runs to a rune shim that refuses, before the owner's key, any commit that is not the rewrite of a named one, so a redirect the guard did not see signs nothing and fails the request with the refused commit named. After the run, report any difference between the commits written and the named set.
 - Show every piece of repository text in the signing views, a message line, an author, a bookmark, a path, or a review reason, with control, terminal escape, and Unicode format characters as visible escapes.
 - Let `cd DIR && cargo …` pass the sandbox guard with no advice, and advise a cargo call that reaches a configured checkout through `--manifest-path` to run from there.

@@ -1811,6 +1811,26 @@ fn query_parameters_are_credentials_by_whole_word_only() {
 }
 
 #[test]
+fn a_percent_encoded_query_name_is_a_credential_once_decoded() {
+    // `api%5Fkey` reaches the server as `api_key`: the name stays as
+    // written, the value is hidden and collected.
+    let url =
+        "https://example.test/v1?api%5Fkey=fake-query-secret&access%2Dtoken=fake-token-value&x=1";
+    assert_eq!(
+        redact_urls(url),
+        "https://example.test/v1?api%5Fkey=<redacted>&access%2Dtoken=<redacted>&x=1"
+    );
+    let values = url_query_secrets(url);
+    for expected in ["fake-query-secret", "fake-token-value"] {
+        assert!(
+            values.contains(&expected.to_string()),
+            "{expected}: {values:?}"
+        );
+    }
+    assert!(!values.contains(&"1".to_string()), "{values:?}");
+}
+
+#[test]
 fn tails_redact_known_values_of_eight_or_more_and_any_value_beside_a_name() {
     let secrets = vec!["fake-long-secret-value".to_string(), "ab12".to_string()];
     let text = concat!(

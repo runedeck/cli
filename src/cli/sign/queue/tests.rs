@@ -799,3 +799,106 @@ fn a_range_matches_by_identity_in_order_and_ignores_commit_ids() {
     retree.tree_id = "tree-other".to_string();
     assert!(!same_commit(&from_git, &retree));
 }
+
+/// A scratch git repository of four commits on the empty tree: `a`, its
+/// children `b` and `c`, and `m`, the merge of both. Every git reads the
+/// scratch home alone. `None` when git is not installed.
+fn merge_repository() -> Option<(TempDir, Repo, [String; 4])> {
+    if Command::new("git").arg("--version").output().is_err() {
+        return None;
+    }
+    let dir = TempDir::new().expect("tempdir");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let workspace = dir.path().join("repo");
+    let git_dir = workspace.join(".git");
+    let git = |args: &[&str]| -> String {
+        let output = Command::new("git")
+            .args(args)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Model")
+            .env("GIT_AUTHOR_EMAIL", "model@example.com")
+            .env("GIT_COMMITTER_NAME", "Model")
+            .env("GIT_COMMITTER_EMAIL", "model@example.com")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    let repo = workspace.to_str().expect("utf-8 path").to_string();
+    git(&["init", "--quiet", "--template=", &repo]);
+    let store = git_dir.to_str().expect("utf-8 path").to_string();
+    let tree = git(&["--git-dir", &store, "mktree"]);
+    let a = git(&["--git-dir", &store, "commit-tree", &tree, "-m", "a"]);
+    let b = git(&[
+        "--git-dir",
+        &store,
+        "commit-tree",
+        &tree,
+        "-p",
+        &a,
+        "-m",
+        "b",
+    ]);
+    let c = git(&[
+        "--git-dir",
+        &store,
+        "commit-tree",
+        &tree,
+        "-p",
+        &a,
+        "-m",
+        "c",
+    ]);
+    let m = git(&[
+        "--git-dir",
+        &store,
+        "commit-tree",
+        &tree,
+        "-p",
+        &b,
+        "-p",
+        &c,
+        "-m",
+        "m",
+    ]);
+    let repo = Repo {
+        workspace,
+        git_dir,
+        jj: false,
+    };
+    Some((dir, repo, [a, b, c, m]))
+}
+
+#[test]
+fn a_git_graft_never_hides_a_parent_from_the_range() {
+    let Some((_dir, repo, [a, b, c, m])) = merge_repository() else {
+        eprintln!("skipped: git is not installed");
+        return;
+    };
+    let mut expected = vec![b.clone(), c.clone(), m.clone()];
+    expected.sort();
+    let mut listed = repo.range(&a, &m).expect("range");
+    listed.sort();
+    assert_eq!(listed, expected);
+    // A graft gives `m` the parent `b` alone for every git read that honors
+    // `info/grafts`, and `c` leaves the range that is shown and signed.
+    std::fs::create_dir_all(repo.git_dir.join("info")).expect("info dir");
+    std::fs::write(
+        repo.git_dir.join("info").join("grafts"),
+        format!("{m} {b}\n"),
+    )
+    .expect("grafts");
+    let mut grafted = repo.range(&a, &m).expect("range");
+    grafted.sort();
+    assert_eq!(grafted, expected, "the graft hid {c} from the range");
+}

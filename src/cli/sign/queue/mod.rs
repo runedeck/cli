@@ -829,7 +829,12 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
         };
         let state = derive(&fresh, &live)?;
         let outcome = match state {
-            State::Current => sign_one(&store, fresh, signing_for(&mut signing, &repo.workspace)?)?,
+            State::Current => sign_one(
+                &store,
+                fresh,
+                signing_for(&mut signing, &repo.workspace)?,
+                json,
+            )?,
             State::Failed | State::Signed => continue,
             State::Moved => {
                 moved = true;
@@ -845,7 +850,12 @@ fn sign_requests(every: bool, json: bool) -> Result<i32, Error> {
             State::Claimed => {
                 let mut fresh = fresh;
                 fresh.request.claim = None;
-                sign_one(&store, fresh, signing_for(&mut signing, &repo.workspace)?)?
+                sign_one(
+                    &store,
+                    fresh,
+                    signing_for(&mut signing, &repo.workspace)?,
+                    json,
+                )?
             }
             State::Stale | State::Blocked => Outcome::skipped(&fresh.request, state),
         };
@@ -903,8 +913,9 @@ fn signing_for<'a>(slot: &'a mut Option<Signing>, workspace: &Path) -> Result<&'
 /// is the one `derive` saw: it keeps the recorded identity, and its commit
 /// id may differ from the recorded one when an ancestor was signed since.
 /// The recorded head is never rewritten: the receipt names it, and a retry
-/// on a later run must still find it there.
-fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Error> {
+/// on a later run must still find it there. Under `json`, the view the
+/// owner acknowledges goes to stderr.
+fn sign_one(store: &Store, live: Live, signing: &Signing, json: bool) -> Result<Outcome, Error> {
     let Live {
         mut request,
         head,
@@ -954,9 +965,9 @@ fn sign_one(store: &Store, live: Live, signing: &Signing) -> Result<Outcome, Err
                 Err(attempt) => attempt,
             }
         }
-        Kind::Open => open::complete_from_queue(&repo, &live, signing, &keys)?,
-        Kind::Merge => merge_seal(&repo, &live, signing, &keys)?,
-        Kind::Range => sign_range(&repo, &request, &observed, signing, &keys)?,
+        Kind::Open => open::complete_from_queue(&repo, &live, signing, &keys, json)?,
+        Kind::Merge => merge_seal(&repo, &live, signing, &keys, json)?,
+        Kind::Range => sign_range(&repo, &request, &observed, signing, &keys, json)?,
     };
     let outcome = match attempt {
         Attempt::Signed(commit) => {
@@ -1004,6 +1015,7 @@ fn merge_seal(
     live: &Live,
     signing: &Signing,
     keys: &[String],
+    json: bool,
 ) -> Result<Attempt, Error> {
     let request = &live.request;
     let Some(coverage) = &request.coverage else {
@@ -1011,7 +1023,7 @@ fn merge_seal(
             "the request records no coverage".to_string(),
         ));
     };
-    print!("{}", ceremony::view(repo, request, &coverage.base)?);
+    ceremony::show(json, &ceremony::view(repo, request, &coverage.base)?);
     if !ceremony::acknowledge(&format!(
         "sign the merge-seal for {} at {} generation {}?",
         request.bookmark,
@@ -1051,6 +1063,7 @@ fn sign_range(
     observed: &str,
     signing: &Signing,
     keys: &[String],
+    json: bool,
 ) -> Result<Attempt, Error> {
     let Some(range) = &request.range else {
         return Ok(Attempt::Failed("the request records no range".to_string()));
@@ -1076,7 +1089,7 @@ fn sign_range(
     {
         return Ok(Attempt::Signed(observed.to_string()));
     }
-    print!("{}", ceremony::range_view(request, range, &live));
+    ceremony::show(json, &ceremony::range_view(request, range, &live));
     if !ceremony::acknowledge(&format!(
         "sign {} commits on {} from {} to {}?",
         commits.len(),

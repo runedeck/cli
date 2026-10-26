@@ -330,6 +330,17 @@ fn coverage_table(coverage: &Coverage) -> Vec<String> {
     lines
 }
 
+/// The view the owner acknowledges: on stdout in text mode, where the
+/// outcome lines follow it, and on stderr under `--json`, so stdout holds
+/// the JSON document alone.
+pub(crate) fn show(json: bool, view: &str) {
+    if json {
+        eprint!("{view}");
+    } else {
+        print!("{view}");
+    }
+}
+
 /// One `y` on the terminal, and nothing else, is the owner's acknowledgment.
 pub(crate) fn acknowledge(prompt: &str) -> Result<bool, Error> {
     let path = std::env::var_os(TTY_VARIABLE)

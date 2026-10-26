@@ -2430,6 +2430,32 @@ fn a_declined_range_signs_nothing_and_stays_current() {
 }
 
 #[test]
+fn a_declined_range_under_json_leaves_stdout_to_the_outcomes() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "n\n");
+    let output = rune(&fixture)
+        .args(["sign", "next", "--json"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .output()
+        .expect("rune runs");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let outcomes: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|error| panic!("stdout is not one JSON document ({error}):\n{stdout}"));
+    assert_eq!(outcomes[0]["result"], "declined");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("commits      3"),
+        "the view goes to stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn a_range_goes_stale_when_its_head_or_the_protected_branch_moves() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3079,6 +3105,31 @@ fn a_git_replacement_object_never_hides_what_the_range_shows_or_signs() {
         .success()
         .stdout(predicate::str::contains("feat: one"))
         .stdout(predicate::str::contains("feat: evil").not());
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "sss");
+}
+
+#[test]
+fn a_git_graft_never_hides_a_commit_the_range_shows_or_signs() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let top = head_commit(&fixture, "change/top");
+    // A graft makes `top` the parent of the head for every git read that
+    // honors `info/grafts`, and `one` leaves the range; jj keeps the stored
+    // ancestry, so the queue would show and verify two commits of three.
+    let info = fixture.workspace.join(".git").join("info");
+    fs::create_dir_all(&info).expect("info dir");
+    fs::write(info.join("grafts"), format!("{head} {top}\n")).expect("grafts");
+    queue_range(&fixture, &head);
     let tty = outside(&fixture, "tty", "y\n");
     rune(&fixture)
         .args(["sign", "next"])

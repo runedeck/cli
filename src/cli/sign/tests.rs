@@ -1,7 +1,8 @@
 use super::{
-    branch_push_refspec, colon_listing_fingerprints, index_is_clean, run_signing_command,
-    select_default_remote, signature_fingerprints, signer_lines, signing_command_error,
-    signing_failure, tag_push_refspec, tag_reference, tag_target, verified_status_output,
+    branch_push_refspec, colon_listing_fingerprints, index_is_clean, pin_object_reads,
+    run_signing_command, select_default_remote, signature_fingerprints, signer_lines,
+    signing_command_error, signing_failure, tag_push_refspec, tag_reference, tag_target,
+    verified_status_output,
 };
 use rune::error::ErrorKind;
 use std::io::{self, Write};
@@ -83,6 +84,90 @@ fn staged_content_makes_the_index_unclean() {
     run_git(repository.path(), &["add", "reviewed.txt"]);
 
     assert!(!index_is_clean(Some(repository.path())).unwrap());
+}
+
+/// git on a scratch repository with a home of its own, so no config of the
+/// developer reaches the git under test.
+fn scratch_git(scratch: &Path) -> Command {
+    let home = scratch.join("home");
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(scratch.join("repo"))
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Model")
+        .env("GIT_AUTHOR_EMAIL", "model@example.com")
+        .env("GIT_COMMITTER_NAME", "Model")
+        .env("GIT_COMMITTER_EMAIL", "model@example.com")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_CONFIG_COUNT");
+    command
+}
+
+fn git_output(command: &mut Command) -> (String, String) {
+    let output = command.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "git failed: {stderr}");
+    (String::from_utf8_lossy(&output.stdout).into_owned(), stderr)
+}
+
+/// A scratch repository of one commit whose `info/grafts` names a parent
+/// for it: every git that reads the commit opens the graft file.
+fn grafted_repository() -> (TempDir, String) {
+    let scratch = TempDir::new().unwrap();
+    std::fs::create_dir_all(scratch.path().join("home")).unwrap();
+    run_git(scratch.path(), &["init", "--quiet", "--template=", "repo"]);
+    let (tree, _) = git_output(scratch_git(scratch.path()).arg("mktree"));
+    let (commit, _) =
+        git_output(scratch_git(scratch.path()).args(["commit-tree", tree.trim(), "-m", "root"]));
+    let commit = commit.trim().to_string();
+    let info = scratch.path().join("repo").join(".git").join("info");
+    std::fs::create_dir_all(&info).unwrap();
+    std::fs::write(
+        info.join("grafts"),
+        format!("{commit} {}\n", "1".repeat(40)),
+    )
+    .unwrap();
+    (scratch, commit)
+}
+
+#[test]
+fn pinned_git_writes_no_hint_with_a_grafts_file_present() {
+    let (scratch, commit) = grafted_repository();
+    let mut command = scratch_git(scratch.path());
+    command.args(["rev-list", "--max-count=1", &commit]);
+
+    let (_, stderr) = git_output(pin_object_reads(&mut command));
+
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("hint:")),
+        "git wrote a hint: {stderr}"
+    );
+}
+
+#[test]
+fn pinned_git_keeps_the_config_pairs_the_caller_passes() {
+    let (scratch, _) = grafted_repository();
+    let mut command = scratch_git(scratch.path());
+    command
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "probe.answer")
+        .env("GIT_CONFIG_VALUE_0", "yes")
+        .args(["config", "--list"]);
+
+    let (listing, stderr) = git_output(pin_object_reads(&mut command));
+
+    assert!(listing.contains("probe.answer=yes\n"), "{listing}");
+    assert!(
+        listing.contains("advice.graftfiledeprecated=false\n"),
+        "{listing}"
+    );
+    assert!(!stderr.contains("hint:"), "git wrote a hint: {stderr}");
 }
 
 #[test]

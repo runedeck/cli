@@ -17,6 +17,7 @@
 
 use super::short;
 use super::store::Identity;
+use crate::cli::sign::pin_object_reads;
 use rune::error::{Error, ErrorKind};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -113,11 +114,9 @@ impl Repo {
             return Ok(repo);
         }
         let git = |args: &[&str]| -> Result<PathBuf, Error> {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(path)
-                .args(args)
-                .env("GIT_NO_REPLACE_OBJECTS", "1")
+            let mut command = Command::new("git");
+            command.arg("-C").arg(path).args(args);
+            let output = pin_object_reads(&mut command)
                 .output()
                 .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
             if !output.status.success() {
@@ -686,17 +685,18 @@ impl Repo {
             .collect())
     }
 
-    /// git on the store, with replacement objects ignored: a `refs/replace`
-    /// entry would otherwise put another commit's content behind the id the
-    /// queue reads, shows, and verifies, while jj signs the stored one.
+    /// git on the store, reading the stored objects alone: a `refs/replace`
+    /// entry would otherwise put another commit's content, and an
+    /// `info/grafts` line another parent list, behind the id the queue
+    /// reads, shows, lists, and verifies, while jj signs the stored one.
     fn git(&self) -> Command {
         let mut command = Command::new("git");
         command
             .arg("--no-pager")
             .arg("--git-dir")
             .arg(&self.git_dir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_NO_REPLACE_OBJECTS", "1");
+            .env("GIT_TERMINAL_PROMPT", "0");
+        pin_object_reads(&mut command);
         command
     }
 
@@ -1160,15 +1160,16 @@ fn canonical(path: &Path) -> PathBuf {
 /// jj on the workspace with the git it runs pinned to `git` on PATH: the
 /// repository's config can name another program under
 /// `git.executable-path`, and every export and import would run it. That
-/// git ignores replacement objects, as the queue's own git does.
+/// git reads the stored objects alone, no replacement and no graft, as the
+/// queue's own git does.
 fn jj(workspace: &Path) -> Command {
     let mut command = Command::new("jj");
     command
         .arg("-R")
         .arg(workspace)
         .args(["--color=never", "--ignore-working-copy"])
-        .args(["--config", "git.executable-path=\"git\""])
-        .env("GIT_NO_REPLACE_OBJECTS", "1");
+        .args(["--config", "git.executable-path=\"git\""]);
+    pin_object_reads(&mut command);
     command
 }
 

@@ -1841,14 +1841,20 @@ fn redact_one_url(url: &str) -> String {
     let (pairs, fragment) = query_pairs(from_query);
     let query: Vec<String> = pairs
         .into_iter()
-        .map(|pair| match pair.split_once('=') {
-            Some((name, _)) if is_credential_query_name(name) => {
-                format!("{name}={REDACTED_VALUE}")
-            }
-            _ => pair.to_string(),
+        .map(|pair| match credential_query_pair(pair) {
+            Some((name, _)) => format!("{name}={REDACTED_VALUE}"),
+            None => pair.to_string(),
         })
         .collect();
     format!("{authority}{path}{}{fragment}", query.join("&"))
+}
+
+/// A `name=value` query pair whose name is credential-named once
+/// percent-decoded, as the server reads it (`api%5Fkey` is `api_key`):
+/// the name and the value, both as written.
+fn credential_query_pair(pair: &str) -> Option<(&str, &str)> {
+    let (name, value) = pair.split_once('=')?;
+    is_credential_query_name(&rune::services::percent_decode(name)).then_some((name, value))
 }
 
 /// The credential-named query values of every URL in `text`, as written
@@ -1860,11 +1866,7 @@ pub(crate) fn url_query_secrets(text: &str) -> Vec<String> {
     for url in split_at_urls(text).into_iter().filter_map(|(_, url)| url) {
         let (_, _, from_query) = url_parts(url);
         let (pairs, _) = query_pairs(from_query);
-        for value in pairs.into_iter().filter_map(|pair| {
-            pair.split_once('=')
-                .filter(|(name, _)| is_credential_query_name(name))
-                .map(|(_, value)| value)
-        }) {
+        for (_, value) in pairs.into_iter().filter_map(credential_query_pair) {
             values.push(value.to_string());
             values.push(rune::services::percent_decode(value));
         }

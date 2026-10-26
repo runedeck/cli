@@ -19,6 +19,60 @@ use std::process::{Command, Stdio};
 
 const SEAL_SUBJECT: &str = "seal: approve";
 
+/// The graft file every git the signer runs reads: the null device, so no
+/// `info/grafts` line of the repository is read.
+const NO_GRAFTS: &str = "/dev/null";
+
+/// The variable that tells git how many `GIT_CONFIG_KEY_<n>` and
+/// `GIT_CONFIG_VALUE_<n>` pairs its environment carries.
+const GIT_CONFIG_COUNT: &str = "GIT_CONFIG_COUNT";
+
+/// git with its reads pinned to the stored objects. A `refs/replace`
+/// entry would put another commit's content behind an id, and an
+/// `info/grafts` line another parent list behind one, for every read that
+/// honors them: a range listing would drop a merge parent, and the
+/// verification after signing would walk the same cut graph. jj signs the
+/// stored commit, and the git it runs for its exports inherits both.
+///
+/// git prints its graft deprecation hint whenever the graft file opens,
+/// and the null device always opens, so the hint is off for every pinned
+/// call: one config pair appended after the ones the command, or this
+/// process, already passes git through its environment.
+pub(crate) fn pin_object_reads(command: &mut Command) -> &mut Command {
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_GRAFT_FILE", NO_GRAFTS);
+    if let Some(count) = git_config_count(command) {
+        command
+            .env(
+                format!("GIT_CONFIG_KEY_{count}"),
+                "advice.graftFileDeprecated",
+            )
+            .env(format!("GIT_CONFIG_VALUE_{count}"), "false")
+            .env(GIT_CONFIG_COUNT, (count + 1).to_string());
+    }
+    command
+}
+
+/// How many config pairs the git `command` starts already reads from its
+/// environment: the count the command sets, else the one this process
+/// inherits, and none when neither is set. `None` when the count is not a
+/// number, which git refuses on its own.
+fn git_config_count(command: &Command) -> Option<usize> {
+    let count = match command
+        .get_envs()
+        .find(|(name, _)| *name == std::ffi::OsStr::new(GIT_CONFIG_COUNT))
+    {
+        Some((_, Some(value))) => value.to_os_string(),
+        Some((_, None)) => return Some(0),
+        None => std::env::var_os(GIT_CONFIG_COUNT).unwrap_or_default(),
+    };
+    if count.is_empty() {
+        return Some(0);
+    }
+    count.to_str()?.parse().ok()
+}
+
 /// The options of `rune sign --verify --seal`.
 pub(crate) struct SealCheck<'a> {
     pub reference: &'a str,
@@ -148,7 +202,7 @@ fn ensure_index_clean() -> Result<(), Error> {
 
 pub(crate) fn index_is_clean(repository: Option<&Path>) -> Result<bool, Error> {
     let mut command = Command::new("git");
-    command.env("GIT_NO_REPLACE_OBJECTS", "1");
+    pin_object_reads(&mut command);
     if let Some(repository) = repository {
         // An explicit repository must win over inherited hook context, where
         // GIT_DIR and friends would silently redirect -C to the outer repo.
@@ -302,10 +356,11 @@ pub(crate) fn tag_reference(reference: &str) -> String {
 }
 
 fn is_tag(reference: &str) -> bool {
-    Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["rev-parse", "--quiet", "--verify"])
-        .arg(tag_reference(reference))
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .arg(tag_reference(reference));
+    pin_object_reads(&mut command)
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -468,12 +523,13 @@ fn status_word(line: &str) -> Option<&str> {
     line.strip_prefix("[GNUPG:] ")?.split_whitespace().next()
 }
 
-/// git with replacement objects ignored: a `refs/replace` entry would put
-/// another commit's content behind the id the signature is checked on.
+/// git with its reads pinned to the stored objects: a `refs/replace` entry
+/// would put another commit's content behind the id the signature is
+/// checked on.
 fn git_raw_verification(args: &[&str]) -> Result<Option<String>, Error> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+    let mut command = Command::new("git");
+    command.args(args);
+    let output = pin_object_reads(&mut command)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     let status_lines = String::from_utf8_lossy(&output.stderr).to_string();
@@ -620,14 +676,15 @@ fn owner_git_command(args: &[&str]) -> Command {
     for variable in IDENTITY_OVERRIDES {
         command.env_remove(variable);
     }
-    command.args(args).env("GIT_NO_REPLACE_OBJECTS", "1");
+    command.args(args);
+    pin_object_reads(&mut command);
     command
 }
 
 fn git_stdout(args: &[&str]) -> Result<String, Error> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+    let mut command = Command::new("git");
+    command.args(args);
+    let output = pin_object_reads(&mut command)
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     if output.status.success() {

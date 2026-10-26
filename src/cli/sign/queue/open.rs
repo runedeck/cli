@@ -5,7 +5,7 @@
 //! an owner branch: the seal comes first, and only the sealed branch is
 //! published.
 
-use super::ceremony::{Attempt, acknowledge, seal_above, view};
+use super::ceremony::{Attempt, acknowledge, seal_above, show, view};
 use super::gh::{self, PullRequest};
 use super::repo::{Head, PROTECTED, Repo, Signing};
 use super::store::{Kind, OpenRequest, Request, Status};
@@ -402,12 +402,13 @@ fn finish(open: &OpenRequest, draft: u64, sealed: &str, nonce: &str, bookmark: &
 }
 
 /// `next` on an `open` request: the owner acknowledges the view, then the
-/// flow completes.
+/// flow completes. Under `json` the view goes to stderr.
 pub(crate) fn complete_from_queue(
     repo: &Repo,
     live: &Live,
     signing: &Signing,
     keys: &[String],
+    json: bool,
 ) -> Result<Attempt, Error> {
     let request = &live.request;
     let Some(open) = &request.open else {
@@ -415,7 +416,7 @@ pub(crate) fn complete_from_queue(
             "the request records no pull request to open".to_string(),
         ));
     };
-    print!("{}", view(repo, request, &open.base)?);
+    show(json, &view(repo, request, &open.base)?);
     if !acknowledge(&format!("sign the open-seal for {}?", request.bookmark))? {
         return Ok(Attempt::NotSigned("declined".to_string()));
     }
@@ -473,7 +474,7 @@ pub(crate) fn adopt(number: u64, repository: Option<&Path>, json: bool) -> Resul
     };
     let request = open_request(&repo, &bookmark, &candidate);
     let open = request.open.as_ref().expect("set above");
-    print!("{}", view(&repo, &request, &open.base)?);
+    show(json, &view(&repo, &request, &open.base)?);
     let signing = Signing::owner(&repo.workspace)?;
     let keys = owner_keys(&repo)?;
     let (sealed, nonce) = match seal_and_push(&repo, &request, open, &signing, &keys, None)? {
