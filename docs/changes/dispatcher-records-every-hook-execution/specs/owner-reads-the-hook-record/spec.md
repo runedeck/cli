@@ -3,17 +3,17 @@
 ### Requirement: The Record Lists On Request
 
 The *[hook record][HOOKRECORD]* listing MUST print the record oldest first, one line per *[hook][HOOK]* run, as a table or as one JSON object per line.
-It MUST accept a start and an end given as an ISO week or a date, both inclusive whole UTC periods, and filters on harness, hook, rule, file, what the hook asked for, and the *[dispatcher answer][DISPATCHERANSWER]*, where rule and file match a substring.
+It MUST accept a start and an end given as an ISO week or a date, both inclusive whole UTC periods, and filters on harness, [hook][HOOK], rule, file, what the [hook][HOOK] asked for, and the *[dispatcher answer][DISPATCHERANSWER]*, where rule and file match a substring.
 Every supplied filter MUST match, and with no matching record the listing MUST print nothing and succeed.
 
 #### Scenario: Filter selects one hook from one week on
 
-- **WHEN** the record holds runs of several hooks over three weeks and the listing is filtered to the lint hook from week 2026-W42 on
-- **THEN** the output holds only that hook's runs from the first instant of that week on, oldest first
+- **WHEN** the record holds runs of several [hooks][HOOK] over three weeks and the listing is filtered to the lint [hook][HOOK] from week 2026-W42 on
+- **THEN** the output holds only that [hook][HOOK]'s runs from the first instant of that week on, oldest first
 
 #### Scenario: Filters combine
 
-- **WHEN** the listing is filtered to the rule MD013, hooks that asked to deny, and an end of 2026-10-15
+- **WHEN** the listing is filtered to the rule MD013, [hooks][HOOK] that asked to deny, and an end of 2026-10-15
 - **THEN** every printed run has MD013 in its rules, asked for deny, and a timestamp at or before 2026-10-15T23:59:59.999Z
 
 #### Scenario: Record is empty
@@ -23,7 +23,7 @@ Every supplied filter MUST match, and with no matching record the listing MUST p
 
 ### Requirement: Stats Aggregate The Record
 
-The aggregate view MUST print, under the same filters: runs by what the hook asked for and by dispatcher answer, one row per rule with its finding count, the runs where it was a cause, the runs where it was the sole cause, and the runs where it was advice, runs per ISO week, repeat denials with how many kept the same causes, the files denied most, and the hooks by run count.
+The aggregate view MUST print, under the same filters: runs by what the [hook][HOOK] asked for and by [dispatcher answer][DISPATCHERANSWER], one row per rule with its finding count, the runs where it was a cause, the runs where it was the sole cause, and the runs where it was advice, runs per ISO week, repeat denials with how many kept the same causes, the files denied most, and the [hooks][HOOK] by run count.
 Its JSON form MUST carry the same figures as one object.
 
 #### Scenario: Rule is among the causes and the sole cause
@@ -38,8 +38,8 @@ Its JSON form MUST carry the same figures as one object.
 
 ### Requirement: Stats Define Denial, Advice, Repeats, And Top
 
-A denial is a run in which the hook asked to deny.
-A rule counts as advice in a run in which the hook asked for allow and its *[hook metrics][HOOKMETRICS]* name the rule.
+A denial is a run in which the [hook][HOOK] asked to deny.
+A rule counts as advice in a run in which the [hook][HOOK] asked for allow and its *[hook metrics][HOOKMETRICS]* name the rule.
 A denial is a repeat when the same session was denied on the same file earlier, and it keeps the same causes when its causes equal those of the denial just before it for that session and file.
 The top count MUST keep the rows with the highest count, by count descending, then name ascending, default 25.
 
@@ -55,8 +55,8 @@ The top count MUST keep the rows with the highest count, by count descending, th
 
 ### Requirement: Import Backfills From Raw Claude Sessions
 
-The import MUST read every transcript under the raw Claude session store, the capture mirror by default and else the harness's own store, take each post-tool hook attachment that denied or advised through the Markdown lint hook, and write one hook record per attachment with its tool-use id.
-It MUST skip an attachment when a record with the same harness, session, tool-use id, and hook exists, whether live or imported, and MUST report how many records it added.
+The import MUST read every transcript under the raw Claude session store, the capture mirror by default and else the harness's own store, take each post-tool [hook][HOOK] attachment that denied or advised through the Markdown lint [hook][HOOK], and write one [hook record][HOOKRECORD] per attachment with its tool-use id.
+It MUST skip an attachment when a record with the same harness, session, tool-use id, and [hook][HOOK] exists, whether live or imported, and MUST report how many records it added.
 
 #### Scenario: Import reads two transcripts twice
 
@@ -65,7 +65,7 @@ It MUST skip an attachment when a record with the same harness, session, tool-us
 
 #### Scenario: Live record already holds the tool use
 
-- **WHEN** the *[hook dispatcher][HOOKDISPATCHER]* recorded a lint hook run for one tool-use id and a transcript holds an attachment for the same id
+- **WHEN** the *[hook dispatcher][HOOKDISPATCHER]* recorded a lint [hook][HOOK] run for one tool-use id and a transcript holds an attachment for the same id
 - **THEN** the import adds no record for it
 
 ### Requirement: Import Keeps A Checkpoint
@@ -90,7 +90,7 @@ A later import MUST read from the offset, resolve an attachment's file path thro
 
 ### Requirement: The Record Stays On The Machine
 
-rune MUST read the hook record only from the configured state dir, and MUST NOT transmit record data or include it in a release tarball, a bench report, a proof, or a signing artifact, under any file name or embedded in another file. The proof runner MUST give each scene its own empty state dir, unless the scene names a fixture state dir itself.
+rune MUST read the [hook record][HOOKRECORD] only from the configured state dir, and MUST NOT transmit record data or include it in a release tarball, a bench report, a proof, or a signing artifact, under any file name or embedded in another file. The proof runner MUST give each scene its own empty state dir, unless the scene names a fixture state dir itself.
 
 #### Scenario: Release runs with a populated record
 

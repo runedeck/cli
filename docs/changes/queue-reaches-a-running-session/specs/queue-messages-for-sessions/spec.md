@@ -2,7 +2,7 @@
 
 ### Requirement: Every message is recorded and nothing is removed
 
-The command MUST record every posted message in one plaintext ledger in the owner's home folder, shared by every session on the machine. Each event MUST be one line of seven tab-separated columns: timestamp, id, state, sender, harness, session, message, with tabs, newlines, and backslashes escaped. A state change MUST be a new line with the message's id. No line MUST ever be removed or rewritten, and a message's last line MUST give its state.
+The command MUST record every posted message in one plaintext ledger in the owner's home folder, shared by every session on the machine. Each event MUST be one line of seven tab-separated columns: timestamp, id, state, sender, *[harness][HARNESS]*, session, message, with tabs, newlines, and backslashes escaped. A state change MUST be a new line with the message's id. No line MUST ever be removed or rewritten, and a message's last line MUST give its state.
 
 #### Scenario: Message for a Claude session is read once
 
@@ -12,7 +12,7 @@ The command MUST record every posted message in one plaintext ledger in the owne
 
 ### Requirement: A message waits for the session's next turn
 
-The caller MUST name a route, a session, and a message. The route is a *[harness][HARNESS]* or a profile on one. The session is an id or an exact name. Where the harness has its own queue, the command MUST hand the message to it and record it as `queued`. Every other message MUST wait as `posted`. The command MUST NOT start a turn, a session, or a model call. For a harness's own queue, the profile's environment MUST apply and its arguments MUST NOT, with a warning that names them.
+The caller MUST name a route, a session, and a message. The route is a [harness][HARNESS] or a profile on one. The session is an id or an exact name. Where the [harness][HARNESS] has its own queue, the command MUST hand the message to it and record it as `queued`. Every other message MUST wait as `posted`. The command MUST NOT start a turn, a session, or a model call. For a [harness][HARNESS]'s own queue, the profile's environment MUST apply and its arguments MUST NOT, with a warning that names them.
 
 #### Scenario: Codex session takes a queued message
 
@@ -27,7 +27,7 @@ The caller MUST name a route, a session, and a message. The route is a *[harness
 
 ### Requirement: A session reads its messages through a hook or by asking
 
-A read MUST return the `posted` messages for the named sessions, with sender, timestamp, and text, and record each as `read` under the ledger's lock. Without a named session, a read inside a harness session MUST read for that session's id. A hook handler MUST deliver `posted` messages as context or as the reason to keep working at a turn's end. On an event where the harness can show neither, the hook MUST read nothing.
+A read MUST return the `posted` messages for the named sessions, with sender, timestamp, and text, and record each as `read` under the ledger's lock. Without a named session, a read inside a [harness][HARNESS] session MUST read for that session's id. A hook handler MUST deliver `posted` messages as context or as the reason to keep working at a turn's end. On an event where the [harness][HARNESS] can show neither, the hook MUST read nothing.
 
 #### Scenario: Hook keeps a Codex turn going
 
@@ -50,7 +50,7 @@ A list MUST show each message in its last state, filtered by session or state wh
 
 ### Requirement: The result reports the message
 
-A post MUST report the message's id and sender, and for a harness's own queue the ids the harness printed. A route that names no harness, a usage error, and a read with no session to read for MUST exit 125 and start nothing. When the harness fails, its exit status MUST pass through with the last lines of both streams, and the ledger MUST NOT record the message.
+A post MUST report the message's id and sender, and for a [harness][HARNESS]'s own queue the ids the [harness][HARNESS] printed. A route that names no [harness][HARNESS], a usage error, and a read with no session to read for MUST exit 125 and start nothing. When the [harness][HARNESS] fails, its exit status MUST pass through with the last lines of both streams, and the ledger MUST NOT record the message.
 
 #### Scenario: Route that names no harness
 

@@ -11,7 +11,7 @@ A live scene's screen steps MUST drive a program in a pseudo terminal through th
 
 ### Requirement: Screen And Model Parts Run On Request
 
-The proof runner MUST run screen steps and model prompts only when it is asked for them, and command blocks on every run. Screen steps need a pseudo terminal and the owner's host. A *[model][MODEL]* prompt costs a model call. A new recording of either leaves the earlier judgment and approval stale, so it never happens as a side effect.
+The proof runner MUST run screen steps and *[model][MODEL]* prompts only when it is asked for them, and command blocks on every run. Screen steps need a pseudo terminal and the owner's host. A [model][MODEL] prompt costs a [model][MODEL] call. A new recording of either leaves the earlier judgment and approval stale, so it never happens as a side effect.
 
 #### Scenario: Plain run of a proof with live scenes
 
@@ -20,16 +20,16 @@ The proof runner MUST run screen steps and model prompts only when it is asked f
 
 ### Requirement: A Judge Reads Only The Evidence
 
-Every screen part and model prompt MUST get a judgment from a model of another vendor than the model under test. The model MUST be on the repository's trusted list. The judge gets every input inside its prompt and no tool: the *[scenario][SCENARIO]*, the claim, the notes marked as context, the steps, and the screen text or the answer. It answers passed, failed, or cannot tell, with a reason and a quoted line. The proof runner keeps the raw reply and records the judgment.
+Every screen part and [model][MODEL] prompt MUST get a judgment from a [model][MODEL] of another vendor than the [model][MODEL] under test. The [model][MODEL] MUST be on the repository's trusted list. The judge gets every input inside its prompt and no tool: the *[scenario][SCENARIO]*, the claim, the notes marked as context, the steps, and the screen text or the answer. It answers passed, failed, or cannot tell, with a reason and a quoted line. The proof runner keeps the raw reply and records the judgment.
 
 #### Scenario: Judge model is not trusted
 
-- **WHEN** an author asks for a judgment from a model that the repository's trusted list does not hold
-- **THEN** the proof runner refuses, names the model, and records nothing
+- **WHEN** an author asks for a judgment from a [model][MODEL] that the repository's trusted list does not hold
+- **THEN** the proof runner refuses, names the [model][MODEL], and records nothing
 
 ### Requirement: Only The Owner Approves
 
-Every screen part and model prompt MUST get the owner's approval after its judgment. The approval loop lists the pending parts and shows the claim, the judgment, and the screen text, and it offers to play the recording. The owner accepts, rejects, or overrules a failed judgment. The approval names the digest of the judge's reply it accepts. The loop MUST refuse to run without an interactive terminal, so an agent in a *[harness][HARNESS]* cannot approve.
+Every screen part and [model][MODEL] prompt MUST get the owner's approval after its judgment. The approval loop lists the pending parts and shows the claim, the judgment, and the screen text, and it offers to play the recording. The owner accepts, rejects, or overrules a failed judgment. The approval names the digest of the judge's reply it accepts. The loop MUST refuse to run without an interactive terminal, so an agent in a *[harness][HARNESS]* cannot approve.
 
 #### Scenario: Owner accepts a passed judgment
 

@@ -19,7 +19,7 @@ The owner also finds a line of joined commands hard to read and to debug (2026-1
 - It refuses an exempt tool that something on the line keeps inside the sandbox. The refusal names what keeps it inside and gives the command to run instead. A directory change before `jj`, `git`, `rune run`, `codex exec`, or `opencode run` becomes that tool's own directory option.
 - A line that joins separate commands runs, and the model gets advice to split it into one command per call.
 - A line with no exempt tool is never refused.
-- The Claude encoder passes handler context on `PreToolUse` as `additionalContext`, which the hooks reference documents for that event.
+- The Claude encoder passes handler context on `PreToolUse` as `additionalContext`, which the [hooks][HOOK] reference documents for that event.
 
 ## Capabilities
 
