@@ -655,11 +655,14 @@ mod tests {
                 same(&[&link, "attention"], &[&real, "attention"]),
                 "a symlink is its target"
             );
-            if let Some(system) = legacy::tests::system_sh() {
+            // The second command names the system shell by the path a line
+            // would carry, /bin/sh. Its canonical path is no shell word where
+            // /bin/sh links to dash, as on Ubuntu.
+            if legacy::tests::system_sh().is_some() {
                 assert!(
                     same(
                         &["sh", &link, "snapshot"],
-                        &[&system.display().to_string(), &real, "snapshot"]
+                        &[legacy::SYSTEM_SH, &real, "snapshot"]
                     ),
                     "a shell by the file it resolves to"
                 );
