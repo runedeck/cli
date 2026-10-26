@@ -12,6 +12,12 @@
 //! separate commands with `&&` or `;` runs, with advice to split it.
 //! Commands that start with any other tool are never denied.
 //!
+//! Cargo is the one exception to the advice. It reads `.cargo/config.toml`
+//! from the current directory, not from the manifest, so `cd DIR && cargo …`
+//! is the only way to use a checkout's configured target directory. A cargo
+//! call that reaches such a checkout through `--manifest-path` gets advice
+//! to run from the checkout instead (decided 2026-10-26).
+//!
 //! The patterns come from the handler's arguments, or else from the Claude
 //! Code settings files the session reads.
 
@@ -183,7 +189,8 @@ pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<Handler
     } else {
         Exemptions::new(args)
     };
-    let mut result = judge(command, disable, &exemptions);
+    let cwd = payload.cwd.as_deref().map(Path::new);
+    let mut result = judge(command, disable, &exemptions, cwd);
     let written = payload.raw["tool_input"]["command"].as_str();
     if result.effect == super::encode::Effect::Deny
         && let Some(written) = written.filter(|w| *w != command)
@@ -200,11 +207,18 @@ pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<Handler
     Ok(result)
 }
 
-/// The verdict on one command line.
-pub(crate) fn judge(command: &str, disable: bool, exemptions: &Exemptions) -> HandlerResult {
+/// The verdict on one command line. `cwd` is where the harness runs it,
+/// which resolves a relative `--manifest-path` and decides whether cargo
+/// already sees a checkout's configuration.
+pub(crate) fn judge(
+    command: &str,
+    disable: bool,
+    exemptions: &Exemptions,
+    cwd: Option<&Path>,
+) -> HandlerResult {
     let commands = shell::parse(command);
     if exemptions.is_empty() || commands.is_empty() {
-        return advise(&commands);
+        return advise(&commands, cwd);
     }
     let outside = commands.iter().all(|c| clean(c, exemptions));
     if outside {
@@ -216,14 +230,14 @@ pub(crate) fn judge(command: &str, disable: bool, exemptions: &Exemptions) -> Ha
                  same command without it."
             ));
         }
-        return advise(&commands);
+        return advise(&commands, cwd);
     }
     let fixes: Vec<Fix> = fixes(&commands, exemptions, None)
         .into_iter()
         .filter(|f| !f.problems.is_empty())
         .collect();
     if fixes.is_empty() {
-        return advise(&commands);
+        return advise(&commands, cwd);
     }
     HandlerResult::deny(reason(&fixes, disable))
 }
@@ -495,25 +509,42 @@ fn reason(fixes: &[Fix], disable: bool) -> String {
     text
 }
 
-/// Pass, with advice when the line joins separate commands.
-fn advise(commands: &[Command]) -> HandlerResult {
+/// Pass, with advice when the line joins separate commands, and when a
+/// cargo call reaches a configured checkout through `--manifest-path`.
+fn advise(commands: &[Command], cwd: Option<&Path>) -> HandlerResult {
     let mut result = HandlerResult::default();
     if chained(commands) {
         result.context.push(
             "sandbox-guard: this command line joins separate commands with `&&`, `||`, or `;`. \
              One command per call is easier for the owner to read and to debug, so split it \
              into separate calls next time. Give a directory through the tool's own flag \
-             (`git -C`, `jj -R`) rather than `cd … &&`."
+             (`git -C`, `jj -R`) rather than `cd … &&` (cargo is the exception: \
+             `cd <dir> && cargo …` is fine, because cargo reads its configuration from the \
+             current directory)."
                 .to_string(),
         );
     }
     result
+        .context
+        .extend(commands.iter().filter_map(|c| manifest_advice(c, cwd)));
+    result
+}
+
+/// `cd DIR && cargo …` and nothing else: two commands, `cd` with one
+/// argument, joined by `&&`, the second one cargo.
+fn cd_then_cargo(commands: &[Command]) -> bool {
+    commands.len() == 2
+        && cd_before(commands, 0).is_some_and(|(_, joiner)| joiner == " &&")
+        && tool_name(&commands[1].values()).as_deref() == Some("cargo")
 }
 
 /// Two or more commands joined by anything but a pipe. A probe or guard
-/// before one action (`test -f x && …`, `mkdir -p d && cd d`) and a
-/// trailing `|| true` are not a chain.
+/// before one action (`test -f x && …`, `mkdir -p d && cd d`), a trailing
+/// `|| true`, and `cd DIR && cargo …` are not a chain.
 fn chained(commands: &[Command]) -> bool {
+    if cd_then_cargo(commands) {
+        return false;
+    }
     let mut commands: Vec<&Command> = commands.iter().collect();
     if commands.len() > 1
         && matches!(commands[commands.len() - 2].joiner, Some(Joiner::Or))
@@ -536,4 +567,111 @@ fn chained(commands: &[Command]) -> bool {
         ["test" | "[" | "[[" | "which" | "type" | "mkdir", ..] | ["command", "-v", ..]
     );
     !(joins == 1 && commands.len() == 2 && probe)
+}
+
+/// The largest cargo config file the guard reads. A hook must not wait on
+/// a file.
+const CONFIG_LIMIT: u64 = 64 * 1024;
+
+/// Advice for a cargo call that reaches a checkout through
+/// `--manifest-path` while that checkout, or a parent of it, sets
+/// `build.target-dir`. Cargo reads `.cargo/config.toml` from the current
+/// directory, never from the manifest, so such a call builds a private
+/// copy under the manifest's folder. A file the guard cannot read or
+/// parse, a path it cannot resolve, and a call already under that
+/// checkout mean no advice.
+fn manifest_advice(command: &Command, cwd: Option<&Path>) -> Option<String> {
+    let values = command.values();
+    let start = values.iter().position(|w| *w != "rtk")?;
+    if values[start] != "cargo" {
+        return None;
+    }
+    let (flag, span, manifest) = manifest_flag(&values[start..])?;
+    let manifest = Path::new(manifest);
+    let manifest = if manifest.is_absolute() {
+        manifest.to_path_buf()
+    } else {
+        cwd?.join(manifest)
+    };
+    let folder = manifest.parent()?;
+    let folder = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    let (checkout, config) = configured_target_dir(&folder)?;
+    if cwd.is_some_and(|cwd| {
+        cwd.canonicalize()
+            .unwrap_or_else(|_| cwd.to_path_buf())
+            .starts_with(&checkout)
+    }) {
+        return None;
+    }
+    let args: Vec<&str> = command.words[start..]
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i < flag || *i >= flag + span)
+        .map(|(_, w)| w.raw.as_str())
+        .collect();
+    let folder = quoted(&folder.to_string_lossy());
+    Some(format!(
+        "sandbox-guard: cargo reads `{}` from the current directory, not from the manifest, so \
+         this call does not see its `build.target-dir` and fills {folder}/target with a private \
+         build. Run `cd {folder} && {}` instead, without `--manifest-path`: the configured \
+         target directory applies only from there.",
+        config.display(),
+        args.join(" ")
+    ))
+}
+
+/// `--manifest-path FILE` or `--manifest-path=FILE` among cargo's words:
+/// where the flag starts, how many words it spans, and the file.
+fn manifest_flag<'a>(values: &[&'a str]) -> Option<(usize, usize, &'a str)> {
+    values.iter().enumerate().skip(1).find_map(|(at, word)| {
+        if *word == "--manifest-path" {
+            values.get(at + 1).map(|file| (at, 2, *file))
+        } else {
+            word.strip_prefix("--manifest-path=")
+                .map(|file| (at, 1, file))
+        }
+    })
+}
+
+/// The checkout whose `.cargo/config.toml` (or `.cargo/config`) is the
+/// first one above `folder`, and that file, when it sets
+/// `build.target-dir`. The search stops at the first config file either
+/// way.
+fn configured_target_dir(folder: &Path) -> Option<(PathBuf, PathBuf)> {
+    for dir in folder.ancestors() {
+        let cargo = dir.join(".cargo");
+        let Some((file, meta)) = ["config.toml", "config"].into_iter().find_map(|name| {
+            let file = cargo.join(name);
+            let meta = std::fs::metadata(&file)
+                .ok()
+                .filter(std::fs::Metadata::is_file)?;
+            Some((file, meta))
+        }) else {
+            continue;
+        };
+        if meta.len() > CONFIG_LIMIT {
+            return None;
+        }
+        let text = std::fs::read_to_string(&file).ok()?;
+        let value: toml::Value = toml::from_str(&text).ok()?;
+        return value
+            .get("build")?
+            .get("target-dir")
+            .is_some()
+            .then(|| (dir.to_path_buf(), file));
+    }
+    None
+}
+
+/// A path as a shell word: bare when it holds nothing the shell reads,
+/// else in single quotes.
+fn quoted(path: &str) -> String {
+    let plain = |c: char| c.is_alphanumeric() || "/._-+,:@%=~".contains(c);
+    if !path.is_empty() && path.chars().all(plain) {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
 }

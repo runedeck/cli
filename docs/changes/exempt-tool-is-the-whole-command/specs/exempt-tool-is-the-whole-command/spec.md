@@ -59,13 +59,35 @@ A substitution of any kind keeps an exempt tool inside the sandbox, even when th
 
 ### Requirement: Other tools are never refused and a chain gets advice
 
-The sandbox guard MUST NOT refuse a line that holds no exempt tool. When a line joins separate commands with `&&`, `||`, `;`, or `&`, the guard MUST let it run and add advice to split it into one command per call. A check before one action, a directory creation before entering it, and an ignored failure at the end get no advice. A pipe gets no advice.
+The sandbox guard MUST NOT refuse a line that holds no exempt tool. When a line joins commands with `&&`, `||`, `;`, or `&`, the guard MUST let it run and advise one command per call. A check before one action, a directory creation before entering it, a trailing ignored failure, a pipe, and `cd DIR && cargo …` get no advice: cargo reads its configuration from the current folder. When a cargo command names a manifest under a checkout whose configuration sets a target directory, the guard MUST advise running cargo from that checkout without the manifest option.
 
 #### Scenario: Build after a directory change
 
 - **WHEN** the model runs `cd /x && cargo build`
+- **THEN** the call passes with no advice
+
+#### Scenario: Two builds after a directory change
+
+- **WHEN** the model runs `cd /x && cargo build && cargo test`
 - **THEN** the call passes
 - **AND** the model receives advice to split the line
+
+#### Scenario: Make after a directory change
+
+- **WHEN** the model runs `cd /x && make`
+- **THEN** the call passes
+- **AND** the model receives advice to split the line, which names cargo as the exception
+
+#### Scenario: Manifest under a configured checkout
+
+- **WHEN** the model runs `cargo build --manifest-path /c/ws/Cargo.toml` from `/x`, and `/c/.cargo/config.toml` sets `build.target-dir`
+- **THEN** the call passes
+- **AND** the advice names `/c/.cargo/config.toml` and says to run `cd /c/ws && cargo build` without `--manifest-path`
+
+#### Scenario: Manifest with no configured target directory
+
+- **WHEN** the model runs `cargo build --manifest-path /c/ws/Cargo.toml` and no `.cargo/config.toml` above the manifest sets `build.target-dir`
+- **THEN** the call passes with no advice
 
 #### Scenario: Test output through a pipe
 

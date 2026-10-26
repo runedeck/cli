@@ -27,7 +27,7 @@ fn owner() -> Exemptions {
 }
 
 fn verdict(command: &str) -> HandlerResult {
-    judge(command, false, &owner())
+    judge(command, false, &owner(), None)
 }
 
 fn denied(command: &str) -> String {
@@ -132,7 +132,7 @@ fn an_ansi_c_string_decodes_its_escapes() {
     );
     let jj = Exemptions::new(["jj *"]);
     assert_eq!(
-        judge(r"$'\x6a\x6a' log > out", false, &jj).effect,
+        judge(r"$'\x6a\x6a' log > out", false, &jj, None).effect,
         Effect::Deny
     );
 }
@@ -150,7 +150,7 @@ fn a_nul_ends_an_ansi_c_string_as_bash_ends_it() {
         assert_eq!(commands[0].values(), ["jj", "log"], "{line}");
         assert_eq!(commands[0].redirects.len(), 1, "{line}");
         let jj = Exemptions::new(["jj *"]);
-        assert_eq!(judge(line, false, &jj).effect, Effect::Deny, "{line}");
+        assert_eq!(judge(line, false, &jj, None).effect, Effect::Deny, "{line}");
     }
     assert_eq!(parse(r"x $'a\0b'c")[0].values(), ["x", "ac"]);
 }
@@ -170,7 +170,7 @@ fn a_parameter_operand_hides_no_substitution_behind_quotes_or_a_hash() {
             "{line}"
         );
         let jj = Exemptions::new(["jj *"]);
-        assert_eq!(judge(line, false, &jj).effect, Effect::Deny, "{line}");
+        assert_eq!(judge(line, false, &jj, None).effect, Effect::Deny, "{line}");
     }
     // Inside double quotes a single quote ends nothing, so the first `}`
     // closes the expansion and the line holds two more commands.
@@ -214,14 +214,14 @@ fn the_reader_findings_reach_the_verdict() {
         ("gh api ${X:-$(id)}", false),
     ] {
         assert_eq!(
-            judge(line, disable, &gh).effect,
+            judge(line, disable, &gh, None).effect,
             Effect::Deny,
             "{line} (disable {disable})"
         );
     }
     let jj = Exemptions::new(["jj *"]);
     for line in [r#"FOO="1" jj log"#, "FOO='1' jj log"] {
-        let reason = judge(line, false, &jj).reason.unwrap_or_default();
+        let reason = judge(line, false, &jj, None).reason.unwrap_or_default();
         assert!(reason.contains("the assignment"), "{line}: {reason}");
     }
 }
@@ -264,7 +264,7 @@ fn bare_exempt_commands_pass_without_a_word() {
 
 #[test]
 fn a_sandbox_off_request_on_an_outside_command_is_denied() {
-    let result = judge("jj -R /x log", true, &owner());
+    let result = judge("jj -R /x log", true, &owner(), None);
     assert_eq!(result.effect, Effect::Deny);
     let reason = result.reason.unwrap();
     assert!(
@@ -281,7 +281,7 @@ fn a_sandbox_off_request_for_another_tool_passes() {
         "chezmoi apply",
         "cd /x && cargo test",
     ] {
-        let result = judge(command, true, &owner());
+        let result = judge(command, true, &owner(), None);
         assert_eq!(result.effect, Effect::Pass, "{command}");
     }
 }
@@ -390,7 +390,7 @@ fn the_refusal_adds_the_tip_its_wrapper_needs() {
     assert!(denied("FOO=1 rune run sol").contains("own flag or config"));
     assert!(denied("rune run sol \"$(cat b.md)\"").contains("rune run --prompt-file FILE"));
     assert!(!denied("cd /x && jj log").contains("run_in_background"));
-    let result = judge("cd /x && jj log", true, &owner());
+    let result = judge("cd /x && jj log", true, &owner(), None);
     assert!(
         result
             .reason
@@ -414,7 +414,8 @@ fn other_tools_are_never_denied() {
 
 #[test]
 fn a_chain_of_separate_commands_gets_advice() {
-    passes_with_advice("cd /x && cargo build");
+    passes_with_advice("cd /x && make");
+    passes_with_advice("cd /x && make build && make test");
     passes_with_advice("jj log; jj st");
     passes_with_advice("cargo fmt && cargo clippy && cargo test");
     passes_quietly("mkdir -p d && cd d");
@@ -423,13 +424,137 @@ fn a_chain_of_separate_commands_gets_advice() {
     passes_quietly("make check || true");
     passes_quietly("cargo test | tail -40");
     passes_quietly("sleep 1 &");
+    assert!(
+        verdict("cd /x && make").context[0].contains("cargo is the exception"),
+        "the chain advice names the cargo exception"
+    );
+}
+
+#[test]
+fn cd_before_cargo_alone_passes_quietly() {
+    passes_quietly("cd /x && cargo build");
+    passes_quietly("cd '/a b' && cargo test --release 2>&1");
+    passes_quietly("cd /x && rtk cargo clippy --all-targets -- -D warnings");
+}
+
+#[test]
+fn a_longer_cargo_chain_still_gets_advice() {
+    passes_with_advice("cd /x && cargo build && cargo test");
+    passes_with_advice("cd /x; cargo build");
+    passes_with_advice("cd /x && cargo test | tail -40");
+    passes_with_advice("cargo fmt && cargo clippy && cargo test");
+    passes_with_advice("cd /x && cd /y && cargo build");
+}
+
+/// A checkout with `.cargo/config.toml`, and a manifest folder under it.
+fn checkout(config: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    if let Some(config) = config {
+        std::fs::create_dir(dir.path().join(".cargo")).unwrap();
+        std::fs::write(dir.path().join(".cargo/config.toml"), config).unwrap();
+    }
+    let ws = dir.path().join("ws/run-1");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    (dir, ws)
+}
+
+#[test]
+fn a_manifest_path_under_a_configured_target_dir_gets_advice() {
+    let (dir, ws) = checkout(Some("[build]\ntarget-dir = \"target\"\n"));
+    let manifest = ws.join("Cargo.toml");
+    let elsewhere = std::path::Path::new("/x");
+    for line in [
+        format!(
+            "cargo build --manifest-path {} --release",
+            manifest.display()
+        ),
+        format!(
+            "cargo build --manifest-path={} --release",
+            manifest.display()
+        ),
+        format!(
+            "rtk cargo build --manifest-path {} --release",
+            manifest.display()
+        ),
+    ] {
+        let result = judge(&line, false, &owner(), Some(elsewhere));
+        assert_eq!(result.effect, Effect::Pass, "{line}");
+        assert_eq!(result.context.len(), 1, "{line}: {:?}", result.context);
+        let advice = &result.context[0];
+        let folder = ws.canonicalize().unwrap();
+        let config = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join(".cargo/config.toml");
+        assert!(
+            advice.contains(&format!("`{}`", config.display())),
+            "{advice}"
+        );
+        assert!(advice.contains("`build.target-dir`"), "{advice}");
+        assert!(
+            advice.contains(&format!(
+                "`cd {} && cargo build --release`",
+                folder.display()
+            )),
+            "{advice}"
+        );
+    }
+    // A relative manifest resolves against the harness's directory, and
+    // without one it gets no advice.
+    let parent = dir.path().parent().unwrap();
+    let name = dir.path().file_name().unwrap().to_string_lossy();
+    let line = format!("cargo build --manifest-path {name}/ws/run-1/Cargo.toml");
+    let result = judge(&line, false, &owner(), Some(parent));
+    assert_eq!(result.context.len(), 1, "{line}: {:?}", result.context);
+    let result = judge(&line, false, &owner(), None);
+    assert!(result.context.is_empty(), "{line}: {:?}", result.context);
+    // Already under the checkout, cargo sees the file itself.
+    let line = format!("cargo build --manifest-path {}", manifest.display());
+    let result = judge(&line, false, &owner(), Some(dir.path()));
+    assert_eq!(result.context.len(), 0, "{line}: {:?}", result.context);
+    let result = judge(&line, false, &owner(), Some(&ws));
+    assert_eq!(result.context.len(), 0, "{line}: {:?}", result.context);
+}
+
+#[test]
+fn a_manifest_path_without_a_configured_target_dir_gets_no_advice() {
+    let elsewhere = std::path::Path::new("/x");
+    let (_dir, ws) = checkout(None);
+    let line = format!(
+        "cargo build --manifest-path {}",
+        ws.join("Cargo.toml").display()
+    );
+    let result = judge(&line, false, &owner(), Some(elsewhere));
+    assert_eq!(result.effect, Effect::Pass);
+    assert!(result.context.is_empty(), "{line}: {:?}", result.context);
+    let (_dir, ws) = checkout(Some("[build]\njobs = 2\n"));
+    let line = format!(
+        "cargo build --manifest-path {}",
+        ws.join("Cargo.toml").display()
+    );
+    let result = judge(&line, false, &owner(), Some(elsewhere));
+    assert!(result.context.is_empty(), "{line}: {:?}", result.context);
+    let (_dir, ws) = checkout(Some("this is not toml ["));
+    let line = format!(
+        "cargo build --manifest-path {}",
+        ws.join("Cargo.toml").display()
+    );
+    let result = judge(&line, false, &owner(), Some(elsewhere));
+    assert!(result.context.is_empty(), "{line}: {:?}", result.context);
+    passes_quietly("cargo build --manifest-path");
+    passes_quietly("cargo build --manifest-path /nonexistent/Cargo.toml");
 }
 
 #[test]
 fn no_exemptions_means_no_denial() {
     let none = Exemptions::default();
-    assert_eq!(judge("jj log", true, &none).effect, Effect::Pass);
-    assert_eq!(judge("cd /x && jj log", false, &none).effect, Effect::Pass);
+    assert_eq!(judge("jj log", true, &none, None).effect, Effect::Pass);
+    assert_eq!(
+        judge("cd /x && jj log", false, &none, None).effect,
+        Effect::Pass
+    );
 }
 
 #[test]
@@ -535,7 +660,7 @@ fn the_adapter_judges_the_command_the_harness_will_run() {
 
 #[test]
 fn claude_hears_the_advice_beside_its_tool_call() {
-    let result = verdict("cd /x && cargo build");
+    let result = verdict("cd /x && make");
     let answer = encode::encode(
         Harness::Claude,
         "PreToolUse",

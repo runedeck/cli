@@ -7,6 +7,7 @@
 - [x] 1.5 CHANGELOG entry, and the handler in the owner's commented `hooks:` block (dotfiles change `qsomtzmu`)
 - [x] 1.6 The reader decodes the escapes of a `$'…'` string as Bash does, and counts every substitution in a `${…}` operand whatever quotes or `#` stand in it
 - [x] 1.7 A NUL ends a `$'…'` string, as it does in Bash
+- [x] 1.8 The cargo exception: `cd DIR && cargo …` is not a chain, the chain advice names cargo, a cargo call that reaches a checkout with a configured `build.target-dir` through `--manifest-path` gets advice to run from there, unit tests with and without the configured target directory, and the CHANGELOG entry
 
 ## 2. Verification
 

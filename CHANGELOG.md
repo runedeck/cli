@@ -318,6 +318,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Let `cd DIR && cargo …` pass the sandbox guard with no advice, and advise a cargo call that reaches a configured checkout through `--manifest-path` to run from there.
 - Clamp a hook budget to the whole seconds of the harness cap, for a canonical or a native subscription alike, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s.
 - Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
 - Withhold `additionalContext` on a passive Claude `Stop`, where it continues the turn, and report it on stderr. The encoder now knows the event's mode and sends no decision or input on a passive event.

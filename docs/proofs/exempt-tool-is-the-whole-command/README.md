@@ -23,6 +23,14 @@ scenes:
   kind: check
 - scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/build-after-a-directory-change
   kind: check
+- scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/two-builds-after-a-directory-change
+  kind: check
+- scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/make-after-a-directory-change
+  kind: check
+- scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/manifest-under-a-configured-checkout
+  kind: check
+- scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/manifest-with-no-configured-target-directory
+  kind: check
 - scenario: exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/test-output-through-a-pipe
   kind: check
 - scenario: exempt-tool-is-the-whole-command#the-guard-judges-the-line-the-harness-runs/rewritten-line-outside-the-exempt-list
@@ -37,7 +45,7 @@ scenes:
 
 # Proof: exempt-tool-is-the-whole-command
 
-One scene per scenario, in closure order. Each scene compiles the plan of a fixture home under `tests/fixtures/hooks/`, then sends one Claude Code `PreToolUse` payload through `rune hook run`. `jq` prints the decision and the text the model reads. The `sandbox-guard` home passes the exempt patterns as handler arguments. The `sandbox-settings` home passes none, so the guard reads the Claude Code settings that `CLAUDE_CONFIG_DIR` names.
+One scene per scenario, in closure order. Each scene compiles the plan of a fixture home under `tests/fixtures/hooks/`, then sends one Claude Code `PreToolUse` payload through `rune hook run`. `jq` prints the decision and the text the model reads. The `sandbox-guard` home passes the exempt patterns as handler arguments. The `sandbox-settings` home passes none, so the guard reads the Claude Code settings that `CLAUDE_CONFIG_DIR` names. The two manifest scenes first make a scratch checkout `c` with a manifest under `c/ws` in the scene's own directory, and the payload's `cwd` of `.` is that directory, outside the checkout.
 
 ## exempt-tool-is-the-whole-command#a-sandbox-off-request-for-an-exempt-command-is-refused/sandbox-off-request-for-a-jj-command
 
@@ -149,11 +157,54 @@ sandbox-guard: the sandbox lets an exempt tool run outside it only when the tool
 ## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/build-after-a-directory-change
 
 ```console
+$# cargo reads its configuration from the current directory, so `cd DIR && cargo …` is not a chain: no answer at all, the call passes with no advice
 $ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
 $ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
 < {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cd /x && cargo build"}}
+```
+
+## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/two-builds-after-a-directory-change
+
+```console
+$# a third command makes it a chain again
+$ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
+$ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cd /x && cargo build && cargo test"}}
 pass
-sandbox-guard: this command line joins separate commands with `&&`, `||`, or `;`. One command per call is easier for the owner to read and to debug, so split it into separate calls next time. Give a directory through the tool's own flag (`git -C`, `jj -R`) rather than `cd … &&`.
+sandbox-guard: this command line joins separate commands with `&&`, `||`, or `;`. One command per call is easier for the owner to read and to debug, so split it into separate calls next time. Give a directory through the tool's own flag (`git -C`, `jj -R`) rather than `cd … &&` (cargo is the exception: `cd <dir> && cargo …` is fine, because cargo reads its configuration from the current directory).
+```
+
+## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/make-after-a-directory-change
+
+```console
+$# any other program after `cd` keeps the advice, which names cargo as the exception
+$ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
+$ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cd /x && make"}}
+pass
+sandbox-guard: this command line joins separate commands with `&&`, `||`, or `;`. One command per call is easier for the owner to read and to debug, so split it into separate calls next time. Give a directory through the tool's own flag (`git -C`, `jj -R`) rather than `cd … &&` (cargo is the exception: `cd <dir> && cargo …` is fine, because cargo reads its configuration from the current directory).
+```
+
+## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/manifest-under-a-configured-checkout
+
+```console
+$# the checkout `c` sets `build.target-dir`, and the call runs from outside it
+$ sh -c 'mkdir -p c/.cargo c/ws && printf "[build]\ntarget-dir = \"target\"\n" > c/.cargo/config.toml && printf "[package]\nname = \"x\"\n" > c/ws/Cargo.toml'
+$ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
+$ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cargo build --manifest-path c/ws/Cargo.toml"}}
+pass
+sandbox-guard: cargo reads `[..]/c/.cargo/config.toml` from the current directory, not from the manifest, so this call does not see its `build.target-dir` and fills [..]/c/ws/target with a private build. Run `cd [..]/c/ws && cargo build` instead, without `--manifest-path`: the configured target directory applies only from there.
+```
+
+## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/manifest-with-no-configured-target-directory
+
+```console
+$# the same manifest with no `.cargo/config.toml` above it: no answer at all, the call passes with no advice
+$ sh -c 'mkdir -p c/ws && printf "[package]\nname = \"x\"\n" > c/ws/Cargo.toml'
+$ sh -c 'HOME="$RUNE_PROOF_ROOT/tests/fixtures/hooks/sandbox-guard" RUNE_STATE_DIR=state rune hook list --write >/dev/null 2>&1'
+$ sh -c 'RUNE_STATE_DIR=state rune hook run --harness claude --native-event PreToolUse | jq -r ".hookSpecificOutput | .permissionDecision // \"pass\", .permissionDecisionReason // .additionalContext // empty"'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"cargo build --manifest-path c/ws/Cargo.toml"}}
 ```
 
 ## exempt-tool-is-the-whole-command#other-tools-are-never-refused-and-a-chain-gets-advice/test-output-through-a-pipe
