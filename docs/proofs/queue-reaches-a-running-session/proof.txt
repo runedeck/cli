@@ -1,9 +1,9 @@
 ## queue-messages-for-sessions#every-message-is-recorded-and-nothing-is-removed/message-for-a-claude-session-is-read-once
 kind: check
 $ HOME=home rune queue post claude --session 42e43c0b --from codex:01a0abff "Is the deck ready?"
-  posted message 01a174335b7f-c6835f30 for claude session 42e43c0b in home/.rune/postbox.tsv
+  posted message 01a1781d7b6d-4d309428 for claude session 42e43c0b in home/.rune/postbox.tsv
 $ HOME=home rune queue read --session 42e43c0b
-  Message 01a174335b7f-c6835f30 from codex:01a0abff at 2026-10-25T17:54:45.247Z:
+  Message 01a1781d7b6d-4d309428 from codex:01a0abff at 2026-10-26T12:09:20.493Z:
   Is the deck ready?
 $ HOME=home rune queue read --session 42e43c0b
   no messages for 42e43c0b
@@ -58,36 +58,36 @@ $ cat env.txt args.txt
 ## queue-messages-for-sessions#a-session-reads-its-messages-through-a-hook-or-by-asking/hook-keeps-a-codex-turn-going
 kind: check
 $ HOME=home rune queue post codex --postbox --session 01a0abff --from claude:42e43c0b "Is the deck ready?"
-  posted message 01a174335c74-f756eab2 for codex session 01a0abff in home/.rune/postbox.tsv
+  posted message 01a1781d7daa-7e8353f4 for codex session 01a0abff in home/.rune/postbox.tsv
 $ HOME=home rune hook adapter postbox
 < {"v":1,"harness":"codex","event":"turn.finish","native_event":"Stop","session_id":"01a0abff","raw":{}}
-  {"v":1,"effect":"continue_turn","reason":"Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender with `rune queue post`.\n\nMessage 01a174335c74-f756eab2 from claude:42e43c0b at 2026-10-25T17:54:45.492Z:\nIs the deck ready?","input":null,"context":[]}
+  {"v":1,"effect":"continue_turn","reason":"Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender with `rune queue post`.\n\nMessage 01a1781d7daa-7e8353f4 from claude:42e43c0b at 2026-10-26T12:09:21.066Z:\nIs the deck ready?","input":null,"context":[]}
 $ HOME=home rune queue list --session 01a0abff
-  2026-10-25T17:54:45.492Z  01a174335c74-f756eab2  read    claude:42e43c0b -> codex:01a0abff  Is the deck ready?
+  2026-10-26T12:09:21.066Z  01a1781d7daa-7e8353f4  read    claude:42e43c0b -> codex:01a0abff  Is the deck ready?
 
 ## queue-messages-for-sessions#a-session-reads-its-messages-through-a-hook-or-by-asking/codex-prompt-cannot-take-context
 kind: check
 $ HOME=home rune queue post codex --postbox --session 01a0abff --from claude:42e43c0b "Is the deck ready?"
-  posted message 01a174335c8a-2778f6c3 for codex session 01a0abff in home/.rune/postbox.tsv
+  posted message 01a1781d7dc1-57125ad7 for codex session 01a0abff in home/.rune/postbox.tsv
 $ HOME=home rune hook adapter postbox
 < {"v":1,"harness":"codex","event":"prompt.before","native_event":"UserPromptSubmit","session_id":"01a0abff","raw":{}}
   {"v":1,"effect":"pass","reason":null,"input":null,"context":[]}
 $ HOME=home rune queue list --session 01a0abff
-  2026-10-25T17:54:45.514Z  01a174335c8a-2778f6c3  posted  claude:42e43c0b -> codex:01a0abff  Is the deck ready?
+  2026-10-26T12:09:21.089Z  01a1781d7dc1-57125ad7  posted  claude:42e43c0b -> codex:01a0abff  Is the deck ready?
 
 ## queue-messages-for-sessions#listing-changes-nothing/list-after-one-read
 kind: check
 $ HOME=home rune queue post agy --session seat-a --from council first
-  posted message 01a174335c9d-c34577e3 for agy session seat-a in home/.rune/postbox.tsv
+  posted message 01a1781d7dd5-f863acc2 for agy session seat-a in home/.rune/postbox.tsv
 $ HOME=home rune queue post agy --session seat-b --from council second
-  posted message 01a174335ca3-20f5908f for agy session seat-b in home/.rune/postbox.tsv
+  posted message 01a1781d7ddb-efbb8fcd for agy session seat-b in home/.rune/postbox.tsv
 $ HOME=home rune queue read --session seat-a
-  Message 01a174335c9d-c34577e3 from council at 2026-10-25T17:54:45.533Z:
+  Message 01a1781d7dd5-f863acc2 from council at 2026-10-26T12:09:21.109Z:
   first
 $ sh -c 'shasum home/.rune/postbox.tsv > before.sum'
 $ HOME=home rune queue list
-  2026-10-25T17:54:45.533Z  01a174335c9d-c34577e3  read    council -> agy:seat-a  first
-  2026-10-25T17:54:45.539Z  01a174335ca3-20f5908f  posted  council -> agy:seat-b  second
+  2026-10-26T12:09:21.109Z  01a1781d7dd5-f863acc2  read    council -> agy:seat-a  first
+  2026-10-26T12:09:21.115Z  01a1781d7ddb-efbb8fcd  posted  council -> agy:seat-b  second
 $ shasum -c before.sum
   home/.rune/postbox.tsv: OK
 
