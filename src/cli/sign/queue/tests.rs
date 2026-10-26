@@ -1,11 +1,19 @@
+use super::ceremony::range_lines;
 use super::repo::{
-    SignOutcome, Signing, classify_sign_output, export_refused, has_signature, parse_commit,
-    user_value,
+    Head, Repo, SignOutcome, Signing, classify_sign_output, commit_id_revset, export_refused,
+    has_signature, parse_commit, shadowing_alias, shadowing_alias_in, signed_exactly, user_value,
 };
 use super::repo::{helper_applies, helper_settings};
-use super::store::{Identity, Kind, Receipt, Request, Status, Store, claim_is_dead, split_holder};
-use super::{exit_status, names_commit, notifier_commands, topological};
+use super::shim;
+use super::store::{
+    Identity, Kind, RangeRequest, Receipt, Request, Status, Store, claim_is_dead, split_holder,
+};
+use super::{
+    Live, State, derive, exit_status, head_matches, identities_match, names_commit,
+    notifier_commands, range_identities_match, same_commit, topological,
+};
 use std::process::Command;
+use std::rc::Rc;
 use tempfile::TempDir;
 
 fn request(id: &str, repository: &str, at: &str) -> Request {
@@ -32,6 +40,7 @@ fn request(id: &str, repository: &str, at: &str) -> Request {
         kind: Kind::Head,
         open: None,
         coverage: None,
+        range: None,
         signed_commit: None,
         claim: None,
         failure: None,
@@ -434,4 +443,359 @@ fn a_click_activates_the_terminal_the_owner_typed_in() {
             "{env:?}"
         );
     }
+}
+
+#[test]
+fn every_commit_is_named_through_commit_id_and_an_alias_of_it_is_found() {
+    let commits = vec!["abc123".to_string(), "def456".to_string()];
+    assert_eq!(
+        commit_id_revset(&commits),
+        "commit_id(\"abc123\") | commit_id(\"def456\")"
+    );
+    assert_eq!(commit_id_revset(&[]), "");
+
+    let listing = "revset-aliases.\"closest_bookmark(to)\"\u{1f}'heads(::to & bookmarks())'\u{1f}false\u{1e}revset-aliases.\"commit_id( x )\"\u{1f}'all()'\u{1f}false\u{1e}";
+    assert_eq!(
+        shadowing_alias(listing),
+        Some("revset-aliases.\"commit_id( x )\"".to_string())
+    );
+    let single = "revset-aliases.'commit_id(id)'\u{1f}'all()'\u{1f}false\u{1e}";
+    assert_eq!(
+        shadowing_alias(single),
+        Some("revset-aliases.'commit_id(id)'".to_string())
+    );
+    assert_eq!(
+        shadowing_alias("revset-aliases.commit_id\u{1f}'all()'\u{1f}false\u{1e}"),
+        None,
+        "a symbol alias does not shadow the function"
+    );
+    assert_eq!(
+        shadowing_alias("revset-aliases.\"commit_ids(x)\"\u{1f}'all()'\u{1f}false\u{1e}"),
+        None
+    );
+    assert_eq!(shadowing_alias(""), None);
+}
+
+#[test]
+fn a_commit_id_alias_is_found_in_a_config_file_root_and_in_a_conditional_scope() {
+    let root: toml::Table =
+        toml::from_str("[revset-aliases]\n\"commit_id( x )\" = \"all()\"\n").expect("toml");
+    assert_eq!(
+        shadowing_alias_in(&root),
+        Some("revset-aliases.\"commit_id( x )\"".to_string())
+    );
+    let scoped: toml::Table = toml::from_str(
+        "[user]\nname = \"x\"\n[[--scope]]\n--when.commands = [\"sign\"]\n[--scope.revset-aliases]\n\"commit_id(x)\" = \"all() ~ root()\"\n",
+    )
+    .expect("toml");
+    assert_eq!(
+        shadowing_alias_in(&scoped),
+        Some("--scope.revset-aliases.\"commit_id(x)\"".to_string())
+    );
+    let harmless: toml::Table = toml::from_str(
+        "[revset-aliases]\ncommit_id = \"all()\"\n\"commit_ids(x)\" = \"none()\"\n[[--scope]]\n--when.commands = [\"log\"]\n[--scope.revset-aliases]\n\"mine(x)\" = \"all()\"\n",
+    )
+    .expect("toml");
+    assert_eq!(shadowing_alias_in(&harmless), None);
+}
+
+#[test]
+fn a_commit_id_alias_is_found_in_a_scope_nested_inside_a_scope() {
+    let nested: toml::Table = toml::from_str(
+        "[[--scope]]\n--when.commands = [\"sign\"]\n[[--scope.--scope]]\n--when.commands = [\"sign\"]\n[--scope.--scope.revset-aliases]\n\"commit_id(x)\" = \"x | all()\"\n",
+    )
+    .expect("toml");
+    assert_eq!(
+        shadowing_alias_in(&nested),
+        Some("--scope.--scope.revset-aliases.\"commit_id(x)\"".to_string())
+    );
+}
+
+#[test]
+fn a_sign_run_is_exact_when_every_named_commit_has_one_signed_rewrite_and_no_other() {
+    let base = identity("cbase", "kbase", &[]);
+    let one = identity("c1", "k1", &["kbase"]);
+    let two = identity("c2", "k2", &["k1"]);
+    let one_signed = identity("c1", "s1", &["kbase"]);
+    let two_signed = identity("c2", "s2", &["s1"]);
+    let named = vec![one.clone(), two.clone()];
+    let written = vec![(one_signed.clone(), true), (two_signed.clone(), true)];
+    assert_eq!(signed_exactly(&named, &written), Ok(()));
+    let top_rewritten_unsigned = identity("c3", "r3", &["s2"]);
+    let with_descendant = vec![
+        (one_signed.clone(), true),
+        (two_signed.clone(), true),
+        (top_rewritten_unsigned, false),
+    ];
+    assert_eq!(
+        signed_exactly(&named, &with_descendant),
+        Ok(()),
+        "a descendant rewritten without a signature is what signing.behavior=drop leaves"
+    );
+    let base_signed = identity("cbase", "sbase", &[]);
+    let overreach = vec![
+        (base_signed, true),
+        (one_signed.clone(), true),
+        (two_signed, true),
+    ];
+    let error = signed_exactly(&named, &overreach).expect_err("extra commit");
+    assert_eq!(error, "jj sign also signed sbase (change cbase)");
+    assert!(
+        !error.contains(&base.description),
+        "no repository text in the reason"
+    );
+    let partial = vec![(one_signed, true)];
+    let error = signed_exactly(&named, &partial).expect_err("missing rewrite");
+    assert_eq!(error, "no signed rewrite of k2 (change c2)");
+}
+
+#[test]
+fn the_shim_matches_each_named_commit_once_with_parents_mapped_through_its_signed_ids() {
+    let one = identity("c1", "k1", &["kbase"]);
+    let two = identity("c2", "k2", &["k1"]);
+    let mut state = shim::State {
+        program: "gpg".to_string(),
+        named: vec![one.clone(), two.clone()],
+        signed: std::collections::BTreeMap::new(),
+        refused: None,
+    };
+    // jj hands the shim a rewrite of `one` under a new id, then a rewrite
+    // of `two` whose parent is the signed `one`, which only the shim knows.
+    let one_payload = identity("c1", "p1", &["kbase"]);
+    let two_payload = identity("c2", "p2", &["s1"]);
+    assert_eq!(shim::matched(&state, &one_payload), Some(&one));
+    assert_eq!(
+        shim::matched(&state, &two_payload),
+        None,
+        "the parent is not yet known as the signed rewrite of one"
+    );
+    state.signed.insert("k1".to_string(), "s1".to_string());
+    assert_eq!(shim::matched(&state, &two_payload), Some(&two));
+    assert_eq!(
+        shim::matched(&state, &one_payload),
+        None,
+        "a named commit is signed once"
+    );
+    let side = identity("cside", "pside", &["kbase"]);
+    assert_eq!(shim::matched(&state, &side), None);
+    let mut moved = two_payload.clone();
+    moved.tree_id = "tree-other".to_string();
+    assert_eq!(shim::matched(&state, &moved), None);
+    let mut reparented = two_payload;
+    reparented.parents = vec!["kbase".to_string()];
+    assert_eq!(shim::matched(&state, &reparented), None);
+}
+
+#[test]
+fn the_shim_rebuilds_the_signed_object_the_way_jj_writes_it() {
+    let payload = COMMIT_OBJECT.replace(
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n \n fake\n -----END PGP SIGNATURE-----\n",
+        "",
+    );
+    let signature = "-----BEGIN PGP SIGNATURE-----\n\nfake\n-----END PGP SIGNATURE-----\n";
+    let object = shim::signed_object(payload.as_bytes(), signature.as_bytes());
+    assert_eq!(String::from_utf8_lossy(&object), COMMIT_OBJECT);
+    let crlf = "-----BEGIN PGP SIGNATURE-----\r\n\r\nfake\r\n-----END PGP SIGNATURE-----\r\n";
+    let object = shim::signed_object(payload.as_bytes(), crlf.as_bytes());
+    assert_eq!(String::from_utf8_lossy(&object), COMMIT_OBJECT);
+    assert!(shim::is_sign_request(&[
+        "--status-fd".into(),
+        "2".into(),
+        "-abu".into(),
+        "k".into()
+    ]));
+    assert!(shim::is_sign_request(&[
+        "--status-fd".into(),
+        "2".into(),
+        "-ab".into()
+    ]));
+    assert!(!shim::is_sign_request(&[
+        "--verify".into(),
+        "sig".into(),
+        "-".into()
+    ]));
+}
+
+#[test]
+fn the_shim_hashes_a_payload_as_git_hashes_a_commit_object() {
+    let Ok(git) = Command::new("git").arg("--version").output() else {
+        eprintln!("skipped: git is not installed");
+        return;
+    };
+    if !git.status.success() {
+        return;
+    }
+    let mut child = Command::new("git")
+        .args(["hash-object", "-t", "commit", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("git");
+    std::io::Write::write_all(
+        &mut child.stdin.take().expect("stdin"),
+        COMMIT_OBJECT.as_bytes(),
+    )
+    .expect("payload");
+    let output = child.wait_with_output().expect("git");
+    assert_eq!(
+        shim::object_id(COMMIT_OBJECT.as_bytes()),
+        String::from_utf8_lossy(&output.stdout).trim()
+    );
+}
+
+#[test]
+fn the_range_view_shows_control_and_format_characters_as_escapes() {
+    let range = RangeRequest {
+        protected: "origin/main\u{1b}[2K".to_string(),
+        base: "kbase".to_string(),
+        commits: Vec::new(),
+    };
+    let mut commit = identity("c1", "k1", &["kbase"]);
+    commit.description = "feat: ok\u{1b}[2K\u{1b}[1Agone\nbody".to_string();
+    commit.author = "Model\u{202e} <model@example.com>".to_string();
+    let text = range_lines(&range, &[commit]).join("\n");
+    assert!(
+        text.contains("range        origin/main\\x1b[2K at"),
+        "{text}"
+    );
+    assert!(text.contains("feat: ok\\x1b[2K\\x1b[1Agone"), "{text}");
+    assert!(
+        text.contains("author       Model\\u{202e} <model@example.com> 1"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("body"),
+        "only the first line of a message is shown"
+    );
+    assert!(
+        text.chars()
+            .all(|c| c == '\n' || (!c.is_control() && c != '\u{202e}')),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn a_seal_rewritten_under_a_new_id_keeps_its_identity_and_a_moved_one_does_not() {
+    let sealed = identity("cseal", "kseal", &["c1", "cmain"]);
+    let mut rewritten = sealed.clone();
+    rewritten.commit_id = "kseal-rewritten".to_string();
+    assert!(identities_match(&sealed, &rewritten));
+    let mut moved = rewritten;
+    moved.change_id = "cnext".to_string();
+    assert!(!identities_match(&sealed, &moved));
+}
+
+#[test]
+fn a_range_head_matches_without_a_recorded_change_id_and_a_head_request_does_not() {
+    let mut request = request("1", "acme/widgets", "2026-09-15T10:00:00Z");
+    request.head.change_id = String::new();
+    let mut live = request.head.clone();
+    live.change_id = "added-by-jj".to_string();
+    let head = Head {
+        identity: live,
+        signed: true,
+    };
+    assert!(!head_matches(&request, &head));
+    request.kind = Kind::Range;
+    assert!(head_matches(&request, &head));
+}
+
+fn live(request: Request, head: Option<Head>) -> Live {
+    Live {
+        request,
+        head,
+        repo: Some(Rc::new(Repo {
+            workspace: "/nowhere".into(),
+            git_dir: "/nowhere/.git".into(),
+            jj: true,
+        })),
+    }
+}
+
+#[test]
+fn a_signed_request_rewritten_without_a_signature_is_current_again() {
+    let mut request = request("1", "acme/widgets", "2026-09-15T10:00:00Z");
+    request.status = Status::Signed;
+    request.signed_commit = Some("k1".to_string());
+    let at_signed = Head {
+        identity: request.head.clone(),
+        signed: true,
+    };
+    assert_eq!(
+        derive(&live(request.clone(), Some(at_signed)), &[]).expect("derive"),
+        State::Signed
+    );
+    let mut rewritten = request.head.clone();
+    rewritten.commit_id = "k1-rewritten".to_string();
+    let unsigned = Head {
+        identity: rewritten.clone(),
+        signed: false,
+    };
+    assert_eq!(
+        derive(&live(request.clone(), Some(unsigned)), &[]).expect("derive"),
+        State::Current,
+        "the recorded identity under a new id, unsigned, needs the key again"
+    );
+    let signed = Head {
+        identity: rewritten.clone(),
+        signed: true,
+    };
+    assert_eq!(
+        derive(&live(request.clone(), Some(signed)), &[]).expect("derive"),
+        State::Unverified
+    );
+    let mut moved = rewritten;
+    moved.description = "feat: more".to_string();
+    let elsewhere = Head {
+        identity: moved,
+        signed: false,
+    };
+    assert_eq!(
+        derive(&live(request.clone(), Some(elsewhere)), &[]).expect("derive"),
+        State::Moved
+    );
+    assert_eq!(
+        derive(&live(request, None), &[]).expect("derive"),
+        State::Moved
+    );
+}
+
+fn identity(change: &str, commit: &str, parents: &[&str]) -> Identity {
+    Identity {
+        change_id: change.to_string(),
+        commit_id: commit.to_string(),
+        tree_id: format!("tree-{change}"),
+        author: "Model <model@example.com>".to_string(),
+        description: format!("feat: {change}\n"),
+        parents: parents.iter().map(|parent| (*parent).to_string()).collect(),
+    }
+}
+
+#[test]
+fn a_range_matches_by_identity_in_order_and_ignores_commit_ids() {
+    let recorded = vec![
+        identity("c1", "k1", &["cbase"]),
+        identity("c2", "k2", &["c1"]),
+    ];
+    let signed = vec![
+        identity("c1", "s1", &["cbase"]),
+        identity("c2", "s2", &["c1"]),
+    ];
+    assert!(range_identities_match(&recorded, &signed));
+    let reordered = vec![signed[1].clone(), signed[0].clone()];
+    assert!(!range_identities_match(&recorded, &reordered));
+    assert!(!range_identities_match(&recorded, &signed[..1]));
+    let mut amended = signed.clone();
+    amended[1].description = "feat: c2 amended\n".to_string();
+    assert!(!range_identities_match(&recorded, &amended));
+
+    // A commit object without a change-id header reads with an empty change
+    // id and empty parent change ids, and matches on everything else.
+    let mut from_git = identity("", "k1", &[""]);
+    from_git.tree_id = "tree-c1".to_string();
+    from_git.description = "feat: c1\n".to_string();
+    assert!(same_commit(&from_git, &identity("c1", "s1", &["cbase"])));
+    let mut retree = identity("c1", "s1", &["cbase"]);
+    retree.tree_id = "tree-other".to_string();
+    assert!(!same_commit(&from_git, &retree));
 }

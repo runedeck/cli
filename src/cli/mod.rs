@@ -1173,9 +1173,14 @@ enum SignAction {
         /// Workspace of the bookmark. Defaults to the enclosing jj workspace.
         #[arg(long, value_name = "DIR")]
         repo: Option<QueuePathBuf>,
-        /// Remove stale, signed, and failed requests.
+        /// Remove stale, signed, moved, and failed requests.
         #[arg(long)]
         prune: bool,
+        /// Queue every commit a direct push of the head adds: the commits
+        /// above the protected branch as origin has it, signed in one run.
+        /// The receipt names the head.
+        #[arg(long, requires = "bookmark", conflicts_with = "prune")]
+        range: bool,
     },
     /// Queue a reviewed head for the merge-seal
     ///
@@ -1246,6 +1251,21 @@ enum SignAction {
         id: Option<String>,
         #[arg(long, value_name = "DIR")]
         repo: Option<QueuePathBuf>,
+    },
+    /// The gpg program the signer pins for `jj sign`: signs a payload only
+    /// when it is the rewrite of a commit the run named (the signer's entry)
+    #[command(hide = true)]
+    GpgShim {
+        /// The run's state file, written by the signer.
+        #[arg(long, value_name = "FILE")]
+        state: QueuePathBuf,
+        /// The arguments jj passes to gpg, forwarded unchanged.
+        #[arg(
+            value_name = "ARG",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
     },
 }
 

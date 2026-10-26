@@ -481,8 +481,9 @@ static FORMAT: LazyLock<Regex> =
 /// reverse a line with a zero-width character or a bidi override. A
 /// control shows as `\xNN`, a format character as `\u{NNNN}`. A tab
 /// stays. A newline stays when the field carries lines, as context does;
-/// a message line has none left after the split.
-pub(super) fn visible(text: &str, keep_newline: bool) -> String {
+/// a message line has none left after the split. The signing queue's
+/// views use it for every piece of repository text they print.
+pub(crate) fn visible(text: &str, keep_newline: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut utf8 = [0u8; 4];
     for c in text.chars() {

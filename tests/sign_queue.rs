@@ -12,12 +12,18 @@ use tempfile::TempDir;
 
 struct Fixture {
     _home: TempDir,
+    /// `HOME` for every process the test runs: nothing reads the owner's.
+    home: PathBuf,
+    /// The one git config file every process reads, as `GIT_CONFIG_GLOBAL`.
+    git_config: PathBuf,
     state: PathBuf,
     workspace: PathBuf,
     gnupg: PathBuf,
     xdg_config: PathBuf,
     /// A file whose content makes the fake gpg fail once with that message.
     fail_once: PathBuf,
+    /// A shell script the fake gpg runs once, before it signs, and removes.
+    before_sign: PathBuf,
 }
 
 /// The owner's fingerprint from the repository's own KEYS file, which the
@@ -31,7 +37,9 @@ const OWNER_FINGERPRINT: &str = "29DD2145CE7A818929459B2649F08103D3DA399E";
 /// exercise the retry rule. With `FAKE_GPG_WAIT` set to a directory holding
 /// an `armed` file, one signing call blocks until `go` appears there and
 /// then times out, so a test can act while the owner's card is "busy"; the
-/// retry that follows signs. On `--show-keys`, as the plain-checkout
+/// retry that follows signs. With `FAKE_GPG_BEFORE_SIGN` naming a script,
+/// one signing call runs it first and removes it, so a test can move a ref
+/// while the owner is at the key. On `--show-keys`, as the plain-checkout
 /// verifier calls `gpg` from PATH, it lists the owner fingerprint.
 const FAKE_GPG: &str = r#"#!/bin/sh
 case " $* " in
@@ -39,6 +47,9 @@ case " $* " in
     printf 'fpr:::::::::%s:\n' "${FAKE_GPG_KEY:-29DD2145CE7A818929459B2649F08103D3DA399E}"
     ;;
   *" -abu "*)
+    if [ -n "$FAKE_GPG_BEFORE_SIGN" ] && [ -e "$FAKE_GPG_BEFORE_SIGN" ]; then
+      hook="$FAKE_GPG_BEFORE_SIGN"; sh "$hook"; rm -f "$hook"
+    fi
     if [ -n "$FAKE_GPG_WAIT" ] && [ -e "$FAKE_GPG_WAIT/armed" ]; then
       rm -f "$FAKE_GPG_WAIT/armed"
       : > "$FAKE_GPG_WAIT/in-sign"
@@ -51,7 +62,11 @@ case " $* " in
       message=$(cat "$FAKE_GPG_FAIL_ONCE"); : > "$FAKE_GPG_FAIL_ONCE"
       echo "gpg: signing failed: $message" >&2; exit 2
     fi
-    cat >/dev/null
+    if [ -n "$FAKE_GPG_LOG" ]; then
+      cat >> "$FAKE_GPG_LOG"; printf '=====\n' >> "$FAKE_GPG_LOG"
+    else
+      cat >/dev/null
+    fi
     printf -- '-----BEGIN PGP SIGNATURE-----\nfake %s\n-----END PGP SIGNATURE-----\n' "${FAKE_GPG_KEY:-29DD2145CE7A818929459B2649F08103D3DA399E}"
     ;;
   *" --verify "*)
@@ -92,9 +107,20 @@ fn jj(fixture: &Fixture) -> Process {
         .env("JJ_USER", "Model One")
         .env("JJ_EMAIL", "model-one@example.com")
         .env("JJ_CONFIG", fixture.workspace.join(".jjconfig.toml"))
-        .env("XDG_CONFIG_HOME", &fixture.xdg_config)
-        .env("FAKE_GPG_FAIL_ONCE", &fixture.fail_once);
+        .env("FAKE_GPG_FAIL_ONCE", &fixture.fail_once)
+        .env("FAKE_GPG_BEFORE_SIGN", &fixture.before_sign);
+    isolate(&mut command, fixture);
     command
+}
+
+/// Every process the test runs reads the scratch home, git config, gpg
+/// home, and XDG config, never the owner's.
+fn isolate(command: &mut Process, fixture: &Fixture) {
+    command
+        .env("HOME", &fixture.home)
+        .env("GIT_CONFIG_GLOBAL", &fixture.git_config)
+        .env("GNUPGHOME", &fixture.gnupg)
+        .env("XDG_CONFIG_HOME", &fixture.xdg_config);
 }
 
 /// A colocated jj repository signed through the fake gpg, with the
@@ -141,9 +167,20 @@ fn fixture() -> Option<Fixture> {
     }
     let xdg_config = home.path().join("xdg-config");
     fs::create_dir_all(&xdg_config).expect("xdg config");
+    let scratch_home = home.path().join("home");
+    fs::create_dir_all(&scratch_home).expect("home");
+    let git_config = scratch_home.join("gitconfig");
+    fs::write(
+        &git_config,
+        "[user]\n\tname = Owner Test\n\temail = owner@example.com\n",
+    )
+    .expect("git config");
     let fixture = Fixture {
         state: home.path().join("state"),
         fail_once: home.path().join("fail-once"),
+        before_sign: home.path().join("before-sign.sh"),
+        home: scratch_home,
+        git_config,
         gnupg,
         xdg_config,
         _home: home,
@@ -174,6 +211,7 @@ fn set_remote_ref(fixture: &Fixture, name: &str, commit: &str) {
 fn git(fixture: &Fixture) -> Process {
     let mut command = Process::new("git");
     command.arg("-C").arg(&fixture.workspace);
+    isolate(&mut command, fixture);
     command
 }
 
@@ -225,11 +263,11 @@ fn configure(command: &mut Process, fixture: &Fixture) {
     command
         .env("RUNE_STATE_DIR", &fixture.state)
         .env("RUNE_NO_NOTIFY", "1")
-        .env("GNUPGHOME", &fixture.gnupg)
         .env("JJ_CONFIG", fixture.workspace.join(".jjconfig.toml"))
-        .env("XDG_CONFIG_HOME", &fixture.xdg_config)
         .env("FAKE_GPG_FAIL_ONCE", &fixture.fail_once)
+        .env("FAKE_GPG_BEFORE_SIGN", &fixture.before_sign)
         .current_dir(&fixture.workspace);
+    isolate(command, fixture);
 }
 
 #[test]
@@ -2276,4 +2314,932 @@ fn open_refuses_an_https_origin_with_only_a_repository_scope_helper() {
         .stderr(predicate::str::contains("never a repository-scope one"));
     assert!(!head_is_signed(fixture, "change/top"));
     assert!(!ceremony.gh_dir.join("ready-7").exists());
+}
+
+/// Two more model commits above `change/top`, with `main` on the last one:
+/// what a direct push of `main` adds to `origin/main` is top, one, two.
+fn range_stack(fixture: &Fixture) -> String {
+    run(jj(fixture).args(["new", "change/top", "-m", "feat: one"]));
+    fs::write(fixture.workspace.join("one.txt"), "one\n").expect("file");
+    run(jj(fixture).args(["new", "-m", "feat: two"]));
+    fs::write(fixture.workspace.join("two.txt"), "two\n").expect("file");
+    run(jj(fixture).args(["bookmark", "set", "main", "-r", "@"]));
+    run(jj(fixture).args(["new"]));
+    head_commit(fixture, "main")
+}
+
+/// A file beside the workspace, so jj never snapshots it into a commit.
+fn outside(fixture: &Fixture, name: &str, content: &str) -> PathBuf {
+    let path = fixture.workspace.parent().expect("home").join(name);
+    fs::write(&path, content).expect("file");
+    path
+}
+
+/// One letter per commit of the revset, oldest first: `s` signed, `u` not.
+fn signatures(fixture: &Fixture, revset: &str) -> String {
+    run(jj(fixture).args([
+        "log",
+        "--no-graph",
+        "--reversed",
+        "-r",
+        revset,
+        "-T",
+        "if(signature, \"s\", \"u\")",
+    ]))
+}
+
+fn queue_range(fixture: &Fixture, head: &str) {
+    let receipt = outside(fixture, "range.log", &format!("checked {head}\nexit=0\n"));
+    rune(fixture)
+        .args(["sign", "queue", "main", "--range", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(3 commits)"));
+}
+
+#[test]
+fn a_range_of_model_commits_is_signed_in_one_run_and_every_commit_verifies() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let base = head_commit(&fixture, "change/base");
+    let empty = outside(&fixture, "base.log", &format!("checked {base}\nexit=0\n"));
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--range", "--receipt"])
+        .arg(&empty)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("adds no commit"));
+    queue_range(&fixture, &head);
+
+    rune(&fixture)
+        .args(["sign", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind         range"))
+        .stdout(predicate::str::contains("commits      3"))
+        .stdout(predicate::str::contains(
+            "author       Model One <model-one@example.com> 3",
+        ))
+        .stdout(predicate::str::contains("feat: top"))
+        .stdout(predicate::str::contains("feat: two"));
+
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"))
+        .stdout(predicate::str::contains(
+            "publish with: jj git push --remote origin --bookmark main",
+        ));
+    assert_eq!(signatures(&fixture, "change/base..main"), "sss");
+    assert!(!head_is_signed(&fixture, "change/base"));
+    rune(&fixture)
+        .args(["sign", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("state        signed"));
+}
+
+#[test]
+fn a_declined_range_signs_nothing_and_stays_current() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "n\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("declined main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("current"));
+}
+
+#[test]
+fn a_range_goes_stale_when_its_head_or_the_protected_branch_moves() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    queue_range(&fixture, &head);
+    run(jj(&fixture).args(["new", "main", "-m", "feat: three"]));
+    run(jj(&fixture).args(["bookmark", "set", "main", "-r", "@"]));
+    run(jj(&fixture).args(["new"]));
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("stale"));
+    rune(&fixture)
+        .args(["sign", "drop", "main"])
+        .assert()
+        .success();
+
+    let head = head_commit(&fixture, "main");
+    let receipt = outside(&fixture, "again.log", &format!("checked {head}\nexit=0\n"));
+    rune(&fixture)
+        .args(["sign", "queue", "main", "--range", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(4 commits)"));
+    let top = head_commit(&fixture, "change/top");
+    set_remote_ref(&fixture, "main", &top);
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("stale"));
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("skipped: stale main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuuu");
+}
+
+#[test]
+fn a_range_the_owner_already_signed_is_recorded_without_the_key() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    range_stack(&fixture);
+    run(jj(&fixture).args(["sign", "-r", "change/base..main"]));
+    assert_eq!(signatures(&fixture, "change/base..main"), "sss");
+    let head = head_commit(&fixture, "main");
+    queue_range(&fixture, &head);
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", fixture.workspace.join("no-such-tty"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"));
+}
+
+#[test]
+fn a_bookmark_named_after_the_commit_id_does_not_redirect_the_key() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let top = head_commit(&fixture, "change/top");
+    // A bookmark whose name is the id of a commit in the range, pointing
+    // at the base: a bare id in the revset would resolve to the bookmark.
+    run(jj(&fixture).args(["bookmark", "create", &top, "-r", "change/base"]));
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "sss");
+    assert!(!head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+fn a_commit_id_alias_is_refused_and_nothing_is_signed() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let config_path = fixture.workspace.join(".jjconfig.toml");
+    let config = fs::read_to_string(&config_path).expect("config");
+    fs::write(
+        &config_path,
+        config.replace(
+            "[revset-aliases]\n",
+            "[revset-aliases]\n\"commit_id( x )\" = \"all()\"\n",
+        ),
+    )
+    .expect("config");
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("revset alias"))
+        .stdout(predicate::str::contains("commit_id( x )"))
+        .stdout(predicate::str::contains("redefines commit_id()"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("current"));
+}
+
+#[test]
+fn a_signed_request_whose_bookmark_moved_lists_as_moved_and_fails_nothing() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let top = head_commit(&fixture, "change/top");
+    let top_receipt = receipt(&fixture, "top.log", &top, "exit=0");
+    rune(&fixture)
+        .args(["sign", "queue", "change/top", "--receipt"])
+        .arg(&top_receipt)
+        .assert()
+        .success();
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/top"));
+    run(jj(&fixture).args(["new", "change/top", "-m", "feat: more"]));
+    run(jj(&fixture).args(["bookmark", "set", "change/top", "-r", "@"]));
+    run(jj(&fixture).args(["new"]));
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("moved"));
+    rune(&fixture)
+        .args(["sign", "all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipped: moved"))
+        .stdout(predicate::str::contains("rune sign queue --prune"));
+    rune(&fixture)
+        .args(["sign", "queue", "--prune"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(moved)"));
+}
+
+#[test]
+fn a_commit_id_alias_scoped_to_the_sign_command_is_refused() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    // jj evaluates the scope against the running command: `jj config list`
+    // never shows this alias, `jj sign` resolves revsets through it.
+    let config_path = fixture.workspace.join(".jjconfig.toml");
+    let mut config = fs::read_to_string(&config_path).expect("config");
+    config.push_str(
+        "[[--scope]]\n--when.commands = [\"sign\"]\n[--scope.revset-aliases]\n\"commit_id(x)\" = \"all() ~ root()\"\n",
+    );
+    fs::write(&config_path, config).expect("config");
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("revset alias"))
+        .stdout(predicate::str::contains("--scope"))
+        .stdout(predicate::str::contains("commit_id(x)"))
+        .stdout(predicate::str::contains("redefines commit_id()"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert!(!head_is_signed(&fixture, "change/base"));
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("current"));
+}
+
+#[test]
+fn a_commit_id_alias_in_a_scope_nested_in_a_scope_is_refused() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    run(jj(&fixture).args(["new", "change/base", "-m", "feat: side"]));
+    fs::write(fixture.workspace.join("side.txt"), "side\n").expect("file");
+    run(jj(&fixture).args(["bookmark", "set", "side", "-r", "@"]));
+    run(jj(&fixture).args(["new"]));
+    // jj resolves a scope inside a scope as well: an alias there would add
+    // `side` to every revset the signer names, and only that revset.
+    let config_path = fixture.workspace.join(".jjconfig.toml");
+    let mut config = fs::read_to_string(&config_path).expect("config");
+    config.push_str(
+        "[[--scope]]\n--when.commands = [\"sign\"]\n[[--scope.--scope]]\n--when.commands = [\"sign\"]\n[--scope.--scope.revset-aliases]\n\"commit_id(x)\" = \"x | bookmarks(exact:\\\"side\\\")\"\n",
+    );
+    fs::write(&config_path, config).expect("config");
+    queue_range(&fixture, &head);
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("revset alias"))
+        .stdout(predicate::str::contains("--scope.--scope.revset-aliases"))
+        .stdout(predicate::str::contains("redefines commit_id()"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert!(!head_is_signed(&fixture, "side"));
+}
+
+/// A `jj` on PATH that forwards every call and adds `side` to the revset
+/// of a `sign` run: what a jj that resolves the named revset to more than
+/// the signer wrote would do, past every guard the signer runs first.
+const REDIRECTING_JJ: &str = r#"#!/bin/sh
+export PATH="${PATH#*:}"
+sign=0
+for arg in "$@"; do
+    [ "$arg" = sign ] && sign=1
+done
+if [ "$sign" = 1 ]; then
+    previous=""
+    for arg in "$@"; do
+        shift
+        if [ "$previous" = "-r" ]; then
+            arg="$arg | bookmarks(exact:\"side\")"
+        fi
+        previous="$arg"
+        set -- "$@" "$arg"
+    done
+fi
+exec jj "$@"
+"#;
+
+/// A `jj` on PATH that forwards every call and, on the `sign` call only,
+/// first writes a sign-scoped `commit_id(x)` alias into the config file
+/// jj reads: the alias lands after the alias guard read the file and
+/// before `jj sign` does, as a writer racing the signer would place it.
+const ALIAS_RACING_JJ: &str = r#"#!/bin/sh
+export PATH="${PATH#*:}"
+for arg in "$@"; do
+    if [ "$arg" = sign ]; then
+        printf '%s\n' '[[--scope]]' '--when.commands = ["sign"]' '[--scope.revset-aliases]' '"commit_id(x)" = "x | bookmarks(exact:\"side\")"' >> "$JJ_CONFIG"
+        break
+    fi
+done
+exec jj "$@"
+"#;
+
+/// Put a `jj` wrapper first on PATH for the signer.
+fn jj_wrapper(fixture: &Fixture, script: &str) -> String {
+    let bin = fixture.home.join("jj-bin");
+    fs::create_dir_all(&bin).expect("bin");
+    fs::write(bin.join("jj"), script).expect("jj");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(bin.join("jj"), fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// A commit named `side` on `parent`, outside the queued range, and its
+/// change id.
+fn side_commit(fixture: &Fixture, parent: &str) -> String {
+    run(jj(fixture).args(["new", parent, "-m", "feat: side"]));
+    fs::write(fixture.workspace.join("side.txt"), "side\n").expect("file");
+    run(jj(fixture).args(["bookmark", "set", "side", "-r", "@"]));
+    run(jj(fixture).args(["new"]));
+    run(jj(fixture).args(["log", "--no-graph", "-r", "side", "-T", "change_id"]))
+}
+
+/// Whether any commit jj kept in the git store carries this change id and
+/// a signature: what a run that signed outside the named set leaves
+/// behind, under `refs/jj/keep/`, whether or not a bookmark points at it.
+fn kept_signed_with_change(fixture: &Fixture, change_id: &str) -> bool {
+    run(git(fixture).args(["for-each-ref", "--format=%(objectname)", "refs/jj/keep/"]))
+        .lines()
+        .map(|id| cat_commit(fixture, id.trim()))
+        .any(|object| {
+            object.contains(&format!("change-id {change_id}")) && object.contains("\ngpgsig ")
+        })
+}
+
+fn expect_refused(fixture: &Fixture, path: &str, side_change: &str) {
+    let tty = outside(fixture, "tty", "y\n");
+    rune(fixture)
+        .args(["sign", "next"])
+        .env("PATH", path)
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "failed: jj sign asked the key for",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "(change {}), which is not a named commit: refused before the key",
+            &side_change[..12]
+        )));
+    assert!(!head_is_signed(fixture, "side"));
+    assert!(
+        !kept_signed_with_change(fixture, side_change),
+        "no signed object of side exists anywhere in the git store"
+    );
+    rune(fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("failed"));
+}
+
+#[test]
+fn a_run_that_asks_the_key_for_a_commit_outside_the_named_set_is_refused_at_the_key() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let side_change = side_commit(&fixture, "change/base");
+    let side = head_commit(&fixture, "side");
+    let path = jj_wrapper(&fixture, REDIRECTING_JJ);
+    queue_range(&fixture, &head);
+    expect_refused(&fixture, &path, &side_change);
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert_eq!(head_commit(&fixture, "side"), side);
+    assert_eq!(head_commit(&fixture, "main"), head);
+}
+
+/// The first race: a sign-scoped alias written between the alias guard
+/// and the `jj sign` call. The guard read a clean file, jj resolves every
+/// `commit_id` to the named commit plus `side`, and the key is asked for
+/// `side`. The shim refuses it, so nothing signed of `side` exists for a
+/// push to carry.
+#[test]
+fn an_alias_written_after_the_guard_and_before_the_run_is_refused_at_the_key() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let side_change = side_commit(&fixture, "change/base");
+    let path = jj_wrapper(&fixture, ALIAS_RACING_JJ);
+    queue_range(&fixture, &head);
+    expect_refused(&fixture, &path, &side_change);
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert_eq!(head_commit(&fixture, "main"), head);
+    let config = fs::read_to_string(fixture.workspace.join(".jjconfig.toml")).expect("config");
+    assert!(
+        config.contains("\"commit_id(x)\""),
+        "the alias was in place for the run:\n{config}"
+    );
+}
+
+/// The second race: another jj operation lands while the owner is at the
+/// key, so the operation store has two heads when the run ends and no
+/// single operation names the run. `side` is a child of `main`, so jj
+/// asks the key for the named commits first, the concurrent operation
+/// lands during the first, and `side` comes last. The shim refuses
+/// `side` whatever the operation store holds, and the request fails
+/// instead of staying current with `side` signed.
+#[test]
+fn a_concurrent_operation_during_the_run_does_not_let_a_refused_commit_through() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let side_change = side_commit(&fixture, "main");
+    let path = jj_wrapper(&fixture, REDIRECTING_JJ);
+    fs::write(
+        &fixture.before_sign,
+        format!(
+            "jj -R '{}' --ignore-working-copy bookmark set concurrent -r 'bookmarks(exact:\"change/base\")'\n",
+            fixture.workspace.display()
+        ),
+    )
+    .expect("hook");
+    queue_range(&fixture, &head);
+    expect_refused(&fixture, &path, &side_change);
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert_eq!(head_commit(&fixture, "main"), head);
+    assert_eq!(
+        head_commit(&fixture, "concurrent"),
+        head_commit(&fixture, "change/base"),
+        "the concurrent operation landed during the run"
+    );
+    assert!(
+        !fixture.before_sign.exists(),
+        "the hook ran while the key was in use"
+    );
+}
+
+/// The id git gives a commit object with this content.
+fn hash_commit(fixture: &Fixture, payload: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = git(fixture)
+        .args(["hash-object", "-t", "commit", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("git");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(payload)
+        .expect("payload");
+    let output = child.wait_with_output().expect("git");
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Every payload the fake gpg logged, in signing order.
+fn logged_payloads(log: &Path) -> Vec<Vec<u8>> {
+    let bytes = fs::read(log).expect("log");
+    let mut payloads = Vec::new();
+    let mut rest = &bytes[..];
+    while let Some(at) = rest.windows(6).position(|window| window == b"=====\n") {
+        payloads.push(rest[..at].to_vec());
+        rest = &rest[at + 6..];
+    }
+    payloads
+}
+
+/// A commit object as git stores it, with its final newline.
+fn cat_commit(fixture: &Fixture, id: &str) -> String {
+    let output = git(fixture)
+        .args(["cat-file", "commit", id])
+        .output()
+        .expect("git");
+    assert!(output.status.success(), "no commit {id}");
+    String::from_utf8(output.stdout).expect("utf8")
+}
+
+/// A header's values from a raw commit object.
+fn header(object: &str, name: &str) -> Vec<String> {
+    object
+        .split_once("\n\n")
+        .map_or(object, |(headers, _)| headers)
+        .lines()
+        .filter_map(|line| line.strip_prefix(&format!("{name} ")))
+        .map(str::to_string)
+        .collect()
+}
+
+/// What the shim relies on, proved against jj itself: the payload `jj
+/// sign` hands gpg is not the stored commit, so a hash of it never equals
+/// a queued id, and a later commit's payload names the signed rewrite of
+/// the earlier one as its parent. The payload keeps the tree, author,
+/// change id, and message, and the payload with the signature as a
+/// `gpgsig` header hashes to the id jj stores for the signed commit.
+#[test]
+fn the_sign_payload_is_a_rewrite_whose_parents_are_signed_ids_and_the_signed_object_rebuilds() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    range_stack(&fixture);
+    let listing = [
+        "log",
+        "--no-graph",
+        "--reversed",
+        "-r",
+        "change/base..main",
+        "-T",
+        "commit_id ++ \"\\n\"",
+    ];
+    let ids: Vec<String> = run(jj(&fixture).args(listing))
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let objects: Vec<String> = ids.iter().map(|id| cat_commit(&fixture, id)).collect();
+    let log = outside(&fixture, "payloads", "");
+    let revset = ids
+        .iter()
+        .map(|id| format!("commit_id(\"{id}\")"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    run(jj(&fixture)
+        .args([
+            "--ignore-working-copy",
+            "--config",
+            "signing.behavior=\"drop\"",
+            "sign",
+            "-r",
+            &revset,
+        ])
+        .env("FAKE_GPG_LOG", &log));
+    let payloads: Vec<String> = logged_payloads(&log)
+        .into_iter()
+        .map(|payload| String::from_utf8(payload).expect("utf8"))
+        .collect();
+    let signed_ids: Vec<String> = run(jj(&fixture).args(listing))
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(payloads.len(), ids.len());
+    let signature = format!(
+        "-----BEGIN PGP SIGNATURE-----\nfake {OWNER_FINGERPRINT}\n-----END PGP SIGNATURE-----\n"
+    );
+    for (index, payload) in payloads.iter().enumerate() {
+        let payload_id = hash_commit(&fixture, payload.as_bytes());
+        for name in ["tree", "author", "change-id"] {
+            assert_eq!(
+                header(payload, name),
+                header(&objects[index], name),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            payload.split_once("\n\n").map(|(_, message)| message),
+            objects[index]
+                .split_once("\n\n")
+                .map(|(_, message)| message)
+        );
+        if index > 0 {
+            assert_ne!(
+                payload_id, ids[index],
+                "the payload names the signed parent, so it is not the queued object"
+            );
+            assert_eq!(
+                header(payload, "parent"),
+                vec![signed_ids[index - 1].clone()],
+                "the parent is the signed rewrite, which only the run knows"
+            );
+        }
+        let (headers, message) = payload.split_once("\n\n").expect("headers");
+        let mut gpgsig = String::from("gpgsig ");
+        for (line, text) in signature
+            .strip_suffix('\n')
+            .expect("newline")
+            .split('\n')
+            .enumerate()
+        {
+            if line > 0 {
+                gpgsig.push(' ');
+            }
+            gpgsig.push_str(text);
+            gpgsig.push('\n');
+        }
+        let rebuilt = format!("{headers}\n{gpgsig}\n{message}");
+        assert_eq!(
+            hash_commit(&fixture, rebuilt.as_bytes()),
+            signed_ids[index],
+            "the payload with the signature as gpgsig is the stored signed commit"
+        );
+        assert_eq!(rebuilt, cat_commit(&fixture, &signed_ids[index]));
+    }
+}
+
+#[test]
+fn a_merge_seal_rewritten_by_signing_its_ancestor_needs_the_key_and_never_lists_as_done() {
+    let Some(ceremony) = ceremony() else {
+        eprintln!("skipped: jj, gpg, or python3 is not installed");
+        return;
+    };
+    let fixture = &ceremony.fixture;
+    let (top, _receipt) = submit_top(&ceremony);
+    let tty = fixture.workspace.join("tty");
+    fs::write(&tty, "y\n").expect("tty");
+    ceremony_rune(&ceremony)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/top"));
+    assert!(head_is_signed(fixture, "change/top"));
+    assert_eq!(parent_commit(&ceremony, "change/top"), top);
+    let base = head_commit(fixture, "change/base");
+    let base_receipt = receipt(fixture, "base.log", &base, "exit=0");
+    ceremony_rune(&ceremony)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&base_receipt)
+        .assert()
+        .success();
+    // Signing the base rewrites the seal above it with the pinned `drop`
+    // behavior: the same identity under a new id, and no signature. A
+    // local bookmark on an unsigned seal is never done.
+    ceremony_rune(&ceremony)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/base"));
+    assert!(!head_is_signed(fixture, "change/top"));
+    ceremony_rune(&ceremony)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(r"(?m)^stale +\S+ +change/top ").expect("regex"))
+        .stdout(
+            predicate::str::is_match(r"(?m)^(moved|signed) +\S+ +change/top ")
+                .expect("regex")
+                .not(),
+        );
+    ceremony_rune(&ceremony)
+        .args(["sign", "all"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("skipped: stale change/top"))
+        .stdout(predicate::str::contains("moved").not());
+    assert!(!head_is_signed(fixture, "change/top"));
+    assert_eq!(remote_head(&ceremony, "change/top").as_deref(), Some(&*top));
+}
+
+#[test]
+fn a_git_replacement_object_never_hides_what_the_range_shows_or_signs() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    let one = run(git(&fixture).args(["rev-parse", &format!("{head}~1")]));
+    let tree = run(git(&fixture).args(["rev-parse", &format!("{one}^{{tree}}")]));
+    let top = head_commit(&fixture, "change/top");
+    // A replacement puts another commit's content behind `one`'s id for
+    // every git read that honors it; jj signs the stored object.
+    let evil = run(git(&fixture).args(["commit-tree", &tree, "-p", &top, "-m", "feat: evil"]));
+    run(git(&fixture).args(["replace", &one, &evil]));
+    queue_range(&fixture, &head);
+    rune(&fixture)
+        .args(["sign", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("feat: one"))
+        .stdout(predicate::str::contains("feat: evil").not());
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "sss");
+}
+
+#[test]
+fn a_signed_head_rewritten_by_signing_its_ancestor_is_current_and_signed_again() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let top = head_commit(&fixture, "change/top");
+    let top_receipt = receipt(&fixture, "top.log", &top, "exit=0");
+    rune(&fixture)
+        .args(["sign", "queue", "change/top", "--receipt"])
+        .arg(&top_receipt)
+        .assert()
+        .success();
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/top"));
+    let base = head_commit(&fixture, "change/base");
+    let base_receipt = receipt(&fixture, "base.log", &base, "exit=0");
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&base_receipt)
+        .assert()
+        .success();
+    // Signing the base rewrites `change/top` with the pinned `drop`
+    // behavior: the same identity under a new id, and no signature.
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/base"));
+    assert!(!head_is_signed(&fixture, "change/top"));
+    rune(&fixture)
+        .args(["sign", "queue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(r"(?m)^current +\S+ +change/top ").expect("regex"))
+        .stdout(
+            predicate::str::is_match(r"(?m)^(moved|signed) +\S+ +change/top ")
+                .expect("regex")
+                .not(),
+        );
+    rune(&fixture)
+        .args(["sign", "all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/top"))
+        .stdout(predicate::str::contains("moved").not());
+    assert!(head_is_signed(&fixture, "change/top"));
+    assert!(head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+fn a_protected_branch_that_moves_before_a_retry_stops_the_range() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    queue_range(&fixture, &head);
+    let top = head_commit(&fixture, "change/top");
+    // The first attempt at the key moves the base, as a fetch would, and
+    // then times out; the retry must see the moved base and stop.
+    fs::write(&fixture.fail_once, "Timeout").expect("flag file");
+    fs::write(
+        &fixture.before_sign,
+        format!(
+            "git -C '{}' update-ref refs/remotes/origin/main {top}\n",
+            fixture.workspace.display()
+        ),
+    )
+    .expect("hook");
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "stale: refs/remotes/origin/main moved",
+        ));
+    assert_eq!(signatures(&fixture, "change/base..main"), "uuu");
+    assert!(!fixture.before_sign.exists());
+}
+
+#[test]
+fn a_protected_branch_that_moves_while_the_key_signs_fails_the_range() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let head = range_stack(&fixture);
+    queue_range(&fixture, &head);
+    let top = head_commit(&fixture, "change/top");
+    fs::write(
+        &fixture.before_sign,
+        format!(
+            "git -C '{}' update-ref refs/remotes/origin/main {top}\n",
+            fixture.workspace.display()
+        ),
+    )
+    .expect("hook");
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "failed: stale: refs/remotes/origin/main moved",
+        ));
+    rune(&fixture)
+        .args(["sign", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("state        failed"));
+}
+
+#[test]
+fn a_range_head_written_by_plain_git_verifies_after_jj_adds_its_change_id() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let two = range_stack(&fixture);
+    let tree = run(git(&fixture).args(["rev-parse", &format!("{two}^{{tree}}")]));
+    // A head with no change-id header, as `git commit-tree` writes it; jj
+    // adds the header when it rewrites the commit to sign it.
+    let four = run(git(&fixture).args(["commit-tree", &tree, "-p", &two, "-m", "feat: four"]));
+    run(git(&fixture).args(["update-ref", "refs/heads/main", &four]));
+    run(jj(&fixture).args(["git", "import"]));
+    assert_eq!(head_commit(&fixture, "main"), four);
+    let receipt = outside(&fixture, "range.log", &format!("checked {four}\nexit=0\n"));
+    rune(&fixture)
+        .args(["sign", "queue", "main", "--range", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(4 commits)"));
+    let tty = outside(&fixture, "tty", "y\n");
+    rune(&fixture)
+        .args(["sign", "next"])
+        .env("RUNE_SIGN_TTY", &tty)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed main"));
+    assert_eq!(signatures(&fixture, "change/base..main"), "ssss");
+    rune(&fixture)
+        .args(["sign", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("state        signed"));
 }

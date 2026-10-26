@@ -232,6 +232,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add the `rune-hook-<name>` adapters: author-identity (the model written into the checkout from `authors.yaml`), dcg, git-ai, rtk, lint-on-write, session-capture, turn-checkpoint, tmux-status.
 - Add the `rune-hook-jj-guards` adapter: worktree, agent isolation, and VCS internals refusals on `tool.before`.
 - Add `RUNE_STATE_DIR` as the state directory override shared by the sign queue and the hook plan.
+- Add `rune sign queue <bookmark> --range`: one request for every commit a direct push adds, listed before the key, signed in one `jj sign` run, and checked against `KEYS`.
+- List a signed request whose bookmark moved as `moved` instead of `stale`. `rune sign next` and `rune sign all` pass over it without failing, and `rune sign queue --prune` removes it. A signed seal that a later run rewrote without a signature lists as `stale`, so it never passes as done.
 
 ### Changed
 
@@ -320,6 +322,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Name each commit the queue signs as `commit_id("<id>")` and refuse a `commit_id` alias in any config file jj reads, conditional scopes at any depth included, so a bookmark, tag, or alias named after an id cannot move the owner's signature. Pin the gpg program `jj sign` runs to a rune shim that refuses, before the owner's key, any commit that is not the rewrite of a named one, so a redirect the guard did not see signs nothing and fails the request with the refused commit named. After the run, report any difference between the commits written and the named set.
+- Show every piece of repository text in the signing views, a message line, an author, a bookmark, a path, or a review reason, with control, terminal escape, and Unicode format characters as visible escapes.
 - Let `cd DIR && cargo …` pass the sandbox guard with no advice, and advise a cargo call that reaches a configured checkout through `--manifest-path` to run from there.
 - Clamp a hook budget to the whole seconds of the harness cap, for a canonical or a native subscription alike, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s.
 - Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.

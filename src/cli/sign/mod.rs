@@ -68,11 +68,13 @@ pub(crate) fn run_queue(action: super::SignAction, json: bool) -> Result<i32, Er
             receipt,
             repo,
             prune,
+            range,
         } => queue::queue(
             bookmark.as_deref(),
             receipt.as_deref(),
             repo.as_deref(),
             prune,
+            range,
             json,
         ),
         SignAction::Submit {
@@ -101,6 +103,7 @@ pub(crate) fn run_queue(action: super::SignAction, json: bool) -> Result<i32, Er
         SignAction::Drop { bookmark, id, repo } => {
             queue::drop(bookmark.as_deref(), id.as_deref(), repo.as_deref())
         }
+        SignAction::GpgShim { state, args } => queue::gpg_shim(&state, &args),
     }
 }
 
@@ -145,6 +148,7 @@ fn ensure_index_clean() -> Result<(), Error> {
 
 pub(crate) fn index_is_clean(repository: Option<&Path>) -> Result<bool, Error> {
     let mut command = Command::new("git");
+    command.env("GIT_NO_REPLACE_OBJECTS", "1");
     if let Some(repository) = repository {
         // An explicit repository must win over inherited hook context, where
         // GIT_DIR and friends would silently redirect -C to the outer repo.
@@ -301,6 +305,7 @@ fn is_tag(reference: &str) -> bool {
     Command::new("git")
         .args(["rev-parse", "--quiet", "--verify"])
         .arg(tag_reference(reference))
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -463,9 +468,12 @@ fn status_word(line: &str) -> Option<&str> {
     line.strip_prefix("[GNUPG:] ")?.split_whitespace().next()
 }
 
+/// git with replacement objects ignored: a `refs/replace` entry would put
+/// another commit's content behind the id the signature is checked on.
 fn git_raw_verification(args: &[&str]) -> Result<Option<String>, Error> {
     let output = Command::new("git")
         .args(args)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     let status_lines = String::from_utf8_lossy(&output.stderr).to_string();
@@ -612,13 +620,14 @@ fn owner_git_command(args: &[&str]) -> Command {
     for variable in IDENTITY_OVERRIDES {
         command.env_remove(variable);
     }
-    command.args(args);
+    command.args(args).env("GIT_NO_REPLACE_OBJECTS", "1");
     command
 }
 
 fn git_stdout(args: &[&str]) -> Result<String, Error> {
     let output = Command::new("git")
         .args(args)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
         .output()
         .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
     if output.status.success() {

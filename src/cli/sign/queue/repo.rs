@@ -15,8 +15,10 @@
 //! so no hook, ssh wrapper, askpass, or credential helper from the
 //! candidate repository runs as the owner.
 
+use super::short;
 use super::store::Identity;
 use rune::error::{Error, ErrorKind};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -63,6 +65,11 @@ pub(crate) enum SignOutcome {
     /// jj refused to rewrite the commit: it is in `immutable_heads()`,
     /// which for a pushed bookmark means the head is published.
     Immutable(String),
+    /// The run asked the key for a commit outside the named set, and the
+    /// gpg shim refused it before the key: nothing outside the set is
+    /// signed, and the request fails because something redirected the
+    /// run. The text names the refused commit.
+    Refused(String),
     Failed(String),
 }
 
@@ -110,6 +117,7 @@ impl Repo {
                 .arg("-C")
                 .arg(path)
                 .args(args)
+                .env("GIT_NO_REPLACE_OBJECTS", "1")
                 .output()
                 .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run git: {error}")))?;
             if !output.status.success() {
@@ -122,8 +130,9 @@ impl Repo {
                     ),
                 ));
             }
-            let found = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-            Ok(std::fs::canonicalize(&found).unwrap_or(found))
+            Ok(canonical(Path::new(
+                String::from_utf8_lossy(&output.stdout).trim(),
+            )))
         };
         Ok(Self {
             workspace: git(&["rev-parse", "--show-toplevel"])?,
@@ -146,17 +155,39 @@ impl Repo {
         let Some(commit) = self.resolve(bookmark)? else {
             return Ok(None);
         };
-        let raw = self.cat_commit(&commit)?;
-        let mut identity = parse_commit(&commit, &raw)?;
+        self.head_at(&commit).map(Some)
+    }
+
+    /// The identity and signature state of one commit, by its id.
+    pub(crate) fn head_at(&self, commit: &str) -> Result<Head, Error> {
+        let raw = self.cat_commit(commit)?;
+        let mut identity = parse_commit(commit, &raw)?;
         identity.parents = identity
             .parents
             .iter()
             .map(|parent| Ok(parse_commit(parent, &self.cat_commit(parent)?)?.change_id))
             .collect::<Result<Vec<_>, Error>>()?;
-        Ok(Some(Head {
+        Ok(Head {
             identity,
             signed: has_signature(&raw),
-        }))
+        })
+    }
+
+    /// The commits `head` adds above `base`, oldest first: what a direct
+    /// push of `head` would add to the branch `base` names.
+    pub(crate) fn range(&self, base: &str, head: &str) -> Result<Vec<String>, Error> {
+        let listing = self.git_stdout(&[
+            "rev-list",
+            "--reverse",
+            "--topo-order",
+            &format!("{base}..{head}"),
+        ])?;
+        Ok(listing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     fn export(&self, bookmark: &str) -> Result<(), Error> {
@@ -575,10 +606,20 @@ impl Repo {
         })
     }
 
-    /// `jj sign -r <commit>` with the owner's settings pinned. The behavior
-    /// is pinned to `drop`, so the rewrite of descendants signs nothing: a
-    /// descendant that was signed is queued again and signed in its turn.
-    pub(crate) fn sign(&self, commit: &str, signing: &Signing) -> Result<SignOutcome, Error> {
+    /// `jj sign -r <commits>` with the owner's settings pinned. Every commit
+    /// is named as `commit_id("<id>")`, which no bookmark or tag can
+    /// redirect, and a `commit_id` alias in any config file jj reads is
+    /// refused first. The behavior is pinned to `drop`, so the rewrite of
+    /// descendants signs nothing: a descendant that was signed is queued
+    /// again and signed in its turn. The gpg program is pinned to the shim
+    /// of `shim.rs`, which holds the named identities and refuses any
+    /// payload that is not the rewrite of one before the owner's gpg runs,
+    /// so an alias the guard did not see, or a jj that resolves one
+    /// differently, signs nothing outside the set and fails the run. After
+    /// a run, the commits the operation kept are compared with the named
+    /// set once more, as a report: the owner sees a rewrite that was not
+    /// expected, and nothing is undone.
+    pub(crate) fn sign(&self, commits: &[String], signing: &Signing) -> Result<SignOutcome, Error> {
         if !self.jj {
             return Err(Error::new(
                 ErrorKind::Config,
@@ -588,26 +629,74 @@ impl Repo {
                 ),
             ));
         }
+        if let Err(reason) = commit_id_alias_check(&self.workspace)? {
+            return Ok(SignOutcome::Failed(reason));
+        }
+        let named = commits
+            .iter()
+            .map(|commit| self.commit(commit))
+            .collect::<Result<Vec<_>, Error>>()?;
+        let kept_before = self.kept()?;
+        let shim = super::shim::Run::create(&signing.program, named.clone())?;
+        let pinned = Signing {
+            program: shim.program().to_string_lossy().into_owned(),
+            key: signing.key.clone(),
+        };
         let mut command = jj(&self.workspace);
-        for setting in signing.overrides() {
+        for setting in pinned.overrides() {
             command.arg("--config").arg(setting);
         }
         let output = command
-            .args(["sign", "-r", commit])
+            .args(["sign", "-r", &commit_id_revset(commits)])
             .stdin(Stdio::inherit())
             .output()
-            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")));
+        let state = shim.finish()?;
+        let output = output?;
+        if let Some(reason) = state.refused {
+            return Ok(SignOutcome::Refused(reason));
+        }
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Ok(classify_sign_output(output.status.success(), &stderr))
+        let outcome = classify_sign_output(output.status.success(), &stderr);
+        if outcome != SignOutcome::Signed {
+            return Ok(outcome);
+        }
+        let mut written = Vec::new();
+        for commit in self.kept()?.difference(&kept_before) {
+            let raw = self.cat_commit(commit)?;
+            written.push((parse_commit(commit, &raw)?, has_signature(&raw)));
+        }
+        if let Err(reason) = signed_exactly(&named, &written) {
+            eprintln!(
+                "note: after the run, {reason}; every signature came through the shim, so look at jj op log before you push"
+            );
+        }
+        Ok(SignOutcome::Signed)
     }
 
+    /// The commit ids under `refs/jj/keep/`, which jj writes for every
+    /// commit it creates. The refs go through no template or revset, so no
+    /// alias can shape them.
+    fn kept(&self) -> Result<HashSet<String>, Error> {
+        let listing = self.git_stdout(&["for-each-ref", "--format=%(refname)", "refs/jj/keep/"])?;
+        Ok(listing
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("refs/jj/keep/"))
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// git on the store, with replacement objects ignored: a `refs/replace`
+    /// entry would otherwise put another commit's content behind the id the
+    /// queue reads, shows, and verifies, while jj signs the stored one.
     fn git(&self) -> Command {
         let mut command = Command::new("git");
         command
             .arg("--no-pager")
             .arg("--git-dir")
             .arg(&self.git_dir)
-            .env("GIT_TERMINAL_PROMPT", "0");
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_NO_REPLACE_OBJECTS", "1");
         command
     }
 
@@ -675,20 +764,7 @@ impl Signing {
 /// are checked against `template-aliases` first, through `jj config get`,
 /// which renders nothing.
 fn user_setting(workspace: &Path, key: &str) -> Result<Option<String>, Error> {
-    for keyword in ["name", "value", "overridden"] {
-        let probe = jj(workspace)
-            .args(["config", "get", &format!("template-aliases.{keyword}")])
-            .output()
-            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
-        if probe.status.success() {
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!(
-                    "the jj config defines template-aliases.{keyword}, which changes what jj reports: unset it before signing"
-                ),
-            ));
-        }
-    }
+    refuse_listing_aliases(workspace)?;
     let output = jj(workspace)
         .args([
             "config",
@@ -704,9 +780,332 @@ fn user_setting(workspace: &Path, key: &str) -> Result<Option<String>, Error> {
     Ok(user_value(&String::from_utf8_lossy(&output.stdout), key))
 }
 
+/// Refuse a `template-aliases` entry that shadows one of the keywords the
+/// config listing templates use. `jj config get` renders nothing, so it is
+/// safe to probe with.
+fn refuse_listing_aliases(workspace: &Path) -> Result<(), Error> {
+    for keyword in ["name", "value", "overridden", "path"] {
+        let probe = jj(workspace)
+            .args(["config", "get", &format!("template-aliases.{keyword}")])
+            .output()
+            .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+        if probe.status.success() {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "the jj config defines template-aliases.{keyword}, which changes what jj reports: unset it before signing"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Fields split by the unit separator, records by the record separator,
 /// with no template function a `template-aliases` entry could shadow.
 const LISTING: &str = "name ++ \"\\x1f\" ++ value ++ \"\\x1f\" ++ overridden ++ \"\\x1e\"";
+
+/// The revset that names every commit by id and nothing else: a bookmark,
+/// tag, or alias named after an id cannot redirect `commit_id("<id>")`.
+pub(crate) fn commit_id_revset(commits: &[String]) -> String {
+    commits
+        .iter()
+        .map(|commit| format!("commit_id(\"{commit}\")"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The refusal, if any, for a `revset-aliases` entry that redefines the
+/// `commit_id` function in any config file jj reads. jj evaluates a
+/// conditional scope against the running command, so `jj config list`
+/// does not show an alias that is active only for `jj sign`. Every file is
+/// parsed here, scopes included, and the files jj reports reading are
+/// checked against the files read. A file that cannot be read or parsed
+/// and a file jj reads that was not read refuse signing.
+fn commit_id_alias_check(workspace: &Path) -> Result<Result<(), String>, Error> {
+    refuse_listing_aliases(workspace)?;
+    let files = config_files(workspace)?;
+    for file in &files {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Ok(Err(format!(
+                    "cannot read the jj config {}: {error}: the alias check needs every config file",
+                    file.display()
+                )));
+            }
+        };
+        let table: toml::Table = match toml::from_str(&text) {
+            Ok(table) => table,
+            Err(error) => {
+                return Ok(Err(format!(
+                    "cannot parse the jj config {}: {}: the alias check needs every config file",
+                    file.display(),
+                    error.message()
+                )));
+            }
+        };
+        if let Some(alias) = shadowing_alias_in(&table) {
+            return Ok(Err(format!(
+                "the jj config {} defines revset alias {alias}, which redefines commit_id(): unset it before signing",
+                file.display()
+            )));
+        }
+    }
+    let output = jj(workspace)
+        .args(["config", "list", "--include-overridden", "-T", PATHS])
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    if !output.status.success() {
+        return Ok(Err(format!(
+            "cannot list the jj config files: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let read: HashSet<PathBuf> = files.iter().map(|file| canonical(file)).collect();
+    for path in String::from_utf8_lossy(&output.stdout)
+        .split('\u{1e}')
+        .map(|record| record.trim_matches('\n'))
+        .filter(|path| !path.is_empty())
+    {
+        if !read.contains(&canonical(Path::new(path))) {
+            return Ok(Err(format!(
+                "jj reads the config file {path}, which the alias check did not: refusing to sign"
+            )));
+        }
+    }
+    let output = jj(workspace)
+        .args(["config", "list", "revset-aliases", "-T", LISTING])
+        .output()
+        .map_err(|error| Error::new(ErrorKind::Io, format!("cannot run jj: {error}")))?;
+    if let Some(alias) = shadowing_alias(&String::from_utf8_lossy(&output.stdout)) {
+        return Ok(Err(format!(
+            "the jj config defines revset alias {alias}, which redefines commit_id(): unset it before signing"
+        )));
+    }
+    Ok(Ok(()))
+}
+
+/// The config file of every entry, one record per entry, empty for an
+/// entry that comes from the command line or the environment.
+const PATHS: &str = "path ++ \"\\x1e\"";
+
+/// Every config file jj reads for the workspace, in jj's order: the user
+/// files, or the files `JJ_CONFIG` names in their place, then the system
+/// files, then the repository and workspace files jj names itself. A file
+/// that does not exist is listed, and skipped when read.
+fn config_files(workspace: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut files = Vec::new();
+    if let Some(list) = std::env::var_os("JJ_CONFIG") {
+        for entry in std::env::split_paths(&list) {
+            if entry.as_os_str().is_empty() {
+                continue;
+            }
+            if entry.is_dir() {
+                files.extend(toml_files_in(&entry)?);
+            } else {
+                files.push(entry);
+            }
+        }
+    } else {
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|home| !home.as_os_str().is_empty())
+        {
+            files.push(home.join(".jjconfig.toml"));
+            let platform = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .unwrap_or_else(|| home.join(".config"));
+            files.push(platform.join("jj").join("config.toml"));
+            files.extend(toml_files_in(&platform.join("jj").join("conf.d"))?);
+        }
+        files.push(PathBuf::from("/etc/jj/config.toml"));
+        files.extend(toml_files_in(Path::new("/etc/jj/conf.d"))?);
+    }
+    for scope in ["--repo", "--workspace"] {
+        files.push(jj_path(workspace, &["config", "path", scope])?);
+    }
+    Ok(files)
+}
+
+/// The `*.toml` entries directly in `dir`, in lexicographic order, none
+/// when the directory does not exist.
+fn toml_files_in(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot read {}: {error}", dir.display()),
+            ));
+        }
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot read {}: {error}", dir.display()),
+                )
+            })?
+            .path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "toml")
+        {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// The name of a `revset-aliases` entry in a parsed config file that
+/// redefines the `commit_id` function, from the file's root table or from
+/// a `--scope` entry at any depth, or `None`. jj resolves a scope nested
+/// in a scope, so every level is read, and the name repeats `--scope.`
+/// once per level.
+pub(crate) fn shadowing_alias_in(table: &toml::Table) -> Option<String> {
+    shadowing_alias_under("", table)
+}
+
+fn shadowing_alias_under(prefix: &str, table: &toml::Table) -> Option<String> {
+    if let Some(name) = table
+        .get("revset-aliases")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(toml::Table::keys)
+        .find(|name| shadows_commit_id(name))
+    {
+        return Some(format!("{prefix}revset-aliases.\"{name}\""));
+    }
+    table
+        .get("--scope")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_table)
+        .find_map(|scope| shadowing_alias_under(&format!("{prefix}--scope."), scope))
+}
+
+/// Every named commit has exactly one signed rewrite among the commits
+/// the run wrote, and nothing else the run wrote carries a signature. A
+/// rewrite keeps the change id when the named commit records one, the
+/// tree, the author, and the message, and its parents are the named
+/// parents with every named commit replaced by its own rewrite, so the
+/// match walks from the oldest named commit up. The error names every
+/// extra signed commit and every named commit without a rewrite. The shim
+/// applies the same match to each payload before the key; this one is the
+/// report after the run.
+pub(crate) fn signed_exactly(
+    named: &[Identity],
+    written: &[(Identity, bool)],
+) -> Result<(), String> {
+    let mut rewrite: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut claimed: HashSet<&str> = HashSet::new();
+    loop {
+        let mut progressed = false;
+        for commit in named {
+            if rewrite.contains_key(commit.commit_id.as_str()) {
+                continue;
+            }
+            let mut candidates = written.iter().filter(|(candidate, signed)| {
+                *signed
+                    && !claimed.contains(candidate.commit_id.as_str())
+                    && rewrites(commit, candidate, &rewrite)
+            });
+            if let Some((candidate, _)) = candidates.next()
+                && candidates.next().is_none()
+            {
+                rewrite.insert(&commit.commit_id, &candidate.commit_id);
+                claimed.insert(&candidate.commit_id);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    let extra: Vec<String> = written
+        .iter()
+        .filter(|(candidate, signed)| *signed && !claimed.contains(candidate.commit_id.as_str()))
+        .map(|(candidate, _)| name_commit(candidate))
+        .collect();
+    let missing: Vec<String> = named
+        .iter()
+        .filter(|commit| !rewrite.contains_key(commit.commit_id.as_str()))
+        .map(name_commit)
+        .collect();
+    if extra.is_empty() && missing.is_empty() {
+        return Ok(());
+    }
+    let mut parts = Vec::new();
+    if !extra.is_empty() {
+        parts.push(format!("jj sign also signed {}", extra.join(", ")));
+    }
+    if !missing.is_empty() {
+        parts.push(format!("no signed rewrite of {}", missing.join(", ")));
+    }
+    Err(parts.join("; "))
+}
+
+/// `candidate` is the rewrite of `named` under the rewrites found so far.
+pub(crate) fn rewrites(
+    named: &Identity,
+    candidate: &Identity,
+    rewrite: &BTreeMap<&str, &str>,
+) -> bool {
+    (named.change_id.is_empty() || named.change_id == candidate.change_id)
+        && named.tree_id == candidate.tree_id
+        && named.author == candidate.author
+        && named.description == candidate.description
+        && named.parents.len() == candidate.parents.len()
+        && named
+            .parents
+            .iter()
+            .zip(&candidate.parents)
+            .all(|(parent, live)| rewrite.get(parent.as_str()).copied().unwrap_or(parent) == live)
+}
+
+/// A commit by its ids alone, so the reason carries no repository text.
+pub(crate) fn name_commit(commit: &Identity) -> String {
+    if commit.change_id.is_empty() {
+        return short(&commit.commit_id).to_string();
+    }
+    format!(
+        "{} (change {})",
+        short(&commit.commit_id),
+        short(&commit.change_id)
+    )
+}
+
+/// The first `revset-aliases` entry in a listing whose name is a
+/// `commit_id(` function alias.
+pub(crate) fn shadowing_alias(listing: &str) -> Option<String> {
+    listing
+        .split('\u{1e}')
+        .filter_map(|record| record.trim_matches('\n').split('\u{1f}').next())
+        .find(|name| {
+            name.strip_prefix("revset-aliases.")
+                .is_some_and(shadows_commit_id)
+        })
+        .map(str::to_string)
+}
+
+/// Whether an alias name, with the quoting and whitespace jj allows
+/// removed, is a `commit_id(` function alias. A plain `commit_id` symbol
+/// does not shadow the function and is left alone.
+fn shadows_commit_id(name: &str) -> bool {
+    let bare: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'')
+        .collect();
+    bare.starts_with("commit_id(")
+}
 
 /// The value of `key` among user-scope entries: the one nothing overrides
 /// when there is one, otherwise the last one, which a repository entry
@@ -748,20 +1147,28 @@ fn jj_path(workspace: &Path, args: &[&str]) -> Result<PathBuf, Error> {
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    Ok(std::fs::canonicalize(&path).unwrap_or(path))
+    Ok(canonical(Path::new(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    )))
+}
+
+/// The path with symlinks resolved when it exists, as given otherwise.
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// jj on the workspace with the git it runs pinned to `git` on PATH: the
 /// repository's config can name another program under
-/// `git.executable-path`, and every export and import would run it.
+/// `git.executable-path`, and every export and import would run it. That
+/// git ignores replacement objects, as the queue's own git does.
 fn jj(workspace: &Path) -> Command {
     let mut command = Command::new("jj");
     command
         .arg("-R")
         .arg(workspace)
         .args(["--color=never", "--ignore-working-copy"])
-        .args(["--config", "git.executable-path=\"git\""]);
+        .args(["--config", "git.executable-path=\"git\""])
+        .env("GIT_NO_REPLACE_OBJECTS", "1");
     command
 }
 
