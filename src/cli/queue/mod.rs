@@ -321,14 +321,10 @@ fn send(
     warnings: Vec<String>,
 ) -> Outcome {
     let mut secrets = launch::credential_values(&request.env);
-    secrets.extend(
-        options
-            .remote_auth_token_env
-            .as_deref()
-            .and_then(std::env::var_os)
-            .map(|token| token.to_string_lossy().into_owned())
-            .filter(|token| !token.is_empty()),
-    );
+    secrets.extend(remote_token(
+        options.remote_auth_token_env.as_deref(),
+        &request.env,
+    ));
     let result = run_process_request(request)
         .map_err(SurfaceFailure::from)
         .and_then(|output| require_success(output, &secrets));
@@ -435,6 +431,40 @@ fn queued_outcome(
     }
 }
 
+/// The value of the variable `--remote-auth-token-env` names: the route's
+/// environment first, as the child sees it, else this process's. Its name
+/// says nothing about it being a credential, so it is hidden by the flag
+/// that named it, never by its name.
+fn remote_token(variable: Option<&str>, env: &[(OsString, OsString)]) -> Option<String> {
+    let variable = variable?;
+    env.iter()
+        .rev()
+        .find(|(key, _)| key == variable)
+        .map(|(_, value)| value.clone())
+        .or_else(|| std::env::var_os(variable))
+        .map(|token| token.to_string_lossy().into_owned())
+        .filter(|token| !token.is_empty())
+}
+
+/// The route's environment as the dry run shows it: every credential hidden
+/// by its name, and the variable `--remote-auth-token-env` names hidden
+/// whatever its name.
+fn shown_env(
+    env: &[(OsString, OsString)],
+    remote_auth_token_env: Option<&str>,
+) -> Vec<(String, String)> {
+    launch::redacted_env(env)
+        .into_iter()
+        .map(|(key, value)| {
+            if remote_auth_token_env == Some(key.as_str()) {
+                (key, launch::REDACTED_VALUE.to_string())
+            } else {
+                (key, value)
+            }
+        })
+        .collect()
+}
+
 /// The command the queue would start, with the message as a placeholder
 /// and every credential hidden. Nothing starts.
 fn dry_run_outcome(
@@ -450,7 +480,7 @@ fn dry_run_outcome(
         .chain(request.args.iter().cloned())
         .collect();
     let argv = launch::redact_argv(&argv);
-    let env = launch::redacted_env(&request.env);
+    let env = shown_env(&request.env, options.remote_auth_token_env.as_deref());
     let mut lines = vec![
         format!("tool: {tool}"),
         format!("route: {}", options.tool),

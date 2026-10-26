@@ -518,3 +518,69 @@ fn postbox_hook_adapter_adds_the_message_to_a_claude_prompt() {
     assert!(context.contains("Is the deck ready?"), "{result}");
     assert!(postbox(home.path()).contains("\tread\tcodex:01a0abff\tclaude\t42e43c0b\t"));
 }
+
+#[cfg(unix)]
+#[test]
+fn the_named_remote_token_never_shows_in_a_dry_run_or_a_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    codex:\n      remote:\n",
+            "        env:\n          REMOTE_ACCESS: fake-remote-token-value\n",
+        ),
+    )
+    .expect("config");
+    let codex = home.path().join("fake-codex");
+    std::fs::write(
+        &codex,
+        "#!/bin/sh\nprintf 'token %s refused\\n' \"$REMOTE_ACCESS\" >&2\nexit 1\n",
+    )
+    .expect("fake codex");
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755))
+        .expect("fake codex permissions");
+    let codex = codex.to_str().expect("fake codex path");
+    let post = [
+        "queue",
+        "post",
+        "remote@codex",
+        "--session",
+        "ouroboros",
+        "--remote",
+        "wss://host:4500",
+        "--remote-auth-token-env",
+        "REMOTE_ACCESS",
+        "--binary",
+    ];
+
+    for json in [false, true] {
+        let mut command = rune(home.path());
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args(post)
+            .args([codex, "--dry-run", "hi"])
+            .output()
+            .expect("dry run");
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("fake-remote-token-value"), "{stdout}");
+        assert!(stdout.contains("<redacted>"), "{stdout}");
+    }
+
+    let output = rune(home.path())
+        .arg("--json")
+        .args(post)
+        .args([codex, "hi"])
+        .output()
+        .expect("failed post");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("fake-remote-token-value"), "{stdout}");
+    assert!(stdout.contains("token <redacted> refused"), "{stdout}");
+}
