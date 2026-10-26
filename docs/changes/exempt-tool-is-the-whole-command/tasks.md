@@ -13,5 +13,5 @@
 
 - [x] 2.1 Unit tests: the reader, each wrapper, each directory option, other tools, the advice cases, the patterns, the settings files, the adapter, the Claude encoding
 - [x] 2.2 `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
-- [x] 2.3 Proof: one scene per scenario through `rune hook run`, 14 of 14 proven
+- [x] 2.3 Proof: one scene per scenario through `rune hook run`, 18 of 18 proven
 - [ ] 2.4 Live: with the `hooks:` block active, `cd /x && jj log` in a Claude Code session is refused with `jj -R /x log`
