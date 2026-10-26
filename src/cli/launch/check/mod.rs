@@ -3,7 +3,7 @@
 //! there, and report every model id the plan sends as served or missing.
 //! The check never spawns the tool and never prints a credential value.
 
-use super::{ResolvedLaunch, credential_values, env_value, redact_credentials, redact_urls};
+use super::{ResolvedLaunch, credential_values, env_value, redact_output, redact_urls};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ pub(crate) struct Family {
     /// never sent by the check.
     pub(crate) isolation_keys: &'static [&'static str],
     model_keys: &'static [&'static str],
-    tool: &'static str,
+    pub(crate) tool: &'static str,
 }
 
 impl Family {
@@ -536,7 +536,7 @@ fn run_checks_with(
                         .iter()
                         .filter_map(|model| {
                             closest_served(model, &listed)
-                                .map(|found| (model.clone(), redact_credentials(&found, &secrets)))
+                                .map(|found| (model.clone(), redact_output(&found, &secrets)))
                         })
                         .collect();
                     EndpointResult::Listed {
@@ -546,7 +546,7 @@ fn run_checks_with(
                     }
                 }
                 Err(reason) => EndpointResult::Failed {
-                    reason: redact_credentials(&reason, &secrets),
+                    reason: redact_output(&reason, &secrets),
                 },
             };
             EndpointReport {

@@ -518,6 +518,180 @@ fn profile_resolution_errors_with_known_names() {
 }
 
 #[test]
+fn cursor_has_a_built_in_fable_profile_that_names_the_model_first() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = resolve_with_config_for_tests(
+        "fable@cursor",
+        &[
+            OsString::from("--endpoint"),
+            OsString::from("https://api.example.test"),
+        ],
+        dir.path(),
+    );
+    let argv: Vec<String> = resolved
+        .argv
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        argv,
+        [
+            "cursor-agent",
+            "--model",
+            "claude-fable-5-1-high",
+            "--endpoint",
+            "https://api.example.test",
+        ]
+    );
+    let model = resolved.model.as_ref().expect("resolved model");
+    assert_eq!(model.alias, "fable-cursor");
+    assert_eq!(model.id, "claude-fable-5-1-high");
+    assert_eq!(model.context, 1_000_000);
+    assert_eq!(model.source, ModelSource::BuiltIn);
+    assert_eq!(
+        resolved.model_args,
+        [
+            OsString::from("--model"),
+            OsString::from("claude-fable-5-1-high")
+        ]
+    );
+    // The model travels on the command line, not in Claude's variables.
+    assert!(
+        !resolved
+            .effective_env()
+            .iter()
+            .any(|(key, _)| key == "ANTHROPIC_MODEL"),
+        "{:?}",
+        resolved.effective_env()
+    );
+
+    let profile = resolve_profile("cursor", Some("fable"), &Launch::default())
+        .expect("built-in profile")
+        .expect("found");
+    assert_eq!(profile.model.as_deref(), Some("fable-cursor"));
+    assert_eq!(profile_names("cursor", &Launch::default()), ["fable"]);
+    assert_eq!(
+        model_args("claude", resolved.model.as_ref()),
+        [] as [OsString; 0]
+    );
+    assert_eq!(model_args("cursor", None), [] as [OsString; 0]);
+}
+
+#[test]
+fn a_configured_cursor_profile_or_route_replaces_the_built_in_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "cursor".to_string(),
+        [
+            (
+                "fable".to_string(),
+                ontology::LaunchProfile {
+                    args: vec![
+                        "--endpoint".to_string(),
+                        "https://own.example.test".to_string(),
+                    ],
+                    ..ontology::LaunchProfile::default()
+                },
+            ),
+            ("mine".to_string(), ontology::LaunchProfile::default()),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let resolved = resolve_with_config(
+        "fable@cursor",
+        &[],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig {
+            launch: launch.clone(),
+            ..ontology::ResolvedConfig::default()
+        },
+    )
+    .expect("configured profile");
+    assert!(resolved.model.is_none(), "{:?}", resolved.model);
+    assert_eq!(resolved.model_args, [] as [OsString; 0]);
+    assert_eq!(
+        resolved.argv,
+        ["cursor-agent", "--endpoint", "https://own.example.test"].map(OsString::from)
+    );
+    assert_eq!(profile_names("cursor", &launch), ["fable", "mine"]);
+
+    // A configured route of the built-in name wins over the built-in route.
+    let mut launch = Launch::default();
+    launch.models.insert(
+        "fable-cursor".to_string(),
+        ontology::LaunchModel {
+            id: "claude-fable-5-1-medium".to_string(),
+            context: 200_000,
+            compact: None,
+        },
+    );
+    let resolved = resolve_with_config(
+        "fable@cursor",
+        &[],
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+        ontology::ResolvedConfig {
+            launch,
+            ..ontology::ResolvedConfig::default()
+        },
+    )
+    .expect("configured route");
+    let model = resolved.model.as_ref().expect("resolved model");
+    assert_eq!(model.id, "claude-fable-5-1-medium");
+    assert_eq!(model.source, ModelSource::Config);
+    assert_eq!(
+        resolved.argv,
+        ["cursor-agent", "--model", "claude-fable-5-1-medium"].map(OsString::from)
+    );
+}
+
+#[test]
+fn cursor_starts_the_agent_binary_unless_the_configuration_names_another() {
+    let launch = Launch::default();
+    assert_eq!(
+        resolve_tool("cursor", &launch).binary,
+        OsString::from("cursor-agent")
+    );
+    for tool in ["claude", "codex", "agy", "grok", "opencode", "ollama"] {
+        assert_eq!(resolve_tool(tool, &launch).binary, OsString::from(tool));
+    }
+
+    let mut launch = Launch::default();
+    launch.tools.insert(
+        "cursor".to_string(),
+        ontology::LaunchTool {
+            binary: Some("/opt/cursor/agent".to_string()),
+            base_url_env: None,
+        },
+    );
+    assert_eq!(
+        resolve_tool("cursor", &launch).binary,
+        OsString::from("/opt/cursor/agent")
+    );
+}
+
+#[test]
+fn an_unknown_cursor_profile_lists_the_built_in_one() {
+    let error = resolve_profile("cursor", Some("nope"), &Launch::default()).expect_err("unknown");
+    assert!(
+        error
+            .message
+            .contains("no launch profile 'nope' for cursor (profiles: fable)"),
+        "{}",
+        error.message
+    );
+    assert_eq!(error.profiles, Some(vec!["fable".to_string()]));
+    // Claude has no built-in profile: its list is the configured one alone.
+    assert_eq!(
+        profile_names("claude", &Launch::default()),
+        [] as [String; 0]
+    );
+}
+
+#[test]
 fn invocation_splits_as_profile_at_tool() {
     assert_eq!(split_invocation("sol@claude"), ("claude", Some("sol")));
     assert_eq!(
@@ -989,10 +1163,10 @@ fn a_settings_endpoint_wins_over_the_middleware_endpoint_as_in_the_child() {
 }
 
 #[test]
-fn every_shown_endpoint_loses_its_password_and_credential_query() {
+fn every_shown_endpoint_loses_its_credential_query() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let gateway = "https://u:fake-url-secret@127.0.0.1:9/v1?api_key=fake-query-secret";
-    let shown = "https://u:<redacted>@127.0.0.1:9/v1?api_key=<redacted>";
+    let gateway = "https://127.0.0.1:9/v1?api_key=fake-query-secret";
+    let shown = "https://127.0.0.1:9/v1?api_key=<redacted>";
     let resolved = resolve_with_config_for_tests(
         "claude",
         &[
@@ -1061,7 +1235,7 @@ fn a_tmux_command_line_hides_a_credential_value_with_spaces_whole() {
         ]),
         ..plan
     };
-    plan.base_url = Some("https://u:fake-url-secret@127.0.0.1:9/v1".to_string());
+    plan.base_url = Some("https://127.0.0.1:9/v1".to_string());
     let tool = resolve_tool("claude", &Launch::default());
     let args = [
         OsString::from("--api-key"),
@@ -1083,7 +1257,7 @@ fn a_tmux_command_line_hides_a_credential_value_with_spaces_whole() {
     );
     assert!(inner.contains("'ANTHROPIC_MODEL=sol model'"), "{inner}");
     assert!(
-        inner.contains("ANTHROPIC_BASE_URL=https://u:<redacted>@127.0.0.1:9/v1"),
+        inner.contains("ANTHROPIC_BASE_URL=https://127.0.0.1:9/v1"),
         "{inner}"
     );
     assert!(inner.ends_with("claude --api-key '<redacted>'"), "{inner}");
@@ -1363,6 +1537,280 @@ fn urls_lose_their_password_and_credential_query_parameters() {
 }
 
 #[test]
+fn url_query_secrets_hold_each_credential_named_query_value_as_written_and_decoded() {
+    // Two URLs in one text; a plain URL, a host alone, and a plain query
+    // value add nothing. A URL's user and password are never read here:
+    // the launch refuses them.
+    let values = url_query_secrets(
+        "-ehttps://example.test/v1?token=fake-query-secret&x=1&sig=fake%3Dsig%40value and http://h/?a=b and example.test",
+    );
+    for expected in ["fake-query-secret", "fake%3Dsig%40value", "fake=sig@value"] {
+        assert!(
+            values.contains(&expected.to_string()),
+            "{expected}: {values:?}"
+        );
+    }
+    for plain in ["1", "b", "example.test", "h"] {
+        assert!(!values.contains(&plain.to_string()), "{plain}: {values:?}");
+    }
+    assert_eq!(url_query_secrets("no url here"), [] as [String; 0]);
+}
+
+#[test]
+fn a_url_credential_is_read_by_a_whatwg_parser_in_every_form_the_harness_reads() {
+    // Node's `new URL()` reads a user and a password from each of these.
+    // A `://` rule saw none of the first six: a backslash, one slash,
+    // three slashes, no slash, a tab before the `@`, and an upper-case
+    // scheme.
+    for text in [
+        r"https:\\u:p@h",
+        "https:/u:p@h",
+        "https:///u:p@h",
+        "https:u:p@h",
+        "https://u:p\t@h",
+        "HTTPS://u:p@h",
+        "https://user:pa'ss@example.test",
+        "https://u:p@host/x?y=1 and more",
+        "https://host/x?redirect=https://u:p@other",
+        r#"-c model_providers.p.base_url="https:user:p@h/v1""#,
+        "postgres://postgres:p@localhost/app",
+    ] {
+        assert_eq!(url_userinfo(text), Some(UrlUserinfo::Password), "{text:?}");
+    }
+    for text in [
+        "-ehttps://FAKE-URL-TOKEN@example.test",
+        "see postgres://postgres@localhost/app",
+        r"ftp:\anonymous@files.example.test/pub",
+    ] {
+        assert_eq!(url_userinfo(text), Some(UrlUserinfo::User), "{text:?}");
+    }
+    for text in [
+        "https://example.test/?api_key=fake-query-secret",
+        "https://example.test/path@with/at?mail=a@b.test",
+        "user@host without a scheme",
+        "ssh://host/x",
+        "mailto:a@b.test",
+        "file:///Users/me/x",
+        "",
+    ] {
+        assert_eq!(url_userinfo(text), None, "{text:?}");
+    }
+}
+
+/// A launch of `tool` with a profile `p` that sets `env` and `args`, with
+/// the refusal kept.
+fn try_resolve_profile(
+    tool: &str,
+    env: &[(&str, &str)],
+    args: &[&str],
+    root: &Path,
+) -> Result<ResolvedLaunch, ResolveError> {
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        tool.to_string(),
+        [(
+            "p".to_string(),
+            ontology::LaunchProfile {
+                env: env
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            (*key).to_string(),
+                            ontology::ProfileEnvValue::Literal((*value).to_string()),
+                        )
+                    })
+                    .collect(),
+                args: args.iter().map(|arg| (*arg).to_string()).collect(),
+                ..ontology::LaunchProfile::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+    resolve_with_config(
+        &format!("p@{tool}"),
+        &[],
+        root.to_path_buf(),
+        root.to_path_buf(),
+        ontology::ResolvedConfig {
+            launch,
+            ..ontology::ResolvedConfig::default()
+        },
+    )
+}
+
+#[test]
+fn a_user_only_url_is_refused_where_the_tool_reads_an_endpoint_and_passes_elsewhere() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A database URL names its user and no password. The route sets it,
+    // the tool reads no endpoint from it: the launch resolves.
+    let resolved = try_resolve_profile(
+        "cursor",
+        &[("DATABASE_URL", "postgres://postgres@localhost/app")],
+        &["-ehttps://api.example.test"],
+        dir.path(),
+    );
+    assert!(resolved.is_ok(), "{resolved:?}");
+    // A password refuses in the same variable.
+    let message = try_resolve_profile(
+        "cursor",
+        &[(
+            "DATABASE_URL",
+            "postgres://postgres:FAKE-DB-SECRET@localhost/app",
+        )],
+        &[],
+        dir.path(),
+    )
+    .expect_err("refused")
+    .message;
+    assert!(message.contains("DATABASE_URL"), "{message}");
+    assert!(!message.contains("FAKE-DB-SECRET"), "{message}");
+    // A user alone refuses where the tool reads its endpoint: the base URL
+    // variable the route sets, and the endpoint argument.
+    for (tool, env, args) in [
+        (
+            "claude",
+            &[("ANTHROPIC_BASE_URL", "https://FAKE-URL-TOKEN@proxy.test/v1")][..],
+            &[][..],
+        ),
+        ("cursor", &[], &["-ehttps://FAKE-URL-TOKEN@example.test"]),
+    ] {
+        let message = try_resolve_profile(tool, env, args, dir.path())
+            .err()
+            .unwrap_or_else(|| panic!("{tool} resolved"))
+            .message;
+        assert!(!message.contains("FAKE-URL-TOKEN"), "{tool}: {message}");
+    }
+}
+
+#[test]
+fn a_proxy_variable_keeps_its_credential_and_the_plan_hides_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // The child needs the proxy's user and password: the launch resolves,
+    // in either case of the name, and the plan hides the password.
+    for key in ["HTTPS_PROXY", "http_proxy", "ALL_PROXY"] {
+        let resolved = try_resolve_profile(
+            "cursor",
+            &[(key, "http://user:pa'ss-FAKE-PROXY-SECRET@proxy.test:3128")],
+            &[],
+            dir.path(),
+        );
+        let resolved = resolved.unwrap_or_else(|error| panic!("{key}: {error}"));
+        let secrets = resolved.known_secrets(&[]);
+        assert!(
+            secrets.contains(&"pa'ss-FAKE-PROXY-SECRET".to_string()),
+            "{key}: {secrets:?}"
+        );
+        let isolation = surface::parent_session_isolation(&resolved.route_keys());
+        let text = resolved.format_dry_run(&isolation, &[]);
+        assert!(!text.contains("FAKE-PROXY-SECRET"), "{key}: {text}");
+        assert!(text.contains("user:<redacted>@proxy.test"), "{key}: {text}");
+    }
+    // An inherited proxy with a percent-encoded password, and one with a
+    // token for a user and no password: both as written and decoded.
+    let resolved = try_resolve_profile("cursor", &[], &[], dir.path()).expect("resolved");
+    let inherited = names(&[
+        (
+            "https_proxy",
+            "http://user:pa%27ss-FAKE-PROXY-SECRET@proxy.test:3128",
+        ),
+        ("HTTP_PROXY", "http://FAKE-PROXY-TOKEN%3D@proxy.test:3128"),
+    ]);
+    let secrets = resolved.known_secrets(&inherited);
+    for expected in [
+        "pa%27ss-FAKE-PROXY-SECRET",
+        "pa'ss-FAKE-PROXY-SECRET",
+        "FAKE-PROXY-TOKEN%3D",
+        "FAKE-PROXY-TOKEN=",
+    ] {
+        assert!(
+            secrets.contains(&expected.to_string()),
+            "{expected}: {secrets:?}"
+        );
+    }
+    assert!(!secrets.contains(&"user".to_string()), "{secrets:?}");
+    // A quote does not end the URL: the password is hidden whole.
+    assert_eq!(
+        redact_urls("HTTPS_PROXY=http://user:pa'ss-FAKE-PROXY-SECRET@proxy.test:3128 next"),
+        "HTTPS_PROXY=http://user:<redacted>@proxy.test:3128 next"
+    );
+    assert_eq!(
+        redact_urls(r#"base_url="https://h/v1?token=fake-query-secret" next"#),
+        r#"base_url="https://h/v1?token=<redacted>" next"#
+    );
+}
+
+#[test]
+fn a_codex_config_url_is_hidden_as_codex_decodes_it() {
+    // The query name and the value are TOML escapes: the raw text shows
+    // neither `token` nor the secret, and codex reads both.
+    assert_eq!(
+        redact_argument(
+            r#"model_providers.p.base_url="https://h/v1?\u0074oken=\u0046AKE-ESCAPED-SECRET&x=1""#
+        ),
+        r#"model_providers.p.base_url="https://h/v1?token=<redacted>&x=1""#
+    );
+    assert_eq!(
+        redact_argument(
+            r#"--config=model_providers.p.base_url="https://h/v1?\u0074oken=\u0046AKE-ESCAPED-SECRET""#
+        ),
+        r#"--config=model_providers.p.base_url="https://h/v1?token=<redacted>""#
+    );
+    // A table value that holds such a URL is hidden whole.
+    assert_eq!(
+        redact_argument(
+            r#"model_providers.p={ base_url = "https://h/v1?\u0074oken=\u0046AKE-ESCAPED-SECRET" }"#
+        ),
+        "model_providers.p=<redacted>"
+    );
+    // A plain value keeps its text as written.
+    assert_eq!(
+        redact_argument(r#"model_providers.p.base_url="https://h/v1""#),
+        r#"model_providers.p.base_url="https://h/v1""#
+    );
+}
+
+#[test]
+fn query_parameters_are_credentials_by_whole_word_only() {
+    // `keyword` holds `key` but is no credential word; `api_key` and
+    // `X-Amz-Signature` split into one.
+    let values = url_query_secrets(
+        "https://example.test/search?keyword=documentation&api_key=fake-query-secret&X-Amz-Signature=fake-sig-value&max_tokens=4096",
+    );
+    for expected in ["fake-query-secret", "fake-sig-value"] {
+        assert!(
+            values.contains(&expected.to_string()),
+            "{expected}: {values:?}"
+        );
+    }
+    for plain in ["documentation", "4096"] {
+        assert!(!values.contains(&plain.to_string()), "{plain}: {values:?}");
+    }
+    assert_eq!(
+        redact_urls("https://example.test/search?keyword=documentation&sig=fake-sig-value"),
+        "https://example.test/search?keyword=documentation&sig=<redacted>"
+    );
+    for name in [
+        "key",
+        "api_key",
+        "access-token",
+        "X-Amz-Signature",
+        "AUTH",
+        "apikey",
+    ] {
+        assert_eq!(
+            redact_urls(&format!("http://h/?{name}=fake-value")),
+            format!("http://h/?{name}=<redacted>"),
+            "{name}"
+        );
+    }
+    for name in ["keyword", "tokens", "max_tokens", "q", "passage"] {
+        let url = format!("http://h/?{name}=plain-value");
+        assert_eq!(redact_urls(&url), url, "{name}");
+    }
+}
+
+#[test]
 fn tails_redact_known_values_of_eight_or_more_and_any_value_beside_a_name() {
     let secrets = vec!["fake-long-secret-value".to_string(), "ab12".to_string()];
     let text = concat!(
@@ -1474,6 +1922,15 @@ pub(super) fn resolve_with_config_for_tests(
     rest: &[OsString],
     root: &Path,
 ) -> ResolvedLaunch {
+    try_resolve_with_config_for_tests(tool, rest, root).expect("resolved launch")
+}
+
+/// [`resolve_with_config_for_tests`] with the refusal kept.
+fn try_resolve_with_config_for_tests(
+    tool: &str,
+    rest: &[OsString],
+    root: &Path,
+) -> Result<ResolvedLaunch, ResolveError> {
     resolve_with_config(
         tool,
         rest,
@@ -1492,7 +1949,115 @@ pub(super) fn resolve_with_config_for_tests(
             theme: None,
         },
     )
-    .expect("resolved launch")
+}
+
+#[test]
+fn a_url_that_carries_a_user_or_a_password_is_refused_by_name_of_the_credential_variable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let refusal = |tool: &str, rest: &[&str]| {
+        let rest: Vec<OsString> = rest.iter().map(OsString::from).collect();
+        try_resolve_with_config_for_tests(tool, &rest, dir.path())
+            .err()
+            .unwrap_or_else(|| panic!("{tool} {rest:?} resolved"))
+            .message
+    };
+    // A `'` in the password: the URL pass ended the URL at the quote and
+    // the password printed. Decoded the way each tool decodes it: a TOML
+    // escape for codex, a JSON escape for claude.
+    for (tool, rest, source) in [
+        (
+            "cursor",
+            &["-ehttps://user:pa'ss-FAKE-URL-SECRET@example.test"][..],
+            "CURSOR_API_KEY",
+        ),
+        (
+            "cursor",
+            &["-e", "https://FAKE-URL-TOKEN@example.test"],
+            "CURSOR_API_KEY",
+        ),
+        (
+            "codex",
+            &[
+                "-c",
+                r#"model_providers.p.base_url="https://FAKE-URL-TOKEN@example.test/v1""#,
+            ],
+            "OPENAI_API_KEY",
+        ),
+        (
+            "claude",
+            &[
+                "--settings",
+                r#"{"env":{"ANTHROPIC_BASE_URL":"https://u:FAKE-URL-SECRET@proxy.test/v1"}}"#,
+            ],
+            "ANTHROPIC_AUTH_TOKEN",
+        ),
+    ] {
+        let message = refusal(tool, rest);
+        assert!(message.contains(source), "{tool}: {message}");
+        for hidden in ["FAKE-URL", "pa'ss", "example.test", "proxy.test"] {
+            assert!(!message.contains(hidden), "{tool}: {message}");
+        }
+    }
+    // A query credential is no userinfo: the route resolves and the plan
+    // hides the value by name.
+    let resolved = resolve_with_config_for_tests(
+        "cursor",
+        &[OsString::from(
+            "-ehttps://example.test/?api_key=fake-query-secret",
+        )],
+        dir.path(),
+    );
+    let isolation = surface::parent_session_isolation(&resolved.route_keys());
+    let text = resolved.format_dry_run(&isolation, &[]);
+    assert!(text.contains("api_key=<redacted>"), "{text}");
+    assert!(!text.contains("fake-query-secret"), "{text}");
+}
+
+#[test]
+fn query_parameters_split_on_camel_case_and_every_parameter_is_matched() {
+    assert_eq!(
+        redact_urls(
+            "https://h/?accessToken=fake-a&apiToken=fake-b&page=2&clientSecret=fake-c&maxTokens=4096"
+        ),
+        "https://h/?accessToken=<redacted>&apiToken=<redacted>&page=2&clientSecret=<redacted>&maxTokens=4096"
+    );
+    for name in ["APIKey", "XAmzSignature", "AuthToken", "passWord"] {
+        assert_eq!(
+            redact_urls(&format!("http://h/?{name}=fake-value")),
+            format!("http://h/?{name}=<redacted>"),
+            "{name}"
+        );
+    }
+    for name in ["keyword", "passage", "Tokens", "maxTokens"] {
+        let url = format!("http://h/?{name}=plain-value");
+        assert_eq!(redact_urls(&url), url, "{name}");
+    }
+}
+
+#[test]
+fn the_output_redaction_hides_known_values_and_url_queries_in_text_and_json() {
+    let secrets = vec!["fake-known-secret".to_string()];
+    assert_eq!(
+        redact_output(
+            "Primary key: user_id, SECRET_KEY = os.environ[\"X\"], saw fake-known-secret at https://h/?token=fake-q&page=2",
+            &secrets
+        ),
+        "Primary key: user_id, SECRET_KEY = os.environ[\"X\"], saw <redacted> at https://h/?token=<redacted>&page=2"
+    );
+    let json = redact_output_json(
+        serde_json::json!({
+            "warnings": ["uses https://h/?api_key=fake-q", "fake-known-secret"],
+            "nested": {"value": "plain", "count": 2}
+        }),
+        &secrets,
+    );
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "warnings": ["uses https://h/?api_key=<redacted>", "<redacted>"],
+            "nested": {"value": "plain", "count": 2}
+        })
+    );
 }
 
 #[test]

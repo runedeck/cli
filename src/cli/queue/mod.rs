@@ -75,7 +75,9 @@ impl Transport {
 pub(crate) fn queue_transport(surface: Surface) -> Transport {
     match surface {
         Surface::Codex => Transport::CodexQueue,
-        Surface::Claude | Surface::Agy | Surface::Grok | Surface::Opencode => Transport::Postbox,
+        Surface::Claude | Surface::Agy | Surface::Grok | Surface::Opencode | Surface::Cursor => {
+            Transport::Postbox
+        }
     }
 }
 

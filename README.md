@@ -51,7 +51,10 @@ rune launch sol@claude
 rune launch grok@claude
 rune run sol@claude "Review this repository"
 rune run grok@claude "Summarize the current architecture"
+rune launch fable@cursor
 ```
+
+`fable@cursor` is built in as well. `rune launch cursor` starts `cursor-agent` with your Cursor login, because `cursor` on a Mac opens the editor, and `fable@cursor` adds `--model claude-fable-5-1-high`. A configured profile or route of the same name replaces the built-in one, and `tools.cursor.binary` names another binary.
 
 Copy [`config.example.yaml`](config.example.yaml) to `~/.config/rune/config.yaml` when you need to replace the built-in profiles, change the proxy endpoint, or override model metadata. Credential values stay outside YAML through `from_env` references.
 
@@ -403,7 +406,13 @@ The exit status follows the POSIX `timeout` utility, which supervises a child as
 
 agy runs in workspace-write mode only. It wrote files in its plan mode and with a settings file that denied every write, so the runner cannot make it read-only: a read-only agy run is refused before anything starts, and the refusal names `--mode workspace-write`, where agy's own jj workspace takes the edits. Every agy prompt starts with an instruction to read with the file tools, because headless agy denies a shell command it cannot confirm. When that happens, agy's log of the run (`--log-file`, in the run's scratch directory) names the denied tool, and the failure's hint says so: `agy denied a shell command (RunCommand) in headless mode`.
 
-Name the harness session, where the harness takes a name (claude `--name`, opencode `run --title`). Codex, agy, and grok take none, and the plan says so:
+cursor runs through `cursor-agent`, the only way Cursor's terms allow, in print mode with JSON output: `cursor-agent -p --output-format json --workspace <repo> --trust`, the prompt on stdin behind the system prompt, and the answer and token count read from the one JSON result object. A read-only run adds `--mode ask`, a workspace-write run adds `--force --sandbox enabled`, and answer-only is refused by name, because Cursor cannot switch its tools off. A read-only run also refuses `approvalMode: unrestricted` in `cli-config.json` (found through `CURSOR_CONFIG_DIR`, then `$XDG_CONFIG_HOME/cursor`, then `~/.cursor`) with exit 125, because that is the one approval mode that would run a write without asking if ask mode failed. A profile keeps only `--endpoint`. Every other flag or positional is dropped with a warning that names its flag or position and hides its value. A clean run needs `CURSOR_API_KEY`, because the browser login lives in the macOS Keychain, which a clean home cannot reach: without the key the run is refused with exit 125 before anything starts, and with it HOME and `CURSOR_CONFIG_DIR` move into the clean root. When an outer sandbox blocks the Keychain (`failed to copy trust settings`, or `Authentication required` under `SANDBOX_RUNTIME`), the failure's hint says so.
+
+```sh
+rune run fable@cursor "Review the README"
+```
+
+Name the harness session, where the harness takes a name (claude `--name`, opencode `run --title`). Codex, agy, grok, and cursor take none, and the plan says so:
 
 ```sh
 rune run sol@claude --session-name claude/runedeck/mods/council "Review this repository"
@@ -455,7 +464,7 @@ Every message is recorded in the postbox, `~/.rune/postbox.tsv`, one file for ev
 
 Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed.
 
-Claude Code, agy, grok, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's session start and next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
+Claude Code, agy, grok, cursor, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's session start and next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
 
 ```yaml
 hooks:
@@ -465,7 +474,7 @@ hooks:
       events: [session.start, prompt.before, turn.finish]
 ```
 
-Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
+Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, cursor, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
 
 `--json` makes every result one object (`posted`, `queued`, `read`, `list`, `dry_run`). `--dry-run` prints what would be posted with the message as `<message>`. A route that names no harness exits 125 with kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
 

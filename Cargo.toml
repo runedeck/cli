@@ -67,6 +67,10 @@ pulldown-cmark = { version = "0.13", default-features = false }
 
 # utils
 regex = "1"
+# A WHATWG parser decides whether a URL carries a credential, as Node's
+# `new URL()` reads it in the harness: a hand-written slash rule missed
+# `https:\\u:p@h`, `https:/u:p@h`, `https:///u:p@h`, and `https:u:p@h`.
+url = "2"
 console = "0.15"
 base64 = "0.22"
 dirs = "6"

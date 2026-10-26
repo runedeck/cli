@@ -51,6 +51,8 @@ const INHERITED: &[&str] = &[
     "CLAUDE_PROJECT_DIR",
     "CODEX_HOME",
     "GROK_SESSION_ID",
+    "CURSOR_CONFIG_DIR",
+    "CURSOR_API_KEY",
 ];
 
 /// The variables to drop and the one to set for an isolated command. With

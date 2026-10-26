@@ -1,10 +1,11 @@
 //! Noninteractive adapters for the coding surfaces `rune run` drives:
-//! Claude, Codex, Grok, `agy`, and `OpenCode`. Each adapter owns its argument
+//! Claude, Codex, Grok, `agy`, `OpenCode`, and Cursor. Each adapter owns its argument
 //! contract, prompt transport, and output parsing; process lifecycle comes
 //! from [`crate::cli::process`]. Serde field names on the event types mirror
 //! each tool's real stdout and must not change.
 use crate::cli::launch::{
-    REDACTED_VALUE, credential_values, inherited_env, redact_credentials, redact_text,
+    REDACTED_VALUE, credential_values, default_base_url_env, inherited_env, proxy_credentials,
+    redact_output, redact_output_json_map, redact_text, url_query_secrets,
 };
 use crate::cli::process::{
     DEFAULT_OUTPUT_LIMIT_BYTES, ProcessFailure, ProcessOutput, ProcessRequest, ProcessTermination,
@@ -18,8 +19,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod cursor;
 mod grok_keys;
 mod isolation;
+pub(crate) use cursor::API_KEY_ENV as CURSOR_API_KEY_ENV;
 pub(crate) use grok_keys::{GrokKeyChoice, model_family, shared_prefix_len};
 pub(crate) use isolation::{Isolation, parent_session_isolation, tmux_removals};
 
@@ -30,6 +33,7 @@ pub(crate) enum Surface {
     Agy,
     Grok,
     Opencode,
+    Cursor,
 }
 
 impl Surface {
@@ -40,6 +44,7 @@ impl Surface {
             "agy" => Some(Self::Agy),
             "grok" => Some(Self::Grok),
             "opencode" => Some(Self::Opencode),
+            "cursor" => Some(Self::Cursor),
             _ => None,
         }
     }
@@ -54,7 +59,8 @@ pub(crate) enum AccessMode {
     WorkspaceWrite,
     /// No tool at all: the harness answers from its prompt alone. For a seat
     /// the owner does not trust with the repository. Claude and `OpenCode` can
-    /// run so; codex, agy and grok cannot switch their tools off and refuse.
+    /// run so; codex, agy, grok and cursor cannot switch their tools off
+    /// and refuse.
     AnswerOnly,
 }
 
@@ -68,14 +74,17 @@ impl AccessMode {
     }
 }
 
-/// Why `surface` cannot take `mode`, else `None`. Codex, grok and agy have
-/// no switch for answer-only. agy cannot enforce read-only access: it wrote
+/// Why `surface` cannot take `mode`, else `None`. Codex, grok, agy and
+/// cursor have no switch for answer-only. agy cannot enforce read-only access: it wrote
 /// files in `--mode plan`, and with a settings file that denied every write
 /// (experiments of 2026-10-22), so it runs in workspace-write mode only,
 /// where its own jj workspace takes the edits.
 pub(crate) fn unsupported_mode(surface: Surface, mode: AccessMode) -> Option<String> {
     match (surface, mode) {
-        (Surface::Codex | Surface::Grok | Surface::Agy, AccessMode::AnswerOnly) => Some(format!(
+        (
+            Surface::Codex | Surface::Grok | Surface::Agy | Surface::Cursor,
+            AccessMode::AnswerOnly,
+        ) => Some(format!(
             "answer-only mode needs a harness that runs without tools (claude or opencode); {} cannot switch its tools off",
             surface_name(surface)
         )),
@@ -396,6 +405,7 @@ fn sandbox_hint(stderr: &[&str], harness_errors: &[String]) -> Option<String> {
         .map(|(_, _, hint)| (*hint).to_string())
         .or_else(|| allowlist_hint(texts()))
         .or_else(|| soft_deny_hint(texts()))
+        .or_else(|| cursor::keychain_hint(stderr, std::env::var_os("SANDBOX_RUNTIME").is_some()))
 }
 
 /// The line headless agy writes to its log when it denies a tool call it
@@ -584,6 +594,62 @@ fn string_leaves(value: &serde_json::Value) -> Vec<String> {
 /// { Authorization = "..." } }`).
 fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
     let mut values = Vec::new();
+    for (key, value) in codex_assignments(args) {
+        if key
+            .split('.')
+            .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()))
+        {
+            values.push(codex_config_string(&value));
+        }
+        if let Some(json) = codex_config_json(&value) {
+            values.extend(structured_credential_values(&json));
+        }
+    }
+    values
+}
+
+/// Every string inside the one settings object the inline `--settings`
+/// arguments in `args` merge into, as claude reads it: a JSON escape
+/// (`@` for `@`) is decoded, so a URL is read as the child sees it.
+pub(crate) fn settings_strings(args: &[OsString]) -> Vec<String> {
+    merged_settings(args)
+        .0
+        .map(|settings| string_leaves(&serde_json::Value::Object(settings)))
+        .unwrap_or_default()
+}
+
+/// Every string a codex `-c key=value` assignment in `args` carries, as
+/// codex reads it: the TOML string the value is, decoded, or every string
+/// inside a table value; a value that is not TOML as written. A URL is
+/// scanned from these, not from the raw text, because codex decodes a TOML
+/// escape (`@` for `@`) that the raw text hides from the scan.
+pub(crate) fn assignment_strings(args: &[OsString]) -> Vec<String> {
+    codex_assignments(args)
+        .into_iter()
+        .flat_map(|(_, value)| {
+            codex_config_json(&value).map_or_else(
+                || vec![value.trim().to_string()],
+                |json| string_leaves(&json),
+            )
+        })
+        .collect()
+}
+
+/// The value of a codex `-c` assignment parsed as TOML and carried over to
+/// JSON, so one walk reads a string, a table, and an array alike; `None`
+/// when the value is not TOML.
+fn codex_config_json(value: &str) -> Option<serde_json::Value> {
+    let parsed = toml::from_str::<toml::Value>(&format!("v = {}", value.trim())).ok()?;
+    serde_json::to_value(parsed)
+        .ok()
+        .and_then(|mut json| json.get_mut("v").map(serde_json::Value::take))
+}
+
+/// Every codex `-c key=value` assignment in `args`, as `(key, value)`, in
+/// each form the flag takes: `-c k=v`, `-ck=v`, `-c=k=v`, `--config k=v`,
+/// and `--config=k=v`.
+fn codex_assignments(args: &[OsString]) -> Vec<(String, String)> {
+    let mut assignments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         let text = args[index].to_string_lossy();
@@ -600,21 +666,11 @@ fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
         if let Some(assignment) = assignment
             && let Some((key, value)) = assignment.split_once('=')
         {
-            if key
-                .split('.')
-                .any(|segment| crate::cli::launch::is_credential_env_key(segment.trim()))
-            {
-                values.push(codex_config_string(value));
-            }
-            if let Ok(parsed) = toml::from_str::<toml::Value>(&format!("v = {}", value.trim()))
-                && let Ok(json) = serde_json::to_value(parsed)
-            {
-                values.extend(structured_credential_values(&json));
-            }
+            assignments.push((key.to_string(), value.to_string()));
         }
         index += 1;
     }
-    values
+    assignments
 }
 
 /// The separate or attached value of every credential-named flag in
@@ -758,18 +814,25 @@ pub(crate) fn merge_settings_args(args: &[OsString]) -> Vec<OsString> {
 }
 
 /// Every credential value the child could echo, longest first so a value
-/// that contains another is replaced whole: the effective environment's,
-/// the inherited ones the isolation leaves in place, the ones inside the
-/// retained structured arguments (the claude settings object, codex `-c`
-/// assignments), the value of a credential-named flag, and the parts a
-/// harness quotes alone: each header of a `*_HEADERS` value and the token
-/// after a `Bearer` or `Basic` scheme word.
+/// that contains another is replaced whole, from the environment the route
+/// reads and never from every inherited variable: the credential-named
+/// values of the effective environment and of the inherited ones the
+/// isolation leaves in place, the ones inside the retained structured
+/// arguments (the claude settings object, codex `-c` assignments), the
+/// value of a credential-named flag, the credential-named query values of
+/// every URL an argument or a route environment value holds, the same of
+/// the inherited base URL variable the surface reads when the route sets
+/// none, and the parts a harness quotes alone: each header of a
+/// `*_HEADERS` value and the token after a `Bearer` or `Basic` scheme word.
+/// A URL's user and password are never here: the launch refuses them.
 pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
     let removals = parent_session_isolation(&route_keys(invocation)).removals();
     let inherited = inherited_env(&removals);
     let effective = effective_env(invocation);
     let mut secrets = credential_values(&effective);
     secrets.extend(credential_values(&inherited));
+    secrets.extend(proxy_credentials(&effective));
+    secrets.extend(proxy_credentials(&inherited));
     secrets.extend(header_values(&effective));
     secrets.extend(header_values(&inherited));
     match invocation.surface {
@@ -780,7 +843,14 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
                 )));
             }
         }
-        Surface::Codex => secrets.extend(assignment_credential_values(&invocation.extra_args)),
+        Surface::Codex => {
+            secrets.extend(assignment_credential_values(&invocation.extra_args));
+            // A URL inside a config value, as codex decodes it: the raw
+            // pass below reads the escaped text.
+            for text in assignment_strings(&invocation.extra_args) {
+                secrets.extend(url_query_secrets(&text));
+            }
+        }
         // The owner's key map names the variable that holds each model's
         // key, whatever that variable is called: its value is a credential.
         Surface::Grok => {
@@ -792,9 +862,28 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
                     .or_else(|| crate::cli::launch::env_value(&inherited, name))
             }));
         }
-        Surface::Agy | Surface::Opencode => {}
+        // Cursor's key is `CURSOR_API_KEY`, a credential-named variable
+        // the environment passes above already catch; its `--endpoint`
+        // URL is caught by the URL pass below.
+        Surface::Agy | Surface::Opencode | Surface::Cursor => {}
     }
     secrets.extend(flag_credential_values(&invocation.extra_args));
+    // The URL pass: every argument whatever its form (`-eURL`, `-e URL`,
+    // `--endpoint=URL`, a settings or config value that holds one), every
+    // value the route sets, and the inherited base URL variable the child
+    // reads when the route sets none.
+    for arg in &invocation.extra_args {
+        secrets.extend(url_query_secrets(&arg.to_string_lossy()));
+    }
+    for (_, value) in &effective {
+        secrets.extend(url_query_secrets(&value.to_string_lossy()));
+    }
+    if let Some(key) = default_base_url_env(surface_name(invocation.surface))
+        && crate::cli::launch::env_value(&effective, key).is_none()
+        && let Some(value) = crate::cli::launch::env_value(&inherited, key)
+    {
+        secrets.extend(url_query_secrets(&value));
+    }
     let tokens: Vec<String> = secrets
         .iter()
         .filter_map(|secret| scheme_token(secret))
@@ -1113,17 +1202,18 @@ fn surface_name(surface: Surface) -> &'static str {
         Surface::Agy => "agy",
         Surface::Grok => "grok",
         Surface::Opencode => "opencode",
+        Surface::Cursor => "cursor",
     }
 }
 
 /// The flag that names a session on `surface`: claude `--name`, opencode
-/// `run --title`. Codex, agy and grok take none, and a session name given to
-/// them is reported, not sent.
+/// `run --title`. Codex, agy, grok and cursor take none, and a session name
+/// given to them is reported, not sent.
 pub(crate) fn session_name_flag(surface: Surface) -> Option<&'static str> {
     match surface {
         Surface::Claude => Some("--name"),
         Surface::Opencode => Some("--title"),
-        Surface::Codex | Surface::Agy | Surface::Grok => None,
+        Surface::Codex | Surface::Agy | Surface::Grok | Surface::Cursor => None,
     }
 }
 
@@ -1147,6 +1237,7 @@ fn boolean_options(surface: Surface) -> &'static [&'static str] {
         Surface::Grok => &["--always-approve", "--no-plan"],
         Surface::Agy => &["--dangerously-skip-permissions"],
         Surface::Opencode => &["--print", "--disable-slash-commands"],
+        Surface::Cursor => cursor::BOOLEAN_OPTIONS,
     }
 }
 
@@ -1802,14 +1893,19 @@ pub(crate) fn clean_config_keys(surface: Surface) -> Result<Vec<String>, Surface
         .unwrap_or_default())
 }
 
+/// Prepare the clean state under `root` for `surface`. `env` is the
+/// route's environment, which a surface reads when its clean run needs a
+/// key from it.
 pub(crate) fn prepare_clean_state(
     surface: Surface,
     root: &Path,
     model: Option<&str>,
+    env: &[(OsString, OsString)],
 ) -> Result<(), SurfaceFailure> {
     let home = dirs::home_dir()
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))?;
     match surface {
+        Surface::Cursor => cursor::prepare_clean_state(root, cursor::has_api_key(env)),
         Surface::Codex => {
             let source_root =
                 std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
@@ -1944,6 +2040,16 @@ fn process_request(
                 }
                 request.env.push((OsString::from("HOME"), root));
             }
+            // Both: `CURSOR_CONFIG_DIR` alone still loads `~/.cursor/rules`,
+            // and the key in the environment replaces the Keychain login
+            // the moved home loses.
+            Surface::Cursor => {
+                let config_dir = cursor::clean_config_dir(Path::new(&root)).into_os_string();
+                request
+                    .env
+                    .push((OsString::from("CURSOR_CONFIG_DIR"), config_dir));
+                request.env.push((OsString::from("HOME"), root));
+            }
             Surface::Opencode => {
                 let root = PathBuf::from(root);
                 for (key, directory) in [
@@ -2018,8 +2124,24 @@ pub(crate) fn planned_request(
         Surface::Grok => (grok_args(&planned, &scratch.join("prompt.txt")), None),
         Surface::Agy => (agy_args(&planned, &scratch.join("agy.log")), None),
         Surface::Opencode => (opencode_args(&planned), None),
+        Surface::Cursor => (
+            cursor::args(&planned),
+            Some(cursor::prompt_input(&planned).into_bytes()),
+        ),
     };
     Ok(process_request(&planned, args, stdin))
+}
+
+/// The check a surface runs on its saved configuration before it starts:
+/// a read-only cursor run refuses Cursor's `unrestricted` approval mode.
+/// Every other surface has nothing to check.
+pub(crate) fn check_access(invocation: &SurfaceInvocation) -> Result<(), SurfaceFailure> {
+    match invocation.surface {
+        Surface::Cursor => cursor::check_access(invocation),
+        Surface::Claude | Surface::Codex | Surface::Agy | Surface::Grok | Surface::Opencode => {
+            Ok(())
+        }
+    }
 }
 
 /// The tail of one stream with the credentials hidden first (beside their
@@ -3084,6 +3206,7 @@ fn owned_options(surface: Surface) -> &'static [&'static str] {
             "--username",
             "--title",
         ],
+        Surface::Cursor => cursor::OWNED_OPTIONS,
     }
 }
 
@@ -3102,20 +3225,21 @@ pub(crate) fn invoke_surface(
         Surface::Agy => invoke_agy(invocation, &secrets),
         Surface::Grok => invoke_grok(invocation, &secrets),
         Surface::Opencode => invoke_opencode(invocation, &secrets),
+        Surface::Cursor => cursor::invoke(invocation, &secrets),
     };
-    // The answer passes too: a model that echoes a key is still a leak. It
-    // loses only the known values, though: the structural and URL passes
-    // that fit a failure tail turned `Primary key: user_id` into `Primary
+    // The answer passes the output redaction too: a model that echoes a
+    // key is still a leak. It skips the structural pass that fits a
+    // failure tail, which turned `Primary key: user_id` into `Primary
     // key: <redacted>` in an ordinary coding answer. The model names and
     // the per-model usage pass the same way: a harness can echo a key there.
     match result {
         Ok(reply) => Ok(SurfaceReply {
-            text: redact_credentials(&reply.text, &secrets),
+            text: redact_output(&reply.text, &secrets),
             stderr: redact_text(&reply.stderr, &secrets),
             models: reply
                 .models
                 .iter()
-                .map(|model| redact_credentials(model, &secrets))
+                .map(|model| redact_output(model, &secrets))
                 .collect(),
             model_usage: reply
                 .model_usage
@@ -3126,50 +3250,18 @@ pub(crate) fn invoke_surface(
     }
 }
 
-/// Claude's per-model usage with every credential value hidden: in the
-/// model names, and in every key and string value under them.
+/// Claude's per-model usage after the output redaction: the model names,
+/// and every key and string value under them, at any depth.
 fn redact_model_usage(usage: ModelUsage, secrets: &[String]) -> ModelUsage {
     usage
         .into_iter()
         .map(|(model, counts)| {
             (
-                redact_credentials(&model, secrets),
-                redact_json_map(counts, secrets),
+                redact_output(&model, secrets),
+                redact_output_json_map(counts, secrets),
             )
         })
         .collect()
-}
-
-fn redact_json_map(
-    map: serde_json::Map<String, serde_json::Value>,
-    secrets: &[String],
-) -> serde_json::Map<String, serde_json::Value> {
-    map.into_iter()
-        .map(|(key, value)| {
-            (
-                redact_credentials(&key, secrets),
-                redact_json_strings(value, secrets),
-            )
-        })
-        .collect()
-}
-
-/// `value` with every credential value hidden in its strings and its keys,
-/// at any depth. Numbers, booleans and nulls carry no text.
-fn redact_json_strings(value: serde_json::Value, secrets: &[String]) -> serde_json::Value {
-    match value {
-        serde_json::Value::String(text) => {
-            serde_json::Value::String(redact_credentials(&text, secrets))
-        }
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items
-                .into_iter()
-                .map(|item| redact_json_strings(item, secrets))
-                .collect(),
-        ),
-        serde_json::Value::Object(map) => serde_json::Value::Object(redact_json_map(map, secrets)),
-        other => other,
-    }
 }
 
 /// The filtered profile arguments for a surface, with the key-level hook
@@ -3185,7 +3277,17 @@ pub(crate) fn filter_surface_args(invocation: &SurfaceInvocation) -> FilteredArg
         Surface::Codex => filter_profile_args(invocation, owned, booleans, &|option, value| {
             codex_config_key(option, value, model)
         }),
-        _ => filter_profile_args(invocation, owned, booleans, &drop_whole),
+        // Cursor has no generic config channel, so the owned filter drops
+        // whole; the allow-list then keeps only the endpoint flag.
+        Surface::Cursor => cursor::keep_allowed(filter_profile_args(
+            invocation,
+            owned,
+            booleans,
+            &drop_whole,
+        )),
+        Surface::Agy | Surface::Grok | Surface::Opencode => {
+            filter_profile_args(invocation, owned, booleans, &drop_whole)
+        }
     }
 }
 

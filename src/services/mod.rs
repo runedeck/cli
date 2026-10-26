@@ -27,6 +27,7 @@ pub use history::{
     HistoryScope, HistoryUpdate, HistoryWalker, extract_frontmatter_field, git_log_for_artifact,
     read_source_adoption, read_source_sidecar, source_at_deploy,
 };
+pub use references::percent_decode;
 pub use source::{parse_frontmatter, strip_frontmatter};
 pub use target::git_log_in_repo;
 

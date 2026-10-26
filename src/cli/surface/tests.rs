@@ -800,24 +800,30 @@ fn claude_error_messages_are_deduplicated_in_order() {
 }
 
 /// Credential values leave the model names and the per-model usage the
-/// same way they leave the text: known values only, at any depth.
+/// same way they leave the text: the output pass, known values and URL
+/// queries, in every key and string at any depth, and never a `key: value`
+/// shape.
 #[test]
 fn model_usage_redaction_hides_known_values_in_keys_and_strings() {
     let secrets = vec!["fake-route-secret".to_string()];
     let usage: ModelUsage = serde_json::from_str(concat!(
         "{\"claude-opus-4-6\":{\"inputTokens\":11,\"note\":\"token fake-route-secret here\",",
-        "\"nested\":{\"fake-route-secret\":[\"fake-route-secret\",1,null]}},",
+        "\"nested\":{\"fake-route-secret\":[\"fake-route-secret\",1,null]},",
+        "\"endpoint\":\"https://h/?api_key=fake-q&page=2\",\"Primary key\":\"user_id\"},",
         "\"fake-route-secret\":{\"outputTokens\":7}}"
     ))
     .expect("usage");
     let redacted = redact_model_usage(usage, &secrets);
     let text = serde_json::to_string(&redacted).expect("json");
     assert!(!text.contains("fake-route-secret"), "{text}");
+    assert!(!text.contains("fake-q"), "{text}");
     assert_eq!(
         text,
         concat!(
             "{\"<redacted>\":{\"outputTokens\":7},",
-            "\"claude-opus-4-6\":{\"inputTokens\":11,\"nested\":{\"<redacted>\":[\"<redacted>\",1,null]},",
+            "\"claude-opus-4-6\":{\"Primary key\":\"user_id\",",
+            "\"endpoint\":\"https://h/?api_key=<redacted>&page=2\",",
+            "\"inputTokens\":11,\"nested\":{\"<redacted>\":[\"<redacted>\",1,null]},",
             "\"note\":\"token <redacted> here\"}}"
         )
     );
@@ -957,6 +963,22 @@ fn automated_providers_drop_read_only_bypass_arguments() {
         (Surface::Agy, "--dangerously-skip-permissions"),
         (Surface::Opencode, "--attach=http://127.0.0.1:4096"),
         (Surface::Opencode, "-mproton-lumo/lumo-max"),
+        (Surface::Cursor, "--yolo"),
+        (Surface::Cursor, "--force"),
+        (Surface::Cursor, "-f"),
+        (Surface::Cursor, "--sandbox=disabled"),
+        (Surface::Cursor, "--mode=agent"),
+        (Surface::Cursor, "--workspace=/"),
+        (Surface::Cursor, "--approve-mcps"),
+        (Surface::Cursor, "--plugin-dir=/tmp/plugin"),
+        (Surface::Cursor, "-wscratch"),
+        (Surface::Cursor, "--allowed-tools=shell"),
+        (Surface::Cursor, "--data-dir=/tmp/other"),
+        (Surface::Cursor, "-k"),
+        (
+            Surface::Cursor,
+            "--header=x-cursor-agent-allowed-tools: shell",
+        ),
     ] {
         let filtered = filter_surface_args(&invocation(surface, &[argument]));
         assert!(
@@ -1831,6 +1853,152 @@ fn child_secrets_hold_the_parts_a_harness_quotes_alone() {
         !secrets.contains(&"http://127.0.0.1:9".to_string()),
         "{secrets:?}"
     );
+}
+
+#[test]
+fn child_secrets_hold_the_credential_query_of_every_endpoint_url_the_run_passes() {
+    // Cursor's endpoint flag in each form a profile can write it.
+    for args in [
+        &["-ehttps://example.test?apiKey=fake-attached-secret"][..],
+        &["-e", "https://example.test?apiKey=fake-attached-secret"],
+        &["--endpoint=https://example.test?apiKey=fake-attached-secret"],
+    ] {
+        let secrets = child_secrets(&invocation(Surface::Cursor, args));
+        assert!(
+            secrets.contains(&"fake-attached-secret".to_string()),
+            "{args:?}: {secrets:?}"
+        );
+        assert!(
+            !secrets.contains(&"example.test".to_string()),
+            "{args:?}: {secrets:?}"
+        );
+    }
+
+    // A base URL inside claude's settings object, and one in the route's
+    // environment; the host alone is not a secret.
+    let mut claude = invocation(
+        Surface::Claude,
+        &[
+            "--settings",
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://proxy.test/v1?token=fake-settings-query-secret"}}"#,
+        ],
+    );
+    claude.env = env(&[(
+        "OPENAI_BASE_URL",
+        "https://proxy.test/v1?api_key=fake-env-query-secret",
+    )]);
+    let secrets = child_secrets(&claude);
+    for expected in ["fake-settings-query-secret", "fake-env-query-secret"] {
+        assert!(
+            secrets.contains(&expected.to_string()),
+            "{expected}: {secrets:?}"
+        );
+    }
+    assert!(!secrets.contains(&"proxy.test".to_string()), "{secrets:?}");
+
+    // A base URL inside a codex config assignment.
+    let codex = invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            r#"model_providers.proxy={ base_url = "https://proxy.test/v1?api_key=fake-codex-query-secret" }"#,
+        ],
+    );
+    let secrets = child_secrets(&codex);
+    assert!(
+        secrets.contains(&"fake-codex-query-secret".to_string()),
+        "{secrets:?}"
+    );
+    assert!(
+        !secrets.contains(&"https://proxy.test/v1?api_key=fake-codex-query-secret".to_string()),
+        "{secrets:?}"
+    );
+}
+
+#[test]
+fn child_secrets_scan_a_codex_config_url_as_codex_decodes_it() {
+    // A TOML escape hides the real text from a raw scan: `=` is `=`
+    // once codex reads the string. The bare string and a string inside a
+    // table value both count.
+    let codex = invocation(
+        Surface::Codex,
+        &[
+            "-c",
+            r#"model_providers.p.base_url="https://example.test/?api_key=SYN=EQ""#,
+            "-c",
+            r#"model_providers.q={ base_url = "https://proxy.test/v1?token=TABLE=SECRET" }"#,
+        ],
+    );
+    let secrets = child_secrets(&codex);
+    for expected in ["SYN=EQ", "TABLE=SECRET"] {
+        assert!(
+            secrets.contains(&expected.to_string()),
+            "{expected}: {secrets:?}"
+        );
+    }
+}
+
+#[test]
+fn child_secrets_leave_a_url_host_and_a_plain_query_word_alone() {
+    // A search URL names its query. The word is not a secret, and hiding
+    // it would eat the same word in a reply.
+    let mut claude = invocation(Surface::Claude, &[]);
+    claude.env = env(&[
+        ("DATABASE_URL", "postgres://localhost/app"),
+        (
+            "SEARCH_URL",
+            "https://example.test/search?keyword=documentation&sig=fake-sig-value",
+        ),
+    ]);
+    let secrets = child_secrets(&claude);
+    assert!(
+        secrets.contains(&"fake-sig-value".to_string()),
+        "{secrets:?}"
+    );
+    for plain in ["postgres", "documentation", "localhost", "app"] {
+        assert!(
+            !secrets.contains(&plain.to_string()),
+            "{plain}: {secrets:?}"
+        );
+    }
+}
+
+#[test]
+fn child_secrets_hold_a_proxy_password_and_a_token_only_proxy_user() {
+    // The child needs the proxy's credential, so the run passes it. The
+    // password, and a user that stands alone as a token, are secrets as
+    // written and percent-decoded, in either case of the variable name.
+    let mut cursor = invocation(Surface::Cursor, &[]);
+    cursor.env = env(&[
+        (
+            "HTTPS_PROXY",
+            "http://user:pa'ss-FAKE-PROXY-SECRET@proxy.test:3128",
+        ),
+        ("http_proxy", "http://FAKE-PROXY-TOKEN%3D@proxy.test:3128"),
+        (
+            "ALL_PROXY",
+            "socks5://user:pa%27ss-FAKE-SOCKS-SECRET@proxy.test:1080",
+        ),
+    ]);
+    let secrets = child_secrets(&cursor);
+    for expected in [
+        "pa'ss-FAKE-PROXY-SECRET",
+        "FAKE-PROXY-TOKEN%3D",
+        "FAKE-PROXY-TOKEN=",
+        "pa%27ss-FAKE-SOCKS-SECRET",
+        "pa'ss-FAKE-SOCKS-SECRET",
+    ] {
+        assert!(
+            secrets.contains(&expected.to_string()),
+            "{expected}: {secrets:?}"
+        );
+    }
+    for plain in ["user", "proxy.test", "3128"] {
+        assert!(
+            !secrets.contains(&plain.to_string()),
+            "{plain}: {secrets:?}"
+        );
+    }
 }
 
 #[test]
@@ -3259,4 +3427,610 @@ fn codex_config_flags_go_before_the_exec_subcommand_in_their_order() {
     let planned = strings(&planned.args);
     assert_eq!(planned[0], "-c");
     assert_eq!(planned.iter().position(|arg| arg == "exec"), Some(4));
+}
+
+#[test]
+fn cursor_read_only_run_asks_and_names_the_model() {
+    let mut invocation = invocation(Surface::Cursor, &[]);
+    invocation.repository = PathBuf::from("/repo");
+    invocation.model = Some("claude-fable-5-1-high".to_string());
+    let args = strings(&cursor::args(&invocation));
+    assert_eq!(
+        args,
+        [
+            "-p",
+            "--output-format",
+            "json",
+            "--workspace",
+            "/repo",
+            "--trust",
+            "--mode",
+            "ask",
+            "--model",
+            "claude-fable-5-1-high",
+        ]
+    );
+}
+
+#[test]
+fn cursor_workspace_write_run_forces_inside_its_sandbox() {
+    let mut invocation = invocation(Surface::Cursor, &["--endpoint", "https://api.example.test"]);
+    invocation.mode = AccessMode::WorkspaceWrite;
+    let args = strings(&cursor::args(&invocation));
+    assert!(
+        args.windows(3)
+            .any(|window| window == ["--force", "--sandbox", "enabled"]),
+        "{args:?}"
+    );
+    assert!(!args.contains(&"--mode".to_string()), "{args:?}");
+    assert_eq!(
+        &args[args.len() - 2..],
+        ["--endpoint", "https://api.example.test"]
+    );
+}
+
+#[test]
+fn cursor_prompt_travels_on_stdin_behind_the_system_prompt() {
+    let mut invocation = invocation(Surface::Cursor, &[]);
+    invocation.system_prompt = "Use the rule.".to_string();
+    let planned = planned_request(&invocation).expect("cursor plan");
+    assert_eq!(
+        planned.stdin,
+        Some(b"<system-prompt>\n\n<prompt>\n".to_vec())
+    );
+    assert!(
+        !planned
+            .args
+            .iter()
+            .any(|arg| arg.to_string_lossy().contains("Use the rule")),
+        "{:?}",
+        planned.args
+    );
+    assert_eq!(
+        cursor::prompt_input(&invocation),
+        "Use the rule.\n\nInspect only\n"
+    );
+}
+
+#[test]
+fn cursor_result_object_is_the_answer_and_the_output_tokens() {
+    let reply = cursor::parse(
+        concat!(
+            "{\"type\":\"system\",\"subtype\":\"init\"}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"half\"}]}}\n",
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,",
+            "\"result\":\"The README is fine.\",\"usage\":{\"inputTokens\":12,\"outputTokens\":7}}\n",
+        ),
+        "warned".to_string(),
+    )
+    .expect("reply");
+    assert_eq!(reply.text, "The README is fine.");
+    assert_eq!(reply.completion_tokens, Some(7.0));
+    // Cursor names its output count only: the other counts stay unknown.
+    assert_eq!(
+        reply.usage,
+        Some(TokenUsage {
+            output_tokens: Some(7),
+            ..TokenUsage::default()
+        })
+    );
+    assert_eq!(reply.models, [] as [String; 0]);
+    assert_eq!(reply.model_usage, None);
+    assert_eq!(reply.stderr, "warned");
+    assert_eq!(reply.conversation_id, None);
+
+    let pretty = cursor::parse(
+        "{\n  \"type\": \"result\",\n  \"result\": \"pretty\"\n}\n",
+        String::new(),
+    )
+    .expect("pretty result");
+    assert_eq!(pretty.text, "pretty");
+    assert_eq!(pretty.completion_tokens, None);
+}
+
+#[test]
+fn cursor_result_without_usage_keeps_the_tokens_unknown() {
+    let reply = cursor::parse(
+        "{\"type\":\"result\",\"result\":\"ok\",\"usage\":{\"outputTokens\":0}}\n",
+        String::new(),
+    )
+    .expect("reply");
+    assert_eq!(reply.text, "ok");
+    assert_eq!(reply.completion_tokens, None);
+}
+
+#[test]
+fn cursor_reported_error_fails_with_its_message() {
+    let failure = cursor::parse(
+        "{\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"result\":\"Model not available\"}\n",
+        String::new(),
+    )
+    .expect_err("reported error");
+    assert_eq!(
+        failure,
+        SurfaceFailure::Reported("cursor-agent reported an error: Model not available".to_string())
+    );
+
+    let subtype_only = cursor::parse(
+        "{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"result\":\"\"}\n",
+        String::new(),
+    )
+    .expect_err("error without a message");
+    assert_eq!(
+        subtype_only,
+        SurfaceFailure::Reported("cursor-agent reported an error: error_max_turns".to_string())
+    );
+}
+
+#[test]
+fn cursor_output_without_a_result_object_is_no_answer() {
+    for stdout in [
+        "",
+        "{\"type\":\"assistant\",\"message\":\"text only\"}\n",
+        "[{\"type\":\"result\",\"result\":\"inside an array\"}]\n",
+        "\"a string\"\n",
+        // A result followed by another record is not terminal.
+        "{\"type\":\"result\",\"result\":\"early\"}\n{\"type\":\"system\",\"subtype\":\"shutdown\"}\n",
+    ] {
+        let failure = cursor::parse(stdout, String::new()).expect_err("no result");
+        assert_eq!(
+            failure,
+            SurfaceFailure::Reported("cursor-agent printed no JSON result object".to_string()),
+            "{stdout:?}"
+        );
+    }
+    let empty = cursor::parse("{\"type\":\"result\",\"result\":\"   \"}\n", String::new())
+        .expect_err("empty result");
+    assert!(empty.to_string().contains("cursor-agent print"), "{empty}");
+}
+
+#[test]
+fn cursor_nested_result_cannot_replace_the_top_level_error() {
+    // A pretty-printed error whose nested success sits on its own line:
+    // read line by line, that line was the last result object.
+    let pretty_error = concat!(
+        "{\n",
+        "  \"type\": \"result\",\n",
+        "  \"subtype\": \"error\",\n",
+        "  \"is_error\": true,\n",
+        "  \"result\": \"Model not available\",\n",
+        "  \"events\": [\n",
+        "    {\"type\": \"result\", \"is_error\": false, \"result\": \"stale success\"}\n",
+        "  ]\n",
+        "}\n",
+    );
+    let failure = cursor::parse(pretty_error, String::new()).expect_err("top-level error");
+    assert_eq!(
+        failure,
+        SurfaceFailure::Reported("cursor-agent reported an error: Model not available".to_string())
+    );
+
+    // A quoted success inside the error's text is text, not a record.
+    let quoted = "{\"type\":\"result\",\"is_error\":true,\"result\":\"got {\\\"type\\\":\\\"result\\\",\\\"result\\\":\\\"ok\\\"}\"}\n";
+    let failure = cursor::parse(quoted, String::new()).expect_err("quoted success");
+    assert!(
+        failure
+            .to_string()
+            .starts_with("cursor-agent reported an error:"),
+        "{failure}"
+    );
+}
+
+#[test]
+fn cursor_malformed_output_is_a_harness_failure() {
+    // A stale success, then an error the stream cut short: the success
+    // must not stand as the answer.
+    let truncated = concat!(
+        "{\"type\":\"result\",\"result\":\"stale success\"}\n",
+        "{\"type\":\"result\",\"is_error\":true,\"result\":\"Model not avail\n",
+    );
+    for stdout in [truncated, "not json at all\n", "{\"type\":\"result\"\n"] {
+        let failure = cursor::parse(stdout, String::new()).expect_err("malformed output");
+        let text = failure.to_string();
+        assert!(matches!(failure, SurfaceFailure::Reported(_)), "{text}");
+        assert!(
+            text.starts_with("cursor-agent printed output that is not JSON:"),
+            "{stdout:?}: {text}"
+        );
+        assert!(!text.contains("stale success"), "{text}");
+    }
+}
+
+#[test]
+fn cursor_option_warnings_name_the_flag_and_never_its_attached_value() {
+    let secret = "https://user:SECRET@example.test";
+    // Every option form the tool reads, on an unlisted flag.
+    for (profile, flag) in [
+        (vec![format!("-x{secret}")], "-x"),
+        (vec![format!("-x={secret}")], "-x"),
+        (vec!["-x".to_string(), secret.to_string()], "-x"),
+        (vec![format!("--unlisted={secret}")], "--unlisted"),
+        (
+            vec!["--unlisted".to_string(), secret.to_string()],
+            "--unlisted",
+        ),
+    ] {
+        let profile: Vec<&str> = profile.iter().map(String::as_str).collect();
+        let filtered = filter_surface_args(&invocation(Surface::Cursor, &profile));
+        assert!(filtered.kept.is_empty(), "{profile:?}: {:?}", filtered.kept);
+        assert!(!filtered.warnings.is_empty(), "{profile:?}");
+        for warning in &filtered.warnings {
+            assert!(!warning.contains("SECRET"), "{profile:?}: {warning}");
+            assert!(!warning.contains("example.test"), "{profile:?}: {warning}");
+        }
+        assert!(
+            filtered.warnings[0].contains(&format!("flag {flag} is dropped")),
+            "{profile:?}: {:?}",
+            filtered.warnings
+        );
+    }
+
+    // The kept flag takes its attached value too, with no warning.
+    for (profile, kept) in [
+        (format!("-e{secret}"), ["-e", secret]),
+        (format!("-e={secret}"), ["-e", secret]),
+        (format!("--endpoint={secret}"), ["--endpoint", secret]),
+    ] {
+        let filtered = filter_surface_args(&invocation(Surface::Cursor, &[profile.as_str()]));
+        assert_eq!(strings(&filtered.kept), kept, "{profile}");
+        assert!(filtered.warnings.is_empty(), "{:?}", filtered.warnings);
+    }
+}
+
+#[test]
+fn cursor_relative_config_directory_resolves_against_the_repository() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let repository = temporary.path().join("repo");
+    let inside = repository.join("settings");
+    std::fs::create_dir_all(&inside).expect("repository settings");
+    std::fs::write(
+        inside.join("cli-config.json"),
+        "{\"approvalMode\":\"unrestricted\"}",
+    )
+    .expect("unrestricted config");
+    let with_env = |env: Vec<(OsString, OsString)>| {
+        let mut invocation = invocation(Surface::Cursor, &[]);
+        invocation.repository = repository.clone();
+        invocation.env = env;
+        invocation
+    };
+
+    // Each variable, relative, is read from the child's working directory.
+    for env in [
+        vec![(
+            OsString::from("CURSOR_CONFIG_DIR"),
+            OsString::from("settings"),
+        )],
+        vec![
+            (OsString::from("CURSOR_CONFIG_DIR"), OsString::new()),
+            (OsString::from("XDG_CONFIG_HOME"), OsString::from("xdg")),
+        ],
+        vec![
+            (OsString::from("CURSOR_CONFIG_DIR"), OsString::new()),
+            (OsString::from("XDG_CONFIG_HOME"), OsString::new()),
+            (OsString::from("HOME"), OsString::from("home")),
+        ],
+    ] {
+        let name = env[env.len() - 1].0.to_string_lossy().into_owned();
+        let directory = match name.as_str() {
+            "CURSOR_CONFIG_DIR" => repository.join("settings"),
+            "XDG_CONFIG_HOME" => repository.join("xdg/cursor"),
+            _ => repository.join("home/.cursor"),
+        };
+        std::fs::create_dir_all(&directory).expect("config directory");
+        std::fs::write(
+            directory.join("cli-config.json"),
+            "{\"approvalMode\":\"unrestricted\"}",
+        )
+        .expect("unrestricted config");
+        let refused = check_access(&with_env(env)).expect_err(&name);
+        let text = refused.to_string();
+        assert!(
+            text.contains(&directory.join("cli-config.json").display().to_string()),
+            "{name}: {text}"
+        );
+    }
+
+    // A relative directory that exists only beside rune refuses nothing.
+    let elsewhere = temporary.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+    let mut invocation = with_env(vec![(
+        OsString::from("CURSOR_CONFIG_DIR"),
+        OsString::from("missing"),
+    )]);
+    invocation.repository = elsewhere;
+    check_access(&invocation).expect("missing relative directory");
+}
+
+#[test]
+fn clean_cursor_state_needs_an_api_key() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let root = temporary.path().join("clean");
+    let refused = prepare_clean_state(Surface::Cursor, &root, None, &[]).expect_err("no key");
+    assert!(refused.to_string().contains("CURSOR_API_KEY"), "{refused}");
+    assert!(refused.to_string().contains("--clean"), "{refused}");
+    assert!(!root.join(".cursor").exists());
+
+    // The launch environment's key counts, and a blank one does not.
+    assert!(!cursor::has_api_key(&[(
+        OsString::from("CURSOR_API_KEY"),
+        OsString::from("   ")
+    )]));
+    let env = [(OsString::from("CURSOR_API_KEY"), OsString::from("key-1"))];
+    assert!(cursor::has_api_key(&env));
+    prepare_clean_state(Surface::Cursor, &root, None, &env).expect("clean state");
+    assert!(root.join(".cursor").is_dir());
+}
+
+#[test]
+fn clean_cursor_run_moves_home_and_the_config_directory() {
+    let mut invocation = invocation(Surface::Cursor, &[]);
+    invocation.clean_state_root = Some(PathBuf::from("/clean"));
+    invocation.env = vec![(OsString::from("CURSOR_API_KEY"), OsString::from("key-1"))];
+    let request = process_request(&invocation, cursor::args(&invocation), None);
+
+    for (key, value) in [("HOME", "/clean"), ("CURSOR_CONFIG_DIR", "/clean/.cursor")] {
+        assert!(
+            request
+                .env
+                .contains(&(OsString::from(key), OsString::from(value))),
+            "{key}: {:?}",
+            request.env
+        );
+    }
+    assert!(
+        !request
+            .args
+            .iter()
+            .any(|arg| arg.to_string_lossy().contains("key-1")),
+        "{:?}",
+        request.args
+    );
+    assert!(launch::credential_values(&invocation.env).contains(&"key-1".to_string()));
+}
+
+#[test]
+fn cursor_profile_keeps_only_the_endpoint_flag() {
+    let endpoint = "https://api.example.test";
+    for (profile, kept, warnings) in [
+        (
+            vec!["--endpoint", endpoint, "--verbose"],
+            vec!["--endpoint", endpoint],
+            1,
+        ),
+        (
+            vec!["--endpoint=https://api.example.test"],
+            vec!["--endpoint", endpoint],
+            0,
+        ),
+        (vec!["-e", endpoint], vec!["-e", endpoint], 0),
+        (vec!["--endpoint"], vec![], 1),
+        (vec!["--endpoint", "--verbose"], vec![], 2),
+        (vec!["--", "--endpoint", endpoint], vec![], 1),
+        (
+            vec!["login", "--endpoint", endpoint],
+            vec!["--endpoint", endpoint],
+            1,
+        ),
+        (
+            vec!["--sandbox", "disabled", "--endpoint", endpoint],
+            vec!["--endpoint", endpoint],
+            1,
+        ),
+    ] {
+        let filtered = filter_surface_args(&invocation(Surface::Cursor, &profile));
+        assert_eq!(strings(&filtered.kept), kept, "{profile:?}");
+        assert_eq!(
+            filtered.warnings.len(),
+            warnings,
+            "{profile:?}: {:?}",
+            filtered.warnings
+        );
+    }
+}
+
+#[test]
+fn cursor_profile_warnings_never_show_a_dropped_value() {
+    let filtered = filter_surface_args(&invocation(
+        Surface::Cursor,
+        &[
+            "--api-key",
+            "sk-secret-value",
+            "--header=x-cursor-agent-allowed-tools: shell",
+            "secret-positional",
+            "--endpoint",
+            "-x",
+        ],
+    ));
+    assert!(filtered.kept.is_empty(), "{:?}", filtered.kept);
+    // The unknown flag and its value each earn one warning: the value is
+    // a positional to the tool, and neither warning quotes it.
+    assert_eq!(filtered.warnings.len(), 6, "{:?}", filtered.warnings);
+    for warning in &filtered.warnings {
+        for value in ["sk-secret-value", "shell", "secret-positional"] {
+            assert!(!warning.contains(value), "{warning}");
+        }
+    }
+    assert!(
+        filtered.warnings[0].contains("--api-key"),
+        "{:?}",
+        filtered.warnings
+    );
+    assert!(
+        filtered.warnings[1].contains("position 2"),
+        "{:?}",
+        filtered.warnings
+    );
+    assert!(
+        filtered.warnings[3].contains("position 4"),
+        "{:?}",
+        filtered.warnings
+    );
+    assert!(
+        filtered.warnings[4].contains("no plain value"),
+        "{:?}",
+        filtered.warnings
+    );
+}
+
+#[test]
+fn cursor_two_token_sandbox_value_keeps_nothing() {
+    let filtered = filter_surface_args(&invocation(Surface::Cursor, &["--sandbox", "disabled"]));
+    assert!(filtered.kept.is_empty(), "{:?}", filtered.kept);
+    assert_eq!(filtered.warnings.len(), 1, "{:?}", filtered.warnings);
+    assert!(
+        !filtered.warnings[0].contains("disabled"),
+        "{}",
+        filtered.warnings[0]
+    );
+}
+
+#[test]
+fn read_only_cursor_run_refuses_an_unrestricted_approval_mode() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let home = temporary.path().join("home");
+    let xdg = temporary.path().join("xdg");
+    let explicit = temporary.path().join("explicit");
+    for directory in [home.join(".cursor"), xdg.join("cursor"), explicit.clone()] {
+        std::fs::create_dir_all(&directory).expect("config directory");
+        std::fs::write(
+            directory.join("cli-config.json"),
+            "{\"version\":1,\"approvalMode\":\"unrestricted\"}",
+        )
+        .expect("cli-config.json");
+    }
+    let os = |path: &Path| path.as_os_str().to_os_string();
+    let with_env = |env: Vec<(OsString, OsString)>| {
+        let mut invocation = invocation(Surface::Cursor, &[]);
+        invocation.env = env;
+        invocation
+    };
+    let blank = OsString::new();
+
+    // Each lookup in the tool's order, the earlier one winning.
+    for (name, env) in [
+        (
+            "HOME",
+            vec![
+                (OsString::from("HOME"), os(&home)),
+                (OsString::from("XDG_CONFIG_HOME"), blank.clone()),
+                (OsString::from("CURSOR_CONFIG_DIR"), blank.clone()),
+            ],
+        ),
+        (
+            "XDG_CONFIG_HOME",
+            vec![
+                (OsString::from("HOME"), os(temporary.path())),
+                (OsString::from("XDG_CONFIG_HOME"), os(&xdg)),
+                (OsString::from("CURSOR_CONFIG_DIR"), blank.clone()),
+            ],
+        ),
+        (
+            "CURSOR_CONFIG_DIR",
+            vec![
+                (OsString::from("HOME"), os(temporary.path())),
+                (OsString::from("XDG_CONFIG_HOME"), os(temporary.path())),
+                (OsString::from("CURSOR_CONFIG_DIR"), os(&explicit)),
+            ],
+        ),
+    ] {
+        let refused = check_access(&with_env(env)).expect_err(name);
+        let text = refused.to_string();
+        assert!(text.contains("approvalMode unrestricted"), "{name}: {text}");
+        assert!(text.contains("cli-config.json"), "{name}: {text}");
+        assert!(text.contains("--mode workspace-write"), "{name}: {text}");
+    }
+
+    // Another approval mode, a missing file, and a broken file all pass.
+    let allowed = temporary.path().join("allowed");
+    std::fs::create_dir_all(&allowed).expect("allowed directory");
+    std::fs::write(
+        allowed.join("cli-config.json"),
+        "{\"approvalMode\":\"allowlist\"}",
+    )
+    .expect("allowlist config");
+    let broken = temporary.path().join("broken");
+    std::fs::create_dir_all(&broken).expect("broken directory");
+    std::fs::write(broken.join("cli-config.json"), "{not json").expect("broken config");
+    for directory in [allowed, broken, temporary.path().join("absent")] {
+        let invocation = with_env(vec![(OsString::from("CURSOR_CONFIG_DIR"), os(&directory))]);
+        check_access(&invocation).expect("allowed");
+    }
+
+    // A workspace-write run keeps the tool's own approval and is not checked.
+    let mut writing = with_env(vec![(OsString::from("CURSOR_CONFIG_DIR"), os(&explicit))]);
+    writing.mode = AccessMode::WorkspaceWrite;
+    check_access(&writing).expect("workspace-write");
+
+    // A clean run reads the clean config directory, which holds no file.
+    let mut clean = with_env(vec![(OsString::from("CURSOR_CONFIG_DIR"), os(&explicit))]);
+    clean.clean_state_root = Some(temporary.path().join("clean"));
+    check_access(&clean).expect("clean");
+
+    // The other surfaces have no such check.
+    let mut other = with_env(vec![(OsString::from("CURSOR_CONFIG_DIR"), os(&explicit))]);
+    other.surface = Surface::Claude;
+    check_access(&other).expect("claude");
+}
+
+#[test]
+fn cursor_keychain_hint_matches_only_its_signatures() {
+    assert_eq!(
+        cursor::keychain_hint(&["failed to copy trust settings: -25262"], false),
+        Some(cursor::KEYCHAIN_HINT.to_string())
+    );
+    assert_eq!(
+        cursor::keychain_hint(&["Authentication required. Run cursor-agent login."], true),
+        Some(cursor::KEYCHAIN_HINT.to_string())
+    );
+    assert_eq!(
+        cursor::keychain_hint(&["Authentication required. Run cursor-agent login."], false),
+        None
+    );
+    assert_eq!(cursor::keychain_hint(&["Model not available"], true), None);
+    assert_eq!(cursor::keychain_hint(&[], true), None);
+
+    let trust = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: String::new(),
+        stderr_tail: "SecTrustSettingsCopyTrustSettings: failed to copy trust settings".to_string(),
+        harness_errors: Vec::new(),
+    };
+    let hint = trust.hint().expect("keychain hint");
+    assert!(hint.contains("Keychain"), "{hint}");
+    assert!(
+        trust.to_string().contains(&format!("\nhint: {hint}")),
+        "{trust}"
+    );
+    let quoted = SurfaceFailure::Exit {
+        termination: ProcessTermination::Exited(1),
+        stdout_tail: "The log said: failed to copy trust settings".to_string(),
+        stderr_tail: String::new(),
+        harness_errors: Vec::new(),
+    };
+    assert_eq!(quoted.hint(), None);
+}
+
+#[test]
+fn cursor_refuses_answer_only_and_takes_the_other_modes() {
+    assert_eq!(
+        unsupported_mode(Surface::Cursor, AccessMode::ReadOnly),
+        None
+    );
+    assert_eq!(
+        unsupported_mode(Surface::Cursor, AccessMode::WorkspaceWrite),
+        None
+    );
+    let refusal =
+        unsupported_mode(Surface::Cursor, AccessMode::AnswerOnly).expect("answer-only refused");
+    assert!(
+        refusal.contains("answer-only mode needs a harness"),
+        "{refusal}"
+    );
+    let mut invocation = invocation(Surface::Cursor, &[]);
+    invocation.mode = AccessMode::AnswerOnly;
+    planned_request(&invocation).expect_err("answer-only cursor plan");
+    assert_eq!(session_name_flag(Surface::Cursor), None);
+    assert_eq!(surface_name(Surface::Cursor), "cursor");
+    assert_eq!(Surface::from_tool("cursor"), Some(Surface::Cursor));
 }

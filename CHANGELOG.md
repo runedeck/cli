@@ -62,6 +62,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Send with a grok check only the inherited `GROK_*` credential or the variable the checked model's `env_key` entry names, never another credential of the shell or another model's key.
 - Redact the exact credential a check sends from its report, so a refusal that echoes it leaks nothing under any variable name.
 - Keep only the `model.<id>.env_key` entries of `~/.grok/config.toml` in a clean grok run, and list the kept key names as `clean_config_keys:` in the dry run.
+- Add cursor to `rune run`: `cursor-agent -p --output-format json --workspace <repo> --trust`, the prompt on stdin behind the system prompt, and the answer and token count from the JSON result object.
+- Give a read-only cursor run `--mode ask`, a workspace-write run `--force --sandbox enabled`, and refuse answer-only by name, because Cursor cannot switch its tools off.
+- Refuse a read-only cursor run under `approvalMode: unrestricted` in `cli-config.json` as a configuration error with exit 125, naming the file and `--mode workspace-write`.
+- Make a clean cursor run need `CURSOR_API_KEY`, refused with exit 125 without it, and move HOME and `CURSOR_CONFIG_DIR` into the clean root, with the key kept out of the arguments.
+- Keep only `--endpoint` from a cursor profile. Every other flag or positional is dropped with a warning that names its flag or position and hides its value.
+- Add a hint to a failed cursor run that macOS blocked the Keychain (`failed to copy trust settings`, or `Authentication required` under `SANDBOX_RUNTIME`), naming the sandbox as the cause.
+- Add the built-in `fable@cursor` profile and `fable-cursor` route, `claude-fable-5-1-high` with a 1,000,000 token context, which a configured profile or route of the same name replaces.
+- Start `cursor-agent` for `rune launch cursor` and `rune run cursor`, with `tools.cursor.binary` for another binary, and pass a route's model to cursor as `--model <id>` before the profile arguments.
 - Redact the value of every variable a grok `env_key` entry names from every output, the answer included, and leave an ordinary `key: value` line in the answer as the model wrote it.
 - Add the `.rune` key `ontology: <source>`: `rune install` copies that source's ontology to `ontology/rune.ttl` with a manifest and a sidecar, so `rune spec validate` reads the deck's terms there.
 - Report a deployed ontology copy that left its record in `rune drift` and `rune status`, and skip a hand-edited copy on install unless `--force` is passed.

@@ -1,9 +1,10 @@
 use crate::cli::launch;
 use crate::cli::process::{ProcessFailure, ProcessTermination, SignalWatch};
 use crate::cli::surface::{
-    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, SurfaceReply,
-    clean_config_keys, effective_env, filter_surface_args, invoke_surface, output_tail,
-    parent_session_isolation, planned_request, prepare_clean_state, route_keys, session_name_flag,
+    PROMPT_PLACEHOLDER, Surface, SurfaceFailure, SurfaceInvocation, SurfaceReply, check_access,
+    child_secrets, clean_config_keys, effective_env, filter_surface_args, invoke_surface,
+    output_tail, parent_session_isolation, planned_request, prepare_clean_state, route_keys,
+    session_name_flag,
 };
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -259,7 +260,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     let resolved = launch::resolve(&options.tool, &resolve_args)?;
     let surface = Surface::from_tool(&resolved.tool).ok_or_else(|| {
         format!(
-            "automated execution is not supported for '{}'; use claude, codex, agy, grok, or opencode",
+            "automated execution is not supported for '{}'; use claude, codex, agy, grok, opencode, or cursor",
             resolved.tool
         )
     })?;
@@ -280,6 +281,11 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .argv
         .split_first()
         .ok_or_else(|| "resolved launch command is empty".to_string())?;
+    // The model arguments the launch generated for its route are the run's
+    // to pass: stripped here, so no owned-argument warning names them.
+    let extra_args = extra_args
+        .strip_prefix(resolved.model_args.as_slice())
+        .unwrap_or(extra_args);
     let binary = options.binary.as_ref().map_or_else(
         || resolved_binary.clone(),
         |path| path.as_os_str().to_os_string(),
@@ -343,9 +349,21 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         .transpose()
         .map_err(|error| format!("cannot create clean harness state: {error}"))?;
     if let Some(state) = &clean_state {
-        prepare_clean_state(surface, state.path(), invocation.model.as_deref())
-            .map_err(|error| error.to_string())?;
+        prepare_clean_state(
+            surface,
+            state.path(),
+            invocation.model.as_deref(),
+            &invocation.env,
+        )
+        .map_err(|error| error.to_string())?;
     }
+    let invocation = SurfaceInvocation {
+        clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
+        ..invocation
+    };
+    // A saved harness setting the mode cannot take is refused here, before
+    // the workspace exists: a configuration error, nothing started.
+    check_access(&invocation).map_err(|error| error.to_string())?;
     // The workspace is the harness's repository; the caller's checkout
     // stays out of the run. From here to the finish a signal only sets a
     // flag, and a panic or an early return drops the guard, which takes
@@ -369,7 +387,6 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
     );
     let invocation = SurfaceInvocation {
         repository,
-        clean_state_root: clean_state.as_ref().map(|state| state.path().to_path_buf()),
         ..invocation
     };
     let started = std::time::Instant::now();
@@ -797,9 +814,12 @@ fn dry_run_outcome(
         model_override: options.model.as_deref(),
         warnings: &warnings,
     };
+    // The plan passes the same output redaction as the reply, with the
+    // same secrets the child could echo.
+    let secrets = child_secrets(invocation);
     let text = format!(
         "{}\nstdin: {}\nrepository: {}\nmode: {}\ntimeout: {}\nnative_timeout: {}\nsession_name: {}\nsession_name_flag: {}\nartifacts_dir: {}\nclean_config_keys: {}\n{}",
-        resolved.format_dry_run_with(&parts),
+        resolved.format_dry_run_with(&parts, &secrets),
         stdin.unwrap_or("none"),
         planned_invocation.repository.display(),
         options.mode.label(),
@@ -816,7 +836,7 @@ fn dry_run_outcome(
         planned_workspace_text(workspace_plan)
     );
     // The launcher's plan object, plus the runner's own fields.
-    let mut json = resolved.plan_json(&parts, &isolation);
+    let mut json = resolved.plan_json(&parts, &isolation, &secrets);
     if let Some(object) = json.as_object_mut() {
         for (key, value) in [
             ("requested_route", json!(options.tool)),

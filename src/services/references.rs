@@ -125,7 +125,8 @@ fn reference_resolves(repo_root: &Path, artifact_dir: &Path, target: &str) -> bo
 
 /// Decodes `%XX` percent-escapes (e.g. `%20` -> space) so encoded paths match
 /// real filenames; leaves malformed escapes untouched.
-fn percent_decode(input: &str) -> String {
+#[must_use]
+pub fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;

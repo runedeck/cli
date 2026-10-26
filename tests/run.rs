@@ -6744,8 +6744,8 @@ fn grok_echoing_the_value_of_its_key_variable_leaves_no_trace_in_any_output() {
 }
 
 /// An ordinary coding answer passes the redaction unchanged: the answer
-/// loses only a known credential value, never a `key: value` shape or a
-/// URL parameter.
+/// loses only a known credential value and a credential-named URL query
+/// value, never a `key: value` shape.
 #[cfg(unix)]
 #[test]
 fn an_ordinary_answer_passes_the_redaction_unchanged() {
@@ -6757,7 +6757,7 @@ fn an_ordinary_answer_passes_the_redaction_unchanged() {
         "The lookup uses `let key = cache_key(&path);` and then `map.get(&key)`.\n",
         "In settings.py, set SECRET_KEY = os.environ[\"DJANGO_SECRET\"] and keep it out of git.\n",
         "Hotkey: Ctrl+Shift+P\n",
-        "Docs: https://example.com/api?token=abc123&page=2\n",
+        "Docs: https://example.com/api?version=2&page=2\n",
     );
     // The fake prints the answer as the text of one claude JSON result.
     let text = home.path().join("answer.json");
@@ -6868,4 +6868,891 @@ printf '%s\n' '{"text":"answered"}'
         .assert()
         .success()
         .stdout(predicate::str::contains("clean_config_keys: none\n"));
+}
+
+/// A fake `cursor-agent`: it records its arguments, environment, and
+/// standard input beside itself, then prints `reply` as the one result
+/// object `cursor-agent -p --output-format json` prints.
+#[cfg(unix)]
+fn recording_cursor(home: &std::path::Path, reply: &str) -> std::path::PathBuf {
+    executable_provider(
+        home,
+        "fake-cursor-agent",
+        &format!(
+            r#"#!/bin/sh
+here="$(dirname "$0")"
+touch "$here/harness-started"
+printf '%s\n' "$@" > "$here/args.txt"
+env > "$here/env.txt"
+cat > "$here/stdin.txt"
+printf '%s\n' '{reply}'
+"#
+        ),
+    )
+}
+
+#[cfg(unix)]
+fn recorded_lines(home: &std::path::Path, name: &str) -> Vec<String> {
+    std::fs::read_to_string(home.join(name))
+        .unwrap_or_else(|error| panic!("{name}: {error}"))
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_run_sends_the_prompt_on_stdin_and_reads_the_result_object() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(
+        home.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"The README is fine.","usage":{"inputTokens":12,"outputTokens":7}}"#,
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "cursor",
+            "Review the README",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = confirmation_of(&output);
+    assert_eq!(result["text"], "The README is fine.");
+    assert_eq!(result["resolved_route"], "cursor");
+    assert_eq!(result["usage"]["output_tokens"].as_f64(), Some(7.0));
+    assert!(result.get("hint").is_none(), "{result}");
+
+    let args = recorded_lines(home.path(), "args.txt");
+    assert_eq!(
+        args,
+        [
+            "-p",
+            "--output-format",
+            "json",
+            "--workspace",
+            canonical(repository.path()).as_str(),
+            "--trust",
+            "--mode",
+            "ask",
+        ]
+    );
+    let stdin = std::fs::read_to_string(home.path().join("stdin.txt")).expect("stdin");
+    assert!(stdin.ends_with("Review the README\n"), "{stdin}");
+    assert!(
+        !args.iter().any(|arg| arg.contains("Review the README")),
+        "{args:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fable_at_cursor_runs_without_config_and_names_its_model() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"ok"}"#);
+    let binary = provider.to_str().expect("provider path");
+
+    rune(home.path())
+        .args([
+            "run",
+            "fable@cursor",
+            "Review this repository",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+        ])
+        .assert()
+        .success()
+        .stdout("ok\n");
+    let args = recorded_lines(home.path(), "args.txt");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--model", "claude-fable-5-1-high"]),
+        "{args:?}"
+    );
+    assert_eq!(
+        args.iter().filter(|arg| *arg == "--model").count(),
+        1,
+        "{args:?}"
+    );
+
+    rune(home.path())
+        .args([
+            "run",
+            "fable@cursor",
+            "Review this repository",
+            "--repo",
+            repo,
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tool: cursor"))
+        .stdout(predicate::str::contains("argv: cursor-agent -p "))
+        .stdout(predicate::str::contains("model_id: claude-fable-5-1-high"))
+        .stdout(predicate::str::contains("model_source: built-in"))
+        .stdout(predicate::str::contains("session_name: none"));
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_reported_error_is_a_surface_error() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(
+        home.path(),
+        r#"{"type":"result","subtype":"error","is_error":true,"result":"Model not available"}"#,
+    );
+
+    let output = rune(home.path())
+        .args([
+            "--json",
+            "run",
+            "cursor",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            provider.to_str().expect("provider path"),
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(1));
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "surface_error", "{result}");
+    let message = result["details"]["message"].as_str().expect("message");
+    assert!(message.contains("Model not available"), "{message}");
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_cursor_run_needs_an_api_key_and_then_moves_its_home() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"clean"}"#);
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+
+    let output = rune(home.path())
+        .args([
+            "--json", "run", "cursor", "Review", "--repo", repo, "--binary", binary, "--clean",
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(125));
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "configuration_error", "{result}");
+    let message = result["details"]["message"].as_str().expect("message");
+    assert!(message.contains("CURSOR_API_KEY"), "{message}");
+    assert!(!marker.exists(), "the harness started");
+
+    rune(home.path())
+        .env("CURSOR_API_KEY", "key-1")
+        .args([
+            "run", "cursor", "Review", "--repo", repo, "--binary", binary, "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout("clean\n");
+    let env = recorded_lines(home.path(), "env.txt");
+    let value = |key: &str| {
+        env.iter()
+            .find_map(|line| {
+                line.strip_prefix(key)
+                    .and_then(|rest| rest.strip_prefix('='))
+            })
+            .map(str::to_string)
+    };
+    let child_home = value("HOME").expect("HOME reaches the child");
+    assert_ne!(
+        std::path::Path::new(&child_home),
+        home.path(),
+        "the clean run kept the real home"
+    );
+    let config_dir = value("CURSOR_CONFIG_DIR").expect("CURSOR_CONFIG_DIR reaches the child");
+    assert_eq!(config_dir, format!("{child_home}/.cursor"), "{env:?}");
+    assert_eq!(value("CURSOR_API_KEY").as_deref(), Some("key-1"));
+    let args = recorded_lines(home.path(), "args.txt");
+    assert!(!args.iter().any(|arg| arg.contains("key-1")), "{args:?}");
+
+    rune(home.path())
+        .env("CURSOR_API_KEY", "key-1")
+        .args([
+            "run",
+            "cursor",
+            "Review",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("key-1").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_profile_key_from_the_environment_counts_for_a_clean_run() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"keyed"}"#);
+    let binary = provider.to_str().expect("provider path");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        "launch:\n  profiles:\n    cursor:\n      keyed:\n        env:\n          CURSOR_API_KEY:\n            from_env: FAKE_CURSOR_KEY\n",
+    )
+    .expect("config");
+
+    let output = rune(home.path())
+        .env("FAKE_CURSOR_KEY", "key-from-profile")
+        .args([
+            "--json",
+            "run",
+            "keyed@cursor",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+            "--clean",
+        ])
+        .output()
+        .expect("run output");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = confirmation_of(&output);
+    assert_eq!(result["text"], "keyed");
+    let env = recorded_lines(home.path(), "env.txt");
+    assert!(
+        env.contains(&"CURSOR_API_KEY=key-from-profile".to_string()),
+        "{env:?}"
+    );
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(!printed.contains("key-from-profile"), "{printed}");
+
+    rune(home.path())
+        .env("FAKE_CURSOR_KEY", "key-from-profile")
+        .args([
+            "run",
+            "keyed@cursor",
+            "Review",
+            "--repo",
+            repo,
+            "--dry-run",
+            "--clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CURSOR_API_KEY=<redacted>"))
+        .stdout(predicate::str::contains("key-from-profile").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_cursor_run_refuses_an_unrestricted_approval_mode() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"ran"}"#);
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+    let unrestricted = "{\"version\":1,\"approvalMode\":\"unrestricted\"}";
+    std::fs::create_dir_all(home.path().join(".cursor")).expect(".cursor");
+    std::fs::write(home.path().join(".cursor/cli-config.json"), unrestricted)
+        .expect("cli-config.json");
+    let xdg = tempfile::tempdir().expect("xdg");
+    std::fs::create_dir_all(xdg.path().join("cursor")).expect("xdg cursor");
+    std::fs::write(xdg.path().join("cursor/cli-config.json"), unrestricted)
+        .expect("xdg cli-config.json");
+
+    let refused = |name: &str, command: &mut Command| {
+        let output = command
+            .args([
+                "--json", "run", "cursor", "Review", "--repo", repo, "--binary", binary,
+            ])
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(125), "{name}");
+        let result = confirmation_of(&output);
+        assert_eq!(result["kind"], "configuration_error", "{name}: {result}");
+        let message = result["details"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("approvalMode unrestricted"),
+            "{name}: {message}"
+        );
+        assert!(message.contains("cli-config.json"), "{name}: {message}");
+        assert!(
+            message.contains("--mode workspace-write"),
+            "{name}: {message}"
+        );
+        assert!(!marker.exists(), "{name}: the harness started");
+    };
+    // The home file, then the XDG file over an allowing home file.
+    refused("HOME", &mut rune(home.path()));
+    std::fs::write(
+        home.path().join(".cursor/cli-config.json"),
+        "{\"approvalMode\":\"allowlist\"}",
+    )
+    .expect("allowlist");
+    refused(
+        "XDG_CONFIG_HOME",
+        rune(home.path()).env("XDG_CONFIG_HOME", xdg.path()),
+    );
+
+    // The same saved setting does not stop a workspace-write run.
+    std::fs::write(home.path().join(".cursor/cli-config.json"), unrestricted)
+        .expect("cli-config.json");
+    rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "cursor",
+            "Review",
+            "--repo",
+            repo,
+            "--binary",
+            binary,
+            "--mode",
+            "workspace-write",
+        ])
+        .assert()
+        .success()
+        .stdout("ran\n");
+    let args = recorded_lines(home.path(), "args.txt");
+    assert!(
+        args.windows(3)
+            .any(|window| window == ["--force", "--sandbox", "enabled"]),
+        "{args:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_keychain_failure_carries_the_hint_and_a_plain_login_failure_does_not() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let trust = executable_provider(
+        home.path(),
+        "fake-cursor-trust",
+        "#!/bin/sh\nprintf 'SecTrustSettingsCopyTrustSettings: failed to copy trust settings\\n' >&2\nexit 1\n",
+    );
+    let login = executable_provider(
+        home.path(),
+        "fake-cursor-login",
+        "#!/bin/sh\nprintf 'Authentication required. Run cursor-agent login.\\n' >&2\nexit 1\n",
+    );
+    let run = |binary: &std::path::Path, sandboxed: bool| {
+        let mut command = rune(home.path());
+        command.env_remove("SANDBOX_RUNTIME");
+        if sandboxed {
+            command.env("SANDBOX_RUNTIME", "seatbelt");
+        }
+        let output = command
+            .args([
+                "--json",
+                "run",
+                "cursor",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary.to_str().expect("provider path"),
+            ])
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(1));
+        confirmation_of(&output)
+    };
+
+    let result = run(&trust, false);
+    assert_eq!(result["kind"], "exit", "{result}");
+    let hint = result["hint"].as_str().expect("keychain hint");
+    assert!(hint.contains("Keychain"), "{hint}");
+
+    let result = run(&login, false);
+    assert_eq!(result["kind"], "exit", "{result}");
+    assert!(result["hint"].is_null(), "{result}");
+
+    let result = run(&login, true);
+    assert!(
+        result["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("Keychain")),
+        "{result}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_profile_short_option_value_never_reaches_a_warning() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"ran"}"#);
+    let binary = provider.to_str().expect("provider path");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    // An unlisted short flag with a secret value attached, and the kept
+    // endpoint flag with its value attached.
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n    cursor:\n      attached:\n        args:\n",
+            "          - '-xsk-FAKE-ATTACHED-SECRET'\n",
+            "          - '-ehttps://api.example.test'\n",
+        ),
+    )
+    .expect("config");
+
+    for json in [false, true] {
+        let mut command = rune(home.path());
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args([
+                "run",
+                "attached@cursor",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+            ])
+            .output()
+            .expect("run output");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{printed}");
+        assert!(
+            !printed.contains("FAKE-ATTACHED-SECRET"),
+            "json={json} leaked the dropped value: {printed}"
+        );
+        assert!(
+            printed.contains("flag -x is dropped"),
+            "json={json}: {printed}"
+        );
+        if json {
+            let result = confirmation_of(&output);
+            let warnings = result["warnings"].as_array().expect("warnings");
+            assert_eq!(warnings.len(), 1, "{result}");
+            assert!(
+                warnings[0]
+                    .as_str()
+                    .is_some_and(|warning| warning.contains("flag -x is dropped")),
+                "{result}"
+            );
+        }
+    }
+    // The endpoint reaches the tool as a flag and a separate value.
+    let args = recorded_lines(home.path(), "args.txt");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["-e", "https://api.example.test"]),
+        "{args:?}"
+    );
+    assert!(!args.iter().any(|arg| arg.starts_with("-x")), "{args:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_profile_whose_endpoint_carries_a_password_is_refused_before_the_harness_starts() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    // A `'` in the password ended the URL early in the redaction, and the
+    // fake agent echoes the endpoint it was given. Rune never passes a
+    // credential inside a URL: the run is refused, nothing starts, and the
+    // message names the variable cursor reads its key from.
+    let endpoint = "https://user:pa'ss-FAKE-ENDPOINT-SECRET@api.example.test";
+    let provider = recording_cursor(
+        home.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"reached the endpoint fine"}"#,
+    );
+    let binary = provider.to_str().expect("provider path");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        format!("launch:\n  profiles:\n    cursor:\n      echo:\n        args:\n          - \"-e{endpoint}\"\n"),
+    )
+    .expect("config");
+
+    for json in [false, true] {
+        let mut command = rune(home.path());
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args([
+                "run",
+                "echo@cursor",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+            ])
+            .output()
+            .expect("run output");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(125), "json={json}: {printed}");
+        for hidden in ["pa'ss", "FAKE-ENDPOINT-SECRET", "api.example.test"] {
+            assert!(!printed.contains(hidden), "json={json}: {printed}");
+        }
+        assert!(printed.contains("CURSOR_API_KEY"), "json={json}: {printed}");
+        if json {
+            let result = confirmation_of(&output);
+            assert_eq!(result["kind"], "configuration_error", "{result}");
+            let message = result["details"]["message"].as_str().expect("message");
+            assert!(message.contains("CURSOR_API_KEY"), "{message}");
+        }
+    }
+    assert!(
+        !home.path().join("harness-started").exists(),
+        "the harness started"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_reply_keeps_ordinary_words_beside_an_inherited_url_user_and_query() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    // Rune's own environment carries a database URL and an FTP URL that
+    // name a user without a password, and a search URL with a `keyword`
+    // query. The route reads none of them, so the reply keeps every word.
+    let provider = recording_cursor(
+        home.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"about postgres, anonymous and documentation"}"#,
+    );
+    let binary = provider.to_str().expect("provider path");
+
+    for json in [false, true] {
+        let mut command = rune(home.path());
+        command
+            .env("DATABASE_URL", "postgres://postgres@localhost/app")
+            .env("FTP_URL", "ftp://anonymous@files.example.test/pub")
+            .env(
+                "SEARCH_URL",
+                "https://example.test/search?keyword=documentation",
+            );
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args([
+                "run",
+                "fable@cursor",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary,
+            ])
+            .output()
+            .expect("run output");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{printed}");
+        assert!(
+            printed.contains("about postgres, anonymous and documentation"),
+            "json={json}: {printed}"
+        );
+    }
+}
+
+#[test]
+fn a_dry_run_refuses_a_url_that_carries_a_token_in_every_form_the_tool_decodes() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    // A bare token before the `@` of cursor's endpoint, and a codex config
+    // URL whose `@` is a TOML escape: the dry run printed both whole.
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n",
+            "    cursor:\n      bare:\n        args:\n",
+            "          - '-ehttps://FAKE-URL-TOKEN@example.test'\n",
+            "    codex:\n      escaped:\n        args:\n",
+            "          - '-c'\n",
+            "          - 'model_providers.p.base_url=\"https://FAKE-URL-TOKEN\\u0040example.test/v1\"'\n",
+        ),
+    )
+    .expect("config");
+
+    for (route, source) in [
+        ("bare@cursor", "CURSOR_API_KEY"),
+        ("escaped@codex", "OPENAI_API_KEY"),
+    ] {
+        for json in [false, true] {
+            let mut command = rune(home.path());
+            if json {
+                command.arg("--json");
+            }
+            let output = command
+                .args(["run", route, "Review", "--repo", repo, "--dry-run"])
+                .output()
+                .expect("run output");
+            let printed = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(125),
+                "{route} json={json}: {printed}"
+            );
+            assert!(
+                !printed.contains("FAKE-URL-TOKEN"),
+                "{route} json={json} leaked the token: {printed}"
+            );
+            assert!(printed.contains(source), "{route} json={json}: {printed}");
+            if json {
+                let result = confirmation_of(&output);
+                assert_eq!(result["kind"], "configuration_error", "{result}");
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_refuses_a_url_credential_in_every_form_a_whatwg_parser_reads() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    // Node's URL parser reads a user and a password from a URL with three
+    // slashes, a backslash, one slash, or none after the scheme, and from
+    // one with a tab before the `@`. A `://` rule saw none of them: the
+    // fake agent echoed the three-slash endpoint whole.
+    let provider = recording_cursor(
+        home.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"reached https:///user:FAKETHREESLASH888@api.example.test/v1"}"#,
+    );
+    let binary = provider.to_str().expect("provider path");
+    let config_dir = home.path().join(".config/rune");
+    std::fs::create_dir_all(&config_dir).expect("config directory");
+    std::fs::write(
+        config_dir.join("config.yaml"),
+        concat!(
+            "launch:\n  profiles:\n",
+            "    cursor:\n",
+            "      threeslash:\n        args:\n",
+            "          - '-ehttps:///user:FAKETHREESLASH888@api.example.test/v1'\n",
+            "      backslash:\n        args:\n",
+            "          - '-ehttps:\\\\user:FAKEBACKSLASH888@api.example.test/v1'\n",
+            "    claude:\n",
+            "      oneslash:\n        env:\n",
+            "          ANTHROPIC_BASE_URL: 'https:/user:FAKEONESLASH888@api.example.test/v1'\n",
+            "    codex:\n",
+            "      noslash:\n        args:\n",
+            "          - '-c'\n",
+            "          - 'model_providers.p.base_url=\"https:user:FAKENOSLASH888@api.example.test/v1\"'\n",
+        ),
+    )
+    .expect("config");
+
+    let refused = |route: &str, inherited: Option<&str>, dry_run: bool| {
+        for json in [false, true] {
+            let mut command = rune(home.path());
+            if let Some(value) = inherited {
+                command.env("ANTHROPIC_BASE_URL", value);
+            }
+            if json {
+                command.arg("--json");
+            }
+            command.args(["run", route, "Review", "--repo", repo]);
+            if dry_run {
+                command.arg("--dry-run");
+            } else {
+                command.args(["--binary", binary]);
+            }
+            let output = command.output().expect("run output");
+            let printed = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(125),
+                "{route} json={json}: {printed}"
+            );
+            for hidden in ["888", "api.example.test"] {
+                assert!(
+                    !printed.contains(hidden),
+                    "{route} json={json} leaked {hidden}: {printed}"
+                );
+            }
+            if json {
+                let result = confirmation_of(&output);
+                assert_eq!(result["kind"], "configuration_error", "{result}");
+            }
+        }
+    };
+    refused("threeslash@cursor", None, false);
+    assert!(
+        !home.path().join("harness-started").exists(),
+        "the harness started"
+    );
+    refused("threeslash@cursor", None, true);
+    refused("backslash@cursor", None, true);
+    refused("oneslash@claude", None, true);
+    refused("noslash@codex", None, true);
+    refused(
+        "claude",
+        Some("https://user:FAKETAB888\t@api.example.test/v1"),
+        true,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_cursor_run_reads_a_relative_config_directory_from_the_repository() {
+    let home = tempfile::tempdir().expect("home");
+    let caller = tempfile::tempdir().expect("caller");
+    let provider = recording_cursor(home.path(), r#"{"type":"result","result":"ran"}"#);
+    let binary = provider.to_str().expect("provider path");
+    let marker = home.path().join("harness-started");
+    let unrestricted = "{\"approvalMode\":\"unrestricted\"}";
+    let allowlist = "{\"approvalMode\":\"allowlist\"}";
+    // `settings` beside the caller allows; `repo/settings`, which the
+    // child reads from its working directory, does not.
+    let beside_caller = caller.path().join("settings");
+    let inside_repo = caller.path().join("repo/settings");
+    std::fs::create_dir_all(&beside_caller).expect("caller settings");
+    std::fs::create_dir_all(&inside_repo).expect("repository settings");
+    std::fs::write(beside_caller.join("cli-config.json"), allowlist).expect("caller config");
+    std::fs::write(inside_repo.join("cli-config.json"), unrestricted).expect("repo config");
+
+    let output = rune(home.path())
+        .current_dir(caller.path())
+        .env("CURSOR_CONFIG_DIR", "settings")
+        .args([
+            "--json", "run", "cursor", "Review", "--repo", "repo", "--binary", binary,
+        ])
+        .output()
+        .expect("run output");
+    assert_eq!(output.status.code(), Some(125), "{output:?}");
+    let result = confirmation_of(&output);
+    assert_eq!(result["kind"], "configuration_error", "{result}");
+    let message = result["details"]["message"].as_str().expect("message");
+    assert!(message.contains("approvalMode unrestricted"), "{message}");
+    let expected = canonical(&caller.path().join("repo")) + "/settings/cli-config.json";
+    assert!(message.contains(&expected), "{message}");
+    assert!(!marker.exists(), "the harness started");
+
+    // The other way round, the allowing file inside the repository counts.
+    std::fs::write(beside_caller.join("cli-config.json"), unrestricted).expect("caller config");
+    std::fs::write(inside_repo.join("cli-config.json"), allowlist).expect("repo config");
+    rune(home.path())
+        .current_dir(caller.path())
+        .env("CURSOR_CONFIG_DIR", "settings")
+        .args([
+            "run", "cursor", "Review", "--repo", "repo", "--binary", binary,
+        ])
+        .assert()
+        .success()
+        .stdout("ran\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_nested_or_truncated_result_never_hides_a_top_level_error() {
+    let home = tempfile::tempdir().expect("home");
+    let repository = tempfile::tempdir().expect("repository");
+    let repo = repository.path().to_str().expect("repository path");
+    let run = |binary: &std::path::Path| {
+        let output = rune(home.path())
+            .args([
+                "--json",
+                "run",
+                "cursor",
+                "Review",
+                "--repo",
+                repo,
+                "--binary",
+                binary.to_str().expect("provider path"),
+            ])
+            .output()
+            .expect("run output");
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let result = confirmation_of(&output);
+        assert_eq!(result["kind"], "surface_error", "{result}");
+        assert!(result.get("text").is_none(), "{result}");
+        result["details"]["message"]
+            .as_str()
+            .expect("message")
+            .to_string()
+    };
+
+    // A pretty-printed error with a nested success on its own line.
+    let nested = recording_cursor(
+        home.path(),
+        concat!(
+            "{\n",
+            "  \"type\": \"result\",\n",
+            "  \"subtype\": \"error\",\n",
+            "  \"is_error\": true,\n",
+            "  \"result\": \"Model not available\",\n",
+            "  \"events\": [\n",
+            "    {\"type\": \"result\", \"is_error\": false, \"result\": \"stale success\"}\n",
+            "  ]\n",
+            "}",
+        ),
+    );
+    let message = run(&nested);
+    assert!(message.contains("Model not available"), "{message}");
+
+    // A stale success, then an error the stream cut short.
+    let truncated = recording_cursor(
+        home.path(),
+        concat!(
+            "{\"type\":\"result\",\"result\":\"stale success\"}\n",
+            "{\"type\":\"result\",\"is_error\":true,\"result\":\"Model not avail",
+        ),
+    );
+    let message = run(&truncated);
+    assert!(message.contains("not JSON"), "{message}");
 }
