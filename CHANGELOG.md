@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+[0.6.0]: https://github.com/runedeck/rune/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/runedeck/rune/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/runedeck/rune/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/runedeck/rune/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/runedeck/rune/compare/v0.3.0...v0.3.1
@@ -11,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
-## [Unreleased]
+## [0.6.0] - 2026-10-26
 
 ### Added
 
