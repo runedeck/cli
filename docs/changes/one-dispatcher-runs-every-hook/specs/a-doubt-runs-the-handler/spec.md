@@ -55,12 +55,12 @@ A shell in front of the dispatcher MUST count only when its word is `sh` or `/bi
 
 ### Requirement: Only The First Part Covers
 
-Only the first `*.sh` part of a folder MAY cover, because the dispatcher stops at the first part that fails. The first part MUST be decided by name alone under every locale: every `*.sh` name, dot names aside, is two ASCII digits, a hyphen, lower-case letters, digits, and hyphens, then `.sh`, and no two names share a number. The first part MUST be a regular file in the accepted shape: an optional `-x` or `-f` guard and one final `exec` line. A later part is not read. Any other folder covers nothing, and install names the entry.
+Only a folder's first `*.sh` part MAY cover, because the dispatcher stops at the first failure. Name alone MUST decide the first part under every locale: each `*.sh` name, dot names aside, is two ASCII digits, a hyphen, lower-case letters, digits, and hyphens, then `.sh`, and no two share a number. The first part MUST be a regular file in the shape: an optional `-x` or `-f` guard and one final `exec` line. A later part is never read for covering. Install MAY read it to name it. Any other folder covers nothing, and install names the entry.
 
 #### Scenario: Part with nohup after the first part
 
 - **WHEN** `Stop.d` holds `10-tmux-attention.sh` in the shape and `40-nohup.sh` that runs its program with `nohup`
-- **THEN** install covers tmux with the first part, warns nothing, and the nohup part is not read
+- **THEN** install covers tmux with the first part, the nohup part covers nothing, and install names it as a part it cannot read
 
 #### Scenario: First part outside the shape
 

@@ -116,7 +116,7 @@ On Codex, a changed plan MUST NOT replace a rune entry that Codex trusts, becaus
 
 #### Scenario: Replacement trusted
 
-- **WHEN** the owner then trusts the new entry in `/hooks` and `rune install` runs again
+- **WHEN** the owner then trusts the new entry in `/hooks` and `rune hook install` runs again
 - **THEN** the earlier entry goes, its group stays empty, and the new entry keeps its position
 
 ### Requirement: A Removal Never Moves A Trusted Codex Hook

@@ -147,7 +147,7 @@ pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
         Error::new(
             ErrorKind::Config,
             format!(
-                "no compiled hook plan at {}: run `rune install` ({error})",
+                "no compiled hook plan at {}: run `rune hook install` ({error})",
                 path.display()
             ),
         )
@@ -159,7 +159,7 @@ pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
             return Err(Error::new(
                 ErrorKind::Config,
                 format!(
-                    "{} does not hold the plan its name is the digest of: it changed after install; run `rune install`",
+                    "{} does not hold the plan its name is the digest of: it changed after install; run `rune hook install`",
                     path.display()
                 ),
             )
@@ -174,7 +174,7 @@ pub(crate) fn read_at(path: &Path) -> Result<(Plan, Option<String>), Error> {
     })?;
     let warning = newer_config(&path).map(|config| {
         format!(
-            "{} is newer than the compiled plan; run `rune install` to apply it",
+            "{} is newer than the compiled plan; run `rune hook install` to apply it",
             config.display()
         )
     });

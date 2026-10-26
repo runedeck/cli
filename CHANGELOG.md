@@ -232,6 +232,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Name `rune hook install` in the hook messages that ask for a reinstall, where `rune install` also deploys the deck, and name the slot to trust in the Codex untrusted-entry line.
 - **Breaking:** Exit `rune run` by the POSIX `timeout` table: the harness's own status, 124 on the time limit, 126 for a binary that cannot run, 127 for one not found, and 128 plus the signal number.
 - **Breaking:** Exit `rune run` 125 for a usage or configuration error, an unwritable result file, an output limit, or a runner I/O or supervisor failure, which were 2, 74, 70, and 1.
 - Report a signal that arrives during the finish as `kind` signal with `ok` false beside the answer, and exit 128 plus the signal number.

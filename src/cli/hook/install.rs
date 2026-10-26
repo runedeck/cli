@@ -720,7 +720,7 @@ fn prepare_in(
                 names.push(name.clone());
             }
         }
-        let mut untrusted: Vec<(String, Trust)> = Vec::new();
+        let mut untrusted: Vec<(String, Trust, Option<Slot>)> = Vec::new();
         let mut moved: Vec<(String, Slot, Slot)> = Vec::new();
         let mut deferred: Vec<String> = Vec::new();
         for name in &names {
@@ -777,8 +777,8 @@ fn prepare_in(
                     _ if event.adopt => {}
                     (Some(from), Some(to)) if from != to => moved.push((name.clone(), from, to)),
                     // The entry stays where it is, so its trust there is
-                    // the trust it keeps.
-                    _ => untrusted.push((name.clone(), trust)),
+                    // the trust it keeps, and that is the slot to trust.
+                    _ => untrusted.push((name.clone(), trust, to)),
                 }
             }
             if codex {
@@ -790,7 +790,7 @@ fn prepare_in(
                     let what = describe(&entries, slot, harness, "rune's earlier entry");
                     let moved_hook = describe(&entries, shift.from, harness, "rune's entry");
                     report.trust.push(format!(
-                        "{harness}: {name} keeps {what}, because removing it would move {moved_hook} from {} to {}, where {harness} does not trust it; remove it by hand, trust {moved_hook} in `/hooks` again, then run `rune install`",
+                        "{harness}: {name} keeps {what}, because removing it would move {moved_hook} from {} to {}, where {harness} does not trust it; remove it by hand, trust {moved_hook} in `/hooks` again, then run `rune hook install`",
                         slot_word(shift.from),
                         slot_word(shift.to)
                     ));
@@ -821,15 +821,18 @@ fn prepare_in(
                 rewritten.insert(name.clone(), kept.groups);
             }
         }
-        for (name, trust) in &untrusted {
+        for (name, trust, slot) in &untrusted {
+            let at = slot
+                .map(|s| format!(" at {}", slot_word(s)))
+                .unwrap_or_default();
             report.trust.push(format!(
-                "{harness}: the rune entry for {name} is {}: run `/hooks` in {harness} and trust it, then run `rune install` again; the entries it replaces stay until then",
+                "{harness}: the rune entry for {name}{at} is {}: run `/hooks` in {harness} and trust it there, then run `rune hook install`; the entries it replaces stay until then",
                 trust.word()
             ));
         }
         for (name, from, to) in &moved {
             report.trust.push(format!(
-                "{harness}: removing the entries the rune entry for {name} replaces would move it from {} to {}, where {harness} does not trust it; remove them by hand, trust the rune entry in `/hooks`, then run `rune install` again",
+                "{harness}: removing the entries the rune entry for {name} replaces would move it from {} to {}, where {harness} does not trust it; remove them by hand, trust the rune entry in `/hooks`, then run `rune hook install`",
                 slot_word(*from),
                 slot_word(*to)
             ));
@@ -879,13 +882,15 @@ fn prepare_in(
                     .push(format!("{}: differs from the plan", path.display()));
             }
             report.drift.extend(arrived);
-            report.drift.extend(untrusted.iter().map(|(name, trust)| {
-                format!(
-                    "{}: the rune entry for {name} is {} in {harness}",
-                    path.display(),
-                    trust.word()
-                )
-            }));
+            report
+                .drift
+                .extend(untrusted.iter().map(|(name, trust, _)| {
+                    format!(
+                        "{}: the rune entry for {name} is {} in {harness}",
+                        path.display(),
+                        trust.word()
+                    )
+                }));
             report.drift.extend(moved.iter().map(|(name, _, _)| {
                 format!(
                     "{}: the rune entry for {name} would move when the entries it replaces go",
@@ -1187,7 +1192,7 @@ impl Event<'_> {
         Error::new(
             ErrorKind::Config,
             format!(
-                "{}: the rune entry for {} was changed by hand; restore it or remove it, then install again",
+                "{}: the rune entry for {} was changed by hand; restore it or remove it, then run `rune hook install`",
                 self.path.display(),
                 self.name
             ),
@@ -3074,6 +3079,258 @@ mod tests {
             !check.drift.iter().any(|d| d.contains("PreToolUse")),
             "{:?}",
             check.drift
+        );
+    }
+
+    /// The postbox handlers on `prompt.before` and `turn.finish`, which
+    /// Codex serves as `UserPromptSubmit` and `Stop`; `with_checkpoint`
+    /// adds a second handler to both, so both plans change.
+    fn postbox_plan(with_checkpoint: bool) -> Plan {
+        let mut text = String::from(
+            "handlers:\n  - id: tmux-status\n    exec: [rune-hook-tmux]\n    events: [prompt.before, turn.finish]\n",
+        );
+        if with_checkpoint {
+            text.push_str(
+                "  - id: turn-checkpoint\n    exec: [rune-hook-checkpoint]\n    events: [prompt.before, turn.finish]\n",
+            );
+        }
+        serde_yaml::from_str::<Hooks>(&text)
+            .unwrap()
+            .compile()
+            .unwrap()
+    }
+
+    /// What Codex makes of the hook at `slot` of its `event`, from the
+    /// trust state the scratch home holds.
+    fn codex_trust_at(home: &Path, event: &str, (g, h): Slot) -> Trust {
+        let table_path = home.join(".codex").join("hooks.json");
+        let table: Value = serde_json::from_str(&fs::read_to_string(&table_path).unwrap()).unwrap();
+        let groups = table["hooks"][event].as_array().unwrap();
+        let expected = codex_trust::hash(event, &groups[g], &groups[g]["hooks"][h]);
+        codex_trust::trust(
+            &home.join(".codex").join("config.toml"),
+            &table_path,
+            event,
+            g,
+            h,
+            &expected,
+        )
+    }
+
+    #[test]
+    fn rune_s_trusted_postbox_entries_stay_at_group_one_until_codex_trusts_group_two() {
+        const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join(".codex")).unwrap();
+        let manifest = home.path().join("state").join("manifest.json");
+        let run = |plan: &Plan, check: bool| {
+            apply(
+                plan,
+                home.path(),
+                "/opt/rune",
+                PLAN,
+                &manifest,
+                check,
+                false,
+            )
+            .unwrap()
+        };
+        // The owner's table: rune's entry at group 1 handler 1 of both
+        // events, trusted in `/hooks`.
+        run(&postbox_plan(false), false);
+        for event in EVENTS {
+            assert_eq!(codex_rune_groups(home.path(), event), [1]);
+            trust_in_codex(home.path(), event);
+        }
+        // A changed plan: the new entry goes to group 2, untrusted, and
+        // the trusted one at group 1 handler 1 stays as it is.
+        let changed = postbox_plan(true);
+        let report = run(&changed, false);
+        for event in EVENTS {
+            assert_eq!(
+                codex_rune_groups(home.path(), event),
+                [1, 1],
+                "{event}: the trusted entry stays, the new one has a group of its own"
+            );
+            assert_eq!(codex_trust_at(home.path(), event, (0, 0)), Trust::Trusted);
+            assert_eq!(codex_trust_at(home.path(), event, (1, 0)), Trust::Untrusted);
+            assert!(
+                report.trust.iter().any(|t| t.contains(&format!(
+                    "{event} keeps rune's earlier entry, which codex trusts, until codex trusts the new one at group 2 handler 1"
+                ))),
+                "{:?}",
+                report.trust
+            );
+            assert!(
+                report.trust.iter().any(|t| t.contains(&format!(
+                    "the rune entry for {event} at group 2 handler 1 is not trusted yet: run `/hooks` in codex and trust it there, then run `rune hook install`"
+                ))),
+                "{:?}",
+                report.trust
+            );
+        }
+        let check = run(&changed, true);
+        for event in EVENTS {
+            assert!(
+                check.drift.iter().any(|d| d.contains(event)),
+                "{:?}",
+                check.drift
+            );
+        }
+        // Install again before the owner acts: both tables stay.
+        run(&changed, false);
+        for event in EVENTS {
+            assert_eq!(codex_rune_groups(home.path(), event), [1, 1]);
+            assert_eq!(codex_trust_at(home.path(), event, (0, 0)), Trust::Trusted);
+        }
+        // The owner trusts group 2 handler 1. The next install removes
+        // the group 1 entry and leaves group 1 empty: the new entry
+        // never moves to group 1, so it keeps the trust it has.
+        for event in EVENTS {
+            trust_rune_entry(home.path(), event, true);
+        }
+        let report = run(&changed, false);
+        let table: Value = serde_json::from_str(
+            &fs::read_to_string(home.path().join(".codex").join("hooks.json")).unwrap(),
+        )
+        .unwrap();
+        for event in EVENTS {
+            assert!(
+                report
+                    .written
+                    .iter()
+                    .any(|(h, e)| *h == Harness::Codex
+                        && *e == format!("{event} earlier entry removed")),
+                "{report:?}"
+            );
+            assert_eq!(codex_rune_groups(home.path(), event), [0, 1]);
+            assert_eq!(table["hooks"][event][0], json!({"hooks": []}), "{event}");
+            assert_eq!(codex_trust_at(home.path(), event, (1, 0)), Trust::Trusted);
+        }
+        let check = run(&changed, true);
+        for event in EVENTS {
+            assert!(
+                !check.drift.iter().any(|d| d.contains(event)),
+                "{:?}",
+                check.drift
+            );
+        }
+    }
+
+    /// The owner's table of 2026-10-26: a preview build's entry, trusted,
+    /// at group 1 handler 1 of `Stop` and `UserPromptSubmit`, the live
+    /// build's entry, trusted, at group 2 handler 1, and dcg under a
+    /// `Bash` matcher on `PreToolUse`. Removing the preview entry leaves
+    /// its group as a slot, so the live entry keeps the position Codex
+    /// trusts: Codex numbers every group of the file, an empty one too
+    /// (`append_matcher_groups` in `codex-rs/hooks/src/engine/discovery.rs`
+    /// enumerates `groups` before it looks at `group.hooks`, read
+    /// 2026-10-26). Install reads the trust at that position and asks
+    /// for nothing.
+    #[test]
+    fn removing_a_trusted_preview_entry_keeps_the_live_entry_at_its_trusted_slot() {
+        const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
+        let home = tempfile::tempdir().unwrap();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(&codex).unwrap();
+        fs::write(
+            codex.join("hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":"/Users/x/.local/bin/dcg","type":"command"}],"matcher":"Bash"}]}}"#,
+        )
+        .unwrap();
+        trust_codex_hook(home.path(), "PreToolUse", "/Users/x/.local/bin/dcg");
+        let manifest = home.path().join("state").join("manifest.json");
+        let plan = postbox_plan(true);
+        // The preview build installs from its own path and plan directory,
+        // and the owner trusts its entries at group 1 handler 1.
+        apply(
+            &plan,
+            home.path(),
+            "/Users/x/preview/rune",
+            "/state/preview/plans",
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        for event in EVENTS {
+            assert_eq!(codex_rune_groups(home.path(), event), [1]);
+            trust_in_codex(home.path(), event);
+        }
+        let run = |check: bool| {
+            apply(
+                &plan,
+                home.path(),
+                "/opt/rune",
+                PLAN,
+                &manifest,
+                check,
+                false,
+            )
+            .unwrap()
+        };
+        // The live build's entry goes to group 2 handler 1, and the owner
+        // trusts it there. Both entries are now trusted where they stand.
+        run(false);
+        for event in EVENTS {
+            assert_eq!(codex_rune_groups(home.path(), event), [1, 1]);
+            trust_rune_entry(home.path(), event, true);
+            assert_eq!(codex_trust_at(home.path(), event, (0, 0)), Trust::Trusted);
+            assert_eq!(codex_trust_at(home.path(), event, (1, 0)), Trust::Trusted);
+        }
+        let report = run(false);
+        let table: Value =
+            serde_json::from_str(&fs::read_to_string(codex.join("hooks.json")).unwrap()).unwrap();
+        for event in EVENTS {
+            assert!(
+                report
+                    .written
+                    .iter()
+                    .any(|(h, e)| *h == Harness::Codex
+                        && *e == format!("{event} earlier entry removed")),
+                "{report:?}"
+            );
+            let groups = table["hooks"][event].as_array().unwrap();
+            assert_eq!(
+                groups.len(),
+                2,
+                "{event}: the emptied group stays as a slot"
+            );
+            assert_eq!(groups[0], json!({"hooks": []}), "{event}");
+            assert_eq!(
+                groups[1],
+                rendered_for(&plan, Harness::Codex, event),
+                "{event}"
+            );
+            assert_eq!(
+                codex_trust_at(home.path(), event, (1, 0)),
+                Trust::Trusted,
+                "{event}"
+            );
+            assert!(
+                !report.trust.iter().any(|t| t.contains(event)),
+                "{event}: {:?}",
+                report.trust
+            );
+        }
+        assert_eq!(table["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+        assert_eq!(
+            codex_trust_at(home.path(), "PreToolUse", (0, 0)),
+            Trust::Trusted
+        );
+        let check = run(true);
+        for event in EVENTS.iter().chain(["PreToolUse"].iter()) {
+            assert!(
+                !check.drift.iter().any(|d| d.contains(event)),
+                "{event}: {:?}",
+                check.drift
+            );
+        }
+        // The next install finds nothing to write on Codex.
+        let again = run(false);
+        assert!(
+            !again.written.iter().any(|(h, _)| *h == Harness::Codex),
+            "{again:?}"
         );
     }
 

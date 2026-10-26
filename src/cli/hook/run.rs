@@ -888,7 +888,7 @@ fn passive_note(native_event: &str, harness: Harness, hook: &str, what: &str) ->
 fn unregistered(harness: Harness, native_event: &str) -> Answer {
     Answer {
         stderr: vec![format!(
-            "rune hook: no handler subscribes to {native_event} on {harness}; run `rune install`"
+            "rune hook: no handler subscribes to {native_event} on {harness}; run `rune hook install`"
         )],
         ..Answer::default()
     }

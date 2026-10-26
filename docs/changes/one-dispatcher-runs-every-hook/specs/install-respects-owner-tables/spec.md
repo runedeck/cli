@@ -98,7 +98,7 @@ On Codex, install MUST keep every entry a rune entry replaces until Codex trusts
 
 #### Scenario: Rune entry trusted
 
-- **WHEN** the owner trusted the rune entry in `/hooks` and `rune install` runs again
+- **WHEN** the owner trusted the rune entry in `/hooks` and `rune hook install` runs again
 - **THEN** dcg is adopted, its group stays as an empty group, and the rune entry keeps its position
 
 #### Scenario: Predecessor before rune in one group
