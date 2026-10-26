@@ -15,7 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Report the token counts a harness prints in `rune run --json`: claude's result `usage` and `modelUsage` (as `models` and `model_usage`, redacted like the text), codex's turn usage, opencode's step sums. Claude's `--verbose` message array is read by its last element, a result with errors fails, and the output limit judges claude's decoded answer. A JSON line rune cannot read fails a clean run with a message that names the line, and a count out of range is unknown without dropping its event. The memory of a run stays under four times claude's stdout capture: a field of the result rune does not report is skipped as it is read, and a stop carries only the window around its tail. A codex failure event without a message still fails the run, named for the event. Each harness error text is cut to 4,000 characters with `…[cut]` at the cut.
+- Report the token counts a harness prints in `rune run --json`: claude's `usage` and `modelUsage` (as `models` and `model_usage`, redacted), codex's turn usage, and opencode's step sums.
+- Read claude's `--verbose` message array by its last element, fail a claude result with errors, and judge the output limit on claude's decoded answer.
+- Fail a clean run on a JSON line rune cannot read, with the line named, and read a count out of range as unknown without dropping its event.
+- Keep a run's memory under four times claude's stdout capture: skip the result fields rune does not report as they are read, and keep only the window around a stop's tail.
+- Fail a codex run on a failure event without a message, named for the event, and cut each harness error text to 4,000 characters with `…[cut]`.
 - Print `rune run --dry-run --json` as one JSON object: model, tool, argv, base URL, environment (credentials `<redacted>`), removed and withheld keys, repository, mode, timeout, session name.
 - List the environment keys `rune run` and `rune launch` remove under `env_removed:` in the dry run. A withheld inherited key names the route key of its family that displaced it.
 - Print one `configuration_error` JSON object for a usage error under `--json`, with exit 125, and add `details.profiles` for an unknown profile.
@@ -102,9 +106,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
 - Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
 - Add the `turn-wrap` hook: where the owner ran `rune hook wrap on` in a jj workspace, each session turn becomes one jj change with a card naming the review and the undo.
-- Wrap only when one session touched the workspace after the last wrap: every prompt, stop, and tool event that places a session in the workspace records it under a lock, a payload without a session id records a touch that is nobody's, a stop with any other record wraps nothing and names it, and the owner forgets the record with `rune hook wrap reset`.
+- Wrap only when one session touched the workspace after the last wrap: every prompt, stop, and tool event that places a session there records it under a lock.
+- Record a payload without a session id as a touch that is nobody's, wrap nothing at a stop that finds another record and name it, and forget the record with `rune hook wrap reset`.
 - Refuse `rune hook wrap on`, `off`, and `reset` inside a model session, and recognize the owner's legacy `turn/wrap` script as the `turn-wrap` adapter at install.
-- Run the turn wrapper last on `turn.finish`, pass every handler `RUNE_MERGED_EFFECT` and `RUNE_FAILED_HANDLERS`, wrap nothing after a handler that failed or timed out, and hold back half the budget at most for the wrapper, only where the switch is on and this session is alone.
+- Run the turn wrapper last on `turn.finish`, pass every handler `RUNE_MERGED_EFFECT` and `RUNE_FAILED_HANDLERS`, and wrap nothing after a handler that failed or timed out.
+- Hold back at most half the budget for the turn wrapper, only where the switch is on and this session is alone.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
@@ -245,7 +251,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add the `rune-hook-jj-guards` adapter: worktree, agent isolation, and VCS internals refusals on `tool.before`.
 - Add `RUNE_STATE_DIR` as the state directory override shared by the sign queue and the hook plan.
 - Add `rune sign queue <bookmark> --range`: one request for every commit a direct push adds, listed before the key, signed in one `jj sign` run, and checked against `KEYS`.
-- List a signed request whose bookmark moved as `moved` instead of `stale`. `rune sign next` and `rune sign all` pass over it without failing, and `rune sign queue --prune` removes it. A signed seal that a later run rewrote without a signature lists as `stale`, so it never passes as done.
+- List a signed request whose bookmark moved as `moved` instead of `stale`. `rune sign next` and `rune sign all` pass over it, and `rune sign queue --prune` removes it.
+- List a signed seal that a later run rewrote without a signature as `stale`, so it never passes as done.
 
 ### Changed
 
@@ -334,11 +341,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Name each commit the queue signs as `commit_id("<id>")`, so a bookmark, tag, or alias named after an id cannot move the owner's signature.
+- Refuse a `commit_id` alias in any config file jj reads, conditional scopes at any depth included.
+- Pin the gpg program `jj sign` runs to a rune shim that refuses any commit that is not the rewrite of a named one before the owner's key, and fail the request with that commit named.
+- Report any difference between the commits a signing run wrote and the named set.
+- Show repository text in the signing views (message lines, authors, bookmarks, paths, review reasons) with control, terminal escape, and Unicode format characters escaped.
 - Read no `info/grafts` line in any git the signer runs, so a graft cannot drop a merge parent from the range `rune sign` lists, shows, signs, and verifies.
 - Hide and collect a credential-named query value whose name is percent-encoded (`api%5Fkey`), where only the name as written was checked.
 - Send the view `rune sign next --json` shows before the acknowledgment to stderr, so stdout holds the JSON document alone.
-- Name each commit the queue signs as `commit_id("<id>")` and refuse a `commit_id` alias in any config file jj reads, conditional scopes at any depth included, so a bookmark, tag, or alias named after an id cannot move the owner's signature. Pin the gpg program `jj sign` runs to a rune shim that refuses, before the owner's key, any commit that is not the rewrite of a named one, so a redirect the guard did not see signs nothing and fails the request with the refused commit named. After the run, report any difference between the commits written and the named set.
-- Show every piece of repository text in the signing views, a message line, an author, a bookmark, a path, or a review reason, with control, terminal escape, and Unicode format characters as visible escapes.
 - Let `cd DIR && cargo …` pass the sandbox guard with no advice, and advise a cargo call that reaches a configured checkout through `--manifest-path` to run from there.
 - Clamp a hook budget to the whole seconds of the harness cap, for a canonical or a native subscription alike, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s.
 - Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
