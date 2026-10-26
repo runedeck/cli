@@ -518,6 +518,68 @@ fn apply_rules_kebab_case_is_a_no_op_on_a_kebab_authored_skill() {
 }
 
 #[test]
+fn apply_passthrough_rules_keeps_a_companion_fragment_on_the_converted_path() {
+    let rules = vec![AssemblyRule::KebabCaseSkills, AssemblyRule::RemapTools];
+    let mappings = HashMap::from([("Read".to_string(), "read_file".to_string())]);
+    let content =
+        "---\nname: EvalLoop\n---\nRepeat [the setup steps](EvalLoop.md#setup) with `Read`.\n";
+
+    let (out, filename) = apply_passthrough_rules(
+        content,
+        "BuildSkill/EvalLoop.md",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/eval-loop.md");
+    assert_eq!(
+        out,
+        "---\nname: EvalLoop\n---\nRepeat [the setup steps](eval-loop.md#setup) with `Read`.\n",
+        "only the link target changes: no tool remap, no frontmatter edit"
+    );
+}
+
+#[test]
+fn apply_passthrough_rules_leaves_a_companion_alone_without_a_kebab_rule() {
+    let rules = vec![AssemblyRule::KebabCaseAgents, AssemblyRule::RemapTools];
+    let mappings = HashMap::new();
+    let content = "Repeat [the setup steps](EvalLoop.md#setup).\n";
+
+    let (out, filename) = apply_passthrough_rules(
+        content,
+        "BuildSkill/EvalLoop.md",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "BuildSkill/EvalLoop.md");
+    assert_eq!(out, content);
+}
+
+#[test]
+fn apply_passthrough_rules_never_rewrites_a_script() {
+    let rules = vec![AssemblyRule::KebabCaseSkills];
+    let mappings = HashMap::new();
+    let content = "callbacks[0](Handlers.md)\n";
+
+    let (out, filename) = apply_passthrough_rules(
+        content,
+        "BuildSkill/scripts/dispatch_table.py",
+        &rules,
+        &mappings,
+        "skills",
+    )
+    .unwrap();
+
+    assert_eq!(filename, "build-skill/scripts/dispatch_table.py");
+    assert_eq!(out, content);
+}
+
+#[test]
 fn apply_rules_agents_to_toml_converts_agents() {
     let rules = vec![AssemblyRule::AgentsToToml];
     let mappings = HashMap::new();

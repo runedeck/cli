@@ -476,15 +476,16 @@ fn assemble_source_for_provider(
         };
         (content, format!("{deck}/{relative_within_kind}"))
     } else if source.passthrough {
-        let (_, filename) = rune::transform::apply_rules(
-            "",
+        // A companion keeps its bytes, except that a Markdown one has its
+        // relative links follow the files the rename rules move.
+        rune::transform::apply_passthrough_rules(
+            &assembled,
             relative_within_kind,
             assembly_rules,
             tool_mappings,
             source.kind.as_str(),
         )
-        .map_err(|message| Error::new(rune::error::ErrorKind::Validate, message))?;
-        (assembled.clone(), filename)
+        .map_err(|message| Error::new(rune::error::ErrorKind::Validate, message))?
     } else {
         rune::transform::apply_rules(
             &assembled,

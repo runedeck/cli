@@ -35,12 +35,8 @@ pub fn apply_rules(
 
     for rule in rules {
         match rule {
-            AssemblyRule::KebabCase => {
-                (current_content, current_filename) =
-                    kebab_case_tree(current_content, &current_filename);
-            }
-            AssemblyRule::KebabCaseSkills => {
-                if kind == "skills" {
+            AssemblyRule::KebabCase | AssemblyRule::KebabCaseSkills => {
+                if converts_paths(rule, kind) {
                     (current_content, current_filename) =
                         kebab_case_tree(current_content, &current_filename);
                 }
@@ -71,6 +67,49 @@ pub fn apply_rules(
     Ok((current_content, current_filename))
 }
 
+/// Apply assembly rules to a passthrough file: a skill companion, script, or
+/// asset that assembly copies as it is. The rules rename the file as they
+/// rename the tree around it. When a kebab-case rule converts this kind of
+/// content, a Markdown companion also has its relative link targets
+/// converted, fragment kept, so a link into a renamed sibling still points
+/// at a file that is there. Its other bytes stay the author's: no tool
+/// remap, no TOML, no frontmatter edit.
+pub fn apply_passthrough_rules(
+    content: &str,
+    filename: &str,
+    rules: &[AssemblyRule],
+    tool_mappings: &HashMap<String, String>,
+    kind: &str,
+) -> Result<(String, String), String> {
+    let (_, renamed) = apply_rules("", filename, rules, tool_mappings, kind)?;
+    let converts_links =
+        is_markdown(&renamed) && rules.iter().any(|rule| converts_paths(rule, kind));
+    let content = if converts_links {
+        rewrite_markdown_links(content, to_kebab_path)
+    } else {
+        content.to_string()
+    };
+    Ok((content, renamed))
+}
+
+/// Whether a rule converts the paths of this kind of content to kebab-case.
+fn converts_paths(rule: &AssemblyRule, kind: &str) -> bool {
+    match rule {
+        AssemblyRule::KebabCase => true,
+        AssemblyRule::KebabCaseSkills => kind == "skills",
+        AssemblyRule::KebabCaseAgents
+        | AssemblyRule::RemapTools
+        | AssemblyRule::AgentsToToml
+        | AssemblyRule::StripLinks => false,
+    }
+}
+
+fn is_markdown(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
 /// Kebab-case a file's path and, for Markdown documents only, its frontmatter
 /// name and link targets. Passthrough assets (scripts, templates, images)
 /// follow their renamed directories but keep their bytes untouched: link
@@ -78,10 +117,7 @@ pub fn apply_rules(
 /// `callbacks[0](arg_one)`.
 fn kebab_case_tree(content: String, filename: &str) -> (String, String) {
     let renamed = to_kebab_path(filename);
-    if !std::path::Path::new(&renamed)
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-    {
+    if !is_markdown(&renamed) {
         return (content, renamed);
     }
     let content = crate::assemble::map_field(&content, "name", to_kebab_case);

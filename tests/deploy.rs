@@ -476,6 +476,41 @@ fn install_deploys_skill_to_agentskills_provider() {
     );
 }
 
+#[test]
+fn install_follows_a_companion_link_with_a_fragment_to_the_kebab_path() {
+    let module_directory = tempfile::tempdir().unwrap();
+    let target_directory = tempfile::tempdir().unwrap();
+
+    scaffold_module(module_directory.path());
+    create_skill(module_directory.path(), "BuildSkill");
+    fs::write(
+        module_directory.path().join("skills/BuildSkill/EvalLoop.md"),
+        "Repeat [the setup steps](EvalLoop.md#setup), then run [run_eval.py](scripts/run_eval.py).\n",
+    )
+    .unwrap();
+
+    rune()
+        .args([
+            "install",
+            "--source",
+            module_directory.path().to_str().unwrap(),
+            "--target",
+            target_directory.path().to_str().unwrap(),
+            "--provider",
+            "agents",
+        ])
+        .assert()
+        .success();
+
+    let deployed = target_directory
+        .path()
+        .join(".agents/skills/build-skill/eval-loop.md");
+    assert_eq!(
+        fs::read_to_string(&deployed).unwrap(),
+        "Repeat [the setup steps](eval-loop.md#setup), then run [run_eval.py](scripts/run_eval.py).\n"
+    );
+}
+
 // --- Manifest tests ---
 
 #[test]
