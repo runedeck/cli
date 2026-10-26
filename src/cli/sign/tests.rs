@@ -62,7 +62,7 @@ fn successful_signing_ignores_progress_writer_failure() {
 #[test]
 fn staged_content_makes_the_index_unclean() {
     let repository = TempDir::new().unwrap();
-    run_git(repository.path(), &["init", "--quiet"]);
+    run_git(repository.path(), &["init", "--quiet", "--template="]);
     run_git(repository.path(), &["config", "user.name", "Alice Example"]);
     run_git(
         repository.path(),

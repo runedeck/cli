@@ -1915,13 +1915,17 @@ fn dry_run_names_the_artifacts_destination() {
 }
 
 /// A jj command under the test's home, with an identity so jj prints no
-/// configuration warning. The test fails on a jj failure.
+/// configuration warning. The test fails on a jj failure. It runs from the
+/// home, not from cargo's directory: that directory is a jj workspace of
+/// this checkout, and jj, finding no configuration for it under the test's
+/// home, would write one there and leave a folder the test did not make.
 #[cfg(unix)]
 fn jj(home: &std::path::Path, args: &[&str]) -> String {
     let output = std::process::Command::new("jj")
         .env("HOME", home)
         .env("JJ_USER", "Test Runner")
         .env("JJ_EMAIL", "runner@example.test")
+        .current_dir(home)
         .args(args)
         .output()
         .expect("jj runs");
@@ -3398,10 +3402,223 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
     assert_eq!(workspace_names(home.path(), repo), ["default"]);
     assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
     // The guard's own configuration folder went with the workspace.
+    assert_eq!(guard_folders(home.path()), Vec::<String>::new());
+}
+
+/// The names of the folders jj keeps under `<home>/.config/jj/workspaces`:
+/// one for each workspace with its own configuration, such as a run's
+/// guard. None after a run means the run took its guard with it.
+fn guard_folders(home: &std::path::Path) -> Vec<String> {
+    let config_root = home.join(".config/jj/workspaces");
+    let mut names: Vec<String> = std::fs::read_dir(config_root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[cfg(unix)]
+#[test]
+fn a_finish_that_fails_at_its_first_step_still_removes_the_guard_folder() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // The harness forgets its own workspace. The guard allows that, since
+    // it rewrites nothing, and the finish then finds no working copy for
+    // the run at its first step and stops there, before any cleanup.
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-forgetter",
+        "#!/bin/sh\nprintf 'one\\n' > ONE.md\njj workspace forget >/dev/null 2>&1\nprintf 'done\\n'\n",
+    );
+    let workspace = &result["workspace"];
+    let name = workspace["name"]
+        .as_str()
+        .expect("the run's workspace name");
+    let error = workspace["error"]
+        .as_str()
+        .expect("the finish names its failure");
+    assert!(error.contains(name), "{result}");
+    assert!(workspace["path"].is_string(), "{result}");
+    assert!(workspace["change_id"].is_null(), "{result}");
+    // The guard's folder went all the same, as it does after a full finish.
+    assert_eq!(guard_folders(home.path()), Vec::<String>::new());
+}
+
+/// What jj prints when it refuses `args`: the command must fail.
+#[cfg(unix)]
+fn jj_refusal(home: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("jj")
+        .env("HOME", home)
+        .env("JJ_USER", "Test Runner")
+        .env("JJ_EMAIL", "runner@example.test")
+        .current_dir(home)
+        .args(args)
+        .output()
+        .expect("jj runs");
+    assert!(
+        !output.status.success(),
+        "jj {args:?} succeeded: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// The caller is a second workspace of its repository, and during the run
+/// the main checkout squashes an edit into `base`, the parent of the
+/// caller's working copy. jj rebases the caller's working-copy commit onto
+/// a new tree, so the caller's checkout goes stale, and `jj workspace
+/// remove` refuses to run from a stale checkout. Only the caller may update
+/// its own files. The run still takes its workspace, its folder, and its
+/// guard with it, and leaves the caller's checkout as it found it.
+#[cfg(unix)]
+#[test]
+fn a_run_whose_caller_went_stale_meanwhile_still_removes_its_workspace() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let main_dir = jj_repository(home.path());
+    let main = main_dir.path().to_str().expect("main path");
+    jj(home.path(), &["-R", main, "commit", "-m", "base"]);
+    let caller_dir = tempfile::tempdir().expect("caller");
+    let caller = caller_dir.path().to_str().expect("caller path");
+    jj(
+        home.path(),
+        &["-R", main, "workspace", "add", "--name", "caller", caller],
+    );
+    // The harness stands in for the owner's session in the main checkout.
+    let script = format!(
+        "#!/bin/sh\nprintf 'harness\\n' > NEW.md\nprintf 'squashed\\n' > '{main}/README.md'\njj -R '{main}' squash >/dev/null 2>&1\nprintf 'done\\n'\n"
+    );
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        caller_dir.path(),
+        "fake-stale-maker",
+        &script,
+    );
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert_eq!(workspace["outside_changes"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    assert!(workspace["path"].is_null(), "{result}");
+    let change_id = workspace["change_id"].as_str().expect("change id");
+    assert_eq!(changed_files(home.path(), main, change_id), ["A NEW.md"]);
+    // No run folder, no guard folder, no tracked workspace, and no git
+    // worktree stays.
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    assert_eq!(guard_folders(home.path()), Vec::<String>::new());
+    assert_eq!(workspace_names(home.path(), main), ["caller", "default"]);
+    let name = workspace["name"].as_str().expect("workspace name");
+    let worktrees = String::from_utf8_lossy(
+        &std::process::Command::new("git")
+            .args(["-C", main, "worktree", "list", "--porcelain"])
+            .output()
+            .expect("git runs")
+            .stdout,
+    )
+    .into_owned();
+    assert!(worktrees.contains(caller), "{worktrees}");
+    assert!(!worktrees.contains(name), "{worktrees}");
+    // The caller's checkout is still stale, for the caller to update, and
+    // its files are as the caller left them.
+    let refusal = jj_refusal(home.path(), &["-R", caller, "status"]);
+    assert!(refusal.contains("stale"), "{refusal}");
+    assert_eq!(
+        std::fs::read_to_string(caller_dir.path().join("README.md")).expect("README"),
+        "base\n"
+    );
+    assert!(!caller_dir.path().join("NEW.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_guard_folder_that_cannot_be_removed_is_named_in_the_result_and_on_stderr() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let repository = jj_repository(home.path());
+    let repo = repository.path().to_str().expect("repository path");
+    jj(home.path(), &["-R", repo, "commit", "-m", "base"]);
+    // The guard is set, so its folder exists. The harness then denies
+    // writes to the folder's parent, so the finish can empty the folder
+    // but not remove it: the run still succeeds with its change, and the
+    // result names the folder that stays.
     let config_root = home.path().join(".config/jj/workspaces");
-    let leftover_configs =
-        std::fs::read_dir(&config_root).map_or(0, |entries| entries.flatten().count());
-    assert_eq!(leftover_configs, 0, "{}", config_root.display());
+    let result = run_rewriting_harness(
+        home.path(),
+        state.path(),
+        repository.path(),
+        "fake-parent-locker",
+        "#!/bin/sh\nprintf 'one\\n' > ONE.md\nchmod 555 \"$HOME/.config/jj/workspaces\"\nprintf 'done\\n'\n",
+    );
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod back");
+    let workspace = &result["workspace"];
+    assert_eq!(workspace["guard"], true, "{result}");
+    assert_eq!(workspace["kept"], true, "{result}");
+    assert!(workspace["error"].is_null(), "{result}");
+    let stayed = guard_folders(home.path());
+    assert_eq!(stayed.len(), 1, "{stayed:?}");
+    let folder = workspace["guard_folder"]
+        .as_str()
+        .expect("the result names the guard's folder");
+    assert_eq!(
+        std::path::Path::new(folder),
+        config_root.join(&stayed[0]),
+        "{result}"
+    );
+    assert!(
+        workspace["guard_folder_error"]
+            .as_str()
+            .is_some_and(|reason| reason.contains(folder)),
+        "{result}"
+    );
+    assert_eq!(workspace_names(home.path(), repo), ["default"]);
+    assert_eq!(leftover_workspaces(state.path()), Vec::<String>::new());
+    std::fs::remove_dir_all(config_root.join(&stayed[0])).expect("remove the stayed folder");
+
+    // The text output warns on stderr and exits with the harness's status.
+    let second = jj_repository(home.path());
+    let second_repo = second.path().to_str().expect("repository path");
+    let output = rune_isolated(home.path(), state.path())
+        .args([
+            "run",
+            "sol@claude",
+            "go",
+            "--repo",
+            second_repo,
+            "--binary",
+            home.path()
+                .join("fake-parent-locker")
+                .to_str()
+                .expect("provider path"),
+            "--mode",
+            "workspace-write",
+        ])
+        .output()
+        .expect("run output");
+    std::fs::set_permissions(&config_root, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod back");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let stayed = guard_folders(home.path());
+    assert_eq!(stayed.len(), 1, "{stayed:?}");
+    let warning = stderr
+        .lines()
+        .find(|line| line.starts_with("warning: cannot remove the guard's folder "))
+        .unwrap_or_else(|| panic!("no guard folder warning in: {stderr}"));
+    assert!(warning.contains(&stayed[0]), "{warning}");
+    assert!(warning.ends_with("; remove it by hand"), "{warning}");
 }
 
 #[cfg(unix)]

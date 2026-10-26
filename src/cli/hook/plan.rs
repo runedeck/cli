@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use rune::error::{Error, ErrorKind};
-use rune::hooks::{Harness, Plan};
+use rune::hooks::{Harness, Plan, PlannedEvent};
 use sha2::{Digest, Sha256};
 
 use crate::cli::state;
@@ -77,8 +77,10 @@ pub(crate) struct Generation {
     pub text: String,
 }
 
-/// The generation of the registration of `event` on `harness`, or `None`
-/// when the plan does not subscribe to it.
+/// The generation of the registration of `event` on `harness` as the plan
+/// compiles it, or `None` when the plan does not subscribe to it. Tests
+/// use it; install narrows each event first and calls `generation_of`.
+#[cfg(test)]
 pub(crate) fn generation(
     dir: &Path,
     plan: &Plan,
@@ -86,8 +88,22 @@ pub(crate) fn generation(
     event: &str,
 ) -> Option<Generation> {
     let planned = plan.event(harness, event)?.clone();
+    generation_of(dir, plan.version, harness, event, planned)
+}
+
+/// The generation of a registration that runs `planned` on `event` of
+/// `harness`: a plan of that one event, as the plan compiles it, so a
+/// registration's generation holds what its dispatcher may run and
+/// nothing else.
+pub(crate) fn generation_of(
+    dir: &Path,
+    version: u32,
+    harness: Harness,
+    event: &str,
+    planned: PlannedEvent,
+) -> Option<Generation> {
     let narrowed = Plan {
-        version: plan.version,
+        version,
         harnesses: BTreeMap::from([(harness, BTreeMap::from([(event.to_string(), planned)]))]),
         ..Plan::default()
     };

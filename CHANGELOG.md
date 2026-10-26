@@ -75,7 +75,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse an exempt tool that the line keeps inside the sandbox, such as `cd DIR && jj log`, and name the one command to run, such as `jj -R DIR log`.
 - Advise a Bash line that joins separate commands to split them, and pass every line that holds no exempt tool.
 - Read the exempt patterns from the handler's arguments, else from `sandbox.excludedCommands` while `sandbox.enabled` is on.
+- Keep a legacy dispatcher entry (`sh ~/.config/just/hook <Event>`, `sh ~/.sd/hook <Event>`, `sd hook <Event>`) on install, and never advise its removal.
+- Record, per handler, the part of a kept dispatcher that runs its whole command in `hooks/cover/<harness>-<event>.json`, report it as `covered:`, and keep every handler in the generation.
+- Skip a covered handler in `rune hook run` only while the entry, the dispatcher script, the part, and the command still hold at that firing, and record the skip with its part as `skipped`.
+- Count a dispatcher only behind `sh` or `/bin/sh` that resolves to `/bin/sh`, with the known script content, and resolve the `sh` that runs each part the same way at each firing.
+- Let only the first `*.sh` part of a folder cover, under names every locale sorts one way, in the accepted shape, with at most 16 entries and 256 KiB. Never cover a `deny` handler or a rewriter.
+- Cover nothing when a hook carries a key rune does not read, the harness reads another table, `HOME` is unset, or a file is special or too large. A cover that holds past the budget still skips.
+- Cover nothing when a part expands anything but `$HOME`, or while `SHELLOPTS`, `BASH_ENV`, `IFS`, an exported function, or another variable that changes how `sh` reads a script is set.
+- Cover nothing under a matcher other than `*` or in a compound line, and warn where a part may then run twice. On Codex, cover nothing, because Codex loads its hooks once per session.
+- Read Codex `config.toml` hooks with the TOML parser, and name a tool's entry there with the real line of its command.
+- Warn when an earlier install adopted a legacy dispatcher entry that is gone from its table now, and name the entry.
+- Run the turn checkpoint from `~/.config/just/claude/turn/checkpoint`, else from the old `~/.sd` path.
 - Pass handler context to Claude Code on `PreToolUse` as `additionalContext`.
+- Accept `message` in a hook result and pass it as `systemMessage` to Claude Code and Gemini CLI on the events their references document, each line named for its handler.
+- Show control, format, and bidi characters in a hook message, context line, or deny reason as visible escapes, so no handler can fake, hide, or reverse another's line.
+- Pass handler context as `additionalContext` on every Claude Code and Gemini CLI event whose reference documents the field, `SessionStart` and `Stop` included.
+- Report context or a message a harness cannot show on an event on stderr as `reported, not applied`, so a passive event drops nothing in silence.
 - Add proof frontmatter (`type: proof`, `change`, `head`, `recorded`, `transcript`, `scenes`) that `rune graph export` reads.
 - Emit `rune:Proof` with a proves edge per proven scene, only while `proof.txt` matches the recorded transcript.
 - Add proof README validation to `rune spec validate`: a malformed field or an instruction scene without a model fails the run and names the field.
@@ -301,6 +316,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Clamp a hook budget to the whole seconds of the harness cap, for a canonical or a native subscription alike, so no rendered timeout passes it. Claude `SessionEnd` allows up to 60 s.
+- Keep the context and the message a handler returns on a passive event such as `SessionStart`. The dispatcher dropped both before the encoder saw them.
+- Withhold `additionalContext` on a passive Claude `Stop`, where it continues the turn, and report it on stderr. The encoder now knows the event's mode and sends no decision or input on a passive event.
+- Pass a hook `message` as `systemMessage` on Gemini `BeforeAgent`, `BeforeTool`, `AfterTool`, and `AfterAgent`, where the reference lists it as a common field and the encoder dropped it.
+- Report an event a harness lacks as `unsupported:` for every harness the plan targets, Antigravity and OpenCode included, where `rune hook install` named it for Claude and Codex alone.
+- Name, at install, each handler whose command a part behind the first part of a legacy `Stop.d` runs, with that part and why it covers nothing, where the output said nothing for it.
+- Write the session's author identity to the jj workspace config and the git worktree config, never to the shared `.git/config`.
+- Re-author the working-copy commit only while it is empty, undescribed, and this workspace's alone. Otherwise start the session in a new working copy on top of it.
+- Keep `extensions.worktreeConfig` off while any repository or worktree config, or a file it includes, sets `core.bare` or `core.worktree`, and name the file.
 - Pass `rune proof run --check` after a signature or reword of the head: a proof records `head_change` and `head_tree`, and an ancestor with both holds.
 - Fix `rune run` and `rune launch` hanging or exiting 1 under another harness: the parent session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` names, `CODEX_SANDBOX`) leave the child's environment.
 - Keep owner controls such as `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_CLIENT_CERT` in the child's environment.

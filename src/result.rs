@@ -15,7 +15,8 @@ pub struct ActionResult {
 
 /// The hook tables after an install: `harness:event` for what was
 /// written, `harness:event:command` for what was adopted or kept, and one
-/// line for each gap, legacy entry, drift, trust step, and warning.
+/// line for each gap, legacy entry, covered handler, drift, trust step,
+/// and warning.
 /// `skipped` holds the reason when the install left the tables alone on
 /// purpose, such as a proof scene that kept the runner's HOME.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
@@ -27,6 +28,10 @@ pub struct HookSummary {
     pub foreign: Vec<String>,
     pub unsupported: Vec<String>,
     pub legacy: Vec<String>,
+    /// A handler a part of a kept legacy dispatcher entry covers: the
+    /// dispatcher skips it at each firing while that part still runs its
+    /// command.
+    pub covered: Vec<String>,
     pub drift: Vec<String>,
     pub trust: Vec<String>,
     pub warnings: Vec<String>,
@@ -43,6 +48,7 @@ impl HookSummary {
         for (label, list) in [
             ("unsupported", &self.unsupported),
             ("legacy", &self.legacy),
+            ("covered", &self.covered),
             ("drift", &self.drift),
             ("trust", &self.trust),
             ("warning", &self.warnings),

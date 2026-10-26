@@ -606,7 +606,7 @@ mod tests {
 
     fn history_fixture(commit_count: usize) -> tempfile::TempDir {
         let repo = tempfile::tempdir().expect("fixture repo");
-        git(repo.path(), &["init", "-q"]);
+        git(repo.path(), &["init", "-q", "--template="]);
         git(repo.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
 
         let mut input = String::new();

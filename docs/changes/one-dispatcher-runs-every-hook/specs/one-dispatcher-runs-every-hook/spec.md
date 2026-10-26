@@ -8,7 +8,7 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: One Config Declares Every Hook
 
-`hooks:` in the rune user config MUST declare each handler once: an id, an executable, the canonical events it subscribes to (at least one), an order (default 100), a timeout (default 500 ms), a failure policy (`warn`, the default, or `deny`), optional `requires` capabilities (`tool_deny`, `input_replace`, `context`, `turn_continue`), and per-harness overrides that replace fields. A handler may name a harness-qualified native event such as `claude:WorktreeCreate`, registered on that harness only. `rune hook list` prints the resolved plan per harness. An unknown event, field, or capability, or a `deny` policy on an event whose mode is not `gate`, is an error that names it.
+`hooks:` in the rune user config MUST declare each handler once: an id, an executable, the canonical events it subscribes to (at least one), an order (default 100), a timeout (default 500 ms), a failure policy (`warn`, the default, or `deny`), optional `requires` capabilities (`tool_deny`, `input_replace`, `context`, `turn_continue`), and per-harness overrides that replace fields. A handler may name a harness-qualified native event such as `claude:WorktreeCreate`, registered on that harness only. `rune hook list` prints the resolved plan per harness. An unknown event, field, or capability, or `deny` on a non-gate event, is an error that names it.
 
 #### Scenario: Five handlers resolve to a plan
 
@@ -27,7 +27,7 @@ How a harness lifecycle event reaches a handler and how the handler's answer rea
 
 ### Requirement: Canonical Events Map To Each Harness
 
-The dispatcher MUST know eight canonical events: `session.start` and `session.end` (passive), `prompt.before`, `tool.before`, and `turn.finish` (gate), `tool.after` and `compact.before` (collect), `notification` (passive), each mapped to a native event per harness, or to none. An event a harness lacks is reported at install as unsupported for that harness and never substituted. Each mapping carries the harness's documented timeout cap, and a rendered timeout or dispatcher deadline never exceeds it: Claude `SessionEnd` shares 1.5 s, Codex `SessionEnd` is 1 s by default and 3 s at most. `rune hook list --events` prints the table.
+The dispatcher MUST know eight canonical events, `session.start`, `session.end`, `notification` (passive), `prompt.before`, `tool.before`, `turn.finish` (gate), `tool.after`, `compact.before` (collect), each mapped per harness to a native event or none. Install reports an event a harness lacks as unsupported, for every targeted harness, never substituted. Each mapping carries the harness's cap, binding a canonical or native subscription alike: a rendered timeout (whole seconds on Claude and Codex) and the deadline stay inside it. Claude `SessionEnd` allows 60 s at most, Codex `SessionEnd` 1 s by default and 3 s at most. `rune hook list --events` prints the table.
 
 #### Scenario: Event the harness lacks
 
@@ -41,12 +41,12 @@ The dispatcher MUST know eight canonical events: `session.start` and `session.en
 
 #### Scenario: Session end budget on Codex
 
-- **WHEN** session-capture declares a 5 s timeout on `session.end`
-- **THEN** the Codex entry is rendered with the 3 s cap and `rune hook list` shows the clamp
+- **WHEN** session-capture declares a 5 s timeout on `session.end`, and a second handler 3001 ms on `codex:SessionEnd`
+- **THEN** both Codex entries are rendered with the 3 s cap and `rune hook list` shows the clamp
 
 ### Requirement: The Dispatcher Normalizes And Answers
 
-`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload (`v`, `harness`, `event`, `native_event`, `session_id`, `cwd`, `model`, `tool`, `prompt`, `raw`), run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context) into the harness's documented answer. Antigravity carries no event name, so the argument is the source. An effect the harness cannot express is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's payload keys, exits 0 without a handler.
+`rune hook run --harness <h> --native-event <e>` MUST read the compiled plan and the harness payload on stdin, refuse a payload whose event name disagrees with the argument, normalize it to the versioned handler payload, run the subscribed handlers, and encode one canonical result (`pass`, `deny`, `continue_turn`, optional replacement input, ordered context, a message) into the harness's documented answer for that event. Antigravity carries no event name, so the argument is the source. An effect, context, or message the harness cannot express there is reported on stderr, never faked. A Claude registration Grok inherits, detected by Grok's payload keys, exits 0 without a handler.
 
 #### Scenario: Grok payload reaches a handler
 
@@ -84,7 +84,7 @@ When the dispatcher itself cannot run the handlers, because the payload's event 
 
 ### Requirement: Handlers Run In Order And Fail By Policy
 
-Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler and steers nothing. Each handler gets the smaller of its timeout and the event's remaining budget less a response reserve. A handler fails when it exits non-zero, times out, prints nothing or anything but one JSON result, or cannot start because the budget is spent. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
+Within one event the dispatcher MUST run handlers serially by `order`, then id. A `gate` event stops at the first `deny`. A `collect` event runs every handler and merges context in order, keeping any denial. A `passive` event runs every handler, keeps context and message, and steers nothing. Each handler gets the smaller of its timeout and the remaining budget less a response reserve. A handler fails when it exits non-zero, times out, prints anything but one JSON result, or cannot start on a spent budget. Under `warn` the action proceeds and the failure is logged. Under `deny` the dispatcher answers `deny`.
 
 #### Scenario: Guard times out
 
@@ -122,7 +122,7 @@ A handler that may return a replacement input MUST declare `rewrites: true` and 
 
 ### Requirement: Install Owns Its Entries And Nothing Else
 
-`rune install` MUST write one dispatcher entry per subscribed event into the Claude `settings.json` and Codex `hooks.json` tables and inventory every entry of those tables in the manifest as owned (its full registration hashed: matcher, command, arguments, timeout, async) or foreign (its source location). Ownership is by the command's `rune hook run` prefix and event, never by position. An owned entry whose registration differs from the plan and the manifest is a conflict that stops the install and names the file and event. `rune hook install --check` reports every owned entry that differs from the plan and every foreign entry it did not know.
+`rune install` MUST write one dispatcher entry per subscribed event into the Claude `settings.json` and Codex `hooks.json` tables and inventory every entry of those tables in the manifest as owned (its full registration hashed) or foreign (its source location). Ownership is by the command's `rune hook run` prefix and event, never by position. An owned entry whose registration differs from the plan and the manifest is a conflict that stops the install and names the file and event. `rune hook install --check` reports every owned entry that differs from the plan and every unknown foreign entry.
 
 #### Scenario: Foreign entries survive
 
@@ -136,7 +136,7 @@ A handler that may return a replacement input MUST declare `rewrites: true` and 
 
 ### Requirement: Install Adopts Predecessors And Migrates Legacy Entries
 
-An adapter MUST declare the registration pattern of the tool it replaces. On install, an entry that matches an active adapter's pattern (dcg, git-ai, rtk) or the legacy `sh ~/.sd/hook` dispatcher is removed and recorded in the manifest as adopted, in Claude `settings.json` and Codex `hooks.json`. Codex `config.toml` also holds the trust state, so rune MUST NOT rewrite it: a legacy entry there is reported with its line for the owner. A Codex entry rune wrote is trusted only after the harness's own trust step, so the install prints that step and `--check` reports an untrusted entry until then.
+An adapter MUST declare the pattern of the entry it replaces. Install removes an entry matching an active adapter's pattern from the Claude and Codex tables and records it as adopted. A legacy dispatcher entry (`sh ~/.sd/hook`, `sh ~/.config/just/hook`, `sd hook`) is never removed. The dispatcher skips a handler whose whole command a part provably runs, on Claude only: Codex loads its hooks once per session. Rune MUST NOT rewrite Codex `config.toml`, the trust store, and names its entries by line. Install prints the Codex trust step, and `--check` fails until the owner takes it.
 
 #### Scenario: git-ai adopted
 
@@ -145,5 +145,5 @@ An adapter MUST declare the registration pattern of the tool it replaces. On ins
 
 #### Scenario: Legacy dispatcher in the Codex config
 
-- **WHEN** `~/.codex/config.toml` holds `sh /Users/N4M3Z/.sd/hook PreToolUse`
-- **THEN** after install `hooks.json` holds the rune entry, the output reports the `config.toml` line as the legacy handler for the owner to remove, and the output names the Codex trust step
+- **WHEN** `~/.codex/config.toml` holds `sh /Users/N4M3Z/.sd/hook PreToolUse` and `$HOME/.local/bin/dcg`, and the dcg adapter runs on Codex `PreToolUse`
+- **THEN** `hooks.json` gains the rune entry, the dispatcher line keeps every word, and the output names the dcg line and the Codex trust step

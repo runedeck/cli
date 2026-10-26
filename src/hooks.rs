@@ -46,6 +46,15 @@ impl Harness {
     /// The harnesses release 1 registers. The others decode and report.
     pub const REGISTERED: [Self; 2] = [Self::Claude, Self::Codex];
 
+    /// Whether the harness reads a hook's `timeout` as whole seconds.
+    /// Claude's reference lists the field in seconds, Codex hashes it as
+    /// whole seconds, and Grok reads Claude's table. Gemini takes
+    /// milliseconds; `OpenCode` and Antigravity carry no such field.
+    #[must_use]
+    pub fn whole_second_timeout(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex | Self::Grok)
+    }
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -136,6 +145,22 @@ pub struct Native {
     pub cap_ms: Option<u64>,
 }
 
+impl Native {
+    /// The most a budget may hold so that the rendered timeout stays
+    /// under the cap: the cap itself, or its whole seconds on a harness
+    /// that reads whole seconds, rounded down. A cap under one second on
+    /// such a harness cannot be rendered and keeps the one second floor.
+    #[must_use]
+    pub fn budget_cap_ms(self, harness: Harness) -> Option<u64> {
+        let cap = self.cap_ms?;
+        if harness.whole_second_timeout() {
+            Some((cap / 1_000).max(1) * 1_000)
+        } else {
+            Some(cap)
+        }
+    }
+}
+
 impl Canonical {
     pub const ALL: [Self; 8] = [
         Self::SessionStart,
@@ -219,7 +244,10 @@ impl Canonical {
             (Self::SessionStart, Harness::Grok) => n("SessionStart", grok, None),
             (Self::SessionStart, Harness::Antigravity) => None,
 
-            (Self::SessionEnd, Harness::Claude) => n("SessionEnd", Some(1_500), Some(1_500)),
+            // Claude: SessionEnd hooks share 1.5 s by default, and a
+            // per-hook `timeout` raises that budget to match, up to 60 s
+            // (hooks reference, read 2026-10-25).
+            (Self::SessionEnd, Harness::Claude) => n("SessionEnd", Some(1_500), Some(60_000)),
             (Self::SessionEnd, Harness::Codex) => n("SessionEnd", Some(1_000), Some(3_000)),
             (Self::SessionEnd, Harness::Gemini) => n("SessionEnd", gemini, None),
             (Self::SessionEnd, Harness::Opencode) => None,
@@ -602,6 +630,17 @@ pub struct PlannedEvent {
     pub handlers: Vec<PlannedHandler>,
 }
 
+impl PlannedEvent {
+    /// The whole seconds a harness table carries for this event: the
+    /// budget rounded up, one at least, so the dispatcher's deadline ends
+    /// inside the harness's own. The compiled budget never exceeds the
+    /// whole seconds of the harness's cap, so neither does this.
+    #[must_use]
+    pub fn timeout_s(&self) -> u64 {
+        self.budget_ms.div_ceil(1_000).max(1)
+    }
+}
+
 /// A canonical event a harness lacks, with the handlers that wanted it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unsupported {
@@ -865,7 +904,7 @@ impl Hooks {
                 let mut budget = config
                     .and_then(|c| c.budget_ms)
                     .unwrap_or_else(|| canonical.default_budget_ms());
-                if let Some(cap) = native.cap_ms {
+                if let Some(cap) = native.budget_cap_ms(harness) {
                     budget = budget.min(cap);
                 }
                 let mut handlers: Vec<PlannedHandler> = subscribers
@@ -895,7 +934,9 @@ impl Hooks {
                     },
                 );
             }
-            // Native extensions of this harness.
+            // Native extensions of this harness. A name that is one of the
+            // harness's own canonical events keeps that event's cap, so a
+            // `codex:SessionEnd` renders inside Codex's 3 s like `session.end`.
             for handler in &self.handlers {
                 for subscription in &handler.events {
                     let Subscription::Native { harness: h, name } = subscription else {
@@ -904,7 +945,13 @@ impl Hooks {
                     if *h != harness {
                         continue;
                     }
-                    let budget = self.defaults.timeout_ms.max(1_000);
+                    let mut budget = self.defaults.timeout_ms.max(1_000);
+                    if let Some(cap) = Canonical::from_native(harness, name)
+                        .and_then(|canonical| canonical.native(harness))
+                        .and_then(|native| native.budget_cap_ms(harness))
+                    {
+                        budget = budget.min(cap);
+                    }
                     let event = events.entry(name.clone()).or_insert_with(|| PlannedEvent {
                         canonical: None,
                         mode: Mode::Passive,
@@ -1003,7 +1050,7 @@ handlers:
         let end = claude.get("SessionEnd").expect("session.end");
         assert_eq!(
             end.budget_ms, 700,
-            "the canonical default, under Claude's 1.5 s cap"
+            "the canonical default, under Claude's 60 s cap"
         );
         let ids: Vec<&str> = end.handlers.iter().map(|h| h.id.as_str()).collect();
         assert_eq!(ids, ["session-capture", "turn-checkpoint", "tmux-status"]);
@@ -1041,22 +1088,221 @@ handlers:
             },
         );
         let plan = hooks.compile().expect("compiles");
+        let claude = &plan.harnesses[&Harness::Claude]["SessionEnd"];
         assert_eq!(
-            plan.harnesses[&Harness::Claude]["SessionEnd"].budget_ms,
-            1_500
+            claude.budget_ms, 5_000,
+            "Claude raises its 1.5 s default to a per-hook timeout, up to 60 s"
         );
+        assert_eq!(claude.timeout_s(), 5);
+        let codex = &plan.harnesses[&Harness::Codex]["SessionEnd"];
+        assert_eq!(codex.budget_ms, 3_000);
         assert_eq!(
-            plan.harnesses[&Harness::Codex]["SessionEnd"].budget_ms,
-            3_000
+            codex.timeout_s(),
+            3,
+            "the rendered seconds hold the 3 s cap"
         );
-        assert_eq!(
-            plan.harnesses[&Harness::Codex]["SessionEnd"].handlers[0].timeout_ms,
-            3_000
-        );
+        assert_eq!(codex.handlers[0].timeout_ms, 3_000);
         assert_eq!(
             plan.harnesses[&Harness::Grok]["SessionEnd"].budget_ms,
             5_000
         );
+    }
+
+    #[test]
+    fn a_claude_session_end_past_sixty_seconds_stops_at_the_cap() {
+        let mut hooks = five();
+        hooks.events.insert(
+            Canonical::SessionEnd,
+            EventConfig {
+                mode: None,
+                budget_ms: Some(90_000),
+            },
+        );
+        let plan = hooks.compile().expect("compiles");
+        let claude = &plan.harnesses[&Harness::Claude]["SessionEnd"];
+        assert_eq!(claude.budget_ms, 60_000);
+        assert_eq!(claude.timeout_s(), 60);
+        assert_eq!(
+            claude.handlers[0].timeout_ms, 5_000,
+            "the handler's own ask"
+        );
+    }
+
+    #[test]
+    fn every_cap_holds_the_rendered_seconds_and_the_deadline() {
+        let mut hooks = five();
+        for canonical in Canonical::ALL {
+            hooks.events.insert(
+                canonical,
+                EventConfig {
+                    mode: None,
+                    budget_ms: Some(600_000),
+                },
+            );
+        }
+        let plan = hooks.compile().expect("compiles");
+        let mut capped = Vec::new();
+        for (harness, events) in &plan.harnesses {
+            for (name, event) in events {
+                let Some(cap) = event
+                    .canonical
+                    .and_then(|c| c.native(*harness))
+                    .and_then(|n| n.cap_ms)
+                else {
+                    continue;
+                };
+                capped.push((*harness, name.as_str()));
+                let rendered_ms = event.timeout_s() * 1_000;
+                assert!(
+                    rendered_ms <= cap,
+                    "{harness} {name}: {rendered_ms} over {cap}"
+                );
+                assert!(
+                    event.budget_ms <= rendered_ms,
+                    "{harness} {name}: the deadline {} ends past the rendered {rendered_ms}",
+                    event.budget_ms
+                );
+            }
+        }
+        assert_eq!(
+            capped,
+            [
+                (Harness::Claude, "SessionEnd"),
+                (Harness::Codex, "SessionEnd")
+            ],
+            "the table's caps, each one exercised"
+        );
+    }
+
+    #[test]
+    fn a_cap_inside_a_second_rounds_the_budget_down_where_seconds_are_whole() {
+        let native = Native {
+            name: "x",
+            default_ms: None,
+            cap_ms: Some(1_500),
+        };
+        assert_eq!(native.budget_cap_ms(Harness::Claude), Some(1_000));
+        assert_eq!(native.budget_cap_ms(Harness::Codex), Some(1_000));
+        assert_eq!(
+            native.budget_cap_ms(Harness::Gemini),
+            Some(1_500),
+            "Gemini renders milliseconds"
+        );
+        let under = Native {
+            cap_ms: Some(500),
+            ..native
+        };
+        assert_eq!(
+            under.budget_cap_ms(Harness::Claude),
+            Some(1_000),
+            "whole seconds cannot go under one"
+        );
+        let event = PlannedEvent {
+            canonical: None,
+            mode: Mode::Passive,
+            budget_ms: 1_000,
+            response_reserve_ms: 0,
+            handlers: Vec::new(),
+        };
+        assert_eq!(event.timeout_s(), 1);
+        assert_eq!(
+            PlannedEvent {
+                budget_ms: 1_001,
+                ..event
+            }
+            .timeout_s(),
+            2
+        );
+    }
+
+    fn native_handler(harness: Harness, name: &str) -> Handler {
+        Handler {
+            id: format!("{harness}-{}", name.to_lowercase().replace('.', "-")),
+            exec: vec!["x".to_string()],
+            events: vec![Subscription::Native {
+                harness,
+                name: name.to_string(),
+            }],
+            order: None,
+            timeout_ms: None,
+            on_failure: None,
+            requires: Vec::new(),
+            rewrites: false,
+            per_harness: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_native_subscription_to_a_capped_event_renders_inside_the_cap() {
+        // Every harness, every native name it has, under a default that
+        // would render 601 s: the event's cap holds for a native
+        // subscription as it does for the canonical one.
+        let mut hooks = Hooks::default();
+        hooks.defaults.timeout_ms = 600_001;
+        for harness in Harness::ALL {
+            for canonical in Canonical::ALL {
+                if let Some(native) = canonical.native(harness) {
+                    hooks.handlers.push(native_handler(harness, native.name));
+                }
+            }
+        }
+        let plan = hooks.compile().expect("compiles");
+        let mut capped = Vec::new();
+        for harness in Harness::ALL {
+            for canonical in Canonical::ALL {
+                let Some(native) = canonical.native(harness) else {
+                    continue;
+                };
+                let event = &plan.harnesses[&harness][native.name];
+                assert_eq!(
+                    event.canonical, None,
+                    "a native subscription stays an extension"
+                );
+                let rendered_ms = event.timeout_s() * 1_000;
+                assert!(
+                    event.budget_ms <= rendered_ms,
+                    "{harness} {}: the deadline ends past the rendered timeout",
+                    native.name
+                );
+                if let Some(cap) = native.cap_ms {
+                    capped.push((harness, native.name));
+                    assert!(
+                        rendered_ms <= cap,
+                        "{harness} {}: {rendered_ms} over {cap}",
+                        native.name
+                    );
+                    assert!(event.handlers[0].timeout_ms <= cap);
+                } else {
+                    assert_eq!(event.budget_ms, 600_001, "{harness} {}", native.name);
+                }
+            }
+        }
+        assert_eq!(
+            capped,
+            [
+                (Harness::Claude, "SessionEnd"),
+                (Harness::Codex, "SessionEnd")
+            ],
+            "the table's caps, each one exercised"
+        );
+    }
+
+    #[test]
+    fn the_reviewed_native_session_end_timeouts_render_at_the_cap() {
+        // `codex:SessionEnd` under a 3001 ms default rendered 4 s against
+        // Codex's 3 s, and `claude:SessionEnd` under 60001 ms rendered
+        // 61 s against Claude's 60 s (review, 2026-10-25).
+        for (harness, default_ms, seconds) in
+            [(Harness::Codex, 3_001, 3), (Harness::Claude, 60_001, 60)]
+        {
+            let mut hooks = Hooks::default();
+            hooks.defaults.timeout_ms = default_ms;
+            hooks.handlers.push(native_handler(harness, "SessionEnd"));
+            let plan = hooks.compile().expect("compiles");
+            let event = &plan.harnesses[&harness]["SessionEnd"];
+            assert_eq!(event.timeout_s(), seconds, "{harness}");
+            assert_eq!(event.budget_ms, seconds * 1_000, "{harness}");
+        }
     }
 
     #[test]

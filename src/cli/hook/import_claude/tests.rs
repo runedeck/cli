@@ -15,9 +15,39 @@ fn tool_use(ts: &str, id: &str, path: &str) -> String {
 }
 
 fn block(ts: &str, id: &str, text: &str) -> String {
+    block_from("/Users/x/.sd/hook", ts, id, text)
+}
+
+/// A lint denial as the dispatcher at `hook` reported it.
+fn block_from(hook: &str, ts: &str, id: &str, text: &str) -> String {
     format!(
-        r#"{{"type":"attachment","timestamp":"{ts}","sessionId":"s1","cwd":"/w","attachment":{{"type":"hook_blocking_error","hookEvent":"PostToolUse","hookName":"PostToolUse:Write","toolUseID":"{id}","blockingError":{{"command":"sh /Users/x/.sd/hook PostToolUse","blockingError":"[sh /Users/x/.sd/hook PostToolUse]: {text}"}}}}}}"#
+        r#"{{"type":"attachment","timestamp":"{ts}","sessionId":"s1","cwd":"/w","attachment":{{"type":"hook_blocking_error","hookEvent":"PostToolUse","hookName":"PostToolUse:Write","toolUseID":"{id}","blockingError":{{"command":"sh {hook} PostToolUse","blockingError":"[sh {hook} PostToolUse]: {text}"}}}}}}"#
     )
+}
+
+#[test]
+fn a_denial_from_the_just_dispatcher_is_imported() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    let dir = temp.path().join("record");
+    let file = store.join("proj").join("one.jsonl");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        [
+            tool_use("2026-10-24T09:00:00.000Z", "toolu_9", "/w/a.md"),
+            block_from(
+                "/Users/x/.config/just/hook",
+                "2026-10-24T09:00:01.000Z",
+                "toolu_9",
+                "a.md:7:121: [MD013] Line length 127 exceeds 120 characters",
+            ),
+        ]
+        .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    assert_eq!(import(&store, &dir).unwrap().added, 1);
 }
 
 fn advice(ts: &str, id: &str, text: &str) -> String {
@@ -119,6 +149,7 @@ fn a_live_record_that_holds_the_tool_use_is_not_imported_again() {
         failure: None,
         metrics: None,
         source: None,
+        skipped: None,
     };
     assert_eq!(
         record::write_all(&dir, vec![live], Duration::from_secs(2)),

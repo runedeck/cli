@@ -157,7 +157,8 @@ pub(crate) struct Workspace {
     /// start, as `key=value` lines.
     git_settings: Vec<String>,
     /// The folder that holds the workspace's own jj configuration (the
-    /// guard), once the guard is set.
+    /// guard), learned as the workspace is added and removed by the
+    /// finish, however the run ended.
     config_dir: Option<PathBuf>,
     /// Why the guard could not be set, when it could not: the run goes on
     /// without that layer, and the result says so.
@@ -219,6 +220,11 @@ pub(crate) struct Outcome {
     pub(crate) path: Option<PathBuf>,
     /// The step that failed, or why the folder stays, when one did.
     pub(crate) error: Option<String>,
+    /// The folder that held the guard, under the user's jj configuration,
+    /// when its removal failed and it stays for the owner to remove.
+    pub(crate) guard_folder: Option<PathBuf>,
+    /// Why the guard's folder could not be removed, when it stays.
+    pub(crate) guard_folder_error: Option<String>,
 }
 
 /// The run state file: what a kill at any phase leaves to clean up by.
@@ -1088,6 +1094,10 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
     // is one layer: where that configuration cannot be written (a sandbox
     // that denies the user's jj configuration folder), the run goes on
     // without it, says so, and the outside change report still runs.
+    // The folder is asked for first: jj creates it as it answers, so the
+    // run knows what to remove even when the guard write that follows
+    // fails halfway, and the state file names it from this point on.
+    workspace.config_dir = workspace_config_dir(workspace);
     let guard = guard_revset(&workspace.name, &copy.commit_id);
     match jj_in(
         &workspace.path,
@@ -1102,7 +1112,11 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
             OsStr::new(&guard),
         ],
     ) {
-        Ok(_) => workspace.config_dir = workspace_config_dir(workspace),
+        Ok(_) => {
+            if workspace.config_dir.is_none() {
+                workspace.config_dir = workspace_config_dir(workspace);
+            }
+        }
         Err(error) => workspace.guard_error = Some(error),
     }
     workspace.write_state("added", None);
@@ -1128,6 +1142,13 @@ pub(crate) fn finish(workspace: &Workspace, survivor: bool) -> Outcome {
     if let Err(error) = finish_steps(workspace, &mut outcome, survivor) {
         outcome.error = Some(error);
     }
+    // The guard's folder goes however the steps ended. It holds only the
+    // run's own setting and jj's record of the workspace, and jj does not
+    // remove it with the workspace, so a step that failed before the end
+    // must not keep it either. A removal that fails is a warning, not a
+    // failed step: the result names the folder, and the run's status stays
+    // the harness's.
+    remove_config_dir(workspace, &mut outcome);
     if workspace.path.exists() {
         outcome.path = Some(workspace.path.clone());
         workspace.write_state("stayed", outcome.end_operation.as_deref());
@@ -1411,6 +1432,36 @@ fn workspace_config_dir(workspace: &Workspace) -> Option<PathBuf> {
     under_workspaces.then_some(dir)
 }
 
+/// Remove the folder `workspace_config_dir` named for this run, and nothing
+/// else: the rule that it sits directly under `workspaces` is checked again
+/// here, so a path that was recorded wrongly is left alone rather than
+/// removed. A folder that is already gone is no error. A removal that
+/// fails (a parent the run may not write, so the emptied folder stays)
+/// goes to the outcome with the folder's path, so the owner can remove it.
+fn remove_config_dir(workspace: &Workspace, outcome: &mut Outcome) {
+    let Some(dir) = &workspace.config_dir else {
+        return;
+    };
+    let under_workspaces = dir
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "workspaces");
+    if !under_workspaces {
+        return;
+    }
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            outcome.guard_folder = Some(dir.clone());
+            outcome.guard_folder_error = Some(format!(
+                "cannot remove the guard's folder {}: {error}",
+                dir.display()
+            ));
+        }
+    }
+}
+
 /// Stop tracking the workspace, without touching its files: for a folder
 /// that stays, and as the fallback of a removal that failed, so no stale
 /// workspace stays tracked.
@@ -1426,31 +1477,62 @@ fn forget_workspace(workspace: &Workspace) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// Stop tracking the workspace and delete its files, under the repository
-/// lock that guards git's worktree registration. `workspace remove`
-/// refuses `--ignore-working-copy`, so it snapshots the caller's checkout
-/// once more. When it fails, the workspace is at least forgotten, and the
-/// error goes to the outcome.
-fn remove_workspace(workspace: &Workspace) -> Result<(), String> {
-    let _lock = lock_repository(&workspace.lock_path)?;
-    let root = &workspace.root;
-    if let Err(error) = jj_in(
-        root,
+/// `jj workspace remove` of the run's workspace, run from `checkout`.
+/// The command refuses `--ignore-working-copy`, so it snapshots the
+/// checkout it runs from, and refuses a checkout that is stale.
+fn workspace_remove_from(checkout: &Path, name: &str) -> Result<(), String> {
+    jj_in(
+        checkout,
         &[
             OsStr::new("-R"),
-            root.as_os_str(),
+            checkout.as_os_str(),
             OsStr::new("workspace"),
             OsStr::new("remove"),
-            OsStr::new(&workspace.name),
+            OsStr::new(name),
         ],
-    ) {
-        let _ = forget_workspace(workspace);
+    )
+    .map(|_| ())
+}
+
+/// The removal retried from the run's own folder at `path`, or the reason
+/// it was skipped: a folder that is already gone cannot start jj, and the
+/// spawn error for a missing folder would name a missing jj binary
+/// instead, which sends the owner to the wrong cause.
+fn workspace_remove_from_run(path: &Path, name: &str) -> Result<(), String> {
+    if !path.is_dir() {
         return Err(format!(
-            "cannot remove workspace folder {}: {error}",
-            workspace.path.display()
+            "the run's folder {} is already gone",
+            path.display()
         ));
     }
-    Ok(())
+    workspace_remove_from(path, name)
+}
+
+/// Stop tracking the workspace and delete its files, under the repository
+/// lock that guards git's worktree registration. The removal runs from
+/// the caller's checkout first: it snapshots the checkout, so a caller
+/// edit shows in the conflict flag. jj refuses that while the caller's
+/// checkout is stale, which a squash from another workspace of the
+/// repository leaves behind when it rewrites the caller's working copy
+/// with a new tree, and only the caller may update its own files. The
+/// removal then runs from the run's own workspace, which the finish just
+/// recorded and nothing outside the run rewrites: the same jj command,
+/// snapshotting the run's folder instead. A run folder that is already
+/// gone skips that retry and is named as gone. When both fail, the
+/// workspace is at least forgotten, and both errors go to the outcome.
+fn remove_workspace(workspace: &Workspace) -> Result<(), String> {
+    let _lock = lock_repository(&workspace.lock_path)?;
+    let Err(from_caller) = workspace_remove_from(&workspace.root, &workspace.name) else {
+        return Ok(());
+    };
+    let Err(from_run) = workspace_remove_from_run(&workspace.path, &workspace.name) else {
+        return Ok(());
+    };
+    let _ = forget_workspace(workspace);
+    Err(format!(
+        "cannot remove workspace folder {}: {from_caller}; from the run's workspace: {from_run}",
+        workspace.path.display()
+    ))
 }
 
 /// Whether any of the caller's commits recorded at the start is gone or
@@ -1609,9 +1691,6 @@ fn finish_steps(
         outcome.conflicted = Some(false);
         outcome.outside_changes = Some(true);
         forget_workspace(workspace)?;
-        if let Some(dir) = &workspace.config_dir {
-            let _ = std::fs::remove_dir_all(dir);
-        }
         clean_up(workspace, outcome, &lineage, None, &worktree_log)?;
         outcome.end_operation = Some(latest_operation(root)?);
         return Err(format!(
@@ -1637,9 +1716,6 @@ fn finish_steps(
     } else {
         remove_workspace(workspace)
     };
-    if let Some(dir) = &workspace.config_dir {
-        let _ = std::fs::remove_dir_all(dir);
-    }
     // The conflict flag is measured whatever the cleanup did: a cleanup
     // that fails (a run commit made immutable meanwhile) must not leave an
     // unmeasured value behind.
@@ -1866,6 +1942,21 @@ mod tests {
             let through_alias = alias.join("state/workspaces/repo-1/run-1");
             assert!(refuse_inside_checkout(&through_alias, &checkout).is_err());
         }
+    }
+
+    #[test]
+    fn a_retry_from_a_run_folder_that_is_gone_names_the_folder_not_jj() {
+        let root = tempfile::tempdir().expect("root");
+        let gone = root.path().join("workspaces/repo-1/run-1");
+        let error = workspace_remove_from_run(&gone, "run-1").expect_err("gone folder");
+        assert!(error.contains("already gone"), "{error}");
+        assert!(error.contains(&gone.display().to_string()), "{error}");
+        assert!(!error.contains("PATH"), "{error}");
+        // A folder that is there still goes to jj, whose own refusal is
+        // the error.
+        let present = workspace_remove_from_run(root.path(), "run-1").expect_err("no repository");
+        assert!(present.contains("jj"), "{present}");
+        assert!(!present.contains("already gone"), "{present}");
     }
 
     #[test]

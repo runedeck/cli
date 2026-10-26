@@ -61,19 +61,22 @@ When the config declares no handler and an earlier install left a plan generatio
 - **WHEN** an install registered dcg, the owner then sets `hooks.handlers` to an empty list, and `Stop` holds the owner's own hook
 - **THEN** `rune hook install --check` exits non-zero, and after `rune hook install` the tables hold no rune entry and `Stop` keeps the owner's hook
 
-### Requirement: The Legacy Dispatcher Goes Where Rune Takes Over
+### Requirement: The Legacy Dispatcher Keeps Its Entry
 
-Install MUST adopt a legacy `sh ~/.sd/hook` entry only on an event the plan registers for that harness. On any other event install MUST keep the entry and warn that no handler takes its place. Install MUST adopt a predecessor, legacy or a tool's own, only from a command that runs it alone. A command that joins it with other commands MUST stay whole, and install MUST warn that the owner splits it by hand.
+Install MUST keep a legacy dispatcher entry (`sh ~/.config/just/hook <Event>`, `sh ~/.sd/hook <Event>`, `sd hook <Event>`) and MUST NOT advise its removal. Every handler stays in the generation. Install MUST record the handler whose whole command the first part runs, and name both. `rune hook run` MUST skip the handler only while the entry, its keys, the shell, the script, the environment, the first part, and the command hold at each firing. A `deny` handler or a rewriter is never skipped. A matcher, a compound line, or a Codex table skips nothing, and install names each later part that makes a handler run twice, and why.
 
-#### Scenario: Turn wrap on Stop
+#### Scenario: Owner's Stop parts on Claude
 
-- **WHEN** `Stop` holds `sh ~/.sd/hook Stop` and no handler subscribes to `turn.finish`
-- **THEN** the entry stays, and the install output warns that no handler takes its place
+- **WHEN** `Stop` holds `sh $HOME/.config/just/hook Stop`, its `Stop.d` parts run the tmux attention script and the turn checkpoint, and handlers run `rune-hook-tmux-status`, `rune-hook-turn-checkpoint`, and `rune-hook-session-capture` on `turn.finish`
+- **THEN** the entry stays and Claude's `Stop` generation keeps all three handlers
+- **AND** the output names tmux as covered with its part, and turn as not covered with its part, because that part is not the first
+- **AND** `rune hook run` skips tmux and runs turn and capture
+- **AND** once the tmux part is gone, the next firing runs tmux with no install
 
 #### Scenario: Legacy dispatcher joined with an owner's check
 
 - **WHEN** `PreToolUse` holds `sh ~/.sd/hook PreToolUse && /owner/check-policy` and a handler subscribes to `tool.before`
-- **THEN** the command stays whole, and the install output warns that it runs the legacy dispatcher with other commands
+- **THEN** the command stays whole, every handler stays in the generation, and the install output warns that a part may run twice
 
 ### Requirement: A Tool's Entry Goes Where Its Adapter Runs
 

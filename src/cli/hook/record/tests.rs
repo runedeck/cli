@@ -29,6 +29,7 @@ fn record(ts: &str, hook: &str) -> Record {
         failure: None,
         metrics: None,
         source: None,
+        skipped: None,
     }
 }
 

@@ -536,7 +536,12 @@ fn the_adapter_judges_the_command_the_harness_will_run() {
 #[test]
 fn claude_hears_the_advice_beside_its_tool_call() {
     let result = verdict("cd /x && cargo build");
-    let answer = encode::encode(Harness::Claude, "PreToolUse", &result);
+    let answer = encode::encode(
+        Harness::Claude,
+        "PreToolUse",
+        rune::hooks::Mode::Gate,
+        &result,
+    );
     let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
     let context = out["hookSpecificOutput"]["additionalContext"]
         .as_str()

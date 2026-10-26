@@ -11,10 +11,12 @@ use rune::ontology;
 
 pub(crate) mod adapters;
 pub(crate) mod codex_trust;
+pub(crate) mod cover;
 pub(crate) mod encode;
 pub(crate) mod findings;
 pub(crate) mod import_claude;
 pub(crate) mod install;
+pub(crate) mod legacy;
 pub(crate) mod payload;
 pub(crate) mod plan;
 pub(crate) mod publish;

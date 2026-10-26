@@ -241,10 +241,13 @@ fn author_identity_in(
             )
         }
     };
-    write_checkout_identity(&cwd, &name, &email, config_home)?;
+    let notes = write_checkout_identity(&cwd, &name, &email, config_home)?;
     let mut result = HandlerResult::default();
     if let Some(warning) = warning {
         result = result.with_warning(&warning);
+    }
+    for note in &notes {
+        result = result.with_warning(note);
     }
     Ok(result)
 }
@@ -272,57 +275,426 @@ pub(crate) fn written_paths(tool: &super::payload::ToolPayload) -> Vec<PathBuf> 
         .collect()
 }
 
-/// jj repository config, and git config when the checkout is colocated.
+/// The checkout the adapter writes. `config_home`, when a test gives it,
+/// replaces jj's config directory and git's global config, so no test
+/// reads or writes the owner's files.
+struct Checkout<'a> {
+    cwd: &'a Path,
+    config_home: Option<&'a Path>,
+}
+
+impl Checkout<'_> {
+    fn jj(&self, args: &[&str]) -> Command {
+        let mut command = Command::new("jj");
+        command.args(args).current_dir(self.cwd);
+        if let Some(home) = self.config_home {
+            command.env("XDG_CONFIG_HOME", home);
+        }
+        command
+    }
+
+    fn git(&self, args: &[&str]) -> Command {
+        let mut command = Command::new("git");
+        command.args(args).current_dir(self.cwd);
+        if let Some(home) = self.config_home {
+            command.env("GIT_CONFIG_GLOBAL", home.join("git").join("config"));
+        }
+        command
+    }
+
+    /// `git config` with `args`: the value, `None` when the key is unset
+    /// (exit 1), and the stderr as the error otherwise.
+    fn git_get(&self, args: &[&str]) -> Result<Option<String>, String> {
+        let output = self
+            .git(&[&["config"], args].concat())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        match output.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            )),
+            Some(1) => Ok(None),
+            _ => Err(format!(
+                "git config {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+}
+
+/// Run a jj or git command: its stdout on success, its stderr as the
+/// error otherwise.
+fn capture(mut command: Command) -> Result<String, String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("cannot run {program}: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// The jj config of the workspace the session runs in (jj 0.46 keeps it
+/// under the user's config directory, one file per workspace, so a second
+/// workspace of the repository never reads it), the author of that
+/// workspace's own working-copy commit, and git's config for that
+/// worktree when the checkout is colocated. The git write needs
+/// `extensions.worktreeConfig`. When git cannot take it, no git identity
+/// is written, because the only file left is the shared `.git/config`,
+/// and the returned notes say so.
 pub(crate) fn write_checkout_identity(
     cwd: &Path,
     name: &str,
     email: &str,
     config_home: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
+    let checkout = Checkout { cwd, config_home };
     let has_jj = cwd.join(".jj").is_dir() || jj_root(cwd).is_some();
-    if !has_jj && !cwd.join(".git").exists() {
+    let has_git = cwd.join(".git").exists();
+    if !has_jj && !has_git {
         return Err(format!("{} is not a jj or git checkout", cwd.display()));
     }
+    let pairs = [("user.name", name), ("user.email", email)];
+    let mut notes = Vec::new();
     if has_jj {
-        for (key, value) in [("user.name", name), ("user.email", email)] {
-            let mut command = Command::new("jj");
-            command
-                .args(["config", "set", "--repo", key, value])
-                .current_dir(cwd);
-            if let Some(home) = config_home {
-                command.env("XDG_CONFIG_HOME", home);
+        for (key, value) in pairs {
+            capture(checkout.jj(&["config", "set", "--workspace", key, value]))
+                .map_err(|e| format!("jj config set {key} failed: {e}"))?;
+        }
+        notes.extend(adopt_working_copy_author(&checkout)?);
+    }
+    if has_git {
+        match git_identity_scope(&checkout)? {
+            GitScope::Worktree => {
+                for (key, value) in pairs {
+                    capture(checkout.git(&["config", "--worktree", key, value]))
+                        .map_err(|e| format!("git config --worktree {key} failed: {e}"))?;
+                }
+                if let Some(note) = overriding_identity(&checkout, &pairs)? {
+                    for (key, _) in pairs {
+                        capture(checkout.git(&["config", "--worktree", "--unset-all", key]))
+                            .map_err(|e| {
+                                format!("git config --worktree --unset-all {key} failed: {e}")
+                            })?;
+                    }
+                    notes.push(note);
+                }
             }
-            let status = command
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| format!("cannot run jj: {e}"))?;
-            if !status.status.success() {
-                return Err(format!(
-                    "jj config set {key} failed: {}",
-                    String::from_utf8_lossy(&status.stderr).trim()
-                ));
-            }
+            GitScope::Shared(why) => notes.push(format!(
+                "{why}. No git identity was written: the one file left is the shared .git/config, which every worktree of the repository reads. A raw git commit here carries the global git identity; a jj commit carries the session's"
+            )),
         }
     }
-    if cwd.join(".git").exists() {
-        for (key, value) in [("user.name", name), ("user.email", email)] {
-            let status = Command::new("git")
-                .args(["config", key, value])
-                .current_dir(cwd)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| format!("cannot run git: {e}"))?;
-            if !status.status.success() {
-                return Err(format!(
-                    "git config {key} failed: {}",
-                    String::from_utf8_lossy(&status.stderr).trim()
-                ));
+    Ok(notes)
+}
+
+/// jj sets a commit's author when it creates the commit, so a working-copy
+/// commit made before the session picked its identity keeps the earlier
+/// author through `jj commit`. The workspace's working-copy commit takes
+/// the identity through `jj metaedit --update-author` only while it is
+/// this session's own: empty, undescribed, on one parent, and the working
+/// copy of no other workspace, and mutable so jj lets it. Any other
+/// commit holds someone's work, a merge, a described change, or a commit
+/// another workspace edits too, and re-authoring it would hand that work
+/// to this session. There `jj new` starts the session in a fresh working
+/// copy, which jj authors from the identity written a moment ago, and the
+/// earlier commit keeps its author. The note says which happened.
+fn adopt_working_copy_author(checkout: &Checkout<'_>) -> Result<Vec<String>, String> {
+    let shown = capture(checkout.jj(&[
+        "log",
+        "-r",
+        "@",
+        "--no-graph",
+        "-T",
+        r#"change_id.short() ++ "|" ++ if(empty, "empty", "edited") ++ "|" ++ if(description, "described", "undescribed") ++ "|" ++ parents.len() ++ "|" ++ if(immutable, "immutable", "mutable") ++ "|" ++ working_copies"#,
+    ]))
+    .map_err(|e| format!("jj log @ failed: {e}"))?;
+    let copy = WorkingCopy::parse(shown.trim())
+        .ok_or_else(|| format!("jj log @ printed `{}`", shown.trim()))?;
+    let change = &copy.change;
+    let mut kept = copy.kept_because();
+    if kept.is_empty() {
+        match capture(checkout.jj(&["metaedit", "--update-author", "-r", "@"])) {
+            Ok(_) => {
+                return Ok(vec![format!(
+                    "the working-copy commit {change} is empty, undescribed, and this workspace's alone, so it takes the session's author"
+                )]);
             }
+            Err(error) => kept.push(format!("jj metaedit failed ({error})")),
         }
     }
-    Ok(())
+    let why = kept.join(", ");
+    Ok(vec![match capture(checkout.jj(&["new"])) {
+        Ok(_) => format!(
+            "the working-copy commit {change} keeps its author ({why}); the session starts in a new working copy on top of it"
+        ),
+        Err(error) => format!(
+            "the working-copy commit {change} keeps its author ({why}), and jj new failed: {error}; a commit of this session carries that author"
+        ),
+    }])
+}
+
+/// What `jj log -r @` says about the working-copy commit, from the
+/// template `adopt_working_copy_author` renders: `change|empty|described|
+/// parents|immutable|working_copies`, where jj 0.46 lists the working
+/// copies as `name@` per workspace, space-separated, and prints nothing
+/// in a repository with one workspace.
+struct WorkingCopy {
+    change: String,
+    empty: bool,
+    described: bool,
+    parents: usize,
+    immutable: bool,
+    /// The workspaces whose working copy this commit is, `name@` each.
+    workspaces: Vec<String>,
+}
+
+impl WorkingCopy {
+    fn parse(line: &str) -> Option<Self> {
+        let mut fields = line.splitn(6, '|');
+        let change = fields.next()?.to_string();
+        let empty = fields.next()? == "empty";
+        let described = fields.next()? == "described";
+        let parents = fields.next()?.parse().ok()?;
+        let immutable = fields.next()? == "immutable";
+        let workspaces = fields
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        Some(Self {
+            change,
+            empty,
+            described,
+            parents,
+            immutable,
+            workspaces,
+        })
+    }
+
+    /// Why the commit keeps its author, empty when it is this session's
+    /// own and takes it.
+    fn kept_because(&self) -> Vec<String> {
+        let mut why = Vec::new();
+        if !self.empty {
+            why.push("it has edits".to_string());
+        }
+        if self.described {
+            why.push("it is described".to_string());
+        }
+        if self.parents != 1 {
+            why.push(format!("it has {} parents", self.parents));
+        }
+        if self.workspaces.len() > 1 {
+            why.push(format!(
+                "it is the working copy of {}",
+                self.workspaces.join(" and ")
+            ));
+        }
+        if self.immutable {
+            why.push("it is immutable".to_string());
+        }
+        why
+    }
+}
+
+/// What git reads for the identity after the worktree write, when it is
+/// not the session's. Git reads an `include.path` where the directive
+/// stands, so an include after the `[user]` keys in `config.worktree`
+/// sets them again, and the write changed nothing git sees: a Fable
+/// session committed as Astra through one, and the authorship check
+/// passed, because Astra is a listed author (found in review,
+/// 2026-10-25). So each key is read back from the worktree with its
+/// origin, and the note names the origin and the value of each key that
+/// differs. `None` when both keys read as written.
+fn overriding_identity(
+    checkout: &Checkout<'_>,
+    pairs: &[(&str, &str); 2],
+) -> Result<Option<String>, String> {
+    let mut overrides = Vec::new();
+    for (key, value) in pairs {
+        // `--show-origin --get` prints `file:<path>\t<value>` for the
+        // value git takes, the last one in precedence order.
+        let shown = checkout.git_get(&["--show-origin", "--get", key])?;
+        let (origin, effective) = shown
+            .as_deref()
+            .and_then(|line| line.split_once('\t'))
+            .unwrap_or(("", ""));
+        if effective != *value {
+            let origin = origin.strip_prefix("file:").unwrap_or(origin);
+            overrides.push(if shown.is_none() {
+                format!("{key} reads as unset")
+            } else {
+                format!("{key} reads as `{effective}` from {origin}")
+            });
+        }
+    }
+    if overrides.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "{} after the write to this worktree's config.worktree, so that file or one it includes overrides the keys. They were removed again and no git identity was written. A raw git commit here carries that identity; a jj commit carries the session's",
+        overrides.join(", and ")
+    )))
+}
+
+/// Where git keeps a session identity for this worktree.
+enum GitScope {
+    /// `git config --worktree` reaches this worktree's own file.
+    Worktree,
+    /// Only the shared `.git/config` is left, for the reason given.
+    Shared(String),
+}
+
+/// `--worktree` once `extensions.worktreeConfig` is on in the repository
+/// config, turned on here when git allows it. A global
+/// `extensions.worktreeConfig` is ignored by git, so it is read with
+/// `--local`. git-config(1) says a `core.worktree`, or a `core.bare` that
+/// is true, has to move into the main worktree's `config.worktree` by
+/// hand first. And git ignores every `config.worktree` while the extension
+/// is off, so one that already sets either key would apply the moment it
+/// turns on: a dormant `core.bare = true` broke `git status` in review.
+/// With either, the answer names the cause and the caller writes no git
+/// identity.
+fn git_identity_scope(checkout: &Checkout<'_>) -> Result<GitScope, String> {
+    if checkout
+        .git_get(&[
+            "--local",
+            "--type=bool",
+            "--get",
+            "extensions.worktreeConfig",
+        ])?
+        .as_deref()
+        == Some("true")
+    {
+        return Ok(GitScope::Worktree);
+    }
+    let mut set = Vec::new();
+    for (key, args) in [
+        (
+            "core.bare",
+            &["--show-origin", "--type=bool", "--get", "core.bare"][..],
+        ),
+        (
+            "core.worktree",
+            &["--show-origin", "--get", "core.worktree"][..],
+        ),
+    ] {
+        // `--show-origin --get` prints `file:<path>\t<value>`, and a
+        // `core.bare = false` is no bar.
+        let Some(shown) = checkout.git_get(args)? else {
+            continue;
+        };
+        let (origin, value) = shown.split_once('\t').unwrap_or(("", shown.as_str()));
+        if key == "core.bare" && value != "true" {
+            continue;
+        }
+        let origin = origin.strip_prefix("file:").unwrap_or(origin);
+        set.push(format!("{key} is set in {origin}"));
+    }
+    if !set.is_empty() {
+        let keys = if set.len() == 1 {
+            "the key"
+        } else {
+            "the keys"
+        };
+        return Ok(GitScope::Shared(format!(
+            "git keeps one config for every worktree of this repository: {}, and extensions.worktreeConfig needs {keys} moved into config.worktree by hand first",
+            set.join(" and ")
+        )));
+    }
+    for file in worktree_config_files(checkout)? {
+        if let Some(fault) = work_tree_fault(checkout, &file) {
+            return Ok(GitScope::Shared(format!(
+                "{} {fault}, and git would read it the moment extensions.worktreeConfig turns on, so the extension stays off",
+                file.display()
+            )));
+        }
+    }
+    capture(checkout.git(&["config", "--local", "extensions.worktreeConfig", "true"]))
+        .map_err(|e| format!("git config --local extensions.worktreeConfig failed: {e}"))?;
+    Ok(GitScope::Worktree)
+}
+
+/// Every `config.worktree` git reads once the extension is on: the main
+/// worktree's under the common dir, then one per linked worktree.
+fn worktree_config_files(checkout: &Checkout<'_>) -> Result<Vec<PathBuf>, String> {
+    let common =
+        capture(checkout.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+            .map_err(|e| format!("git rev-parse --git-common-dir failed: {e}"))?;
+    let common = PathBuf::from(common.trim());
+    let mut files = vec![common.join("config.worktree")];
+    if let Ok(entries) = std::fs::read_dir(common.join("worktrees")) {
+        let mut linked: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path().join("config.worktree"))
+            .collect();
+        linked.sort();
+        files.extend(linked);
+    }
+    Ok(files.into_iter().filter(|file| file.exists()).collect())
+}
+
+/// Why a dormant `config.worktree` keeps the extension off: it, or a file
+/// it includes, sets `core.bare` or `core.worktree`, the two keys
+/// git-config(1) names as moving where git finds the work tree; it uses
+/// `includeIf`, whose condition git decides per command, so a read here
+/// proves nothing about the next one; or git cannot read it with its
+/// includes, as with a malformed included file. `git config --file` skips
+/// includes unless asked, so the read follows them and names where each
+/// key came from. `None` when it is safe to wake.
+fn work_tree_fault(checkout: &Checkout<'_>, file: &Path) -> Option<String> {
+    let shown = file.display().to_string();
+    let output = checkout
+        .git(&[
+            "config",
+            "--file",
+            &shown,
+            "--includes",
+            "--list",
+            "--show-origin",
+            "--name-only",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    let listed = match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+        Ok(output) => {
+            return Some(format!(
+                "cannot be read with its includes ({})",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Err(error) => return Some(format!("cannot be read ({error})")),
+    };
+    for line in listed.lines() {
+        // `--show-origin` prints `file:<path>\t<key>`.
+        let (origin, name) = line.split_once('\t').unwrap_or(("", line));
+        let origin = origin.strip_prefix("file:").unwrap_or(origin);
+        let name = name.trim();
+        if name.starts_with("includeif.") {
+            return Some("uses includeIf, which git decides per command".to_string());
+        }
+        if name == "core.bare" || name == "core.worktree" {
+            return Some(if origin.is_empty() || origin == shown {
+                format!("sets {name}")
+            } else {
+                format!("sets {name} through {origin}")
+            });
+        }
+    }
+    None
 }
 
 fn jj_root(cwd: &Path) -> Option<PathBuf> {
@@ -686,10 +1058,18 @@ fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     Ok(HandlerResult::default())
 }
 
-fn sd_script(relative: &str) -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join(".sd").join(relative))
-        .filter(|p| p.is_file())
+/// The turn checkpoint script: the just tree first, where the dotfiles moved
+/// it from `~/.sd`, then the old place for a home not yet applied. Install
+/// names a legacy part that runs this script as the turn-checkpoint
+/// handler's program.
+pub(crate) fn checkpoint_script(home: &Path) -> Option<PathBuf> {
+    [
+        ".config/just/claude/turn/checkpoint",
+        ".sd/claude/turn/checkpoint",
+    ]
+    .into_iter()
+    .map(|relative| home.join(relative))
+    .find(|p| p.is_file())
 }
 
 /// The prompt checkpoint for turn-scoped review, by event.
@@ -700,7 +1080,7 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(script) = sd_script("claude/turn/checkpoint") else {
+    let Some(script) = dirs::home_dir().and_then(|home| checkpoint_script(&home)) else {
         return Ok(HandlerResult::default());
     };
     let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
@@ -835,8 +1215,28 @@ mod tests {
         assert!(resolve_identity(&list, "codex", "gpt-6-luna").is_none());
     }
 
+    /// A scratch config home for jj and git, with the deck's roster in
+    /// it, so a test's checkout can stay empty.
     fn config_home() -> tempfile::TempDir {
-        tempfile::tempdir().unwrap()
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("authors.yaml"), ROSTER).unwrap();
+        home
+    }
+
+    #[test]
+    fn the_checkpoint_script_is_found_in_the_just_tree_first() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(checkpoint_script(home.path()), None);
+        let place = |relative: &str| {
+            let path = home.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            path
+        };
+        let legacy = place(".sd/claude/turn/checkpoint");
+        assert_eq!(checkpoint_script(home.path()), Some(legacy));
+        let just = place(".config/just/claude/turn/checkpoint");
+        assert_eq!(checkpoint_script(home.path()), Some(just));
     }
 
     fn jj_get(dir: &Path, home: &Path, key: &str) -> String {
@@ -852,7 +1252,7 @@ mod tests {
     fn jj_checkout() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let ok = Command::new("git")
-            .args(["init", "-q", "-b", "main"])
+            .args(["init", "-q", "-b", "main", "--template="])
             .current_dir(dir.path())
             .status()
             .is_ok_and(|s| s.success());
@@ -873,7 +1273,10 @@ mod tests {
     fn a_listed_model_is_written_into_the_checkout_and_an_unlisted_one_is_loud() {
         let home = config_home();
         let dir = jj_checkout();
+        // The checkout's own roster, committed so the working copy is
+        // empty when the session starts.
         std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
+        jj_run(dir.path(), home.path(), &["commit", "-m", "roster"]);
         let cwd = dir.path().display().to_string();
         let result = author_identity_in(
             &payload(
@@ -888,19 +1291,16 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(result.context.is_empty(), "{result:?}");
+        took_author(&result);
         assert_eq!(
             jj_get(dir.path(), home.path(), "user.name"),
             "Claude Fable 5.1 (claude-fable-5-1)"
         );
-        let git = Command::new("git")
-            .args(["config", "user.email"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), FABLE);
         assert_eq!(
-            String::from_utf8_lossy(&git.stdout).trim(),
-            "claude-fable-5-1@claude.noreply.nexus.local"
+            jj_author(dir.path(), home.path()),
+            FABLE,
+            "the working-copy commit takes the identity"
         );
 
         let result = author_identity_in(
@@ -921,6 +1321,593 @@ mod tests {
             jj_get(dir.path(), home.path(), "user.name"),
             "Unlisted codex model (gpt-6-luna)"
         );
+    }
+
+    /// The one note of a write that re-authored the working-copy commit.
+    fn took_author(result: &HandlerResult) {
+        assert_eq!(result.context.len(), 1, "{result:?}");
+        assert!(
+            result.context[0].contains("takes the session's author"),
+            "{result:?}"
+        );
+    }
+
+    /// The one note of a write that left the working-copy commit alone
+    /// and started a new one, with why.
+    fn kept_author(result: &HandlerResult, change: &str, why: &str) {
+        assert_eq!(result.context.len(), 1, "{result:?}");
+        let note = &result.context[0];
+        assert!(note.contains(change), "{note}");
+        assert!(note.contains("keeps its author"), "{note}");
+        assert!(note.contains(why), "{note}");
+        assert!(note.contains("new working copy"), "{note}");
+    }
+
+    /// `jj log -r REV -T TEMPLATE` in the workspace, trimmed.
+    fn jj_show(dir: &Path, home: &Path, rev: &str, template: &str) -> String {
+        let out = Command::new("jj")
+            .args(["log", "-r", rev, "--no-graph", "-T", template])
+            .current_dir(dir)
+            .env("XDG_CONFIG_HOME", home)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A jj command in the workspace that has to succeed.
+    fn jj_run(dir: &Path, home: &Path, args: &[&str]) {
+        let out = Command::new("jj")
+            .args(args)
+            .current_dir(dir)
+            .env("XDG_CONFIG_HOME", home)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "jj {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A second workspace of `a`, colocated, at `parent/b`.
+    fn add_workspace(a: &Path, home: &Path, parent: &Path) -> PathBuf {
+        let b = parent.join("b");
+        jj_run(
+            a,
+            home,
+            &["workspace", "add", "--colocate", &b.display().to_string()],
+        );
+        assert!(b.join(".git").is_file(), "the workspace is a git worktree");
+        b
+    }
+
+    /// A git value as the adapter's git sees it: the scratch home stands
+    /// in for the global config, so the owner's never leaks in.
+    fn git_get(dir: &Path, home: &Path, key: &str) -> String {
+        let out = Command::new("git")
+            .args(["config", "--get", key])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", home.join("git").join("config"))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The author email of the workspace's working-copy commit.
+    fn jj_author(dir: &Path, home: &Path) -> String {
+        let out = Command::new("jj")
+            .args(["log", "-r", "@", "--no-graph", "-T", "author.email()"])
+            .current_dir(dir)
+            .env("XDG_CONFIG_HOME", home)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The git worktree jj made for a workspace: the one entry under the
+    /// main checkout's `.git/worktrees/`.
+    fn linked_worktree_dir(main: &Path) -> PathBuf {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(main.join(".git/worktrees"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        entries.remove(0)
+    }
+
+    /// A session start in `dir`, resolved against the deck roster in
+    /// `home` when the checkout has none.
+    fn write_identity(harness: Harness, dir: &Path, home: &Path, model: &str) -> HandlerResult {
+        author_identity_in(
+            &payload(
+                harness,
+                "session.start",
+                None,
+                &dir.display().to_string(),
+                Some(model),
+            ),
+            Some(home.join("authors.yaml")),
+            Some(home),
+            None,
+        )
+        .unwrap()
+    }
+
+    const FABLE: &str = "claude-fable-5-1@claude.noreply.nexus.local";
+    const ASTRA: &str = "gpt-6-astra@codex.noreply.nexus.local";
+
+    #[test]
+    fn two_workspaces_of_one_repository_keep_their_own_identity() {
+        let home = config_home();
+        let a = jj_checkout();
+        let parent = tempfile::tempdir().unwrap();
+        let b = add_workspace(a.path(), home.path(), parent.path());
+
+        let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+        took_author(&result);
+        assert_ne!(jj_get(&b, home.path(), "user.email"), FABLE, "b untouched");
+        assert_ne!(
+            git_get(&b, home.path(), "user.email"),
+            FABLE,
+            "b's git untouched"
+        );
+        assert_ne!(jj_author(&b, home.path()), FABLE, "b's commit untouched");
+
+        // b's working-copy commit was made before b's session picked
+        // Astra, so it carried the earlier author into `jj commit`.
+        let result = write_identity(Harness::Codex, &b, home.path(), "gpt-6-astra");
+        took_author(&result);
+        assert_eq!(jj_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(jj_get(&b, home.path(), "user.email"), ASTRA);
+        assert_eq!(jj_author(a.path(), home.path()), FABLE);
+        assert_eq!(jj_author(&b, home.path()), ASTRA);
+        assert_eq!(git_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(git_get(&b, home.path(), "user.email"), ASTRA);
+        assert_eq!(
+            git_get(a.path(), home.path(), "extensions.worktreeConfig"),
+            "true",
+            "git keeps the identity per worktree"
+        );
+        assert!(a.path().join(".git/config.worktree").is_file());
+    }
+
+    /// A Fable session owns the working-copy commit, then an Astra
+    /// session starts in the same workspace. Astra's write must leave
+    /// Fable's commit as it is and start Astra in a new one on top of it.
+    fn kept_by_astra(dir: &Path, home: &Path, why: &str) -> String {
+        let fable = jj_show(dir, home, "@", "change_id.short()");
+        let result = write_identity(Harness::Codex, dir, home, "gpt-6-astra");
+        assert_eq!(jj_get(dir, home, "user.email"), ASTRA);
+        kept_author(&result, &fable, why);
+        assert_eq!(
+            jj_show(dir, home, "@-", "change_id.short()"),
+            fable,
+            "the session starts on top of the kept commit"
+        );
+        assert_eq!(
+            jj_show(dir, home, "@-", "author.email()"),
+            FABLE,
+            "left alone"
+        );
+        assert_eq!(
+            jj_author(dir, home),
+            ASTRA,
+            "the new working copy is Astra's"
+        );
+        assert_eq!(jj_show(dir, home, "@", "parents.len()"), "1");
+        result.context[0].clone()
+    }
+
+    #[test]
+    fn a_described_working_copy_commit_keeps_its_author_and_is_named() {
+        let home = config_home();
+        let dir = jj_checkout();
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(jj_author(dir.path(), home.path()), FABLE);
+        jj_run(dir.path(), home.path(), &["describe", "-m", "half done"]);
+        kept_by_astra(dir.path(), home.path(), "it is described");
+        assert_eq!(
+            jj_show(dir.path(), home.path(), "@-", "description"),
+            "half done"
+        );
+    }
+
+    #[test]
+    fn a_working_copy_commit_with_edits_keeps_its_author() {
+        let home = config_home();
+        let dir = jj_checkout();
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        std::fs::write(dir.path().join("draft.md"), "half done\n").unwrap();
+        kept_by_astra(dir.path(), home.path(), "it has edits");
+        assert_eq!(jj_show(dir.path(), home.path(), "@-", "empty"), "false");
+        assert_eq!(jj_show(dir.path(), home.path(), "@", "empty"), "true");
+    }
+
+    #[test]
+    fn a_merge_working_copy_commit_keeps_its_author() {
+        let home = config_home();
+        let dir = jj_checkout();
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        jj_run(dir.path(), home.path(), &["describe", "-m", "left"]);
+        let left = jj_show(dir.path(), home.path(), "@", "change_id");
+        jj_run(dir.path(), home.path(), &["new", "root()", "-m", "right"]);
+        let right = jj_show(dir.path(), home.path(), "@", "change_id");
+        jj_run(dir.path(), home.path(), &["new", &left, &right]);
+        assert_eq!(jj_show(dir.path(), home.path(), "@", "parents.len()"), "2");
+        assert_eq!(jj_author(dir.path(), home.path()), FABLE);
+        kept_by_astra(dir.path(), home.path(), "it has 2 parents");
+        assert_eq!(jj_show(dir.path(), home.path(), "@-", "parents.len()"), "2");
+    }
+
+    #[test]
+    fn a_working_copy_commit_shared_with_another_workspace_keeps_its_author() {
+        let home = config_home();
+        let a = jj_checkout();
+        let parent = tempfile::tempdir().unwrap();
+        let b = add_workspace(a.path(), home.path(), parent.path());
+        write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+        // b edits a's working-copy commit, so `@` is both workspaces'.
+        let shared = jj_show(a.path(), home.path(), "@", "change_id");
+        jj_run(&b, home.path(), &["edit", "-r", &shared]);
+        let copies = jj_show(a.path(), home.path(), "@", "working_copies");
+        assert!(
+            copies.contains("default@") && copies.contains("b@"),
+            "{copies}"
+        );
+        let note = kept_by_astra(a.path(), home.path(), "it is the working copy of");
+        assert!(note.contains("default@") && note.contains("b@"), "{note}");
+        assert_eq!(
+            jj_show(&b, home.path(), "@", "change_id"),
+            shared,
+            "b still edits the kept commit"
+        );
+        assert_eq!(jj_author(&b, home.path()), FABLE);
+    }
+
+    #[test]
+    fn an_immutable_working_copy_commit_keeps_its_author() {
+        let home = config_home();
+        let dir = jj_checkout();
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        jj_run(
+            dir.path(),
+            home.path(),
+            &["bookmark", "create", "main", "-r", "@"],
+        );
+        // The user config the adapter's jj reads makes `main` immutable.
+        let user = home.path().join("jj");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(
+            user.join("config.toml"),
+            "[revset-aliases]\n\"immutable_heads()\" = 'bookmarks(exact:\"main\")'\n",
+        )
+        .unwrap();
+        assert_eq!(jj_show(dir.path(), home.path(), "@", "immutable"), "true");
+        kept_by_astra(dir.path(), home.path(), "it is immutable");
+        assert_eq!(jj_show(dir.path(), home.path(), "@-", "immutable"), "true");
+    }
+
+    #[test]
+    fn an_unlisted_models_commit_fails_the_authorship_check() {
+        if run_tool("python3", &["--version"], &[], None).is_err() {
+            eprintln!("skipped: python3 is not installed");
+            return;
+        }
+        let home = config_home();
+        let dir = jj_checkout();
+        let roster = home.path().join("authors.yaml");
+        write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        jj_run(dir.path(), home.path(), &["describe", "-m", "half done"]);
+        // Luna is listed nowhere. Its session starts in a new working
+        // copy, authored unlisted, and its commit is the one the check
+        // refuses; Fable's `half done` passes.
+        let result = write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-luna");
+        assert!(result.context[0].contains("gpt-6-luna"), "{result:?}");
+        assert!(result.context[1].contains("is described"), "{result:?}");
+        std::fs::write(dir.path().join("luna.md"), "by luna\n").unwrap();
+        jj_run(dir.path(), home.path(), &["commit", "-m", "luna"]);
+        assert_eq!(
+            jj_show(dir.path(), home.path(), "@-", "author.email()"),
+            "unlisted@codex.noreply.nexus.local"
+        );
+        let check = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/check-authorship");
+        let authorship = |from: &str| {
+            let out = Command::new("bash")
+                .args([
+                    check,
+                    "--from-ref",
+                    from,
+                    "--to-ref",
+                    "HEAD",
+                    "--authors-file",
+                    &roster.display().to_string(),
+                ])
+                .current_dir(dir.path())
+                .env("GIT_CONFIG_GLOBAL", home.path().join("git").join("config"))
+                .output()
+                .unwrap();
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).to_string(),
+            )
+        };
+        let (code, stdout) = authorship("HEAD~1");
+        assert_eq!(code, Some(1), "{stdout}");
+        assert!(
+            stdout.contains("author 'Unlisted codex model (gpt-6-luna) <unlisted@codex.noreply.nexus.local>' does not satisfy"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains(FABLE), "{stdout}");
+    }
+
+    #[test]
+    fn a_core_worktree_keeps_the_git_identity_out_of_the_shared_config() {
+        let home = config_home();
+        let dir = jj_checkout();
+        let set = Command::new("git")
+            .args(["config", "--local", "core.worktree", "."])
+            .current_dir(dir.path())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(set, "git config core.worktree");
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(result.context.len(), 2, "{result:?}");
+        assert!(
+            result.context[0].contains("takes the session's author"),
+            "{result:?}"
+        );
+        // The note names the one key that is set and the file it is in,
+        // and not the other key.
+        assert!(
+            result.context[1].contains("core.worktree is set in"),
+            "{result:?}"
+        );
+        assert!(result.context[1].contains(".git/config"), "{result:?}");
+        assert!(!result.context[1].contains("core.bare"), "{result:?}");
+        assert!(
+            result.context[1].contains("global git identity"),
+            "{result:?}"
+        );
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), "");
+        assert_eq!(git_get(dir.path(), home.path(), "user.name"), "");
+        assert_eq!(
+            git_get(dir.path(), home.path(), "extensions.worktreeConfig"),
+            ""
+        );
+        assert_eq!(jj_get(dir.path(), home.path(), "user.email"), FABLE);
+    }
+
+    #[test]
+    fn a_dormant_worktree_config_keeps_the_extension_off() {
+        let home = config_home();
+        let a = jj_checkout();
+        let parent = tempfile::tempdir().unwrap();
+        let b = add_workspace(a.path(), home.path(), parent.path());
+        let git_status = |dir: &Path| {
+            Command::new("git")
+                .args(["status", "--short"])
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", home.path().join("git").join("config"))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .code()
+        };
+        // git ignores both files while the extension is off, and would
+        // read them the moment it turns on. An `include.path` is read
+        // relative to the including file, and git follows it only when
+        // asked, so a key behind one is as dormant as a key in the file.
+        let main = a.path().join(".git/config.worktree");
+        let linked = linked_worktree_dir(a.path()).join("config.worktree");
+        let include = "[include]\n\tpath = hazard.conf\n";
+        for (file, body, included, expected) in [
+            (
+                &main,
+                "[core]\n\tworktree = /elsewhere\n",
+                None,
+                vec!["sets core.worktree"],
+            ),
+            (
+                &linked,
+                "[core]\n\tbare = true\n",
+                None,
+                vec!["sets core.bare"],
+            ),
+            (
+                &linked,
+                include,
+                Some("[core]\n\tbare = true\n"),
+                vec!["sets core.bare through", "hazard.conf"],
+            ),
+            (
+                &main,
+                include,
+                Some("[core\n"),
+                vec!["cannot be read with its includes", "hazard.conf"],
+            ),
+            (
+                &main,
+                "[includeIf \"gitdir:/elsewhere/\"]\n\tpath = hazard.conf\n",
+                None,
+                vec!["uses includeIf"],
+            ),
+        ] {
+            let hazard = file.with_file_name("hazard.conf");
+            std::fs::write(file, body).unwrap();
+            if let Some(included) = included {
+                std::fs::write(&hazard, included).unwrap();
+            }
+            let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+            let notes = result.context.join("\n");
+            assert!(notes.contains(&file.display().to_string()), "{notes}");
+            for text in expected {
+                assert!(notes.contains(text), "{text}: {notes}");
+            }
+            assert_eq!(
+                git_get(a.path(), home.path(), "extensions.worktreeConfig"),
+                "",
+                "the extension stays off"
+            );
+            assert_eq!(git_get(a.path(), home.path(), "user.email"), "");
+            assert_eq!(jj_get(a.path(), home.path(), "user.email"), FABLE);
+            assert_eq!(git_status(&b), Some(0), "b still works");
+            std::fs::remove_file(file).unwrap();
+            if hazard.exists() {
+                std::fs::remove_file(&hazard).unwrap();
+            }
+        }
+        let result = write_identity(Harness::Claude, a.path(), home.path(), "claude-fable-5-1");
+        took_author(&result);
+        assert_eq!(
+            git_get(a.path(), home.path(), "extensions.worktreeConfig"),
+            "true"
+        );
+        assert_eq!(git_get(a.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(git_status(&b), Some(0));
+    }
+
+    #[test]
+    fn a_global_worktree_config_extension_is_not_taken_for_the_repository() {
+        let home = config_home();
+        let global = home.path().join("git");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("config"),
+            "[extensions]\n\tworktreeConfig = true\n",
+        )
+        .unwrap();
+        let dir = jj_checkout();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        took_author(&result);
+        let local = Command::new("git")
+            .args(["config", "--local", "--get", "extensions.worktreeConfig"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&local.stdout).trim(),
+            "true",
+            "the repository config carries the extension, not the global"
+        );
+        let worktree = std::fs::read_to_string(dir.path().join(".git/config.worktree"))
+            .expect("the identity went to config.worktree");
+        assert!(worktree.contains(FABLE), "{worktree}");
+    }
+
+    /// A `config.worktree` that includes a file setting the identity. Git
+    /// reads the include where it stands: before the written keys it
+    /// loses and the keys stay; after them it wins, so the keys go again
+    /// and the note names the included file.
+    #[test]
+    fn an_include_after_the_written_keys_leaves_git_without_an_identity() {
+        let home = config_home();
+        let dir = jj_checkout();
+        let worktree = dir.path().join(".git/config.worktree");
+        std::fs::write(
+            dir.path().join(".git/astra.conf"),
+            "[user]\n\tname = Astra\n\temail = astra@example\n",
+        )
+        .unwrap();
+        let include = "[include]\n\tpath = astra.conf\n";
+        // The include first: git appends the written `[user]` section
+        // after it, and the session's keys win.
+        std::fs::write(&worktree, include).unwrap();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        took_author(&result);
+        assert_eq!(git_get(dir.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(
+            git_get(dir.path(), home.path(), "user.name"),
+            "Claude Fable 5.1 (claude-fable-5-1)"
+        );
+        let body = std::fs::read_to_string(&worktree).unwrap();
+        assert!(body.starts_with(include), "{body}");
+        assert!(body.contains(FABLE), "{body}");
+
+        // A `[user]` section before the include: git sets the keys in
+        // that section, and the include after it wins.
+        std::fs::write(
+            &worktree,
+            format!("[user]\n\tname = x\n\temail = y\n{include}"),
+        )
+        .unwrap();
+        let result = write_identity(Harness::Claude, dir.path(), home.path(), "claude-fable-5-1");
+        assert_eq!(result.context.len(), 2, "{result:?}");
+        assert!(
+            result.context[0].contains("takes the session's author"),
+            "{result:?}"
+        );
+        let note = &result.context[1];
+        for text in [
+            "user.name reads as `Astra` from",
+            "user.email reads as `astra@example` from",
+            "astra.conf",
+            "config.worktree",
+            "removed again",
+            "raw git commit here carries that identity",
+        ] {
+            assert!(note.contains(text), "{text}: {note}");
+        }
+        assert_eq!(git_get(dir.path(), home.path(), "user.name"), "Astra");
+        assert_eq!(
+            git_get(dir.path(), home.path(), "user.email"),
+            "astra@example"
+        );
+        let body = std::fs::read_to_string(&worktree).unwrap();
+        assert!(!body.contains(FABLE), "{body}");
+        assert!(
+            !body.contains("name = "),
+            "the written keys are gone: {body}"
+        );
+        assert!(!body.contains("email = "), "{body}");
+        assert!(body.contains(include), "the include stays: {body}");
+        assert_eq!(jj_get(dir.path(), home.path(), "user.email"), FABLE);
+        assert_eq!(jj_author(dir.path(), home.path()), FABLE);
+    }
+
+    #[test]
+    fn the_unlisted_identity_is_refused_by_the_push_gate() {
+        if run_tool("python3", &["--version"], &[], None).is_err() {
+            eprintln!("skipped: python3 is not installed");
+            return;
+        }
+        let home = config_home();
+        let dir = jj_checkout();
+        let roster = home.path().join("authors.yaml");
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/author-identity.py");
+        let gate = |model: &str| {
+            let name = jj_get(dir.path(), home.path(), "user.name");
+            let email = jj_get(dir.path(), home.path(), "user.email");
+            assert!(name.contains(model), "{name}");
+            run_tool(
+                "python3",
+                &[
+                    "-I",
+                    script,
+                    "validate",
+                    "--policy",
+                    &roster.display().to_string(),
+                    "--identity",
+                    &format!("{name} <{email}>"),
+                ],
+                &[],
+                None,
+            )
+            .unwrap()
+        };
+        write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-luna");
+        let (code, _, stderr) = gate("gpt-6-luna");
+        assert_eq!(
+            code,
+            Some(1),
+            "the gate refuses the unlisted model: {stderr}"
+        );
+        assert!(stderr.contains("must match"), "{stderr}");
+        write_identity(Harness::Codex, dir.path(), home.path(), "gpt-6-astra");
+        let (code, _, stderr) = gate("gpt-6-astra");
+        assert_eq!(code, Some(0), "the gate accepts the listed model: {stderr}");
     }
 
     #[test]
@@ -987,7 +1974,6 @@ mod tests {
         assert!(!jj_get(dir.path(), home.path(), "user.name").contains("Unlisted"));
         // Claude's SessionStart carries no model; the launch profile's
         // variable stands in for it.
-        std::fs::write(dir.path().join("authors.yaml"), ROSTER).unwrap();
         let result = author_identity_in(
             &payload(
                 Harness::Claude,
@@ -996,12 +1982,12 @@ mod tests {
                 &dir.path().display().to_string(),
                 None,
             ),
-            None,
+            Some(home.path().join("authors.yaml")),
             Some(home.path()),
             Some("claude-fable-5-1".to_string()),
         )
         .unwrap();
-        assert!(result.context.is_empty(), "{result:?}");
+        took_author(&result);
         assert_eq!(
             jj_get(dir.path(), home.path(), "user.name"),
             "Claude Fable 5.1 (claude-fable-5-1)"

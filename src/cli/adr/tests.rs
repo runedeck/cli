@@ -181,7 +181,7 @@ fn adopt_stages_one_decision_and_opens_a_review_session() {
     let git = std::process::Command::new("git")
         .arg("-C")
         .arg(temp.path())
-        .args(["init", "--quiet"])
+        .args(["init", "--quiet", "--template="])
         .status()
         .unwrap();
     assert!(git.success());

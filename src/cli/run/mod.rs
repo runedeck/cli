@@ -578,6 +578,7 @@ impl Drop for Isolated {
 /// was kept, whether anything outside the run changed, the change the
 /// harness moved to when it left the copy, the operations the run spans,
 /// and, when a step failed or the folder stays, the error and the folder.
+/// When the guard's folder could not be removed, its path and the reason.
 /// A field the finish did not reach is null.
 fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Value {
     let mut object = json!({
@@ -601,14 +602,24 @@ fn workspace_json(workspace: &workspace::Workspace, outcome: &workspace::Outcome
         if let Some(path) = &outcome.path {
             fields.insert("path".to_string(), json!(path.display().to_string()));
         }
+        if let Some(folder) = &outcome.guard_folder {
+            fields.insert(
+                "guard_folder".to_string(),
+                json!(folder.display().to_string()),
+            );
+        }
+        if let Some(error) = &outcome.guard_folder_error {
+            fields.insert("guard_folder_error".to_string(), json!(error));
+        }
     }
     object
 }
 
 /// The text lines for the workspace: one names the change kept or says
 /// nothing was, one more when this run colocated jj, one when the harness
-/// left the copy, one that names the operations the run spans, and a
-/// warning when the workspace could not be taken down.
+/// left the copy, one that names the operations the run spans, a warning
+/// when the workspace could not be taken down, and a warning when the
+/// guard's folder could not be removed.
 fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcome) -> Vec<String> {
     let mut lines = Vec::new();
     if workspace.colocated {
@@ -670,6 +681,9 @@ fn workspace_lines(workspace: &workspace::Workspace, outcome: &workspace::Outcom
             workspace.name,
             folder.display()
         ));
+    }
+    if let Some(error) = &outcome.guard_folder_error {
+        lines.push(format!("warning: {error}; remove it by hand"));
     }
     lines
 }

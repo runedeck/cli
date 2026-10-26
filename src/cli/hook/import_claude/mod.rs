@@ -24,7 +24,7 @@ const CHECKPOINT: &str = "import-claude.json";
 /// The hook name the attachment's command or hook name must carry.
 /// The dispatcher's own entry (`rune hook run`) is not a mark: its outcomes
 /// come from every hook, and the live record already holds them.
-const LINT_MARKS: [&str; 2] = [".sd/hook", "lint-on-write"];
+const LINT_MARKS: [&str; 3] = [".sd/hook", ".config/just/hook", "lint-on-write"];
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct FileState {
@@ -264,6 +264,7 @@ fn attachment_record(value: &Value, tools: &BTreeMap<String, String>) -> Option<
         failure: None,
         metrics: Some(found.metrics()),
         source: None,
+        skipped: None,
     })
 }
 

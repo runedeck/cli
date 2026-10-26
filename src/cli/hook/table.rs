@@ -7,13 +7,17 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs;
 use std::path::Path;
 
 use rune::error::{Error, ErrorKind};
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
+
+use super::legacy;
+
+/// The most bytes rune reads of a hook table.
+pub(crate) const TABLE_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// An object's members in file order, each value as written.
 struct Members(Vec<(String, Box<RawValue>)>);
@@ -48,7 +52,9 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    /// The table at `path`, or an empty one when the file is missing.
+    /// The table at `path`, or an empty one when the file is missing. A
+    /// path that is no regular file under the limit is an error: rune
+    /// never opens a FIFO or a device for a table.
     pub(crate) fn read(path: &Path) -> Result<Self, Error> {
         if !path.exists() {
             return Ok(Self {
@@ -57,8 +63,12 @@ impl Table {
                 hooks: Map::new(),
             });
         }
-        let text = fs::read_to_string(path)
-            .map_err(|error| Error::io(format!("{}: {error}", path.display())))?;
+        let Some(text) = legacy::read_text_bounded(path, TABLE_LIMIT) else {
+            return Err(Error::io(format!(
+                "{} is not a regular UTF-8 file under {TABLE_LIMIT} bytes",
+                path.display()
+            )));
+        };
         let value: Value = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 ErrorKind::Parse,
@@ -177,6 +187,8 @@ fn indent(text: &str, by: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use serde_json::json;
 
@@ -247,5 +259,21 @@ mod tests {
         let text = empty.render(&["Stop".to_string()], &changed);
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value, json!({"hooks": {"Stop": [{"hooks": []}]}}));
+    }
+
+    #[test]
+    fn a_table_that_is_no_regular_file_is_an_error_not_an_empty_table() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Table::read(dir.path()).is_err(), "a directory");
+        #[cfg(unix)]
+        {
+            let fifo = dir.path().join("settings.json");
+            nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+            let error = Table::read(&fifo).err().map(|e| e.to_string());
+            assert!(
+                error.as_deref().is_some_and(|e| e.contains("regular")),
+                "{error:?}"
+            );
+        }
     }
 }
