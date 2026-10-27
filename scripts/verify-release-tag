@@ -21,7 +21,8 @@ gnupg_home=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:?TMPDIR must be set}}/skeleton-r
 trap 'command rm -rf "$gnupg_home"' EXIT
 chmod 0700 "$gnupg_home"
 
-gpg --homedir "$gnupg_home" --batch --import "$repository_root/KEYS" >/dev/null 2>&1
+bash "$repository_root/scripts/trusted-keys" --keys "$repository_root/KEYS" --homedir "$gnupg_home" >/dev/null \
+    || { printf 'fatal: could not resolve the trusted signers in KEYS\n' >&2; exit 1; }
 allowed_fingerprints=$(gpg --homedir "$gnupg_home" --batch --with-colons --fingerprint \
     | awk -F: '$1 == "fpr" { print $10 }')
 [ -n "$allowed_fingerprints" ] \
