@@ -108,7 +108,7 @@ fn compatibility_manifest_references_pinned_existing_fixtures() {
             "duplicate compatibility case: {}",
             compatibility_case.name
         );
-        assert!(!compatibility_case.sources.is_empty());
+        assert_ne!(compatibility_case.sources, [] as [String; 0]);
         for source_url in &compatibility_case.sources {
             assert!(
                 source_url.contains("/v1.6.0/"),
@@ -121,7 +121,7 @@ fn compatibility_manifest_references_pinned_existing_fixtures() {
         }
 
         for diagnostic in &compatibility_case.expected.diagnostics {
-            assert!(!diagnostic.code.trim().is_empty());
+            assert_ne!(diagnostic.code.trim(), "");
             assert!(matches!(
                 diagnostic.severity,
                 ExpectedSeverity::Warning | ExpectedSeverity::Error
@@ -179,7 +179,7 @@ fn all_operations_match_the_golden_specification() {
     assert_eq!(applied.summary.modified, 1);
     assert_eq!(applied.summary.removed, 1);
     assert_eq!(applied.summary.renamed, 1);
-    assert!(applied.warnings.is_empty());
+    assert_eq!(applied.warnings, [] as [String; 0]);
 }
 
 #[test]

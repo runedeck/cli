@@ -573,8 +573,8 @@ mod tests {
         assert!(page.starts_with("---\ntitle: change\n"));
 
         let second = write_glossary_output(source(&root), None).unwrap();
-        assert!(second.written.is_empty());
-        assert!(second.removed.is_empty());
+        assert_eq!(second.written, [] as [String; 0]);
+        assert_eq!(second.removed, [] as [String; 0]);
         let check = check_glossary_output(source(&root), None).unwrap();
         assert!(check.is_current());
         assert_eq!(

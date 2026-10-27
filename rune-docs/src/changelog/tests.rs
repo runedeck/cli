@@ -93,5 +93,5 @@ fn an_absent_changelog_is_not_an_error() {
     let root = tempfile::tempdir().unwrap();
     let report = check(root.path()).unwrap();
     assert!(!report.present);
-    assert!(report.errors.is_empty());
+    assert_eq!(report.errors, [] as [String; 0]);
 }

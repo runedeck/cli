@@ -437,7 +437,7 @@ mod tests {
 
         let output = fix_output(source(&root), false, true).unwrap();
         assert_eq!(output.rewritten, ["docs/decisions/CLI-0001 Example.md"]);
-        assert!(output.drafts.is_empty());
+        assert_eq!(output.drafts, [] as [DraftTerm; 0]);
         let migrated = std::fs::read_to_string(&record).unwrap();
         assert_eq!(
             migrated,
@@ -655,8 +655,8 @@ mod tests {
 
     #[test]
     fn the_walk_skips_generated_deployed_and_archived_trees() {
-        let root = repository();
         const LEGACY: &str = "*change* [CHANGE]\n\n[CHANGE]: https://runedeck.ai/ns#Change\n";
+        let root = repository();
         for directory in [
             "docs/changes/archive/x",
             "build",

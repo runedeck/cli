@@ -276,7 +276,7 @@ fn nested_capabilities_are_discovered_validated_and_archived() {
     // The upstream fixture parses (compatibility) and only the house keyword
     // rule fires on its SHALL statements.
     let diagnostics = validate_spec_tree(root.path(), no_schema_check).unwrap();
-    assert!(!diagnostics.is_empty());
+    assert_ne!(diagnostics, [] as [SpecViolation; 0]);
     assert!(
         diagnostics
             .iter()
@@ -574,7 +574,7 @@ fn targeted_validation_resolves_nested_capability_prefixes() {
 
     // The prefix resolves to the nested capability, whose upstream fixture
     // carries SHALL: the house rule is the only diagnostic.
-    assert!(!diagnostics.is_empty());
+    assert_ne!(diagnostics, [] as [SpecViolation; 0]);
     assert!(
         diagnostics
             .iter()

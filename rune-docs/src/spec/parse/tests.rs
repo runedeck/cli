@@ -68,7 +68,7 @@ fn rename_collisions_across_sections_are_rejected() {
     )
     .unwrap_err();
 
-    assert!(!issues.is_empty());
+    assert_ne!(issues, [] as [ParseIssue; 0]);
 }
 
 #[test]
