@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Step aside when Cursor runs a Claude hook entry: answer `{}` with exit 0, run no handler, and log `borrowed by cursor`. Every Cursor tool call was denied under `--on-failure deny`.
 - Abandon the run workspace's initial working copy under jj 0.47, which names the caller's workspace on its creation. The run kept it and reported `outside_changes`.
+- Record a queued Codex message as `read` when the `postbox` hook sees its session's turn start with it, and list a message posted by name under the thread id Codex printed.
+- Warn before `rune queue post` looks a Codex session up by name, and add a `hint` with the UUID when Codex refuses the name and names the session it matched.
 
 ## [0.6.0] - 2026-10-26
 

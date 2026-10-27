@@ -132,6 +132,55 @@ pub(crate) fn parse_receipt(stdout: &str) -> Option<Receipt> {
     })
 }
 
+/// Whether `text` has the shape of a UUID: groups of 8, 4, 4, 4, and 12 hex
+/// digits. Codex names every session by one.
+pub(crate) fn is_uuid(text: &str) -> bool {
+    let groups: Vec<&str> = text.split('-').collect();
+    groups.len() == 5
+        && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+            group.len() == length && group.chars().all(|character| character.is_ascii_hexdigit())
+        })
+}
+
+/// The warning for a Codex session given by name. Codex finds a UUID at
+/// once and looks a name up page by page across every session of its
+/// server: with Codex 0.154.0 on the owner's daemon, an unknown UUID was
+/// refused in 0.14 s and an unknown name in 45 s (2026-10-28), and a known
+/// name ran past 60 s (2026-10-27).
+pub(crate) fn name_lookup_warning(session: &str) -> Option<String> {
+    (!is_uuid(session)).then(|| {
+        format!(
+            "Codex looks the name {session} up page by page across its server's sessions, which can take a minute or more; a session UUID needs no search"
+        )
+    })
+}
+
+/// The hint for Codex's refusal of a session name, which names the UUIDs
+/// it matched: `Cannot verify a unique session label across server pages;
+/// matching session UUID: <uuid>`, or several before `use a session UUID to
+/// disambiguate`.
+pub(crate) fn session_hint(stderr: &str) -> Option<String> {
+    if !stderr.contains("session UUID") {
+        return None;
+    }
+    let mut matched: Vec<&str> = Vec::new();
+    for word in stderr.split(|character: char| !character.is_ascii_hexdigit() && character != '-') {
+        if is_uuid(word) && !matched.contains(&word) {
+            matched.push(word);
+        }
+    }
+    match matched.as_slice() {
+        [] => None,
+        [uuid] => Some(format!(
+            "Codex matched the name to session {uuid}: post with --session {uuid}"
+        )),
+        several => Some(format!(
+            "Codex matched the name to sessions {}: post with --session and the UUID of the one you mean",
+            several.join(", ")
+        )),
+    }
+}
+
 /// The warning for a profile's arguments: they start a session, so the
 /// queue never takes them. A credential among them is hidden.
 pub(crate) fn dropped_profile_args(args: &[OsString]) -> Option<String> {
@@ -210,6 +259,7 @@ fn execute_inner(options: &PostOptions) -> Result<Outcome, launch::ResolveError>
         .iter()
         .cloned()
         .chain(dropped_profile_args(profile_args))
+        .chain(name_lookup_warning(&options.session))
         .collect();
     // The caller's environment, minus the parent session's variables, plus
     // the route's: the isolation `rune run` gives its harness.
@@ -340,11 +390,27 @@ fn send(
             }
             queued_outcome(options, posted, postbox, &output.stdout, warnings)
         }
-        Err(failure) => Outcome {
-            exit_code: failure_exit_code(&failure),
-            json: failure_json(&posted.harness, &failure),
-            text: Text::Stderr(format!("error: {failure}")),
-        },
+        Err(failure) => failure_outcome(&posted.harness, &failure),
+    }
+}
+
+/// The harness's failure as `rune run` reports it. Where no sandbox hint
+/// applies, a refused session name gets the hint that names its UUID.
+fn failure_outcome(tool: &str, failure: &SurfaceFailure) -> Outcome {
+    let mut json = failure_json(tool, failure);
+    let mut text = format!("error: {failure}");
+    if failure.hint().is_none()
+        && let Some(hint) = failure
+            .tails()
+            .and_then(|(_, stderr_tail)| session_hint(stderr_tail))
+    {
+        text = format!("{text}\nhint: {hint}");
+        json["hint"] = Value::String(hint);
+    }
+    Outcome {
+        exit_code: failure_exit_code(failure),
+        json,
+        text: Text::Stderr(text),
     }
 }
 
@@ -373,8 +439,10 @@ fn unsupported_outcome(options: &PostOptions, tool: &str) -> Outcome {
 
 /// A message the harness took: the ids from its receipt line, or null ids
 /// and a warning when it printed none. The ledger records it as posted and
-/// queued, so the hook never delivers it a second time. A ledger that
-/// cannot be written is a warning: the message is already queued.
+/// queued, so the hook never delivers it a second time, and the queued line
+/// names the thread id of the receipt, so the session's hook finds it by
+/// its id when it was posted by name. A ledger that cannot be written is a
+/// warning: the message is already queued.
 fn queued_outcome(
     options: &PostOptions,
     posted: &ledger::Event,
@@ -384,9 +452,14 @@ fn queued_outcome(
 ) -> Outcome {
     let tool = posted.harness.as_str();
     let transport = Transport::CodexQueue;
+    let receipt = parse_receipt(stdout);
     let queued = ledger::Event {
         timestamp: ledger::now(),
         state: ledger::State::Queued,
+        session: receipt.as_ref().map_or_else(
+            || posted.session.clone(),
+            |receipt| receipt.thread_id.clone(),
+        ),
         message: String::new(),
         ..posted.clone()
     };
@@ -396,7 +469,6 @@ fn queued_outcome(
         eprintln!("warning: {warning}");
         warnings.push(warning);
     }
-    let receipt = parse_receipt(stdout);
     let text = if let Some(receipt) = &receipt {
         format!(
             "queued message {} for {tool} thread {}",

@@ -4,8 +4,9 @@
 //! harness, session, message. A tab, a newline, or a backslash in a column is
 //! escaped, so an event never spans two lines. Nothing is removed or
 //! rewritten: a state change is a new line with the message's id, and the
-//! last line of an id is the message's state. Every write holds the file's
-//! lock, so a read that marks messages read and a post never interleave.
+//! last line of an id gives the message's state and session. Every write
+//! holds the file's lock, so a read that marks messages read and a post
+//! never interleave.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
@@ -18,7 +19,8 @@ const HEADER: &str = "# timestamp\tid\tstate\tsender\tharness\tsession\tmessage"
 pub(crate) enum State {
     /// Waiting in the postbox for its session to read it.
     Posted,
-    /// Handed to the harness's own queue, which delivers it.
+    /// Handed to the harness's own queue, which delivers it. The line names
+    /// the session id the harness printed, where it printed one.
     Queued,
     /// Read by its session, through `rune queue read` or the hook.
     Read,
@@ -107,8 +109,10 @@ impl Event {
     }
 }
 
-/// A message as it stands: the columns of its first line and the state of
-/// its last.
+/// A message as it stands: the columns of its first line, and the state
+/// and session of its last. A `queued` line names the session id the
+/// harness resolved a name to, so the message's session is the one that
+/// reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Message {
     pub(crate) id: String,
@@ -126,6 +130,7 @@ pub(crate) fn fold(events: &[Event]) -> Vec<Message> {
     for event in events {
         if let Some(message) = messages.iter_mut().find(|message| message.id == event.id) {
             message.state = event.state;
+            message.session.clone_from(&event.session);
         } else {
             messages.push(Message {
                 id: event.id.clone(),
@@ -190,6 +195,38 @@ pub(crate) fn take_posted(
     sessions: &[String],
     timestamp: &str,
 ) -> Result<Vec<Message>, String> {
+    take(path, timestamp, |message| {
+        message.state == State::Posted && sessions.contains(&message.session)
+    })
+}
+
+/// Mark read the messages queued for `session` whose text is `prompt`: the
+/// harness's own queue started the session's turn with them. Codex hands a
+/// queued message to its turn as the prompt, unchanged (rollout of
+/// 2026-10-27), and gives no other receipt of delivery.
+pub(crate) fn take_prompted(
+    path: &Path,
+    session: &str,
+    prompt: &str,
+    timestamp: &str,
+) -> Result<Vec<Message>, String> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Ok(Vec::new());
+    }
+    take(path, timestamp, |message| {
+        message.state == State::Queued
+            && message.session == session
+            && message.text.trim() == prompt
+    })
+}
+
+/// Mark read the messages `select` picks, under one lock, and return them.
+fn take(
+    path: &Path,
+    timestamp: &str,
+    select: impl Fn(&Message) -> bool,
+) -> Result<Vec<Message>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -199,10 +236,7 @@ pub(crate) fn take_posted(
         .and_then(|_| file.read_to_string(&mut text))
         .map_err(|error| format!("cannot read the postbox {}: {error}", path.display()))?;
     let (events, _) = parse_all(&text);
-    let taken: Vec<Message> = fold(&events)
-        .into_iter()
-        .filter(|message| message.state == State::Posted && sessions.contains(&message.session))
-        .collect();
+    let taken: Vec<Message> = fold(&events).into_iter().filter(select).collect();
     let read: Vec<Event> = taken
         .iter()
         .map(|message| Event::change(message, State::Read, timestamp))
