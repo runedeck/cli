@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
+## [Unreleased]
+
+### Fixed
+
+- Record a queued Codex message as `read` when the `postbox` hook sees its session's turn start with it, and list a message posted by name under the thread id Codex printed.
+- Warn before `rune queue post` looks a Codex session up by name, and add a `hint` with the UUID when Codex refuses the name and names the session it matched.
+
 ## [0.6.0] - 2026-10-26
 
 ### Added

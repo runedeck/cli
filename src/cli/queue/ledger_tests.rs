@@ -54,6 +54,56 @@ fn the_last_line_of_an_id_is_its_state() {
 }
 
 #[test]
+fn the_last_line_of_an_id_is_its_session() {
+    let posted = event("m-1", State::Posted, "ouroboros", "hello");
+    let queued = Event {
+        state: State::Queued,
+        session: "01a0abff-74d9-7390-b827-57ef47c982c2".to_string(),
+        message: String::new(),
+        ..posted.clone()
+    };
+    let messages = fold(&[posted, queued]);
+    assert_eq!(messages[0].session, "01a0abff-74d9-7390-b827-57ef47c982c2");
+    assert_eq!(messages[0].text, "hello");
+}
+
+#[test]
+fn a_prompt_takes_only_the_queued_message_it_repeats() {
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(".rune").join(FILE_NAME);
+    append(
+        &path,
+        &[
+            event("m-1", State::Posted, "seat", "  for the seat\n"),
+            event("m-1", State::Queued, "seat", ""),
+            event("m-2", State::Posted, "seat", "for the seat"),
+        ],
+    )
+    .expect("append");
+
+    assert!(
+        take_prompted(&path, "seat", "   ", "later")
+            .expect("take")
+            .is_empty(),
+        "an empty prompt takes nothing"
+    );
+    let taken = take_prompted(&path, "seat", "for the seat", "later").expect("take");
+    assert_eq!(
+        taken
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        ["m-1"],
+        "a posted message waits for the postbox reader"
+    );
+    assert_eq!(
+        take_prompted(&path, "seat", "for the seat", "again").expect("take again"),
+        Vec::new(),
+        "a read message is not taken twice"
+    );
+}
+
+#[test]
 fn taking_marks_read_and_keeps_every_line() {
     let folder = tempfile::tempdir().expect("folder");
     let path = folder.path().join(".rune").join(FILE_NAME);
