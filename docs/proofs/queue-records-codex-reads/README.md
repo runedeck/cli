@@ -1,11 +1,11 @@
 ---
 type: proof
 change: queue-records-codex-reads
-head: 94706b41a3d16388dfb9d6e1269f4c09a97aecf6
+head: 2019c64bc794044a8fb9d45518484edf67ca85b5
 head_change: wvzquvsnqmpxtsvmlwvuxzqnmzkvuvsn
-head_tree: fb1bd370f38496cb83b5ee9c1383ade1730d4f75
+head_tree: 26119afdb345cf835b9ac60f14a04df6465dc022
 recorded: 2026-10-28
-transcript: 0c03d74e27d6456e31970446cee2eb1244529ccfcb1e90cd2be32a401bb26957
+transcript: ed2d89946fd00f164d3e4e60a5d4df2654df2bc5928c9b1a88bac62ddc4bd5df
 scenes:
 - scenario: queue-messages-for-sessions#a-queued-message-is-read-when-its-turn-starts/codex-turn-starts-with-a-queued-message
   kind: check

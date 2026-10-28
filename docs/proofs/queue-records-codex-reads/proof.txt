@@ -1,0 +1,64 @@
+## queue-messages-for-sessions#a-queued-message-is-read-when-its-turn-starts/codex-turn-starts-with-a-queued-message
+kind: check
+$ sh -s
+< cat > fake-codex <<'EOF'
+< #!/bin/sh
+< echo 'Queued message msg-41 for thread 019a-ouroboros.'
+< EOF
+< chmod +x fake-codex
+$ HOME=home rune queue post codex --session ouroboros --from claude:42e43c0b --binary ./fake-codex "Is the deck ready?"
+  warning: Codex looks the name ouroboros up page by page across its server's sessions, which can take a minute or more; a session UUID needs no search
+  queued message msg-41 for codex thread 019a-ouroboros
+$ HOME=home rune hook adapter postbox
+< {"v":1,"harness":"codex","event":"prompt.before","native_event":"UserPromptSubmit","session_id":"019a-ouroboros","prompt":"Is the deck ready?","raw":{}}
+  {"v":1,"effect":"pass","reason":null,"input":null,"context":[]}
+$ mlr --itsv --opprint cut -o -f state,sender,harness,session home/.rune/postbox.tsv
+  state  sender          harness session
+  posted claude:42e43c0b codex   ouroboros
+  queued claude:42e43c0b codex   019a-ouroboros
+  read   claude:42e43c0b codex   019a-ouroboros
+$ HOME=home rune queue list
+  2026-10-28T01:40:39.347Z  01a1802a9f33-52339187  read    claude:42e43c0b -> codex:019a-ouroboros  Is the deck ready?
+
+## queue-messages-for-sessions#a-queued-message-is-read-when-its-turn-starts/owner-prompt-leaves-the-queue-alone
+kind: check
+$ sh -s
+< cat > fake-codex <<'EOF'
+< #!/bin/sh
+< echo 'Queued message msg-42 for thread 01a15844-7b2e-71a0-aa88-b41f3c4622af.'
+< EOF
+< chmod +x fake-codex
+$ HOME=home rune queue post codex --session 01a15844-7b2e-71a0-aa88-b41f3c4622af --from claude:42e43c0b --binary ./fake-codex "Is the deck ready?"
+  queued message msg-42 for codex thread 01a15844-7b2e-71a0-aa88-b41f3c4622af
+$ HOME=home rune hook adapter postbox
+< {"v":1,"harness":"codex","event":"prompt.before","native_event":"UserPromptSubmit","session_id":"01a15844-7b2e-71a0-aa88-b41f3c4622af","prompt":"Run the tests","raw":{}}
+  {"v":1,"effect":"pass","reason":null,"input":null,"context":[]}
+$ HOME=home rune queue list
+  2026-10-28T01:40:39.589Z  01a1802aa025-0661f8d5  queued  claude:42e43c0b -> codex:01a15844-7b2e-71a0-aa88-b41f3c4622af  Is the deck ready?
+
+## queue-messages-for-sessions#a-codex-session-name-leads-to-its-uuid/refused-name-names-its-uuid
+kind: check
+$ sh -s
+< cat > fake-codex <<'EOF'
+< #!/bin/sh
+< echo 'Error: Cannot verify a unique session label across server pages; matching session UUID: 01a15844-7b2e-71a0-aa88-b41f3c4622af' >&2
+< exit 1
+< EOF
+< chmod +x fake-codex
+$ HOME=home rune --json queue post codex --session Proton/ai-demo --from claude:42e43c0b --binary ./fake-codex "Is the deck ready?"
+  warning: Codex looks the name Proton/ai-demo up page by page across its server's sessions, which can take a minute or more; a session UUID needs no search
+  {"details":{"exit_code":1,"harness_errors":[],"stderr_tail":"Error: Cannot verify a unique session label across server pages; matching session UUID: 01a15844-7b2e-71a0-aa88-b41f3c4622af","stdout_tail":""},"exit_code":1,"hint":"Codex matched the name to session 01a15844-7b2e-71a0-aa88-b41f3c4622af: post with --session 01a15844-7b2e-71a0-aa88-b41f3c4622af","kind":"exit","ok":false,"tool":"codex"}
+$ sh -c 'test ! -e home/.rune/postbox.tsv && echo "nothing recorded"'
+  nothing recorded
+
+## queue-messages-for-sessions#a-codex-session-name-leads-to-its-uuid/session-uuid-gets-no-warning
+kind: check
+$ sh -s
+< cat > fake-codex <<'EOF'
+< #!/bin/sh
+< echo 'Queued message msg-43 for thread 01a15844-7b2e-71a0-aa88-b41f3c4622af.'
+< EOF
+< chmod +x fake-codex
+$ HOME=home rune queue post codex --session 01a15844-7b2e-71a0-aa88-b41f3c4622af --from claude:42e43c0b --binary ./fake-codex "Is the deck ready?"
+  queued message msg-43 for codex thread 01a15844-7b2e-71a0-aa88-b41f3c4622af
+
