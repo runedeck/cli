@@ -55,7 +55,7 @@ rune queue read --session <name>     # where no session variable names you
 rune queue list --state posted       # look without marking anything read
 ```
 
-Claude Code and Codex sessions with the `postbox` hook get their messages at the next turn. Any other session runs `rune queue read --session <its id or name>` when a task starts and between steps. Answer a message by posting to its sender, who is named as `harness:session`.
+Claude Code and Codex sessions with the `postbox` hook get their messages at the next turn. Any other session runs `rune queue read --session <its id or name>` when a task starts and between steps. Answer a message by posting to its sender, who is named as `harness:session`. Name a Codex session by its UUID: Codex searches its server page by page for a name, which can take a minute or more.
 
 ## Turn Wrapping
 

@@ -448,6 +448,101 @@ fn harness_failure_passes_its_status_and_its_stderr_through() {
 
 #[cfg(unix)]
 #[test]
+fn a_name_resolves_to_the_receipt_thread_and_its_turn_marks_it_read() {
+    let home = tempfile::tempdir().expect("home");
+    let codex = fake_codex(home.path(), RECEIPT, "", 0);
+
+    rune(home.path())
+        .args(["queue", "post", "codex", "--session", "ouroboros"])
+        .args(["--binary", &codex, "Is the deck ready?"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: Codex looks the name ouroboros up page by page",
+        ));
+
+    // The turn the queue starts carries the message as its prompt.
+    let payload = serde_json::json!({
+        "v": 1,
+        "harness": "codex",
+        "event": "prompt.before",
+        "native_event": "UserPromptSubmit",
+        "session_id": "019a-ouroboros",
+        "prompt": "Is the deck ready?",
+        "raw": {},
+    });
+    let output = rune(home.path())
+        .args(["hook", "adapter", "postbox"])
+        .write_stdin(payload.to_string())
+        .output()
+        .expect("adapter output");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(json_of(&output)["effect"], "pass");
+
+    let output = rune(home.path())
+        .args(["--json", "queue", "list"])
+        .output()
+        .expect("list output");
+    let message = &json_of(&output)["messages"][0];
+    assert_eq!(message["session"], "019a-ouroboros", "{message}");
+    assert_eq!(message["state"], "read", "{message}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_session_uuid_gets_no_name_warning() {
+    let home = tempfile::tempdir().expect("home");
+    let codex = fake_codex(home.path(), RECEIPT, "", 0);
+
+    rune(home.path())
+        .args(["queue", "post", "codex", "--session"])
+        .args([
+            "01a15844-7b2e-71a0-aa88-b41f3c4622af",
+            "--binary",
+            &codex,
+            "hi",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refused_name_hints_at_the_uuid_codex_matched() {
+    let home = tempfile::tempdir().expect("home");
+    let codex = fake_codex(
+        home.path(),
+        "",
+        "Error: Cannot verify a unique session label across server pages; matching session UUID: 01a15844-7b2e-71a0-aa88-b41f3c4622af",
+        1,
+    );
+    let post = ["queue", "post", "codex", "--session", "Proton/ai-demo"];
+
+    let output = rune(home.path())
+        .arg("--json")
+        .args(post)
+        .args(["--binary", &codex, "hi"])
+        .output()
+        .expect("queue output");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        json_of(&output)["hint"],
+        "Codex matched the name to session 01a15844-7b2e-71a0-aa88-b41f3c4622af: post with --session 01a15844-7b2e-71a0-aa88-b41f3c4622af"
+    );
+    rune(home.path())
+        .args(post)
+        .args(["--binary", &codex, "hi"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "hint: Codex matched the name to session 01a15844-7b2e-71a0-aa88-b41f3c4622af",
+        ));
+    assert!(postbox(home.path()).is_empty(), "nothing was recorded");
+}
+
+#[cfg(unix)]
+#[test]
 fn missing_receipt_still_reports_success_with_a_warning() {
     let home = tempfile::tempdir().expect("home");
     let codex = fake_codex(home.path(), "", "", 0);

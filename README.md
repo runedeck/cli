@@ -462,7 +462,11 @@ rune queue list --state posted       # the postbox, changed by nothing
 
 Every message is recorded in the postbox, `~/.rune/postbox.tsv`, one file for every session on the machine. Each event is one tab-separated line: timestamp, id, state, sender, harness, session, message. A tab, newline, or backslash in a message is escaped, so `rg` and `column -t -s $'\t'` read the file. Nothing is removed: a state change (`posted`, `queued`, `read`) is a new line with the message's id, and its last line is its state. The sender is `--from`, else the posting session as `harness:id`, else `user:<login>`.
 
-Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed.
+Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed, and the `queued` line names that thread id, so a message posted by name lists under its thread.
+
+Post to a Codex session by its UUID, which the session reads from `CODEX_THREAD_ID`. Codex finds a UUID at once, but searches its server's sessions page by page for a name, which can take a minute or more. So a post by name warns before it starts. When Codex refuses a name and names the UUID it matched, the hint says to post with `--session <uuid>`.
+
+Inside Claude Code's command sandbox, `post` cannot reach the socket of the Codex daemon, and `post` and `read` cannot write `~/.rune/`. Add `rune queue *` to `sandbox.excludedCommands`, as for `rune run *`.
 
 Claude Code, agy, grok, cursor, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's session start and next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
 
@@ -474,7 +478,7 @@ hooks:
       events: [session.start, prompt.before, turn.finish]
 ```
 
-Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, cursor, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
+Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. In a Codex session, the same handler records a `queued` message as `read` when the queue starts the session's turn with it, because that turn's prompt is the message's text. A grok, agy, cursor, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
 
 `--json` makes every result one object (`posted`, `queued`, `read`, `list`, `dry_run`). `--dry-run` prints what would be posted with the message as `<message>`. A route that names no harness exits 125 with kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
 

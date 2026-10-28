@@ -1432,7 +1432,9 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 /// context on an event that takes context, or at a turn's end as the reason
 /// to keep working, so the session reads them at its next turn. A harness
 /// that can express neither on the event reads nothing, so no message is
-/// marked read and lost.
+/// marked read and lost. A prompt that is a message the harness's own
+/// queue holds for this session marks that message read: the queue started
+/// the turn with it.
 fn postbox(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     postbox_at(payload, &crate::cli::queue::ledger::path()?)
 }
@@ -1447,6 +1449,11 @@ pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<Hand
     else {
         return Ok(HandlerResult::default());
     };
+    if payload.event == "prompt.before"
+        && let Some(prompt) = payload.prompt.as_deref()
+    {
+        ledger::take_prompted(ledger, session, prompt, &ledger::now())?;
+    }
     let capability = match payload.event.as_str() {
         "session.start" | "prompt.before" | "tool.after" => Capability::Context,
         "turn.finish" => Capability::TurnContinue,
@@ -1460,7 +1467,7 @@ pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<Hand
         return Ok(HandlerResult::default());
     }
     let text = format!(
-        "Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender with `rune queue post`.\n\n{}",
+        "Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender named `harness:id` with `rune queue post <harness> --session <id>`.\n\n{}",
         inbox::format_messages(&messages)
     );
     Ok(if capability == Capability::TurnContinue {
