@@ -42,10 +42,12 @@ pub fn scratch() -> &'static Path {
 }
 
 /// Variables that point rune, or a harness it reads, at a directory
-/// outside HOME, or mark a proof scene. A test never inherits them from
-/// the developer.
+/// outside HOME, mark a proof scene, or refuse agent policy names. A test
+/// never inherits them from the developer.
 const INHERITED: &[&str] = &[
     "RUNE_STATE_DIR",
+    "RUNE_POLICY",
+    "RUNE_POLICY_DISABLE",
     "RUNE_PROOF_SCENE",
     "RUNE_HOOK_LOCK_TRACE",
     "CLAUDE_CONFIG_DIR",

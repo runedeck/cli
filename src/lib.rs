@@ -10,6 +10,7 @@ pub mod manifest;
 pub mod module;
 pub mod ontology;
 pub mod parse;
+pub mod policy;
 pub mod proof;
 pub mod provider;
 pub mod result;

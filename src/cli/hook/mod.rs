@@ -488,12 +488,22 @@ pub(crate) fn render_events() -> String {
     out
 }
 
-/// The plan: per harness, per native event, the handlers in order.
+/// The plan: per harness, per native event, the handlers in order. When
+/// any handler names an agent policy entry, every handler line gains a
+/// column with that name, `-` for none. Without one the lines stay as
+/// they were.
 pub(crate) fn render_plan(plan: &Plan) -> String {
     let mut out = String::new();
     if plan.harnesses.is_empty() {
         let _ = writeln!(out, "no handlers declared under hooks: in the rune config");
     }
+    let policy_width = plan
+        .harnesses
+        .values()
+        .flat_map(|events| events.values())
+        .flat_map(|event| event.handlers.iter())
+        .filter_map(|handler| handler.policy.as_deref().map(str::len))
+        .max();
     for (harness, events) in &plan.harnesses {
         let registered = if Harness::REGISTERED.contains(harness) {
             ""
@@ -512,15 +522,22 @@ pub(crate) fn render_plan(plan: &Plan) -> String {
                 event.budget_ms
             );
             for handler in &event.handlers {
-                let _ = writeln!(
-                    out,
-                    "    {:>4}  {:<18} {:>6}ms  {}{}",
+                let policy = policy_width.map_or_else(String::new, |width| {
+                    format!(
+                        "  {:<width$}",
+                        handler.policy.as_deref().unwrap_or("-"),
+                        width = width.max(6)
+                    )
+                });
+                let line = format!(
+                    "    {:>4}  {:<18} {:>6}ms  {}{policy}{}",
                     handler.order,
                     handler.id,
                     handler.timeout_ms,
                     handler.on_failure.as_str(),
                     if handler.rewrites { "  rewrites" } else { "" }
                 );
+                let _ = writeln!(out, "{}", line.trim_end());
             }
         }
     }
@@ -613,6 +630,33 @@ mod tests {
                 .take_while(|l| l.starts_with(' '))
                 .any(|l| l.contains("jev")),
             "jev is out of the Cursor block: {text}"
+        );
+    }
+
+    #[test]
+    fn the_plan_shows_a_policy_column_only_when_a_handler_names_one() {
+        let named: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: jev\n    exec: [jev]\n    events: [tool.after]\n    policy: jev.slop-detector\n  - id: lint\n    exec: [lint]\n    events: [tool.after]\n    order: 200\n",
+        )
+        .unwrap();
+        let text = render_plan(&compile(&named).unwrap());
+        let line = |id: &str| {
+            text.lines()
+                .find(|l| l.split_whitespace().nth(1) == Some(id))
+                .unwrap_or_else(|| panic!("{id} in {text}"))
+                .to_string()
+        };
+        assert!(line("jev").ends_with("warn  jev.slop-detector"), "{text}");
+        assert!(line("lint").ends_with("warn  -"), "{text}");
+        let plain: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: lint\n    exec: [lint]\n    events: [tool.after]\n",
+        )
+        .unwrap();
+        let text = render_plan(&compile(&plain).unwrap());
+        let before = format!("     100  {:<18} {:>6}ms  warn", "lint", 500);
+        assert!(
+            text.lines().any(|l| l == before),
+            "a plan without a policy prints as before: {text}"
         );
     }
 

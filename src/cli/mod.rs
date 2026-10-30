@@ -34,6 +34,7 @@ mod launch;
 mod ontology;
 mod output;
 mod plugin;
+mod policy;
 mod process;
 #[cfg(feature = "spec")]
 mod promote;
@@ -378,6 +379,12 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         action: Option<PluginAction>,
+    },
+
+    /// Read the agent policy: which names agents may use in a place
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
     },
 
     /// List deploy providers, or toggle them for this source
@@ -1574,6 +1581,22 @@ enum HookAction {
 }
 
 #[derive(Subcommand)]
+enum PolicyAction {
+    /// Print allowed or refused and the deciding layer for each name; exit 1 when any is refused
+    Check {
+        /// The directory or file to ask about. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        path: Option<std::path::PathBuf>,
+        /// The session id whose switch file also applies.
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+        /// The policy names to check, such as `jev.send.hosted`.
+        #[arg(value_name = "NAME", required = true)]
+        names: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum WrapAction {
     /// Wrap each turn of a session in this workspace as one jj change
     On,
@@ -2164,6 +2187,16 @@ pub fn run() -> i32 {
         }
         Command::Provider { action } => {
             return exit_code(provider_cmd::execute(action, args.json), args.json);
+        }
+        Command::Policy {
+            action:
+                PolicyAction::Check {
+                    path,
+                    session,
+                    names,
+                },
+        } => {
+            return policy::check(path, session.as_deref(), &names, args.json);
         }
         Command::Todo { action, all } => {
             return exit_code(todo::execute(action, all, args.json), args.json);
@@ -3147,6 +3180,12 @@ fn plumbing_help(help: &mut String) {
         "plugin",
         "[list]",
         "List declared plugins and their events",
+    );
+    help_command(
+        help,
+        "policy",
+        "check [--path <DIR>] [--session <ID>] <NAME>...",
+        "Say whether the agent policy allows each name here",
     );
     help_command(
         help,

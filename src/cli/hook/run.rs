@@ -4,6 +4,7 @@
 //! own shape. A failure of the dispatcher itself follows the strongest
 //! policy among the handlers that wanted the event.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::Read as _;
@@ -165,6 +166,7 @@ pub(crate) fn no_plan(
             timeout_ms: 0,
             on_failure: policy,
             rewrites: false,
+            policy: None,
         }],
     };
     dispatcher_failure(harness, native_event, &event, why, log_dir)
@@ -221,6 +223,18 @@ pub(crate) struct Runner {
     pub(crate) env: cover::Environment,
     /// When the budget clock started: before the first read.
     pub(crate) started: Instant,
+    /// Where the agent policy is read from, for a handler that names a
+    /// policy entry. The files are read only when such a handler is
+    /// planned for the event. `None` refuses every such handler.
+    pub(crate) policy: Option<rune::policy::Environment>,
+}
+
+/// Where the session switch files live: `policy/session/` under the rune
+/// state directory.
+pub(crate) fn session_switch_dir() -> Option<PathBuf> {
+    crate::cli::state::dir()
+        .ok()
+        .map(|dir| dir.join("policy").join("session"))
 }
 
 impl Runner {
@@ -229,6 +243,7 @@ impl Runner {
             cover,
             env,
             started,
+            policy: Some(rune::policy::Environment::from_process(session_switch_dir())),
             log_dir: log_dir(),
             record_dir: record::dir().ok(),
             record_error: record::dir().err().map(|e| e.to_string()),
@@ -330,7 +345,82 @@ fn skipped(
     }
 }
 
+/// The handlers the agent policy refuses at one firing, by id, each with
+/// its policy name and the decision.
+pub(crate) type Refusals = HashMap<String, (String, rune::policy::Decision)>;
+
+/// The handlers of this event the agent policy refuses. The policy is
+/// read only when a handler names a policy entry, and once per firing.
+/// The name resolves for the event's directory, else the dispatcher's
+/// own, and for the event's session. Every warning the reader gives
+/// reaches stderr once.
+pub(crate) fn refusals(
+    event: &PlannedEvent,
+    payload: &HandlerPayload,
+    runner: &Runner,
+    stderr: &mut Vec<String>,
+) -> Refusals {
+    let mut refused = HashMap::new();
+    if event.handlers.iter().all(|h| h.policy.is_none()) {
+        return refused;
+    }
+    let reader = runner.policy.clone().map(rune::policy::Reader::load);
+    let subject = payload
+        .cwd
+        .as_deref()
+        .filter(|cwd| !cwd.is_empty())
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let mut warned: Vec<String> = Vec::new();
+    for handler in &event.handlers {
+        let Some(name) = &handler.policy else {
+            continue;
+        };
+        let decision = match &reader {
+            Some(reader) => reader.decide(name, &subject, payload.session_id.as_deref()),
+            None => rune::policy::Decision::new(
+                false,
+                rune::policy::FILE_LAYER,
+                "no policy reader for this dispatch",
+            ),
+        };
+        for warning in &decision.warnings {
+            if !warned.contains(warning) {
+                stderr.push(format!("rune hook: policy: {}", visible(warning, false)));
+                warned.push(warning.clone());
+            }
+        }
+        if !decision.allowed {
+            refused.insert(handler.id.clone(), (name.clone(), decision));
+        }
+    }
+    refused
+}
+
+/// The record of a handler the agent policy refuses at this firing, with
+/// its log line `<id> skipped by policy: <name> (<layer>)`. The handler
+/// does not start and counts as neither a run nor a failure. `None` lets
+/// it run.
+fn policy_skip(
+    refused: &Refusals,
+    handler: &PlannedHandler,
+    harness: Harness,
+    native_event: &str,
+    payload: &HandlerPayload,
+    log: &mut String,
+) -> Option<Record> {
+    let (name, decision) = refused.get(&handler.id)?;
+    let why = format!("skipped by policy: {name} ({})", decision.layer);
+    let _ = writeln!(log, "{} {why}", handler.id);
+    let mut line = record_line(harness, native_event, payload, &handler.id, Instant::now());
+    line.duration_ms = Some(0);
+    line.skipped = Some(why);
+    Some(line)
+}
+
 /// Dispatch one event. Pure over the plan, the payload, and the runner.
+// One loop over the handlers of one event. The policy gate took it past the
+// line limit, and a split would move the merged state through a struct.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn dispatch(
     plan: &Plan,
     harness: Harness,
@@ -355,9 +445,24 @@ pub(crate) fn dispatch(
     let mut asked: Vec<Asked> = Vec::new();
     // One firing reads each table, script, and folder once.
     let mut cache = cover::Cache::default();
-    let hold = wrap_hold(event, harness, native_event, &payload, runner, &mut cache);
+    let refused = refusals(event, &payload, runner, &mut stderr);
+    let hold = wrap_hold(
+        event,
+        harness,
+        native_event,
+        &payload,
+        runner,
+        &mut cache,
+        &refused,
+    );
     let mut failed: Vec<String> = Vec::new();
     for handler in &event.handlers {
+        if let Some(line) =
+            policy_skip(&refused, handler, harness, native_event, &payload, &mut log)
+        {
+            records.push(line);
+            continue;
+        }
         if let Some(line) = skipped(
             event,
             handler,
@@ -452,7 +557,8 @@ pub(crate) fn dispatch(
 /// handler cannot hide the card that names the reset. The wrapper runs
 /// last there. No other event pays the hold, and neither does a firing
 /// the wrapper does nothing on: one outside a workspace with the switch
-/// on, or one where the legacy cover skips the wrapper.
+/// on, one where the legacy cover skips the wrapper, or one where the
+/// agent policy refuses it.
 fn wrap_hold(
     event: &PlannedEvent,
     harness: Harness,
@@ -460,6 +566,7 @@ fn wrap_hold(
     payload: &HandlerPayload,
     runner: &Runner,
     cache: &mut cover::Cache,
+    refused: &Refusals,
 ) -> Duration {
     if Canonical::from_native(harness, native_event) != Some(Canonical::TurnFinish) {
         return Duration::ZERO;
@@ -467,6 +574,9 @@ fn wrap_hold(
     let Some(wrapper) = event.handlers.last().filter(|h| h.wraps_turns()) else {
         return Duration::ZERO;
     };
+    if refused.contains_key(&wrapper.id) {
+        return Duration::ZERO;
+    }
     if let Some(coverage) = runner.cover.handlers.get(&wrapper.id) {
         let canonical = event
             .canonical

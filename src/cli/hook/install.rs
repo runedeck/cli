@@ -4194,6 +4194,7 @@ mod tests {
             cover,
             env: cover::Environment::under(home),
             started: std::time::Instant::now(),
+            policy: None,
             spawn: Box::new(move |handler, _, _, _, _| {
                 log.borrow_mut().push(handler.id.clone());
                 Ok((Some(0), "{}".to_string(), String::new()))
@@ -4722,6 +4723,7 @@ mod tests {
             cover,
             env: cover::Environment::under(home.path()),
             started: std::time::Instant::now(),
+            policy: None,
             spawn: Box::new(move |handler, _, timeout, _, _| {
                 log.borrow_mut().push((handler.id.clone(), timeout));
                 Ok((Some(0), "{}".to_string(), String::new()))

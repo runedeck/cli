@@ -663,6 +663,26 @@ pub struct Handler {
     pub rewrites: bool,
     #[serde(default)]
     pub per_harness: HashMap<Harness, HandlerOverride>,
+    /// A name in the agent policy, such as `jev.slop-detector`. The
+    /// dispatcher starts the handler only where the policy allows the name
+    /// for the event's directory and session. Without it the handler runs
+    /// wherever its events fire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+}
+
+/// Whether `name` can stand in the agent policy as one name: dotted
+/// segments of lowercase letters, digits, `_`, and `-`. A pattern such as
+/// `jev.*` names many and so names no handler.
+#[must_use]
+pub fn policy_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        })
 }
 
 /// The `hooks:` section of the user config.
@@ -757,6 +777,11 @@ pub struct PlannedHandler {
     pub timeout_ms: u64,
     pub on_failure: OnFailure,
     pub rewrites: bool,
+    /// The agent policy name the dispatcher resolves before it starts the
+    /// handler. Absent from the plan file when the handler names none, so
+    /// a plan without one keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
 }
 
 impl PlannedHandler {
@@ -998,6 +1023,16 @@ impl Hooks {
                 errors.push(fault(
                     "timeout_ms",
                     "a timeout of zero never runs".to_string(),
+                ));
+            }
+            if let Some(name) = &handler.policy
+                && !policy_name_ok(name)
+            {
+                errors.push(fault(
+                    "policy",
+                    format!(
+                        "`{name}` is not a policy name: dotted segments of lowercase letters, digits, `_`, and `-`, with no pattern"
+                    ),
                 ));
             }
         }
@@ -1283,6 +1318,7 @@ impl Hooks {
                 .or(handler.on_failure)
                 .unwrap_or(self.defaults.on_failure),
             rewrites: handler.rewrites,
+            policy: handler.policy.clone(),
         }
     }
 }
@@ -1555,6 +1591,7 @@ handlers:
             requires: Vec::new(),
             rewrites: false,
             per_harness: HashMap::new(),
+            policy: None,
         }
     }
 
@@ -1644,6 +1681,7 @@ handlers:
             requires: Vec::new(),
             rewrites: false,
             per_harness: HashMap::new(),
+            policy: None,
         });
         let plan = hooks.compile().expect("compiles");
         assert!(plan.harnesses[&Harness::Claude].contains_key("WorktreeCreate"));
@@ -1737,6 +1775,53 @@ handlers:
                 "hooks.handlers[cap].per_harness.codex.on_failure: `deny` needs a gate event, and `session.end` is passive on codex"
             ]
         );
+    }
+
+    #[test]
+    fn a_policy_name_reaches_the_plan_and_stays_out_of_it_when_absent() {
+        let hooks: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: jev\n    exec: [jev]\n    events: [tool.after]\n    policy: jev.slop-detector\n  - id: lint\n    exec: [lint]\n    events: [tool.after]\n",
+        )
+        .unwrap();
+        let plan = hooks.compile().expect("compiles");
+        let after = &plan.harnesses[&Harness::Claude]["PostToolUse"];
+        let policies: Vec<(&str, Option<&str>)> = after
+            .handlers
+            .iter()
+            .map(|h| (h.id.as_str(), h.policy.as_deref()))
+            .collect();
+        assert_eq!(
+            policies,
+            [("jev", Some("jev.slop-detector")), ("lint", None)]
+        );
+        let text = serde_json::to_string(&after.handlers[1]).unwrap();
+        assert!(
+            !text.contains("policy"),
+            "a plan without a policy keeps its bytes: {text}"
+        );
+        let text = serde_json::to_string(&after.handlers[0]).unwrap();
+        assert!(text.contains(r#""policy":"jev.slop-detector""#), "{text}");
+    }
+
+    #[test]
+    fn a_policy_pattern_or_a_malformed_name_is_a_fault() {
+        for name in ["jev.*", "Jev.send", "jev..send", "", "jev send", ".jev"] {
+            let hooks = Hooks {
+                handlers: vec![Handler {
+                    policy: Some(name.to_string()),
+                    ..native_handler(Harness::Claude, "PreToolUse")
+                }],
+                ..Hooks::default()
+            };
+            let text: Vec<String> = hooks.validate().iter().map(ToString::to_string).collect();
+            assert!(
+                text.iter().any(|e| e.contains("].policy: `")),
+                "{name:?}: {text:?}"
+            );
+        }
+        for name in ["jev", "jev.slop-detector.signal", "vcs.push_tags", "a1.b-2"] {
+            assert!(policy_name_ok(name), "{name}");
+        }
     }
 
     #[test]

@@ -50,6 +50,7 @@
 
   Plumbing:
     plugin      [list]                                                List declared plugins and their events
+    policy      check [--path <DIR>] [--session <ID>] <NAME>...       Say whether the agent policy allows each name here
     update      --check                                               Check for a newer release (read-only)
     assemble    [--source <DIR>]                                      Assemble rune content into build/
     deploy      [--source <DIR>] [--target <DIR>]                     Deploy assembled runes

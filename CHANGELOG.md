@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse `rune run jev` and `rune launch jev` with a pointer to `rune ask`, because a judging model is a different kind of tool from a harness.
 - Read an unset `from_env` key through secretspec from the manifest `secrets` or `RUNE_SECRETS` names, or from `~/.config/rune/secretspec.toml` when no env file is named.
 - Pass `--profile <name>` to secretspec when the config key `secrets_profile` or `RUNE_SECRETS_PROFILE` names a profile. Without a name, secretspec uses its own default profile.
+- Add `policy: <name>` to a hook handler. The dispatcher asks the agent policy before it starts the handler, skips a refused one without a failure, and records `skipped by policy: <name> (<layer>)`.
+- Add `rune policy check [--path <DIR>] [--session <ID>] <NAME>...`, which prints `allowed` or `refused` with the deciding layer for each name and exits 1 when any name is refused.
+- Read a repository's `.rune/policy.yaml`, which may only revoke, narrow, or disable names, and a session switch file under the state directory, which turns names off for one session.
+- Show each handler's policy name in its own column of `rune hook list` when any handler names one.
 
 ### Changed
 
