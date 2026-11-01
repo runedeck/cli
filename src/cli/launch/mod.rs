@@ -1,4 +1,5 @@
 pub(crate) mod check;
+pub(crate) mod secrets;
 
 use crate::cli::dispatch;
 use crate::cli::surface;
@@ -168,7 +169,16 @@ fn resolve_with_config(
         options.args = args;
     }
     if let Some(profile) = &profile {
-        apply_profile_env(profile, &mut plan, context.config.env_file().as_deref())?;
+        let manifest = context.config.secrets_manifest();
+        let env_file = context.config.env_file();
+        let secretspec = manifest
+            .as_deref()
+            .map(|path| secrets::SecretspecBinary::new(path, invocation));
+        let fallback = match &secretspec {
+            Some(source) => SecretFallback::Manifest(source),
+            None => SecretFallback::EnvFile(env_file.as_deref()),
+        };
+        apply_profile_env(profile, &mut plan, &fallback)?;
     }
     // A wrapped command unsets the parent session itself, from the whole
     // tables: a tmux pane takes the tmux server's environment, not rune's.
@@ -780,19 +790,41 @@ fn validate_model(alias: &str, model: &LaunchModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a `from_env` reference is read when the process environment
+/// leaves it unset: a secrets manifest when one applies, else the env file.
+/// The two never mix, so a stale env file cannot answer for a manifest.
+pub(crate) enum SecretFallback<'a> {
+    Manifest(&'a dyn secrets::SecretSource),
+    EnvFile(Option<&'a Path>),
+}
+
 fn apply_profile_env(
     profile: &ontology::LaunchProfile,
     plan: &mut LaunchPlan,
-    env_file: Option<&Path>,
+    fallback: &SecretFallback<'_>,
 ) -> Result<(), String> {
     let mut file_values: Option<HashMap<String, String>> = None;
+    let mut read: HashMap<String, String> = HashMap::new();
     let mut keys: Vec<&String> = profile.env.keys().collect();
     keys.sort_unstable();
     for key in keys {
         let value = match &profile.env[key] {
             ontology::ProfileEnvValue::Literal(value) => value.clone(),
             ontology::ProfileEnvValue::FromEnv { from_env } => {
-                resolve_env_reference(from_env, env_file, &mut file_values)?
+                if let Ok(value) = std::env::var(from_env) {
+                    value
+                } else if let Some(value) = read.get(from_env) {
+                    value.clone()
+                } else {
+                    let value = match fallback {
+                        SecretFallback::Manifest(source) => source.get(from_env)?,
+                        SecretFallback::EnvFile(env_file) => {
+                            resolve_env_reference(from_env, *env_file, &mut file_values)?
+                        }
+                    };
+                    read.insert(from_env.clone(), value.clone());
+                    value
+                }
             }
         };
         plan.env.push((OsString::from(key), OsString::from(value)));
@@ -800,16 +832,12 @@ fn apply_profile_env(
     Ok(())
 }
 
-/// The process environment wins; an unset variable falls back to the env
-/// file, parsed once per launch.
+/// An unset variable read from the env file, parsed once per launch.
 fn resolve_env_reference(
     name: &str,
     env_file: Option<&Path>,
     file_values: &mut Option<HashMap<String, String>>,
 ) -> Result<String, String> {
-    if let Ok(value) = std::env::var(name) {
-        return Ok(value);
-    }
     let Some(path) = env_file else {
         return Err(format!(
             "profile references unset environment variable {name}"

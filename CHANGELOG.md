@@ -13,6 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
+## [Unreleased]
+
+### Added
+
+- Read an unset `from_env` key through secretspec from the manifest `secrets` or `RUNE_SECRETS` names, or from `~/.config/rune/secretspec.toml` when no env file is named.
+
+### Changed
+
+- Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
+
 ## [0.6.0] - 2026-10-26
 
 ### Added

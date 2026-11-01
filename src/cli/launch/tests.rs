@@ -10,6 +10,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
         config: ontology::ResolvedConfig {
             deck: None,
             env: None,
+            secrets: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions,
             setup: None,
@@ -258,6 +259,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
         ontology::ResolvedConfig {
             deck: None,
             env: None,
+            secrets: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions: Vec::new(),
             setup: None,
@@ -940,7 +942,7 @@ fn profile_env_supports_literals_and_from_env_references() {
         ontology::ProfileEnvValue::Literal("claude-fable-5".to_string()),
     );
     let mut plan = LaunchPlan::default();
-    apply_profile_env(&profile, &mut plan, None).unwrap();
+    apply_profile_env(&profile, &mut plan, &SecretFallback::EnvFile(None)).unwrap();
     assert_eq!(
         plan.env,
         vec![(
@@ -957,7 +959,7 @@ fn profile_env_supports_literals_and_from_env_references() {
         },
     );
     let mut plan = LaunchPlan::default();
-    let error = apply_profile_env(&broken, &mut plan, None).unwrap_err();
+    let error = apply_profile_env(&broken, &mut plan, &SecretFallback::EnvFile(None)).unwrap_err();
     assert!(error.contains("RUNE_TEST_UNSET_VARIABLE"), "{error}");
 }
 
@@ -979,7 +981,12 @@ fn from_env_reference_falls_back_to_the_env_file() {
         },
     );
     let mut plan = LaunchPlan::default();
-    apply_profile_env(&profile, &mut plan, Some(&env_path)).unwrap();
+    apply_profile_env(
+        &profile,
+        &mut plan,
+        &SecretFallback::EnvFile(Some(&env_path)),
+    )
+    .unwrap();
     assert_eq!(
         plan.env,
         vec![(OsString::from("TARGET_KEY"), OsString::from("file-value"))]
@@ -993,9 +1000,159 @@ fn from_env_reference_falls_back_to_the_env_file() {
         },
     );
     let mut plan = LaunchPlan::default();
-    let error = apply_profile_env(&missing, &mut plan, Some(&env_path)).unwrap_err();
+    let error = apply_profile_env(
+        &missing,
+        &mut plan,
+        &SecretFallback::EnvFile(Some(&env_path)),
+    )
+    .unwrap_err();
     assert!(error.contains("absent from"), "{error}");
     assert!(error.contains("RUNE_TEST_ABSENT_EVERYWHERE"), "{error}");
+}
+
+/// A secret source that answers from a fixed table and counts its reads.
+struct TableSource {
+    values: HashMap<&'static str, &'static str>,
+    reads: std::cell::Cell<usize>,
+}
+
+impl secrets::SecretSource for TableSource {
+    fn get(&self, key: &str) -> Result<String, String> {
+        self.reads.set(self.reads.get() + 1);
+        self.values
+            .get(key)
+            .map(|value| (*value).to_string())
+            .ok_or_else(|| format!("profile references {key}, unreadable from the manifest"))
+    }
+}
+
+fn from_env_profile(pairs: &[(&str, &str)]) -> ontology::LaunchProfile {
+    let mut profile = ontology::LaunchProfile::default();
+    for (key, source) in pairs {
+        profile.env.insert(
+            (*key).to_string(),
+            ontology::ProfileEnvValue::FromEnv {
+                from_env: (*source).to_string(),
+            },
+        );
+    }
+    profile
+}
+
+#[test]
+fn manifest_value_fills_every_reference_with_one_read() {
+    let source = TableSource {
+        values: HashMap::from([("RUNE_TEST_MANIFEST_KEY", "manifest-value")]),
+        reads: std::cell::Cell::new(0),
+    };
+    let profile = from_env_profile(&[
+        ("ANTHROPIC_AUTH_TOKEN", "RUNE_TEST_MANIFEST_KEY"),
+        ("ANTHROPIC_API_KEY", "RUNE_TEST_MANIFEST_KEY"),
+    ]);
+    let mut plan = LaunchPlan::default();
+    apply_profile_env(&profile, &mut plan, &SecretFallback::Manifest(&source)).unwrap();
+
+    assert_eq!(
+        plan.env,
+        vec![
+            (
+                OsString::from("ANTHROPIC_API_KEY"),
+                OsString::from("manifest-value")
+            ),
+            (
+                OsString::from("ANTHROPIC_AUTH_TOKEN"),
+                OsString::from("manifest-value")
+            ),
+        ]
+    );
+    assert_eq!(source.reads.get(), 1, "a key referenced twice is read once");
+}
+
+#[test]
+fn launch_picks_the_named_manifest_or_the_named_env_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env_path = dir.path().join("env");
+    std::fs::write(&env_path, "RUNE_TEST_SELECTION_KEY=file-value\n").expect("env file");
+    let mut launch = Launch::default();
+    launch.profiles.insert(
+        "claude".to_string(),
+        [(
+            "picked".to_string(),
+            from_env_profile(&[("ANTHROPIC_AUTH_TOKEN", "RUNE_TEST_SELECTION_KEY")]),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let named = |value: &str| ontology::ResolvedValue {
+        value: value.to_string(),
+        source: ontology::Source::Config,
+    };
+    let config = |secrets: Option<&str>| ontology::ResolvedConfig {
+        env: Some(named(&env_path.display().to_string())),
+        secrets: secrets.map(named),
+        launch: launch.clone(),
+        ..ontology::ResolvedConfig::default()
+    };
+    let resolve = |config| {
+        resolve_with_config(
+            "picked@claude",
+            &[],
+            dir.path().to_path_buf(),
+            dir.path().to_path_buf(),
+            config,
+        )
+    };
+    let file_token = |resolved: &ResolvedLaunch| {
+        resolved
+            .env
+            .iter()
+            .any(|(key, value)| key == "ANTHROPIC_AUTH_TOKEN" && value == "file-value")
+    };
+
+    // A named manifest wins over the named env file, even when it is missing.
+    let missing = dir.path().join("missing.toml");
+    let error = resolve(config(Some(&missing.display().to_string()))).unwrap_err();
+    assert!(error.message.contains("does not exist"), "{error}");
+    assert!(!error.message.contains("file-value"), "{error}");
+
+    // An empty name turns the manifest off, and the env file answers.
+    assert!(file_token(&resolve(config(Some(""))).expect("empty name")));
+
+    // With no manifest named, the named env file beats the default manifest.
+    assert!(file_token(&resolve(config(None)).expect("env file named")));
+}
+
+#[test]
+fn manifest_failure_stops_the_launch_with_the_reference() {
+    let source = TableSource {
+        values: HashMap::new(),
+        reads: std::cell::Cell::new(0),
+    };
+    let profile = from_env_profile(&[("TARGET_KEY", "RUNE_TEST_MANIFEST_ABSENT")]);
+    let mut plan = LaunchPlan::default();
+    let error =
+        apply_profile_env(&profile, &mut plan, &SecretFallback::Manifest(&source)).unwrap_err();
+    assert!(error.contains("RUNE_TEST_MANIFEST_ABSENT"), "{error}");
+    assert_eq!(plan.env, [] as [(OsString, OsString); 0]);
+}
+
+#[test]
+fn process_environment_wins_over_the_manifest() {
+    let source = TableSource {
+        values: HashMap::from([("PATH", "from-manifest")]),
+        reads: std::cell::Cell::new(0),
+    };
+    let profile = from_env_profile(&[("SEARCH_PATH", "PATH")]);
+    let mut plan = LaunchPlan::default();
+    apply_profile_env(&profile, &mut plan, &SecretFallback::Manifest(&source)).unwrap();
+    assert_eq!(
+        plan.env,
+        vec![(
+            OsString::from("SEARCH_PATH"),
+            std::env::var_os("PATH").expect("PATH is set")
+        )]
+    );
+    assert_eq!(source.reads.get(), 0);
 }
 
 #[test]
@@ -1069,6 +1226,7 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
     let config = || ontology::ResolvedConfig {
         deck: None,
         env: None,
+        secrets: None,
         ontology: ontology::ResolvedOntology::default(),
         extensions: Vec::new(),
         setup: None,
@@ -1898,6 +2056,7 @@ fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
         ontology::ResolvedConfig {
             deck: None,
             env: None,
+            secrets: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions: Vec::new(),
             setup: None,
@@ -1959,6 +2118,7 @@ fn try_resolve_with_config_for_tests(
         ontology::ResolvedConfig {
             deck: None,
             env: None,
+            secrets: None,
             ontology: ontology::ResolvedOntology::default(),
             extensions: Vec::new(),
             setup: None,

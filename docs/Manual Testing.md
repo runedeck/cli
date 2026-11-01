@@ -808,7 +808,7 @@ rune launch nonexistent@claude         # error listing known profiles
 rune launch claude -- --version        # real execution: args after -- pass through
 ```
 
-The invocation is `[profile@]<tool>`, user@host style: `sol@claude` is profile `sol` running at tool `claude`. Profiles live under `launch.profiles` in `~/.config/rune/config.yaml`. Environment values support `from_env` references so secrets stay out of config. An unset process variable falls back to the env file (`rune config set env <path>`, default `~/.env`).
+The invocation is `[profile@]<tool>`, user@host style: `sol@claude` is profile `sol` running at tool `claude`. Profiles live under `launch.profiles` in `~/.config/rune/config.yaml`. Environment values support `from_env` references so secrets stay out of config. An unset process variable is read through `secretspec get` from the secrets manifest (`rune config set secrets <path>`, default `~/.config/rune/secretspec.toml` when it exists). Without a manifest it falls back to the env file (`rune config set env <path>`, default `~/.env`).
 
 Model routes live under `launch.models`. A profile selects one route with `model`, which keeps the provider model and context settings together. Start the local translating proxy used by the Sol and Lumo profiles, then configure the routes and profiles:
 
@@ -846,7 +846,8 @@ launch:
 ```sh
 rune launch
 rune launch sol@claude --dry-run
-env -u CLIPROXY_API_KEY RUNE_ENV=/dev/null rune launch sol@claude --dry-run
+env -u CLIPROXY_API_KEY RUNE_ENV=/dev/null RUNE_SECRETS=/nonexistent/secretspec.toml rune launch sol@claude --dry-run
+env -u CLIPROXY_API_KEY rune launch sol@claude --dry-run
 rune launch sol@claude
 ```
 
