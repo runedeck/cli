@@ -26,7 +26,7 @@ mod workspace;
 /// 126 is a harness binary found but not runnable, 127 one not found, and
 /// 128 plus the signal number a signal that ended the harness or the
 /// runner.
-const EXIT_TIMEOUT: i32 = 124;
+pub(crate) const EXIT_TIMEOUT: i32 = 124;
 pub(crate) const EXIT_RUNNER_ERROR: i32 = 125;
 const EXIT_CANNOT_RUN: i32 = 126;
 const EXIT_NOT_FOUND: i32 = 127;
@@ -243,6 +243,12 @@ fn with_exit_code(mut json: Value, exit_code: i32) -> Value {
 
 #[allow(clippy::too_many_lines)]
 fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> {
+    // A judging model has no harness to run: `rune ask` asks it. The
+    // refusal comes before any prompt is read.
+    let (tool_name, _) = launch::split_invocation(&options.tool);
+    if let Some(message) = crate::cli::ask::not_a_harness(tool_name) {
+        return Err(message.into());
+    }
     if options.plan == RunPlan::Check {
         return execute_check(options);
     }

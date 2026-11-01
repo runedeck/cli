@@ -7,8 +7,9 @@ How the overlapping command families relate, so the right tool is obvious.
 - `launch` opens an interactive coding-tool session. It inherits terminal input and output, forwards native arguments, and permits terminal wrappers such as tmux.
 - `run` executes a coding tool noninteractively. It reuses launch profiles and middleware, applies an explicit access mode, captures the final answer, and supervises the child process group. No timeout is applied unless requested.
 - `exec` runs a script bundled with a skill through the runtime contract declared by that skill.
+- `ask` sends a judging model a question set about one text and prints typed answers. A judging model is not a harness: it runs no process and keeps no conversation, so `run` and `launch` refuse it by name.
 
-Use `launch` when a person will interact with the provider, `run` when automation needs a provider answer, and `exec` when the executable belongs to a skill.
+Use `launch` when a person will interact with the provider, `run` when automation needs a provider answer, `ask` when a step needs typed answers about a text, and `exec` when the executable belongs to a skill.
 
 ## Deploying content
 

@@ -333,3 +333,59 @@ fn unknown_top_level_config_key_errors() {
     assert_eq!(error.kind(), ErrorKind::Config);
     assert!(error.message().contains("unknown field"), "got: {error}");
 }
+
+#[test]
+fn ask_defaults_name_the_built_in_route_and_question_folder() {
+    let config = Config::default();
+    assert_eq!(config.ask.model, DEFAULT_ASK_MODEL);
+    assert_eq!(
+        config.ask.questions,
+        vec![DEFAULT_ASK_QUESTIONS.to_string()]
+    );
+    assert!(config.ask.routes.is_empty());
+
+    let resolved = resolve_config(&config, &no_env);
+    assert_eq!(resolved.ask, Ask::default());
+}
+
+#[test]
+fn ask_section_deserializes_model_questions_and_routes() {
+    let config: Config = serde_yaml::from_str(
+        "ask:\n    model: local\n    questions: [~/Agents/questions]\n    routes:\n        jev:\n            base_url: https://cliproxy.internal\n            key_env: CLIPROXY_API_KEY\n        local:\n            id: gemma3\n            base_url: http://127.0.0.1:11434\n",
+    )
+    .expect("ask config");
+
+    assert_eq!(config.ask.model, "local");
+    assert_eq!(config.ask.questions, vec!["~/Agents/questions".to_string()]);
+    let jev = &config.ask.routes["jev"];
+    assert_eq!(jev.id, None);
+    assert_eq!(jev.base_url.as_deref(), Some("https://cliproxy.internal"));
+    assert_eq!(jev.key_env.as_deref(), Some("CLIPROXY_API_KEY"));
+    let local = &config.ask.routes["local"];
+    assert_eq!(local.id.as_deref(), Some("gemma3"));
+    assert_eq!(local.base_url.as_deref(), Some("http://127.0.0.1:11434"));
+    assert_eq!(local.key_env, None);
+
+    // A partial section keeps the defaults for the rest.
+    let partial: Config =
+        serde_yaml::from_str("ask:\n    routes:\n        jev:\n            id: jev-1.14.0\n")
+            .expect("partial ask config");
+    assert_eq!(partial.ask.model, DEFAULT_ASK_MODEL);
+    assert_eq!(
+        partial.ask.questions,
+        vec![DEFAULT_ASK_QUESTIONS.to_string()]
+    );
+    assert_eq!(partial.ask.routes["jev"].id.as_deref(), Some("jev-1.14.0"));
+}
+
+#[test]
+fn unknown_ask_keys_error() {
+    // No key value lives in the configuration, under any name.
+    let error = serde_yaml::from_str::<Config>("ask:\n    key: secret\n").expect_err("key");
+    assert!(error.to_string().contains("unknown field"), "got: {error}");
+    let error = serde_yaml::from_str::<Config>(
+        "ask:\n    routes:\n        jev:\n            api_key: secret\n",
+    )
+    .expect_err("route key");
+    assert!(error.to_string().contains("unknown field"), "got: {error}");
+}

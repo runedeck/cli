@@ -34,6 +34,11 @@ same table. A route that names no harness is a runner error,
 `125`. `rune run --check` reports a result and supervises nothing:
 `0` served, `1` missing, `2` endpoint failed.
 
+`rune ask` has no harness and uses the same table: `0` answered, `1` the
+endpoint refused or answered without answers, `124` no reply within the
+deadline, `125` a usage or configuration error, and the check's `0`, `1`,
+`2` under `--check`.
+
 Mutating commands hold a per-target lock (`.rune.lock` in the deploy target)
 for the duration of the write: a second `rune install`, `deploy`, or
 `repair` against the same target fails fast with exit 1 instead of

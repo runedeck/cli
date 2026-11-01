@@ -14,6 +14,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
             extensions,
             setup: None,
             launch,
+            ask: ontology::Ask::default(),
             hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
@@ -262,6 +263,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            ask: ontology::Ask::default(),
             hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
@@ -1073,6 +1075,7 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
         extensions: Vec::new(),
         setup: None,
         launch: Launch::default(),
+        ask: ontology::Ask::default(),
         hooks: rune::hooks::Hooks::default(),
         bench: Vec::new(),
 
@@ -1902,6 +1905,7 @@ fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            ask: ontology::Ask::default(),
             hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
@@ -1963,6 +1967,7 @@ fn try_resolve_with_config_for_tests(
             extensions: Vec::new(),
             setup: None,
             launch: Launch::default(),
+            ask: ontology::Ask::default(),
             hooks: rune::hooks::Hooks::default(),
             bench: Vec::new(),
 
@@ -2144,5 +2149,41 @@ fn a_tmux_launch_unsets_the_host_session_names_and_warns_about_attaching() {
             .any(|warning| warning.contains("attaches to an existing session 'work'")),
         "{:?}",
         resolved.warnings()
+    );
+}
+
+#[test]
+fn rune_launch_refuses_the_judging_model_by_name() {
+    let error = execute_cli("jev", &[], false).expect_err("refused");
+    assert!(error.contains("not a harness"), "{error}");
+    assert!(error.contains("rune ask"), "{error}");
+    let error = execute_cli("proxy@jev", &[], false).expect_err("refused");
+    assert!(error.contains("rune ask"), "{error}");
+}
+
+#[test]
+fn a_call_time_key_falls_back_to_the_env_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join(".env");
+    std::fs::write(&file, "export RUNE_TEST_JEV_FILE_KEY=fake-file-key-value\n")
+        .expect("write env file");
+    assert_eq!(
+        lookup_env_reference("RUNE_TEST_JEV_FILE_KEY", Some(&file)),
+        Ok(Some("fake-file-key-value".to_string()))
+    );
+    assert_eq!(
+        lookup_env_reference("RUNE_TEST_JEV_FILE_KEY", None),
+        Ok(None)
+    );
+    assert_eq!(
+        lookup_env_reference("RUNE_TEST_JEV_UNSET_KEY", Some(&file)),
+        Ok(None)
+    );
+    assert_eq!(
+        lookup_env_reference(
+            "RUNE_TEST_JEV_UNSET_KEY",
+            Some(&dir.path().join("missing.env"))
+        ),
+        Ok(None)
     );
 }

@@ -2,6 +2,7 @@ mod add;
 mod adopt;
 #[cfg(feature = "adr")]
 mod adr;
+mod ask;
 mod assemble;
 mod bench;
 mod closure;
@@ -846,6 +847,50 @@ enum Command {
         /// and `output`.
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
+    },
+
+    /// Ask a judging model a question set about a text and print typed answers
+    #[command(
+        after_help = "TEXT SOURCES:\n  rune ask session-shape \"The afternoon went by in one sitting.\"\n  rune ask session-shape --file state.txt\n  command cat state.txt | rune ask ./questions/v2.json\n  rune ask session-shape --state-file state.json\n  rune ask --check\n\nThe text becomes the state's text. --state-file sends the file's JSON\nobject as the whole state instead. No text goes to the model under\n--dry-run or --check.\n\nQUESTION SETS:\n  QUESTIONS is a JSON file, or a name looked up as <NAME>.json in the\n  folders ask.questions lists (default ~/Developer/runedeck/jev/questions).\n  Only the file's questions object is sent. A signal block or anything\n  else in the file stays local.\n\nROUTES (~/.config/rune/config.yaml):\n  ask:\n    model: jev                       # the route --model falls back to\n    questions: [~/Developer/runedeck/jev/questions]\n    routes:\n      jev:                           # built in: jev-1.13.0 at\n        base_url: https://cliproxy.internal   # https://api.typesafe.ai\n        key_env: CLIPROXY_API_KEY    # default JEV_API_KEY\n      local:                         # any POST <base>/v1/systemone\n        id: gemma3\n        base_url: http://127.0.0.1:11434\n\n  --model names a route, or a model id on the default route. The key is\n  read from the variable the route names at call time, from the\n  environment or the env file (config key env, default ~/.env), and\n  never printed. A route without key_env sends no authorization header.\n\nRESULT:\n  One answer per line, sorted by question key (mood: noul 0.83). Under\n  --json one object with ok, kind, model, answers, usage, details, and\n  exit_code. Exit 0 answered, 1 the endpoint refused or answered without\n  answers, 124 no reply within --timeout (default 60s), 125 a usage or\n  configuration error. --check asks <base>/v1/models: 0 served, 1\n  missing, 2 endpoint failure."
+    )]
+    Ask {
+        /// Question set: a JSON file, or a name looked up as `<NAME>.json`
+        /// in the folders `ask.questions` lists.
+        #[arg(value_name = "QUESTIONS", required_unless_present = "check")]
+        questions: Option<String>,
+
+        /// Text the questions are asked about. Omit to use --file,
+        /// --state-file, or noninteractive stdin.
+        #[arg(value_name = "TEXT", conflicts_with_all = ["file", "state_file"])]
+        text: Option<String>,
+
+        /// Read the text from a UTF-8 file.
+        #[arg(long, value_name = "FILE", conflicts_with = "state_file")]
+        file: Option<std::path::PathBuf>,
+
+        /// A JSON file holding the whole state object, instead of text that
+        /// becomes the state's `text`.
+        #[arg(long, value_name = "JSON")]
+        state_file: Option<std::path::PathBuf>,
+
+        /// A route from `ask.routes` (or the built-in `jev`), or a model
+        /// id on the default route.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Deadline for the reply, such as 30s or 5m. Default 60s.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print the route, the endpoint, the question-set path, and the
+        /// state source without sending anything.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Ask the route's base URL for its model list and report the
+        /// route's model as served or missing. Sends no text.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
     },
 
     /// Post and read messages between harness sessions, read at the next turn
@@ -2396,6 +2441,27 @@ pub fn run() -> i32 {
                 json: args.json,
             });
         }
+        Command::Ask {
+            questions,
+            text,
+            file,
+            state_file,
+            model,
+            timeout,
+            dry_run,
+            check,
+        } => {
+            return ask::execute(&ask::AskOptions {
+                questions,
+                text,
+                file,
+                state_file,
+                model,
+                timeout,
+                plan: run::RunPlan::from_flags(dry_run, check),
+                json: args.json,
+            });
+        }
         Command::Queue { action } => return run_queue(action, args.json),
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
@@ -2705,13 +2771,13 @@ fn run_queue(action: QueueAction, json: bool) -> i32 {
     }
 }
 
-/// Whether the command line names the `run` or the `queue` subcommand:
-/// the first argument before `--` that is not a flag. The global flags take
-/// no value, so no flag swallows the word after it.
+/// Whether the command line names the `run`, `ask`, or `queue`
+/// subcommand: the first argument before `--` that is not a flag. The
+/// global flags take no value, so no flag swallows the word after it.
 fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
-        .is_some_and(|argument| argument == "run" || argument == "queue")
+        .is_some_and(|argument| argument == "run" || argument == "ask" || argument == "queue")
 }
 
 #[cfg(test)]
@@ -3081,6 +3147,12 @@ fn plumbing_help(help: &mut String) {
         "run",
         "<TOOL> [PROMPT|--prompt-file <FILE>]",
         "Run a coding tool with supervised output",
+    );
+    help_command(
+        help,
+        "ask",
+        "<QUESTIONS> [TEXT|--file <FILE>|--state-file <JSON>]",
+        "Ask a judging model a question set about a text",
     );
     help_command(
         help,

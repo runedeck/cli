@@ -59,6 +59,7 @@
     exec        <SKILL> [-- ARGS...]                                  Run a script bundled with a skill
     launch      <TOOL> [-- ARGS...]                                   Launch a coding tool with middleware
     run         <TOOL> [PROMPT|--prompt-file <FILE>]                  Run a coding tool with supervised output
+    ask         <QUESTIONS> [TEXT|--file <FILE>|--state-file <JSON>]  Ask a judging model a question set about a text
     queue       post <TOOL> --session <ID> [MESSAGE] | read | list    Post and read messages between sessions
     completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 

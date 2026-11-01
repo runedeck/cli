@@ -385,6 +385,54 @@
   ],
   "user": [
     {
+      "default": {
+        "model": "jev",
+        "questions": [
+          "~/Developer/runedeck/jev/questions"
+        ],
+        "routes": {}
+      },
+      "key": "ask",
+      "type": "object"
+    },
+    {
+      "default": "jev",
+      "key": "ask.model",
+      "type": "string"
+    },
+    {
+      "default": [
+        "~/Developer/runedeck/jev/questions"
+      ],
+      "key": "ask.questions",
+      "type": "array<string>"
+    },
+    {
+      "default": {},
+      "key": "ask.routes",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "ask.routes.*",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "ask.routes.*.base_url",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ask.routes.*.id",
+      "type": "string | null"
+    },
+    {
+      "default": null,
+      "key": "ask.routes.*.key_env",
+      "type": "string | null"
+    },
+    {
       "default": [],
       "key": "bench",
       "type": "array<string>"

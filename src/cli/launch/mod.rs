@@ -64,6 +64,11 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         let config = ontology::load().map_err(|error| error.to_string())?;
         return Ok(list_tools(&config.launch));
     }
+    // A judging model has no process to launch: `rune ask` asks it.
+    let (tool_name, _) = split_invocation(tool);
+    if let Some(message) = crate::cli::ask::not_a_harness(tool_name) {
+        return Err(message);
+    }
     let resolved = resolve(tool, rest).map_err(|error| error.message)?;
     if resolved.check {
         let report = check::run_checks(&resolved, None);
@@ -832,6 +837,28 @@ fn resolve_env_reference(
                 path.display()
             )
         })
+}
+
+/// The value of `name` for a command that reads a key at call time: the
+/// process environment, else the env file. `Ok(None)` when neither holds
+/// it or there is no env file; `Err` only for an env file that cannot be
+/// read.
+pub(crate) fn lookup_env_reference(
+    name: &str,
+    env_file: Option<&Path>,
+) -> Result<Option<String>, String> {
+    if let Ok(value) = std::env::var(name) {
+        return Ok(Some(value));
+    }
+    let Some(path) = env_file else {
+        return Ok(None);
+    };
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    Ok(parse_env_file(&content).remove(name))
 }
 
 fn parse_env_file(content: &str) -> HashMap<String, String> {

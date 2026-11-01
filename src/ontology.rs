@@ -16,6 +16,9 @@ pub struct Config {
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
+    /// The judging model `rune ask` asks, the folders its question sets
+    /// live in, and the routes it can take.
+    pub ask: Ask,
     /// Harness hook handlers, declared once against canonical events.
     pub hooks: crate::hooks::Hooks,
     pub watch: Watch,
@@ -150,6 +153,64 @@ pub struct LaunchTool {
     pub binary: Option<String>,
     #[serde(alias = "base-url-env")]
     pub base_url_env: Option<String>,
+}
+
+/// The route `rune ask` takes when the configuration names none.
+pub const DEFAULT_ASK_MODEL: &str = "jev";
+/// The folder a question-set name is looked up in when the configuration
+/// names none: the Jev client's own question sets.
+pub const DEFAULT_ASK_QUESTIONS: &str = "~/Developer/runedeck/jev/questions";
+
+/// `rune ask`: the judging model, where its question sets live, and the
+/// routes it may take. The built-in route `jev` reaches the hosted System One
+/// endpoint; a route of the same name here overrides it field by field,
+/// and a route of another name is a second endpoint that speaks the same
+/// protocol, such as a local open model.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Ask {
+    /// The route `rune ask` asks when `--model` names none.
+    pub model: String,
+    /// The folders a question-set name is looked up in, in order. A tilde
+    /// names the home folder.
+    pub questions: Vec<String>,
+    /// Routes by name. `--model <NAME>` and `ask.model` select one.
+    pub routes: HashMap<String, AskRoute>,
+}
+
+impl Default for Ask {
+    fn default() -> Self {
+        Self {
+            model: DEFAULT_ASK_MODEL.to_string(),
+            questions: vec![DEFAULT_ASK_QUESTIONS.to_string()],
+            routes: HashMap::new(),
+        }
+    }
+}
+
+/// One route a judging request can take. Every field is optional so a
+/// route can override one part of the built-in `jev` route and keep the
+/// rest.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct AskRoute {
+    /// The model id the request names. Defaults to the route's name.
+    pub id: Option<String>,
+    /// The base URL the request goes to; `/v1/systemone` is added.
+    pub base_url: Option<String>,
+    /// The environment variable that holds the route's key. The value is
+    /// read at call time from the environment or the env file, never from
+    /// this file. A route without one sends no authorization header.
+    pub key_env: Option<String>,
 }
 
 #[derive(
@@ -361,6 +422,8 @@ pub struct ResolvedConfig {
     pub setup: Option<SetupRecord>,
     #[serde(skip)]
     pub launch: Launch,
+    #[serde(skip)]
+    pub ask: Ask,
     #[serde(skip)]
     pub hooks: crate::hooks::Hooks,
     #[serde(skip)]
@@ -756,6 +819,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         extensions,
         setup: config.setup.clone(),
         launch: resolve_launch(&config.launch),
+        ask: config.ask.clone(),
         hooks: config.hooks.clone(),
         bench: config.bench.clone(),
         theme: config.theme.clone(),

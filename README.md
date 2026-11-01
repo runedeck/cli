@@ -435,6 +435,29 @@ rune --json run sol@claude --dry-run picker
 
 The JSON object carries `model_id`, `tool`, `model`, `argv`, `base_url`, `env`, `env_removed`, `repository`, `mode`, `timeout` (milliseconds, or null), `session_name`, and `artifacts_dir`. Under `--json`, every outcome is one JSON object on stdout, a configuration error and a usage error included. A run that fails reports the last lines of both streams, in the text error and as `details.stdout_tail` and `details.stderr_tail`, the harness's own error messages as `details.harness_errors`, and a `hint` when stderr shows that an outer sandbox blocked the harness. No credential value is ever printed.
 
+Ask a question set about a text. A judging model is not a harness, so it has its own verb: `rune ask <QUESTIONS> [TEXT]` posts the text as the state's `text` with a question set to `<base>/v1/systemone` and prints one answer per line, sorted by question key (`mood: noul 0.83`). `<QUESTIONS>` is a JSON file, or a name looked up as `<NAME>.json` in the folders `ask.questions` lists (default `~/Developer/runedeck/jev/questions`). Only the file's `questions` object is sent. A `signal` block or anything else in the file stays local. The text comes from the argument, `--file <FILE>`, or stdin. `--state-file <JSON>` sends the file's object as the whole state instead. The built-in route `jev` names `jev-1.13.0` at `https://api.typesafe.ai` and reads its key from `JEV_API_KEY` at call time, from the environment or the env file, never printed. `ask.routes.jev` overrides the id, the base URL, or the key variable, so routing through CLIProxyAPI is a configuration change alone. Any other route that speaks `POST <base>/v1/systemone` joins under `ask.routes.<name>`, and `ask.model` or `--model` picks it. `--model` with a name that is no route is a model id on the default route. `--check` asks `<base>/v1/models` and reports the route's model as served or missing. Under `--json` the result carries `answers`, `model`, `usage`, and `details` (`endpoint`, `questions`, `state_source`) beside `ok`, `kind`, and `exit_code`; a refused reply is `endpoint_error` (exit 1) with the status under `details`, no reply within `--timeout` (default 60s) is `timeout` (exit 124), and a missing key or question set is `configuration_error` (exit 125). `rune run jev` and `rune launch jev` point at `rune ask`.
+
+```sh
+rune ask session-shape "The afternoon went by in one sitting."
+rune ask session-shape --file state.txt
+rune ask ./questions/v2.json --state-file state.json --json
+rune ask session-shape --dry-run "picker"
+rune ask --model local --check
+```
+
+```yaml
+ask:
+    model: jev
+    questions: [~/Developer/runedeck/jev/questions]
+    routes:
+        jev:
+            base_url: https://cliproxy.internal
+            key_env: CLIPROXY_API_KEY
+        local:
+            id: gemma3
+            base_url: http://127.0.0.1:11434
+```
+
 Let claude build its own work: workspace-write mode allows `Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit` and turns on Claude Code's own sandbox, which is the only way the shell runs.
 
 ```sh
