@@ -64,7 +64,7 @@ pub fn set(key: &str, value: &str, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
-const SCALAR_KEYS: [&str; 2] = ["deck", "env"];
+const SCALAR_KEYS: [&str; 3] = ["deck", "env", "secrets"];
 
 fn unsupported_key(key: &str) -> String {
     format!(

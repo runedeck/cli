@@ -11,8 +11,15 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub deck: Option<String>,
     /// Env file consulted when a launch profile's `from_env` reference is
-    /// unset in the process environment. Defaults to `~/.env`.
+    /// unset in the process environment and no secrets manifest applies.
+    /// Defaults to `~/.env`.
     pub env: Option<String>,
+    /// Secretspec manifest consulted when a launch profile's `from_env`
+    /// reference is unset in the process environment. Defaults to
+    /// `~/.config/rune/secretspec.toml` when that file exists and no `env`
+    /// file is named. An empty value turns the manifest off. With a
+    /// manifest, the env file is not read.
+    pub secrets: Option<String>,
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
@@ -417,6 +424,7 @@ pub struct ResolvedValue {
 pub struct ResolvedConfig {
     pub deck: Option<ResolvedValue>,
     pub env: Option<ResolvedValue>,
+    pub secrets: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
     pub setup: Option<SetupRecord>,
@@ -442,7 +450,34 @@ impl ResolvedConfig {
             None => dirs::home_dir().map(|home| home.join(".env")),
         }
     }
+
+    /// The secretspec manifest consulted for `from_env` fallback, looked up
+    /// beside the user config in `~/.config/rune`.
+    #[must_use]
+    pub fn secrets_manifest(&self) -> Option<PathBuf> {
+        self.secrets_manifest_in(config_dir().ok().as_deref())
+    }
+
+    /// The secretspec manifest consulted for `from_env` fallback. A named
+    /// manifest is returned whether or not it exists, so a typo fails at
+    /// the first read, and an empty name turns the manifest off. With no
+    /// name, an env file the user named wins; otherwise the default
+    /// manifest in `config_dir` applies when that file exists.
+    #[must_use]
+    pub fn secrets_manifest_in(&self, config_dir: Option<&Path>) -> Option<PathBuf> {
+        match &self.secrets {
+            Some(value) if value.value.is_empty() => None,
+            Some(value) => Some(expand_tilde(&value.value)),
+            None if self.env.is_some() => None,
+            None => config_dir
+                .map(|dir| dir.join(SECRETS_MANIFEST))
+                .filter(|path| path.is_file()),
+        }
+    }
 }
+
+/// The secretspec manifest a launch reads when config names none.
+pub const SECRETS_MANIFEST: &str = "secretspec.toml";
 
 #[derive(Debug, Clone, Copy)]
 enum Key {
@@ -649,6 +684,12 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
         source: config.env.as_ref().map(|value| value.source),
     });
     fields.push(ResolvedField {
+        key: "secrets",
+        env: "RUNE_SECRETS",
+        value: config.secrets.as_ref().map(|value| value.value.clone()),
+        source: config.secrets.as_ref().map(|value| value.source),
+    });
+    fields.push(ResolvedField {
         key: "bench",
         env: "",
         value: (!config.bench.is_empty()).then(|| config.bench.join(", ")),
@@ -793,6 +834,17 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
                 source: Source::Config,
             })
         });
+    let secrets = env("RUNE_SECRETS")
+        .map(|value| ResolvedValue {
+            value,
+            source: Source::Env,
+        })
+        .or_else(|| {
+            config.secrets.as_ref().map(|value| ResolvedValue {
+                value: value.clone(),
+                source: Source::Config,
+            })
+        });
     let ontology = ResolvedOntology {
         targets: resolve_key(Key::Targets, &config.ontology, env),
         skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
@@ -815,6 +867,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
     ResolvedConfig {
         deck,
         env: env_file,
+        secrets,
         ontology,
         extensions,
         setup: config.setup.clone(),

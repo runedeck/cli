@@ -3,6 +3,11 @@
 # Rune already ships sol@claude and grok@claude with these localhost
 # CLIProxyAPI defaults. Repeating a profile here replaces that built-in profile,
 # which makes this file a starting point for endpoint or model overrides.
+#
+# A `from_env` key the shell does not export is read through secretspec from
+# the manifest below. Without the key, Rune uses ~/.config/rune/secretspec.toml
+# when that file exists, and otherwise the env file (key `env`, default ~/.env).
+# secrets: ~/.config/rune/secretspec.toml
 launch:
     models:
         sol:

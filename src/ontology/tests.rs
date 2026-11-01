@@ -168,6 +168,56 @@ fn env_override_is_reflected_in_env_vars() {
 }
 
 #[test]
+fn secrets_manifest_env_beats_config_and_keeps_a_missing_path() {
+    let config = Config {
+        secrets: Some("~/configured/secretspec.toml".to_string()),
+        ..Config::default()
+    };
+    let from_config = resolve_config(&config, &no_env);
+    let home = dirs::home_dir().expect("home for test");
+    assert_eq!(
+        from_config.secrets_manifest(),
+        Some(home.join("configured/secretspec.toml")),
+        "a configured manifest is returned even when it does not exist"
+    );
+    let from_env = resolve_config(
+        &config,
+        &env_from(&[("RUNE_SECRETS", "/from-env/secretspec.toml")]),
+    );
+    let secrets = from_env.secrets.as_ref().expect("secrets from env");
+    assert_eq!(secrets.source, Source::Env);
+    assert_eq!(
+        from_env.secrets_manifest(),
+        Some(PathBuf::from("/from-env/secretspec.toml"))
+    );
+    assert!(
+        fields(&from_env)
+            .iter()
+            .any(|field| field.key == "secrets" && field.env == "RUNE_SECRETS")
+    );
+}
+
+#[test]
+fn default_manifest_applies_only_when_present_and_no_env_file_is_named() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = resolve_config(&Config::default(), &no_env);
+    assert_eq!(resolved.secrets_manifest_in(Some(dir.path())), None);
+
+    let manifest = dir.path().join(SECRETS_MANIFEST);
+    std::fs::write(&manifest, "[project]\n").expect("manifest");
+    assert_eq!(
+        resolved.secrets_manifest_in(Some(dir.path())),
+        Some(manifest.clone())
+    );
+
+    let env_named = resolve_config(&Config::default(), &env_from(&[("RUNE_ENV", "/work.env")]));
+    assert_eq!(env_named.secrets_manifest_in(Some(dir.path())), None);
+
+    let switched_off = resolve_config(&Config::default(), &env_from(&[("RUNE_SECRETS", "")]));
+    assert_eq!(switched_off.secrets_manifest_in(Some(dir.path())), None);
+}
+
+#[test]
 fn tilde_expansion_resolves_under_home() {
     let home = dirs::home_dir().expect("home for test");
     assert_eq!(expand_tilde("~/Agents"), home.join("Agents"));

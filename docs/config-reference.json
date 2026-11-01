@@ -1099,6 +1099,11 @@
     },
     {
       "default": null,
+      "key": "secrets",
+      "type": "string | null"
+    },
+    {
+      "default": null,
       "key": "setup",
       "type": "object | null"
     },

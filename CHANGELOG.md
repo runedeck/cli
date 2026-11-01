@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Add `rune ask <QUESTIONS> [TEXT]`, which asks a judging model a question set about one text and prints the typed answers. The `ask:` section names its routes.
 - Refuse `rune run jev` and `rune launch jev` with a pointer to `rune ask`, because a judging model is a different kind of tool from a harness.
+- Read an unset `from_env` key through secretspec from the manifest `secrets` or `RUNE_SECRETS` names, or from `~/.config/rune/secretspec.toml` when no env file is named.
+
+### Changed
+
+- Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
 
 ### Fixed
 
