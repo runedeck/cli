@@ -213,6 +213,7 @@ fn resolve_with_config(
         display_argv,
         display_env,
         base_url: plan.base_url,
+        declared_secrets: plan.declared_secrets,
     })
 }
 
@@ -288,6 +289,8 @@ pub(crate) struct ResolvedLaunch {
     display_argv: Vec<OsString>,
     display_env: Vec<(OsString, OsString)>,
     base_url: Option<String>,
+    /// Values read through a secret declaration, hidden in the dry run.
+    declared_secrets: Vec<String>,
 }
 
 impl ResolvedLaunch {
@@ -362,6 +365,7 @@ impl ResolvedLaunch {
         let effective = self.effective_env();
         let mut secrets = credential_values(&effective);
         secrets.extend(credential_values(inherited));
+        secrets.extend(self.declared_secrets.iter().cloned());
         secrets.extend(proxy_credentials(&effective));
         secrets.extend(proxy_credentials(inherited));
         for part in &self.argv {
@@ -499,6 +503,9 @@ impl ResolvedLaunch {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct LaunchPlan {
     env: Vec<(OsString, OsString)>,
+    /// Every value read through a secret declaration. Each one is a secret
+    /// whatever variable the profile puts it in, so the dry run hides it.
+    declared_secrets: Vec<String>,
     base_url: Option<String>,
     wrap: Vec<Vec<OsString>>,
     pre: Vec<PreStep>,
@@ -822,7 +829,11 @@ fn apply_profile_env(
                     value.clone()
                 } else {
                     let value = match fallback {
-                        SecretFallback::Manifest(source) => source.get(from_env)?,
+                        SecretFallback::Manifest(source) => {
+                            let value = source.get(from_env)?;
+                            plan.declared_secrets.push(value.clone());
+                            value
+                        }
                         SecretFallback::EnvFile(env_file) => {
                             resolve_env_reference(from_env, *env_file, &mut file_values)?
                         }

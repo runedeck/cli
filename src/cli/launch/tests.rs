@@ -1068,6 +1068,37 @@ fn manifest_value_fills_every_reference_with_one_read() {
         ]
     );
     assert_eq!(source.reads.get(), 1, "a key referenced twice is read once");
+    assert_eq!(plan.declared_secrets, ["manifest-value"]);
+}
+
+#[test]
+fn manifest_value_is_a_secret_under_any_variable_name() {
+    let source = TableSource {
+        values: HashMap::from([("RUNE_TEST_MANIFEST_KEY", "manifest-plain-name")]),
+        reads: std::cell::Cell::new(0),
+    };
+    let profile = from_env_profile(&[
+        ("PROOF_VALUE", "RUNE_TEST_MANIFEST_KEY"),
+        ("SEARCH_PATH", "PATH"),
+    ]);
+    let mut plan = LaunchPlan::default();
+    apply_profile_env(&profile, &mut plan, &SecretFallback::Manifest(&source)).unwrap();
+
+    // PROOF_VALUE is no credential name, and its value is still hidden. A
+    // value the process environment supplied never reached the manifest.
+    assert_eq!(plan.declared_secrets, ["manifest-plain-name"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolved = ResolvedLaunch {
+        env: plan.env.clone(),
+        display_env: plan.env.clone(),
+        declared_secrets: plan.declared_secrets.clone(),
+        ..resolve_with_config_for_tests("claude", &[], dir.path())
+    };
+    assert!(
+        resolved
+            .known_secrets(&[])
+            .contains(&"manifest-plain-name".to_string())
+    );
 }
 
 #[test]
