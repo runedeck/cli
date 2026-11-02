@@ -50,6 +50,6 @@
 
 ## 8. Verification
 
-- [ ] 8.1 Run `cargo fmt --check`, Clippy with warnings denied, and the focused tests
+- [x] 8.1 Run `cargo fmt --check`, Clippy with warnings denied, and the focused tests
 - [ ] 8.2 Run `make validate`
-- [ ] 8.3 Run `rune spec validate rune-captures-every-session`
+- [x] 8.3 Run `rune spec validate rune-captures-every-session`
