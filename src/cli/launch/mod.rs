@@ -95,7 +95,19 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
     }
     run_pre_steps(&resolved.pre);
     let isolation = surface::parent_session_isolation(&resolved.route_keys());
-    run_child(&resolved.argv, &resolved.env, &isolation.removals())
+    let started_at = std::time::SystemTime::now();
+    let status = run_child(&resolved.argv, &resolved.env, &isolation.removals())?;
+    // The session the harness wrote goes to the data folder after it
+    // exits. A failed capture is one warning, never the exit status.
+    if let Ok(cwd) = std::env::current_dir() {
+        crate::cli::session::capture_after_run(
+            rune::session::Harness::parse(&resolved.tool),
+            &cwd,
+            started_at,
+            status,
+        );
+    }
+    Ok(status)
 }
 
 /// Why a launch could not be resolved: the message, and for an unknown

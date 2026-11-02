@@ -537,6 +537,18 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         }
         eprintln!("stopped by signal {signal} after the run; the workspace was finished first");
     }
+    // The session the harness wrote goes to the data folder: the files of
+    // its store that changed since the start. A clean run is not captured:
+    // its session goes with the temporary home. A failed capture is one
+    // warning and a debt record, never the exit status.
+    if !options.clean {
+        crate::cli::session::capture_after_run(
+            crate::cli::session::harness_of(invocation.surface),
+            &invocation.repository,
+            started_at,
+            outcome.exit_code,
+        );
+    }
     Ok(outcome)
 }
 

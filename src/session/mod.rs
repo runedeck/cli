@@ -35,7 +35,7 @@ use chrono::{SecondsFormat, Utc};
 pub use capture::{Outcome, Request, Trigger, capture};
 pub use exclude::Exclude;
 pub use source::{Harness, Stores};
-pub use sweep::{SweepReport, sweep};
+pub use sweep::{HarnessOutcome as SweepOutcome, SweepReport, sweep};
 
 /// The lock wait the script used: a hook waits this long for a sweep of
 /// the same harness before it defers.

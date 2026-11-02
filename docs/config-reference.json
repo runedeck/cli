@@ -438,6 +438,55 @@
       "type": "array<string>"
     },
     {
+      "default": {
+        "data_dir": null,
+        "exclude": {
+          "paths": [],
+          "sessions": []
+        },
+        "sources": {
+          "optional": []
+        }
+      },
+      "key": "capture",
+      "type": "object"
+    },
+    {
+      "default": null,
+      "key": "capture.data_dir",
+      "type": "string | null"
+    },
+    {
+      "default": {
+        "paths": [],
+        "sessions": []
+      },
+      "key": "capture.exclude",
+      "type": "object"
+    },
+    {
+      "default": [],
+      "key": "capture.exclude.paths",
+      "type": "array<string>"
+    },
+    {
+      "default": [],
+      "key": "capture.exclude.sessions",
+      "type": "array<string>"
+    },
+    {
+      "default": {
+        "optional": []
+      },
+      "key": "capture.sources",
+      "type": "object"
+    },
+    {
+      "default": [],
+      "key": "capture.sources.optional",
+      "type": "array<string>"
+    },
+    {
       "default": null,
       "key": "deck",
       "type": "string | null"

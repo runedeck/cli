@@ -21,6 +21,7 @@ fn context(root: &Path, launch: Launch, extensions: Vec<PathBuf>) -> LaunchConte
             bench: Vec::new(),
 
             theme: None,
+            capture: ontology::Capture::default(),
         },
     }
 }
@@ -272,6 +273,7 @@ fn resolved_launch_preserves_interactive_arguments_and_dry_run() {
             bench: Vec::new(),
 
             theme: None,
+            capture: ontology::Capture::default(),
         },
     )
     .expect("resolved launch");
@@ -1272,6 +1274,7 @@ fn endpoint_comes_from_the_plan_or_the_tools_base_url_key_in_the_env() {
         bench: Vec::new(),
 
         theme: None,
+        capture: ontology::Capture::default(),
     };
     let resolved = resolve_with_config(
         "claude",
@@ -2104,6 +2107,7 @@ fn launch_route_keys_include_the_settings_env_of_a_claude_profile() {
             bench: Vec::new(),
 
             theme: None,
+            capture: ontology::Capture::default(),
         },
     )
     .expect("resolved launch");
@@ -2168,6 +2172,7 @@ fn try_resolve_with_config_for_tests(
             bench: Vec::new(),
 
             theme: None,
+            capture: ontology::Capture::default(),
         },
     )
 }

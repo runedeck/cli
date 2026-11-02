@@ -22,7 +22,9 @@ pub struct Exclude {
 }
 
 impl Exclude {
-    /// Expand `~` in each glob against `home`, and drop a trailing slash.
+    /// Expand `~` in each glob against `home`, drop a trailing slash, and
+    /// resolve the folder before the first wildcard through its symlinks,
+    /// so a glob written through a linked path matches the real one.
     #[must_use]
     pub fn resolve(paths: &[String], sessions: &[String], home: &Path) -> Self {
         let paths = paths
@@ -35,7 +37,7 @@ impl Exclude {
                 } else {
                     glob.clone()
                 };
-                expanded.trim_end_matches('/').to_string()
+                canonical_glob(expanded.trim_end_matches('/'))
             })
             .filter(|glob| !glob.is_empty())
             .collect();
@@ -61,14 +63,14 @@ impl Exclude {
     /// also matches the folder itself.
     #[must_use]
     pub fn folder(&self, cwd: &Path) -> bool {
-        let value = cwd.to_string_lossy();
-        let value = value.trim_end_matches('/');
+        let given = cwd.to_string_lossy().trim_end_matches('/').to_string();
+        let canonical = std::fs::canonicalize(cwd)
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+            .filter(|path| *path != given);
         self.paths.iter().any(|glob| {
-            if crate::deck::matches_rune_glob(glob, value) {
-                return true;
-            }
-            glob.strip_suffix("/**")
-                .is_some_and(|base| value == base || crate::deck::matches_rune_glob(base, value))
+            glob_matches(glob, &given)
+                || canonical.as_deref().is_some_and(|c| glob_matches(glob, c))
         })
     }
 
@@ -76,6 +78,34 @@ impl Exclude {
     #[must_use]
     pub fn matches(&self, session: Option<&str>, cwd: Option<&Path>) -> bool {
         session.is_some_and(|id| self.session(id)) || cwd.is_some_and(|cwd| self.folder(cwd))
+    }
+}
+
+/// One glob against one folder. `*` stays inside one path segment and
+/// `**` crosses segments; a glob that ends in `/**` also matches the
+/// folder itself.
+fn glob_matches(glob: &str, value: &str) -> bool {
+    if crate::deck::matches_rune_glob(glob, value) {
+        return true;
+    }
+    glob.strip_suffix("/**")
+        .is_some_and(|base| value == base || crate::deck::matches_rune_glob(base, value))
+}
+
+/// The glob with the folder before its first wildcard resolved through
+/// symlinks, when that folder exists. A glob with no such folder, or one
+/// whose folder is absent, stays as written.
+fn canonical_glob(glob: &str) -> String {
+    let wildcard = glob.find(['*', '?']).unwrap_or(glob.len());
+    let literal = &glob[..wildcard];
+    let Some(slash) = literal.rfind('/') else {
+        return glob.to_string();
+    };
+    let (folder, rest) = glob.split_at(slash.max(1));
+    let folder = if slash == 0 { "/" } else { folder };
+    match std::fs::canonicalize(folder) {
+        Ok(path) => format!("{}{rest}", path.to_string_lossy().trim_end_matches('/')),
+        Err(_) => glob.to_string(),
     }
 }
 

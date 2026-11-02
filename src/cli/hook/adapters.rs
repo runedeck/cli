@@ -1364,22 +1364,17 @@ fn lint_metrics(blocking: &str, advice: &str) -> Value {
     found.metrics()
 }
 
-/// The session's capture, detached: the launcher never waits on it.
+/// The session's capture, detached: this binary as `rune session capture`
+/// in its own process group, so the dispatcher answers without waiting.
+/// A harness Rune does not capture gets nothing started.
 fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
-    let program = dirs::home_dir()
-        .map(|h| h.join(".local/bin/session-sync"))
-        .filter(|p| p.is_file())
-        .map_or_else(|| "session-sync".to_string(), |p| p.display().to_string());
-    let mut args: Vec<OsString> = vec![
-        "--provider".into(),
-        payload.harness.as_str().into(),
-        "--source".into(),
-        "hook".into(),
-    ];
-    if let Some(session) = &payload.session_id {
-        args.push("--session".into());
-        args.push(session.into());
-    }
+    let Some(args) = crate::cli::session::hook_arguments(
+        payload.harness.as_str(),
+        payload.session_id.as_deref(),
+    ) else {
+        return Ok(HandlerResult::default());
+    };
+    let program = std::env::current_exe().map_or_else(|_| OsString::from("rune"), OsString::from);
     let mut command = Command::new(&program);
     command
         .args(&args)
@@ -1396,7 +1391,7 @@ fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     }
     command
         .spawn()
-        .map_err(|e| format!("cannot start {program}: {e}"))?;
+        .map_err(|e| format!("cannot start {}: {e}", program.to_string_lossy()))?;
     Ok(HandlerResult::default())
 }
 

@@ -46,6 +46,7 @@ mod release;
 mod repair;
 mod review;
 mod run;
+mod session;
 mod setup;
 mod sign;
 mod skill;
@@ -907,6 +908,15 @@ enum Command {
     Queue {
         #[command(subcommand)]
         action: QueueAction,
+    },
+
+    /// Copy harness sessions into the data folder, and list the capture debt
+    #[command(
+        after_help = "EXAMPLES:\n  rune session capture --harness claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a\n  rune session sweep\n  rune session debt --json\n\nLAYOUT:\n  Sessions/<harness>/ native copies, SessionVersions/<harness>/ replaced\n  copies that held lost bytes and the daily database backups,\n  Transcripts/<harness>/ readable copies, Plans/claude/ plan-mode plans,\n  under ~/Data or DATA_DIR or capture.data_dir in the rune config.\n\nEXCLUDE:\n  capture.exclude.paths names working-folder globs and\n  capture.exclude.sessions names session ids; a matching session is never\n  copied and records no debt.\n\nDebt records live under $RUNE_STATE_DIR/capture-debt; rune doctor reports\nthe open count."
+    )]
+    Session {
+        #[command(subcommand)]
+        action: session::SessionAction,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -2522,6 +2532,7 @@ pub fn run() -> i32 {
             });
         }
         Command::Queue { action } => return run_queue(action, args.json),
+        Command::Session { action } => return session::run(action, args.json),
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -2853,13 +2864,15 @@ fn run_queue(action: QueueAction, json: bool) -> i32 {
     }
 }
 
-/// Whether the command line names the `run`, `ask`, or `queue`
+/// Whether the command line names the `run`, `ask`, `queue`, or `session`
 /// subcommand: the first argument before `--` that is not a flag. The
 /// global flags take no value, so no flag swallows the word after it.
 fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
-        .is_some_and(|argument| argument == "run" || argument == "ask" || argument == "queue")
+        .is_some_and(|argument| {
+            argument == "run" || argument == "ask" || argument == "queue" || argument == "session"
+        })
 }
 
 #[cfg(test)]
@@ -3247,6 +3260,12 @@ fn plumbing_help(help: &mut String) {
         "queue",
         "post <TOOL> --session <ID> [MESSAGE] | read | list",
         "Post and read messages between sessions",
+    );
+    help_command(
+        help,
+        "session",
+        "capture --harness <NAME> | sweep | debt",
+        "Copy harness sessions into the data folder, list capture debt",
     );
     help_command(
         help,

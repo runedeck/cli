@@ -39,6 +39,63 @@ pub struct Config {
     pub bench: Vec<String>,
     pub setup: Option<SetupRecord>,
     pub theme: Option<ThemeConfig>,
+    /// Session capture: the data folder, the optional sources, and the
+    /// sessions classified as work.
+    pub capture: Capture,
+}
+
+/// Session capture settings for `rune session capture` and `rune session sweep`.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct Capture {
+    /// The owner's data folder. `DATA_DIR` overrides it. Defaults to `~/Data`.
+    pub data_dir: Option<String>,
+    pub sources: CaptureSources,
+    pub exclude: CaptureExclude,
+}
+
+/// The optional sources the owner enables by name: multica-codex,
+/// multica-tasks, pi, cursor.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptureSources {
+    pub optional: Vec<String>,
+}
+
+/// The sessions capture never copies: working-folder globs (`*` stays in
+/// one segment, `**` crosses segments, `~` is the home) and session ids.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptureExclude {
+    pub paths: Vec<String>,
+    pub sessions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -443,6 +500,8 @@ pub struct ResolvedConfig {
     pub bench: Vec<String>,
     #[serde(skip)]
     pub theme: Option<ThemeConfig>,
+    #[serde(skip)]
+    pub capture: Capture,
 }
 
 impl ResolvedConfig {
@@ -912,6 +971,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         hooks: config.hooks.clone(),
         bench: config.bench.clone(),
         theme: config.theme.clone(),
+        capture: config.capture.clone(),
     }
 }
 
