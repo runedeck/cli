@@ -1,0 +1,19 @@
+# Rune config for the launch-secret-declaration-lookup proof. home.sh copies
+# it to .config/rune/config.yaml in the scene directory, and the scene runs
+# rune with HOME=. there. It names no `env` and no `secrets` key, so the
+# default secret declaration applies when .config/rune/secretspec.toml exists.
+# PROOF_ORIGIN and PROOF_VALUE carry no credential word, so the dry run hides
+# a value only because it came through the secret declaration.
+launch:
+    profiles:
+        claude:
+            probe:
+                env:
+                    PROOF_VALUE:
+                        from_env: PROOF_ORIGIN
+            twice:
+                env:
+                    PROOF_FIRST:
+                        from_env: PROOF_ORIGIN
+                    PROOF_SECOND:
+                        from_env: PROOF_ORIGIN

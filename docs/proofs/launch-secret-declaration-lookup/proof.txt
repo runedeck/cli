@@ -1,0 +1,213 @@
+## launch-secret-declaration-lookup#credentials-read-through-the-secret-manager/credential-absent-from-the-environment
+kind: check
+$# the env file holds PROOF_ORIGIN, and the default declaration sits beside the rune config
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh" && cat .env && ls .config/rune'
+  PROOF_ORIGIN=from-env-file
+  config.yaml
+  secretspec.toml
+$# nobody may read the env file now, so a launch that opened it would fail
+$ chmod 000 .env
+$# the shell does not set PROOF_ORIGIN, so the launcher asks the secret manager, and the env file stays unread
+$# the dry run hides the value, because it came through the declaration
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude --dry-run'
+  tool: claude
+  argv: claude
+  env:
+    PROOF_VALUE=<redacted>
+  env_removed:
+    CLAUDE_TMPDIR
+    CLAUDE_EFFORT
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_PID
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDECODE
+    CLAUDE_CODE_TMUX_TRUECOLOR
+  base_url: <none>
+  wrap:
+  pre:
+$ grep -c '^call$' secretspec.log
+  1
+
+## launch-secret-declaration-lookup#process-environment-first/credential-set-in-the-environment
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# the shell sets PROOF_ORIGIN, so the launch uses that value
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. PROOF_ORIGIN=from-parent rune launch probe@claude --dry-run'
+  tool: claude
+  argv: claude
+  env:
+    PROOF_VALUE=from-parent
+  env_removed:
+    CLAUDE_TMPDIR
+    CLAUDE_EFFORT
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_PID
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDECODE
+    CLAUDE_CODE_TMUX_TRUECOLOR
+  base_url: <none>
+  wrap:
+  pre:
+$# the secret manager received no request, so it wrote no log
+$ ls
+  bin
+
+## launch-secret-declaration-lookup#named-declaration/named-declaration-missing
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# the rune config names a declaration that does not exist
+$ sh -c 'printf "secrets: missing/secretspec.toml\n" >> .config/rune/config.yaml'
+$# the launch stops, and the report names the credential and the missing path
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude'
+  fatal: profile references PROOF_ORIGIN, unset in the environment, and the secrets manifest missing/secretspec.toml does not exist
+$# the harness never started, and the secret manager received no request
+$ ls
+  bin
+$# a declaration named in the process environment wins over the config, and the harness starts with the value
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. RUNE_SECRETS=.config/rune/secretspec.toml rune launch probe@claude'
+  PROOF_VALUE=from-secretspec
+
+## launch-secret-declaration-lookup#default-declaration/no-declaration-on-the-machine
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# nothing names a declaration, and the config directory now holds none
+$ rm .config/rune/secretspec.toml
+$# the launcher reads the unset credential from the env file
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude --dry-run'
+  tool: claude
+  argv: claude
+  env:
+    PROOF_VALUE=from-env-file
+  env_removed:
+    CLAUDE_TMPDIR
+    CLAUDE_EFFORT
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_PID
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDECODE
+    CLAUDE_CODE_TMUX_TRUECOLOR
+  base_url: <none>
+  wrap:
+  pre:
+$ ls
+  bin
+
+## launch-secret-declaration-lookup#default-declaration/named-environment-file-beside-a-default-declaration
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# the rune config names an env file, names no declaration, and the default declaration still exists
+$ sh -c 'printf "env: other.env\n" >> .config/rune/config.yaml && printf "PROOF_ORIGIN=from-named-env-file\n" > other.env && ls .config/rune'
+  config.yaml
+  secretspec.toml
+$# the launcher reads the unset credential from the named env file
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude --dry-run'
+  tool: claude
+  argv: claude
+  env:
+    PROOF_VALUE=from-named-env-file
+  env_removed:
+    CLAUDE_TMPDIR
+    CLAUDE_EFFORT
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_PID
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDECODE
+    CLAUDE_CODE_TMUX_TRUECOLOR
+  base_url: <none>
+  wrap:
+  pre:
+$ ls
+  bin
+  other.env
+
+## launch-secret-declaration-lookup#failed-read-stops-the-launch/secret-manager-refuses
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# the secret manager fails, and its error output quotes FAKE-LEAK-VALUE, the value of another key
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. PROOF_SECRETSPEC_FAIL=1 rune launch probe@claude'
+  fatal: profile references PROOF_ORIGIN, unset in the environment and unreadable from ./.config/rune/secretspec.toml: a provider in the manifest's chain failed to parse its store; `secretspec check --file ./.config/rune/secretspec.toml --explain` prints a trace without values
+$# the secret manager ran once, and the harness never started
+$ ls
+  bin
+  secretspec.log
+
+## launch-secret-declaration-lookup#read-reason-recorded/audit-entry-for-a-launch
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude --dry-run > /dev/null'
+$# the request carries a reason that names the profile and the credential, and names rune as the caller
+$ cat secretspec.log
+  call
+  get
+  PROOF_ORIGIN
+  --file
+  ./.config/rune/secretspec.toml
+  --reason
+  rune resolves the probe@claude launch profile and reads PROOF_ORIGIN for its environment
+  --caller
+  rune
+  --caller-version
+  0.6.0
+  --caller-operation
+  resolve-profile
+
+## launch-secret-declaration-lookup#one-read-per-credential/two-values-name-one-credential
+kind: check
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/home.sh"'
+$# PROOF_FIRST and PROOF_SECOND both name PROOF_ORIGIN, and the dry run hides both values
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch twice@claude --dry-run'
+  tool: claude
+  argv: claude
+  env:
+    PROOF_FIRST=<redacted>
+    PROOF_SECOND=<redacted>
+  env_removed:
+    CLAUDE_TMPDIR
+    CLAUDE_EFFORT
+    CLAUDE_CODE_ENTRYPOINT
+    CLAUDE_PID
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    CLAUDE_CODE_CHILD_SESSION
+    CLAUDE_AGENT_SDK_VERSION
+    CLAUDE_CODE_SESSION_ATTENDED
+    CLAUDE_CODE_EXECPATH
+    CLAUDE_CODE_TMPDIR
+    CLAUDE_CODE_SESSION_ID
+    CLAUDE_CODE_MESSAGING_SOCKET
+    CLAUDECODE
+    CLAUDE_CODE_TMUX_TRUECOLOR
+  base_url: <none>
+  wrap:
+  pre:
+$# the secret manager received one request
+$ grep -c '^call$' secretspec.log
+  1
+
