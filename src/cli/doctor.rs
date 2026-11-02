@@ -62,6 +62,11 @@ pub(crate) struct DoctorReport {
     /// repairable. Doctor itself never writes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) repair_command: Option<String>,
+    /// The open capture debt under the state directory: the count and the
+    /// date of the oldest record. Absent when the debt folder does not
+    /// exist on this host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) capture_debt: Option<rune::session::debt::Summary>,
 }
 
 pub fn execute(target: &str, verify: bool, json: bool) -> Result<i32, Error> {
@@ -89,12 +94,14 @@ pub fn execute_with_skills(
                 drafts: Vec::new(),
                 skill_readiness: None,
                 repair_command: None,
+                capture_debt: None,
             },
             Err(error) => return Err(error),
         }
     } else {
         inspect(Path::new(target), &source_root)?
     };
+    report.capture_debt = capture_debt()?;
     if skill_options.enabled {
         report.skill_readiness = Some(skills::inspect(
             Path::new(target),
@@ -137,7 +144,19 @@ pub(crate) fn inspect(target: &Path, source_root: &Path) -> Result<DoctorReport,
         drafts: draft_reports(&consumer_root(target))?,
         skill_readiness: None,
         repair_command,
+        capture_debt: None,
     })
+}
+
+/// The open capture debt of this host, when the debt folder exists.
+fn capture_debt() -> Result<Option<rune::session::debt::Summary>, Error> {
+    let state = crate::cli::state::dir()?;
+    if !state.join("capture-debt").is_dir() {
+        return Ok(None);
+    }
+    rune::session::debt::summary(&state)
+        .map(Some)
+        .map_err(|message| Error::new(ErrorKind::Io, message))
 }
 
 /// The directory that holds `.drafts`: the doctor target when it is the
@@ -740,6 +759,16 @@ fn print_human(report: &DoctorReport) {
         }
     }
     print_drafts(&sheet, &report.drafts);
+    if let Some(debt) = &report.capture_debt {
+        let line = match (debt.open, &debt.oldest) {
+            (0, _) => sheet.dim("capture debt: none open"),
+            (open, Some(oldest)) => sheet.warn(&format!(
+                "capture debt: {open} open, oldest {oldest} (rune session debt)"
+            )),
+            (open, None) => sheet.warn(&format!("capture debt: {open} open (rune session debt)")),
+        };
+        println!("{line}");
+    }
     if let Some(command) = &report.repair_command {
         println!(
             "{}",
@@ -867,6 +896,7 @@ mod tests {
             drafts: Vec::new(),
             skill_readiness: None,
             repair_command: None,
+            capture_debt: None,
         };
         assert_eq!(exit_status(&report, true), 0);
 
@@ -882,6 +912,7 @@ mod tests {
             drafts: Vec::new(),
             skill_readiness: None,
             repair_command: Some("rune repair --target target".to_string()),
+            capture_debt: None,
         };
         assert_eq!(exit_status(&broken, false), 0);
         assert_eq!(exit_status(&broken, true), 1);
@@ -900,6 +931,7 @@ mod tests {
             }],
             skill_readiness: None,
             repair_command: None,
+            capture_debt: None,
         };
         assert_eq!(exit_status(&report, false), 0);
         assert_eq!(exit_status(&report, true), 1);

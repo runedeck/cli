@@ -14,7 +14,7 @@
 - [x] 2.1 Record debt only for an existing session file whose native copy failed
 - [x] 2.2 Clear debt on a later success, close it in the sweep when the copy is complete or the source is lost, and move closed records to `capture-debt/closed/`
 - [x] 2.3 Read the script's records, which say `provider`
-- [ ] 2.4 Add `rune session debt` and the debt line of `rune doctor`
+- [x] 2.4 Add `rune session debt` and the debt line of `rune doctor`
 - [x] 2.5 Test a session without files, a reconciled record, and a lost source
 
 ## 3. Triggers
