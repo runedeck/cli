@@ -24,12 +24,14 @@ Measured on 2026-11-02 from the data folder, the debt folder, and the script's l
 
 - `rune session capture` and `rune session sweep` replace the three modes of the script: hook, launcher, and timer.
 - The `session-capture` hook handler starts `rune session capture` detached instead of the script.
-- `rune run` and `rune launch` capture the session of the *[harness][HARNESS]* after it exits. A clean run's temporary home is copied before the runner deletes it.
+- `rune run` and `rune launch` capture the session of the *[harness][HARNESS]* after it exits. A clean run is not captured by default: the run discards its session with the temporary home.
+- Sessions classified as work are skipped. The capturer reads an exclude configuration, path globs for session working folders and explicit session ids, and never copies a matching session. A skipped session records no debt.
+- Capture runs on each host where sessions live. It does not pull sessions from other hosts.
 - Supported: Claude Code, Codex with its compressed files, Grok, and Antigravity. Optional and off by default: the Codex sessions of Multica, the task workspaces of Multica, Pi, and Cursor. Dropped: OpenCode and Gemini.
 - A version is kept only when a session file lost bytes. A database gets one online backup per day.
 - A readable Markdown copy never records debt. SpecStory stays optional for Claude Code and is no longer called for Codex. Rune renders Grok sessions itself.
 - Debt is recorded only for a session file that exists and failed to copy. It clears on a later success or when the sweep finds a complete copy. `rune doctor` reports it, and `rune session debt` lists it.
-- The data folder keeps the layout it has on disk.
+- The data folder keeps the layout it has on disk. The capture folder is the file spool that a later ClickHouse importer reads.
 
 ## Capabilities
 

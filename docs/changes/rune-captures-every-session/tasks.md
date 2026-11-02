@@ -6,6 +6,8 @@
 - [ ] 1.4 Copy compressed Codex session files as they are
 - [ ] 1.5 Copy the Claude Code plan-mode plans
 - [ ] 1.6 Test with fixture homes for Claude Code, Codex, Grok, and Antigravity
+- [ ] 1.7 Skip a session that `capture.exclude` names, by working folder glob or by session id, with no debt
+- [ ] 1.8 Test an excluded working folder and an excluded session id
 
 ## 2. Capture debt
 
@@ -20,7 +22,7 @@
 - [ ] 3.1 Add `rune session capture` and `rune session sweep` with their exit statuses
 - [ ] 3.2 Make the `session-capture` hook handler start `rune session capture` detached instead of the script
 - [ ] 3.3 Capture after `rune run` and `rune launch` exit, scoped by session id when known, else by files changed after the start
-- [ ] 3.4 Copy a clean run's temporary home before deletion, and measure the delay
+- [ ] 3.4 Skip a clean run: the runner captures nothing from a temporary home
 - [ ] 3.5 Test that a capture failure never changes the exit status of the caller
 
 ## 4. Databases and readable copies

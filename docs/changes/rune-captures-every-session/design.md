@@ -4,7 +4,9 @@
 
 One session module in rune copies the session files of each *[harness][HARNESS]* into the data folder. Three callers use it: the `session-capture` handler of the *[hook dispatcher][HOOKDISPATCHER]*, the runner behind `rune run` and `rune launch`, and the hourly launchd job. The module ports what works in `session-sync` (the layout, the per-harness lock, the debt records, the Grok renderer) and drops what fails (OpenCode, Gemini, SpecStory for Codex, the hourly database copies, debt that never clears).
 
-This beat fixing the script in place, which keeps bash, jq, rsync, and python3 on every host and cannot reach a clean run's temporary home before deletion. It also beat SpecStory alone, which finds sessions by working folder and writes Markdown only.
+This beat fixing the script in place, which keeps bash, jq, rsync, and python3 on every host and cannot tell a work session from a private one. It also beat SpecStory alone, which finds sessions by working folder and writes Markdown only.
+
+Each host captures the sessions that its harnesses wrote. Rune never pulls sessions from another host, so a laptop and a desktop each run their own sweep into their own data folder.
 
 ## Commands
 
@@ -35,18 +37,25 @@ This beat fixing the script in place, which keeps bash, jq, rsync, and python3 o
 | OpenCode | `~/.local/share/opencode` | none | none | dropped by the owner on 2026-11-02 |
 | Gemini | `~/.gemini/tmp` | none | none | dropped, folder gone |
 
-Optional sources are enabled in `~/.config/rune/config.yaml`:
+Optional sources and the excluded sessions are set in `~/.config/rune/config.yaml`:
 
 ```yaml
 capture:
   data_dir: ~/Data          # DATA_DIR overrides it
   sources:
     optional: [multica-codex, multica-tasks, pi, cursor]
+  exclude:
+    paths: ["~/Developer/acme/**", "/srv/client-*"]
+    sessions: ["0f3c2a1e-work-session-id"]
 ```
+
+## Excluded sessions
+
+A session classified as work never reaches the data folder. The hook capture reads the working folder from the payload. The sweep reads it from the session file: Claude Code writes `cwd` on each line, and Codex writes it in the `session_meta` line. Rune reads the first 64 KiB of a file for a `cwd` field and matches the value against `capture.exclude.paths` after tilde expansion. A glob matches the folder itself and, with `/**`, everything under it. A session with no readable working folder is matched by id alone. A skipped session records no debt and leaves no log line beyond one `skipped` entry. A copy made before the owner excluded the session stays, because capture never deletes captured data.
 
 ## Data folder layout
 
-The layout is the one on disk, kind first and harness second, harness names in lowercase:
+The layout is the one on disk, kind first and harness second, harness names in lowercase. The capture folder is the file spool that a later ClickHouse importer reads.
 
 | Folder | Holds |
 | --- | --- |
@@ -66,7 +75,7 @@ The daily database backup uses `sqlite3 <db> ".backup <file>"` and writes one fi
 | Trigger | Caller | Scope | Blocks the caller |
 | --- | --- | --- | --- |
 | Hook | `session-capture` handler on SessionEnd and PreCompact | The payload's session id and working folder | No. Detached in its own process group. |
-| Runner | `rune run`, `rune launch`, after the child exits | The session id when `run-session-records` supplies it, else the session files that changed after the run started | Only for the copy of a clean run's temporary home, which happens before deletion |
+| Runner | `rune run`, `rune launch`, after the child exits | The session id when `run-session-records` supplies it, else the session files that changed after the run started. A clean run is skipped: its session goes with the temporary home | No. The capture is one in-process call after the result is known |
 | Schedule | launchd every 3600 seconds and at load | Every enabled source, the plans, the database backups, debt reconciliation | Not applicable |
 
 ## Capture debt
@@ -92,12 +101,13 @@ The ontology has no entry for these words. The change uses them with these meani
 - **session**: One conversation that a harness runs, with the id the harness gives it and the files it writes.
 - **capture**: The copy Rune makes of the session files of a harness into the owner's data folder, read-only on the files of the harness.
 - **capture debt**: A record that one capture of an existing session file failed, kept open until a later capture succeeds or the file is gone.
+- **work session**: A session whose working folder matches an excluded glob, or whose id the owner listed. Rune never copies it.
 
 The ontology's *[transcript][TRANSCRIPT]* is the digest of a proof's text, so this change says "session file" for what a harness writes.
 
 ## Risks
 
-- A clean run returns later while its temporary home is copied. The copy covers only the session folder of that home. Task 3.4 measures the delay.
+- A harness that writes no `cwd` in its session file escapes a path glob. Grok and Antigravity sessions are excluded by id alone until a working folder is found in their files.
 - A detached capture can race with a harness that still writes. The copy is idempotent, the next trigger completes it, and a version is kept only for lost bytes.
 - A host without the `sqlite3` command cannot back up a database. The sweep records debt with reason `backup-tool-missing`.
 - Codex loses its readable copies. Existing Markdown files stay, and the native files are complete.

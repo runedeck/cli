@@ -30,7 +30,7 @@ change: rune-captures-every-session
 
 The owner keeps every harness session in `~/Data`, so that a session can be read, searched, and loaded into analysis later. A shell script, `session-sync`, does the copy. It runs from an unmerged workspace of forge-data, needs bash, jq, rsync, python3, and SpecStory, and has three callers: a Claude Code hook, a launcher mode that nothing calls, and an hourly launchd job. On 2026-11-02 it had 767 open debt records that nothing clears, and its version store held 50 GB of hourly OpenCode database copies. The owner decided the same day that capture becomes part of rune and that rune stops capturing OpenCode.
 
-The runner knows facts the script cannot see: which harness ran, its session id when the harness reports one, and the temporary home of a clean run, which the runner deletes when the run ends.
+The runner knows facts the script cannot see: which harness ran, its session id when the harness reports one, and whether the run was clean. The owner decided on 2026-11-02 that a clean run is not captured by default, that work sessions are excluded by configuration, and that each host captures its own sessions.
 
 ## Considered Options
 
@@ -40,9 +40,9 @@ The runner knows facts the script cannot see: which harness ran, its session id 
 
 ## Decision Outcome
 
-Option 2. Rune MUST copy the session files of Claude Code, Codex, Grok, and Antigravity into the data folder, from three triggers, and the optional sources only when the owner enables them. Rune MUST keep a version only for lost bytes and at most one database backup per day. Rune MUST record capture debt only for a session file that exists and failed to copy, and MUST clear it on a later success or a complete copy.
+Option 2. Rune MUST copy the session files of Claude Code, Codex, Grok, and Antigravity into the data folder, from three triggers, and the optional sources only when the owner enables them. Rune MUST skip a session that the exclude configuration names, by working folder glob or by session id, without debt. Rune MUST NOT capture a clean run by default. Rune MUST keep a version only for lost bytes and at most one database backup per day. Rune MUST record capture debt only for a session file that exists and failed to copy, and MUST clear it on a later success or a complete copy. Each host captures its own sessions.
 
-Option 1 keeps a second runtime on every host and a PATH link into an unmerged workspace, and the script still cannot reach a clean run's temporary home before the runner deletes it. Option 3 does not work for Codex: SpecStory finds sessions by working folder and failed for 350 Codex sessions, and it writes Markdown, not the native files.
+Option 1 keeps a second runtime on every host and a PATH link into an unmerged workspace, and the script cannot tell a work session from a private one. Option 3 does not work for Codex: SpecStory finds sessions by working folder and failed for 350 Codex sessions, and it writes Markdown, not the native files.
 
 ## Consequences
 
@@ -51,4 +51,5 @@ Option 1 keeps a second runtime on every host and a PATH link into an unmerged w
 - OpenCode sessions after the switch exist only in OpenCode's own database.
 - The first sweep closes most of the old debt records at once. The debt count drops in one step, which is the cleanup, not a sign of lost data.
 - A failed capture no longer fails a launcher call, as the script's exit 1 did. It becomes one warning and a debt record.
-- A clean run returns its result a little later, because its temporary home is copied before deletion.
+- A clean run leaves no session copy. Its temporary home goes with the run, as the run change says.
+- A work session that the exclude configuration misses is copied. The owner widens the globs, and the copy stays.

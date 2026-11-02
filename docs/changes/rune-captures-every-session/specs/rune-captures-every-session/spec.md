@@ -2,7 +2,7 @@
 
 ### Requirement: Native copies of harness sessions
 
-Rune MUST copy the session files that each supported *[harness][HARNESS]* keeps into the owner's data folder, grouped first by kind and then by [harness][HARNESS]. Rune MUST only read the files of the [harness][HARNESS].
+Rune MUST copy the session files that each supported *[harness][HARNESS]* keeps into the owner's data folder, grouped first by kind and then by [harness][HARNESS]. Rune MUST only read the files of the [harness][HARNESS]. Capture runs on the host where the sessions live. Rune MUST NOT pull sessions from another host.
 
 #### Scenario: Session end copies the named session
 
@@ -19,6 +19,27 @@ Rune MUST copy the session files that each supported *[harness][HARNESS]* keeps 
 
 - **WHEN** capture runs for Claude Code
 - **THEN** Rune copies the plan-mode plans into the plans folder of the data folder
+
+#### Scenario: Sessions on another host
+
+- **WHEN** a [harness][HARNESS] wrote its sessions on another host
+- **THEN** the sweep on this host copies nothing from that host
+- **AND** the other host captures its own sessions
+
+### Requirement: Work sessions stay out
+
+Rune MUST read an exclude configuration from the user configuration: path globs for session working folders, and explicit session ids. Rune MUST NOT copy a session whose working folder matches a glob or whose id is listed. A skipped session MUST record no capture debt.
+
+#### Scenario: Working folder matches a glob
+
+- **WHEN** a session's working folder matches an excluded glob
+- **THEN** the hook capture and the sweep copy none of its files
+- **AND** Rune records no capture debt for it
+
+#### Scenario: Session id listed
+
+- **WHEN** an excluded session id names a session with files in the store
+- **THEN** Rune copies none of its files and records no capture debt
 
 ### Requirement: Supported sources
 
@@ -38,7 +59,7 @@ Rune MUST capture Claude Code, Codex, Grok, and Antigravity. Rune MUST capture a
 
 ### Requirement: Capture triggers
 
-Rune MUST capture from three triggers: the [hook dispatcher][HOOKDISPATCHER] at session end and before compaction, the runner after a [harness][HARNESS] that Rune started exits, and a schedule that sweeps every source. A capture failure MUST NOT change the exit status that the [hook dispatcher][HOOKDISPATCHER] or the runner reports.
+Rune MUST capture from three triggers: the [hook dispatcher][HOOKDISPATCHER] at session end and before compaction, the runner after a [harness][HARNESS] that Rune started exits, and a schedule that sweeps every source. A capture failure MUST NOT change the exit status that the [hook dispatcher][HOOKDISPATCHER] or the runner reports. The runner MUST NOT capture a clean run by default: the run discards a clean run's session with its temporary home.
 
 #### Scenario: Run ends
 
@@ -46,10 +67,11 @@ Rune MUST capture from three triggers: the [hook dispatcher][HOOKDISPATCHER] at 
 - **THEN** Rune captures the session of that [harness][HARNESS], scoped to its session id when the runner knows it
 - **AND** a failed capture shows one warning on standard error and records capture debt
 
-#### Scenario: Temporary harness home
+#### Scenario: Clean run ends
 
 - **WHEN** a clean run used a temporary home for the [harness][HARNESS]
-- **THEN** Rune copies the session files of the run before the runner deletes the temporary home
+- **THEN** Rune captures nothing from the run
+- **AND** records no capture debt for it
 
 #### Scenario: Hook event
 
