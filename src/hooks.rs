@@ -3,7 +3,7 @@
 //! validation that names the field, and the plan `rune install` compiles
 //! and `rune hook run` reads. Nothing here spawns a process.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use schemars::JsonSchema;
@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 pub enum Harness {
     Claude,
     Codex,
+    Cursor,
     Gemini,
     Opencode,
     Grok,
@@ -34,25 +35,28 @@ pub enum Harness {
 }
 
 impl Harness {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Claude,
         Self::Codex,
+        Self::Cursor,
         Self::Gemini,
         Self::Opencode,
         Self::Grok,
         Self::Antigravity,
     ];
 
-    /// The harnesses release 1 registers. The others decode and report.
-    pub const REGISTERED: [Self; 2] = [Self::Claude, Self::Codex];
+    /// The harnesses install writes a table for. The others decode and
+    /// report.
+    pub const REGISTERED: [Self; 3] = [Self::Claude, Self::Codex, Self::Cursor];
 
     /// Whether the harness reads a hook's `timeout` as whole seconds.
     /// Claude's reference lists the field in seconds, Codex hashes it as
-    /// whole seconds, and Grok reads Claude's table. Gemini takes
-    /// milliseconds; `OpenCode` and Antigravity carry no such field.
+    /// whole seconds, Cursor's per-script `timeout` is "in seconds" (hooks
+    /// reference, read 2026-11-02), and Grok reads Claude's table. Gemini
+    /// takes milliseconds; `OpenCode` and Antigravity carry no such field.
     #[must_use]
     pub fn whole_second_timeout(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Grok)
+        matches!(self, Self::Claude | Self::Codex | Self::Cursor | Self::Grok)
     }
 
     #[must_use]
@@ -60,6 +64,7 @@ impl Harness {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Cursor => "cursor",
             Self::Gemini => "gemini",
             Self::Opencode => "opencode",
             Self::Grok => "grok",
@@ -231,6 +236,8 @@ impl Canonical {
                 cap_ms,
             })
         }
+        // Cursor documents a "platform default" timeout and no number
+        // for it, and no cap (hooks reference, read 2026-11-02).
         let claude = Some(600_000);
         let codex = Some(600_000);
         let gemini = Some(60_000);
@@ -239,6 +246,7 @@ impl Canonical {
         match (self, harness) {
             (Self::SessionStart, Harness::Claude) => n("SessionStart", claude, None),
             (Self::SessionStart, Harness::Codex) => n("SessionStart", codex, None),
+            (Self::SessionStart, Harness::Cursor) => n("sessionStart", None, None),
             (Self::SessionStart, Harness::Gemini) => n("SessionStart", gemini, None),
             (Self::SessionStart, Harness::Opencode) => n("session.created", None, None),
             (Self::SessionStart, Harness::Grok) => n("SessionStart", grok, None),
@@ -249,6 +257,7 @@ impl Canonical {
             // (hooks reference, read 2026-10-25).
             (Self::SessionEnd, Harness::Claude) => n("SessionEnd", Some(1_500), Some(60_000)),
             (Self::SessionEnd, Harness::Codex) => n("SessionEnd", Some(1_000), Some(3_000)),
+            (Self::SessionEnd, Harness::Cursor) => n("sessionEnd", None, None),
             (Self::SessionEnd, Harness::Gemini) => n("SessionEnd", gemini, None),
             (Self::SessionEnd, Harness::Opencode) => None,
             (Self::SessionEnd, Harness::Grok) => n("SessionEnd", grok, None),
@@ -256,6 +265,7 @@ impl Canonical {
 
             (Self::PromptBefore, Harness::Claude) => n("UserPromptSubmit", claude, None),
             (Self::PromptBefore, Harness::Codex) => n("UserPromptSubmit", codex, None),
+            (Self::PromptBefore, Harness::Cursor) => n("beforeSubmitPrompt", None, None),
             (Self::PromptBefore, Harness::Gemini) => n("BeforeAgent", gemini, None),
             (Self::PromptBefore, Harness::Opencode) => None,
             (Self::PromptBefore, Harness::Grok) => n("UserPromptSubmit", grok, None),
@@ -263,6 +273,7 @@ impl Canonical {
 
             (Self::ToolBefore, Harness::Claude) => n("PreToolUse", claude, None),
             (Self::ToolBefore, Harness::Codex) => n("PreToolUse", codex, None),
+            (Self::ToolBefore, Harness::Cursor) => n("preToolUse", None, None),
             (Self::ToolBefore, Harness::Gemini) => n("BeforeTool", gemini, None),
             (Self::ToolBefore, Harness::Opencode) => n("tool.execute.before", None, None),
             (Self::ToolBefore, Harness::Grok) => n("PreToolUse", grok, None),
@@ -270,6 +281,7 @@ impl Canonical {
 
             (Self::ToolAfter, Harness::Claude) => n("PostToolUse", claude, None),
             (Self::ToolAfter, Harness::Codex) => n("PostToolUse", codex, None),
+            (Self::ToolAfter, Harness::Cursor) => n("postToolUse", None, None),
             (Self::ToolAfter, Harness::Gemini) => n("AfterTool", gemini, None),
             (Self::ToolAfter, Harness::Opencode) => n("tool.execute.after", None, None),
             (Self::ToolAfter, Harness::Grok) => n("PostToolUse", Some(600_000), None),
@@ -277,6 +289,7 @@ impl Canonical {
 
             (Self::TurnFinish, Harness::Claude) => n("Stop", claude, None),
             (Self::TurnFinish, Harness::Codex) => n("Stop", codex, None),
+            (Self::TurnFinish, Harness::Cursor) => n("stop", None, None),
             (Self::TurnFinish, Harness::Gemini) => n("AfterAgent", gemini, None),
             (Self::TurnFinish, Harness::Opencode) => n("session.idle", None, None),
             (Self::TurnFinish, Harness::Grok) => n("Stop", Some(600_000), None),
@@ -284,6 +297,7 @@ impl Canonical {
 
             (Self::CompactBefore, Harness::Claude) => n("PreCompact", claude, None),
             (Self::CompactBefore, Harness::Codex) => n("PreCompact", codex, None),
+            (Self::CompactBefore, Harness::Cursor) => n("preCompact", None, None),
             (Self::CompactBefore, Harness::Gemini) => n("PreCompress", gemini, None),
             (Self::CompactBefore, Harness::Opencode) => None,
             (Self::CompactBefore, Harness::Grok) => n("PreCompact", grok, None),
@@ -291,6 +305,7 @@ impl Canonical {
 
             (Self::Notification, Harness::Claude) => n("Notification", claude, None),
             (Self::Notification, Harness::Codex) => None,
+            (Self::Notification, Harness::Cursor) => None,
             (Self::Notification, Harness::Gemini) => n("Notification", gemini, None),
             (Self::Notification, Harness::Opencode) => None,
             (Self::Notification, Harness::Grok) => n("Notification", grok, None),
@@ -314,10 +329,20 @@ impl Canonical {
     pub fn can_block(self, harness: Harness) -> bool {
         match (self, harness) {
             (Self::ToolBefore, _) => self.native(harness).is_some(),
-            (Self::PromptBefore, Harness::Claude | Harness::Codex | Harness::Gemini) => true,
+            (
+                Self::PromptBefore,
+                Harness::Claude | Harness::Codex | Harness::Cursor | Harness::Gemini,
+            ) => true,
+            // Cursor's `stop` takes a `followup_message` that keeps the
+            // loop going, under its `loop_limit`; `beforeSubmitPrompt`
+            // takes `continue: false`.
             (
                 Self::TurnFinish,
-                Harness::Claude | Harness::Codex | Harness::Grok | Harness::Antigravity,
+                Harness::Claude
+                | Harness::Codex
+                | Harness::Cursor
+                | Harness::Grok
+                | Harness::Antigravity,
             ) => true,
             (Self::CompactBefore, Harness::Claude) => true,
             _ => false,
@@ -363,21 +388,93 @@ impl Capability {
                 Self::InputReplace,
                 Harness::Claude
                 | Harness::Codex
+                | Harness::Cursor
                 | Harness::Gemini
                 | Harness::Grok
                 | Harness::Opencode,
             ) => true,
             (Self::InputReplace, Harness::Antigravity) => false,
-            (Self::Context, Harness::Claude | Harness::Gemini | Harness::Grok) => true,
+            // Cursor takes `additional_context` on `sessionStart` and
+            // `postToolUse`, `updated_input` on `preToolUse`, and a
+            // `followup_message` on `stop` (hooks reference, read
+            // 2026-11-02).
+            (
+                Self::Context,
+                Harness::Claude | Harness::Cursor | Harness::Gemini | Harness::Grok,
+            ) => true,
             (Self::Context, Harness::Codex | Harness::Opencode | Harness::Antigravity) => false,
             (
                 Self::TurnContinue,
-                Harness::Claude | Harness::Codex | Harness::Grok | Harness::Antigravity,
+                Harness::Claude
+                | Harness::Codex
+                | Harness::Cursor
+                | Harness::Grok
+                | Harness::Antigravity,
             ) => true,
             (Self::TurnContinue, Harness::Gemini | Harness::Opencode) => false,
         }
     }
+
+    /// Whether the harness expresses the capability on one canonical
+    /// event: the field its answer has there, as the encoders write it. A
+    /// harness that supports context takes it on some events only (Cursor
+    /// on `sessionStart` and `postToolUse`, hooks reference read
+    /// 2026-11-02), so a handler that asks here before it consumes what it
+    /// delivers never spends a message the harness drops.
+    #[must_use]
+    #[allow(clippy::match_same_arms)]
+    pub fn supported_on(self, harness: Harness, event: Canonical) -> bool {
+        if !self.supported(harness) || event.native(harness).is_none() {
+            return false;
+        }
+        match (self, harness, event) {
+            (Self::ToolDeny | Self::InputReplace, _, Canonical::ToolBefore) => true,
+            (Self::ToolDeny | Self::InputReplace, _, _) => false,
+            (Self::TurnContinue, _, Canonical::TurnFinish) => true,
+            (Self::TurnContinue, _, _) => false,
+            (
+                Self::Context,
+                Harness::Claude,
+                Canonical::SessionStart
+                | Canonical::PromptBefore
+                | Canonical::ToolBefore
+                | Canonical::ToolAfter
+                | Canonical::TurnFinish,
+            ) => true,
+            (Self::Context, Harness::Cursor, Canonical::SessionStart | Canonical::ToolAfter) => {
+                true
+            }
+            (
+                Self::Context,
+                Harness::Gemini,
+                Canonical::SessionStart | Canonical::PromptBefore | Canonical::ToolAfter,
+            ) => true,
+            // Grok reads `additionalContext` on every event it has.
+            (Self::Context, Harness::Grok, _) => true,
+            (Self::Context, _, _) => false,
+        }
+    }
+
+    /// `supported_on` by the harness's own event name: the canonical
+    /// event's answer where the name maps to one, and otherwise the one
+    /// native extension with a field of its own, Cursor's
+    /// `postToolUseFailure`, which takes `additional_context` as
+    /// `postToolUse` does (hooks reference, read 2026-11-02).
+    #[must_use]
+    pub fn supported_on_native(self, harness: Harness, native: &str) -> bool {
+        match Canonical::from_native(harness, native) {
+            Some(event) => self.supported_on(harness, event),
+            None => {
+                self == Self::Context && harness == Harness::Cursor && native == CURSOR_TOOL_FAILURE
+            }
+        }
+    }
 }
+
+/// Cursor's event after a tool fails. No canonical event maps to it, so a
+/// handler reaches it as the extension `cursor:postToolUseFailure`, and it
+/// takes `additional_context` like `postToolUse`.
+pub const CURSOR_TOOL_FAILURE: &str = "postToolUseFailure";
 
 /// What the dispatcher does when a handler fails.
 #[derive(
@@ -724,6 +821,78 @@ pub struct MissingCapability {
     pub capability: Capability,
 }
 
+/// A declared handler the owner switched off on one harness: the plan
+/// leaves it out there and names it here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchedOff {
+    pub harness: Harness,
+    pub handler: String,
+}
+
+/// The owner's per-harness switches: the harnesses each handler is off
+/// on. `rune hook off <id> --harness <h>` writes them under the rune
+/// state directory, beside the plan, so the rendered user config stays
+/// untouched. A handler is on wherever it is not listed. The file is
+/// read strictly: both members present, no other member, and the one
+/// version this release writes; anything else is refused, so a hand
+/// edit or a later version is never read as fewer switches than it
+/// holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Switches {
+    pub version: u32,
+    pub off: BTreeMap<String, BTreeSet<Harness>>,
+}
+
+impl Default for Switches {
+    fn default() -> Self {
+        Self {
+            version: Self::VERSION,
+            off: BTreeMap::new(),
+        }
+    }
+}
+
+impl Switches {
+    /// The one version of the switches file this release reads and
+    /// writes.
+    pub const VERSION: u32 = 1;
+
+    /// Whether `handler` is off on `harness`.
+    #[must_use]
+    pub fn is_off(&self, handler: &str, harness: Harness) -> bool {
+        self.off
+            .get(handler)
+            .is_some_and(|harnesses| harnesses.contains(&harness))
+    }
+
+    /// Turn `handler` off on each of `harnesses`.
+    pub fn turn_off(&mut self, handler: &str, harnesses: impl IntoIterator<Item = Harness>) {
+        self.off
+            .entry(handler.to_string())
+            .or_default()
+            .extend(harnesses);
+    }
+
+    /// Turn `handler` on again on each of `harnesses`.
+    pub fn turn_on(&mut self, handler: &str, harnesses: impl IntoIterator<Item = Harness>) {
+        if let Some(set) = self.off.get_mut(handler) {
+            for harness in harnesses {
+                set.remove(&harness);
+            }
+            if set.is_empty() {
+                self.off.remove(handler);
+            }
+        }
+    }
+
+    /// Whether no switch is set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.off.is_empty()
+    }
+}
+
 /// The plan `rune install` compiles and `rune hook run` reads: every
 /// harness, its native events, the handlers in order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -732,6 +901,9 @@ pub struct Plan {
     pub harnesses: BTreeMap<Harness, BTreeMap<String, PlannedEvent>>,
     pub unsupported: Vec<Unsupported>,
     pub missing: Vec<MissingCapability>,
+    /// The declared handlers the owner's switches keep out, per harness.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off: Vec<SwitchedOff>,
 }
 
 impl Plan {
@@ -936,8 +1108,17 @@ impl Hooks {
             .collect()
     }
 
-    /// Compile the plan for every harness. Fails on a validation fault.
+    /// Compile the plan for every harness with no switch set. Fails on a
+    /// validation fault.
     pub fn compile(&self) -> Result<Plan, Vec<HooksError>> {
+        self.compile_with(&Switches::default())
+    }
+
+    /// Compile the plan for every harness, leaving each handler out of
+    /// every harness `switches` turns it off on. An event no handler is
+    /// left on is not planned there, so install registers nothing for it.
+    /// Fails on a validation fault.
+    pub fn compile_with(&self, switches: &Switches) -> Result<Plan, Vec<HooksError>> {
         let errors = self.validate();
         if !errors.is_empty() {
             return Err(errors);
@@ -949,13 +1130,22 @@ impl Hooks {
         for harness in Harness::ALL {
             let mut events: BTreeMap<String, PlannedEvent> = BTreeMap::new();
             let named = self.names(harness);
+            for handler in &self.handlers {
+                if switches.is_off(&handler.id, harness) {
+                    plan.off.push(SwitchedOff {
+                        harness,
+                        handler: handler.id.clone(),
+                    });
+                }
+            }
             for canonical in Canonical::ALL {
                 let subscribers: Vec<&Handler> = self
                     .handlers
                     .iter()
                     .filter(|h| {
-                        h.subscriptions()
-                            .contains(&Subscription::Canonical(canonical))
+                        !switches.is_off(&h.id, harness)
+                            && h.subscriptions()
+                                .contains(&Subscription::Canonical(canonical))
                     })
                     .collect();
                 if subscribers.is_empty() {
@@ -1007,7 +1197,7 @@ impl Hooks {
                     },
                 );
             }
-            self.extend_native(harness, &mut events);
+            self.extend_native(harness, switches, &mut events);
             if !events.is_empty() {
                 plan.harnesses.insert(harness, events);
             }
@@ -1018,8 +1208,16 @@ impl Hooks {
     /// Add the native extensions of `harness` to `events`. A name that is
     /// one of the harness's own canonical events keeps that event's cap, so
     /// a `codex:SessionEnd` renders inside Codex's 3 s like `session.end`.
-    fn extend_native(&self, harness: Harness, events: &mut BTreeMap<String, PlannedEvent>) {
+    fn extend_native(
+        &self,
+        harness: Harness,
+        switches: &Switches,
+        events: &mut BTreeMap<String, PlannedEvent>,
+    ) {
         for handler in &self.handlers {
+            if switches.is_off(&handler.id, harness) {
+                continue;
+            }
             for subscription in &handler.events {
                 let Subscription::Native { harness: h, name } = subscription else {
                     continue;
@@ -1548,6 +1746,141 @@ handlers:
         )
         .unwrap_err();
         assert!(error.to_string().contains("tool.middle"));
+    }
+
+    #[test]
+    fn context_is_a_capability_per_event() {
+        // Cursor expresses context, but on `sessionStart` and
+        // `postToolUse` alone; a handler that asked the harness-wide
+        // question on `beforeSubmitPrompt` consumed what Cursor dropped.
+        assert!(Capability::Context.supported(Harness::Cursor));
+        assert!(Capability::Context.supported_on(Harness::Cursor, Canonical::SessionStart));
+        assert!(Capability::Context.supported_on(Harness::Cursor, Canonical::ToolAfter));
+        assert!(!Capability::Context.supported_on(Harness::Cursor, Canonical::PromptBefore));
+        assert!(!Capability::Context.supported_on(Harness::Cursor, Canonical::ToolBefore));
+        assert!(!Capability::Context.supported_on(Harness::Cursor, Canonical::TurnFinish));
+        assert!(!Capability::Context.supported_on(Harness::Cursor, Canonical::Notification));
+        assert!(Capability::TurnContinue.supported_on(Harness::Cursor, Canonical::TurnFinish));
+        assert!(!Capability::TurnContinue.supported_on(Harness::Cursor, Canonical::ToolAfter));
+        // The other harnesses answer as their encoders write.
+        assert!(Capability::Context.supported_on(Harness::Claude, Canonical::PromptBefore));
+        assert!(!Capability::Context.supported_on(Harness::Claude, Canonical::SessionEnd));
+        assert!(!Capability::Context.supported_on(Harness::Codex, Canonical::PromptBefore));
+        assert!(Capability::Context.supported_on(Harness::Gemini, Canonical::PromptBefore));
+        assert!(!Capability::Context.supported_on(Harness::Gemini, Canonical::ToolBefore));
+        assert!(Capability::ToolDeny.supported_on(Harness::Codex, Canonical::ToolBefore));
+        assert!(!Capability::ToolDeny.supported_on(Harness::Codex, Canonical::ToolAfter));
+        // By native name: the canonical answer where the name maps, and
+        // Cursor's `postToolUseFailure`, an extension that takes context
+        // as `postToolUse` does, which the canonical table once dropped
+        // (review, 2026-11-02).
+        assert!(Capability::Context.supported_on_native(Harness::Cursor, "postToolUse"));
+        assert!(Capability::Context.supported_on_native(Harness::Cursor, CURSOR_TOOL_FAILURE));
+        assert!(!Capability::Context.supported_on_native(Harness::Cursor, "beforeSubmitPrompt"));
+        assert!(!Capability::Context.supported_on_native(Harness::Cursor, "afterFileEdit"));
+        assert!(
+            !Capability::TurnContinue.supported_on_native(Harness::Cursor, CURSOR_TOOL_FAILURE)
+        );
+        assert!(!Capability::Context.supported_on_native(Harness::Claude, CURSOR_TOOL_FAILURE));
+        assert!(Capability::Context.supported_on_native(Harness::Claude, "UserPromptSubmit"));
+    }
+
+    #[test]
+    fn cursor_maps_seven_events_and_lacks_notification() {
+        // The names, blocking, and capabilities Cursor's hooks reference
+        // documents (read 2026-11-02).
+        let natives: Vec<Option<&str>> = Canonical::ALL
+            .iter()
+            .map(|event| event.native(Harness::Cursor).map(|n| n.name))
+            .collect();
+        assert_eq!(
+            natives,
+            [
+                Some("sessionStart"),
+                Some("sessionEnd"),
+                Some("beforeSubmitPrompt"),
+                Some("preToolUse"),
+                Some("postToolUse"),
+                Some("stop"),
+                Some("preCompact"),
+                None,
+            ]
+        );
+        assert_eq!(
+            Canonical::from_native(Harness::Cursor, "preToolUse"),
+            Some(Canonical::ToolBefore)
+        );
+        assert!(Canonical::ToolBefore.can_block(Harness::Cursor));
+        assert!(Canonical::PromptBefore.can_block(Harness::Cursor));
+        assert!(Canonical::TurnFinish.can_block(Harness::Cursor));
+        assert!(
+            !Canonical::CompactBefore.can_block(Harness::Cursor),
+            "preCompact is observational"
+        );
+        for capability in [
+            Capability::ToolDeny,
+            Capability::InputReplace,
+            Capability::Context,
+            Capability::TurnContinue,
+        ] {
+            assert!(capability.supported(Harness::Cursor), "{capability:?}");
+        }
+        assert!(Harness::REGISTERED.contains(&Harness::Cursor));
+        assert!(Harness::Cursor.whole_second_timeout());
+        let plan = five().compile().expect("compiles");
+        let cursor = &plan.harnesses[&Harness::Cursor];
+        assert!(cursor.contains_key("preToolUse"));
+        assert!(cursor.contains_key("stop"));
+        assert!(plan.unsupported.iter().any(|u| u.harness == Harness::Cursor
+            && u.event == Canonical::Notification
+            && u.handlers == ["tmux-status"]));
+    }
+
+    #[test]
+    fn a_switch_leaves_a_handler_out_of_one_harness_only() {
+        let hooks: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: jev\n    exec: [bun, jev.ts, hook]\n    events: [tool.after, turn.finish]\n  - id: cap\n    exec: [cap]\n    events: [turn.finish]\n",
+        )
+        .unwrap();
+        let mut switches = Switches::default();
+        switches.turn_off("jev", [Harness::Cursor]);
+        assert!(switches.is_off("jev", Harness::Cursor));
+        assert!(!switches.is_off("jev", Harness::Claude));
+        let plan = hooks.compile_with(&switches).expect("compiles");
+        let ids = |harness: Harness, event: &str| -> Vec<String> {
+            plan.event(harness, event)
+                .map(|e| e.handlers.iter().map(|h| h.id.clone()).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(ids(Harness::Cursor, "stop"), ["cap"]);
+        assert_eq!(
+            plan.event(Harness::Cursor, "postToolUse"),
+            None,
+            "an event no handler is left on is not planned"
+        );
+        assert_eq!(ids(Harness::Claude, "Stop"), ["cap", "jev"]);
+        assert_eq!(ids(Harness::Claude, "PostToolUse"), ["jev"]);
+        assert_eq!(
+            plan.off,
+            [SwitchedOff {
+                harness: Harness::Cursor,
+                handler: "jev".to_string()
+            }]
+        );
+        // Off everywhere, then on again on one harness.
+        switches.turn_off("jev", Harness::ALL);
+        switches.turn_on("jev", [Harness::Claude]);
+        let plan = hooks.compile_with(&switches).expect("compiles");
+        assert_eq!(ids(Harness::Claude, "PostToolUse"), ["jev"]);
+        assert!(plan.off.iter().all(|off| off.harness != Harness::Claude));
+        assert_eq!(plan.off.len(), Harness::ALL.len() - 1);
+        switches.turn_on("jev", Harness::ALL);
+        assert!(switches.is_empty(), "an emptied entry goes");
+        // A switch for an id the config does not declare plans nothing.
+        switches.turn_off("ghost", [Harness::Claude]);
+        let plan = hooks.compile_with(&switches).expect("compiles");
+        assert_eq!(plan.off, [] as [SwitchedOff; 0]);
+        assert_eq!(ids(Harness::Claude, "Stop"), ["cap", "jev"]);
     }
 
     #[test]

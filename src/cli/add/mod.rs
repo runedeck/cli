@@ -207,6 +207,19 @@ fn resolve_toggle_target(
     }
 }
 
+/// Whether the consumer manifest in the current directory stages a rune of
+/// `kind` named `name`. A directory with no `.rune`, or one whose sources
+/// cannot be enumerated, stages nothing: the caller that asks this routes a
+/// name, and the toggle itself reports the reason when it is the route.
+pub fn stages_kind(kind: rune::provider::ContentKind, name: &str) -> bool {
+    prepare_for(None, None, false).is_ok_and(|target| {
+        match resolve_toggle_target(&target, kind, name) {
+            Ok(_) => true,
+            Err(error) => error.code() == "toggle.ambiguous_rune",
+        }
+    })
+}
+
 /// Candidate (source label, overlay key) pairs for one source. A deck source
 /// resolves through enumeration. Only the known plain-module shape falls
 /// back to the staged kind lists; every other enumeration failure

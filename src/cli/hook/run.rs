@@ -16,7 +16,7 @@ use rune::hooks::{Canonical, Harness, Mode, OnFailure, Plan, PlannedEvent, Plann
 use serde_json::Value;
 
 use super::cover::{self, Cover};
-use super::encode::{Answer, Effect, HandlerResult, encode};
+use super::encode::{Answer, Dropped, Effect, HandlerResult, encode};
 use super::payload::{HandlerPayload, decode, event_matches, payload_event};
 use super::plan;
 use super::record::{self, Record};
@@ -64,11 +64,29 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
         .map(|path| cover::read(&path, harness, native_event))
         .unwrap_or_default();
     let env = cover::Environment::from_process();
+    // The owner's switches as they are now, beside the plan, anchored to
+    // its canonical path. A registration an install could not replace,
+    // such as a Codex entry trusted where its replacement is not, still
+    // names the generation it was installed with, so the firing reads
+    // the switches itself: off means off whichever generation runs. A
+    // missing file is no switch; a file that is there and does not read
+    // is as bad as a plan that does not, since the handlers it turns off
+    // are unknown, so the firing falls to the registration's policy.
+    let switches = path.as_ref().ok().map(|path| {
+        super::switches::path_beside_plan(path).and_then(|p| super::switches::read_at(&p))
+    });
     let loaded = path.and_then(|path| plan::read_at(&path));
-    let answer = match loaded {
+    let answer = match (loaded, switches) {
+        (Ok(_), Some(Err(error))) => no_plan(
+            harness,
+            native_event,
+            policy,
+            &format!("{error}; the switched-off handlers are unknown"),
+            log_dir().as_deref(),
+        ),
         // A plan that loads but names no handler for the registered event
         // is as good as none: a guarded registration still denies.
-        Ok((plan, _))
+        (Ok((plan, _)), _)
             if plan.event(harness, native_event).is_none() && policy == OnFailure::Deny =>
         {
             no_plan(
@@ -79,9 +97,18 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
                 log_dir().as_deref(),
             )
         }
-        Ok((plan, warning)) => {
+        (Ok((mut plan, warning)), switches) => {
             if let Some(warning) = warning {
                 eprintln!("rune hook: {warning}");
+            }
+            if let Some(Ok(switches)) = switches {
+                let off = super::switches::apply(&mut plan, harness, &switches);
+                if !off.is_empty() {
+                    eprintln!(
+                        "rune hook: {} switched off for {harness}; not run",
+                        off.join(", ")
+                    );
+                }
             }
             dispatch(
                 &plan,
@@ -91,7 +118,7 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
                 &Runner::real(cover, env, started),
             )
         }
-        Err(error) => no_plan(
+        (Err(error), _) => no_plan(
             harness,
             native_event,
             policy,
@@ -326,6 +353,7 @@ pub(crate) fn dispatch(
     let mut stderr = Vec::new();
     let mut log = log_preamble(&payload);
     let mut records: Vec<Record> = Vec::new();
+    let mut asked: Vec<Asked> = Vec::new();
     // One firing reads each table, script, and folder once.
     let mut cache = cover::Cache::default();
     let hold = wrap_hold(event, harness, native_event, &payload, runner, &mut cache);
@@ -345,7 +373,7 @@ pub(crate) fn dispatch(
             continue;
         }
         let remaining = remaining(event, runner.started, handler, hold);
-        let handler_started = Instant::now();
+        let started = Instant::now();
         let outcome = if remaining.is_zero() {
             Err(budget_spent(
                 native_event,
@@ -357,13 +385,7 @@ pub(crate) fn dispatch(
             run_handler(handler, &payload, timeout, merged.effect, &failed, runner)
                 .and_then(|result| admit_result(result, handler, event))
         };
-        let mut line = record_line(
-            harness,
-            native_event,
-            &payload,
-            &handler.id,
-            handler_started,
-        );
+        let mut line = record_line(harness, native_event, &payload, &handler.id, started);
         match outcome {
             Ok(mut result) => {
                 line.exit_status = Some(0);
@@ -373,7 +395,13 @@ pub(crate) fn dispatch(
                 if event.mode == Mode::Passive {
                     passive_notes(native_event, harness, &handler.id, &result, &mut stderr);
                 }
-                merge(&mut payload, &mut merged, result, event.mode, &handler.id);
+                let effects = effects_of(&result);
+                let dropped = merge(&mut payload, &mut merged, result, event.mode, &handler.id);
+                asked.push(Asked {
+                    record: records.len(),
+                    effects,
+                    dropped,
+                });
             }
             Err(failure) => {
                 let _ = writeln!(log, "{} failed {}", handler.id, failure.kind);
@@ -405,6 +433,7 @@ pub(crate) fn dispatch(
     let own_phase = Instant::now();
     let mut answer = encode(harness, native_event, event.mode, &merged);
     stderr.append(&mut answer.stderr);
+    settle_unapplied(&mut records, asked, &answer.unapplied);
     stderr.extend(write_records(
         runner,
         records,
@@ -500,7 +529,7 @@ fn merge(
     result: HandlerResult,
     mode: Mode,
     handler_id: &str,
-) {
+) -> Vec<Dropped> {
     merged
         .context
         .extend(result.context.iter().map(|line| visible(line, true)));
@@ -523,9 +552,14 @@ fn merge(
             None => named,
         });
     }
-    // A passive event steers nothing, a replacement input included.
+    // A passive event steers nothing, a replacement input included: what
+    // the result asked for beyond context and a message is discarded here,
+    // and returned so the hook's record stores it as not applied.
     if mode == Mode::Passive {
-        return;
+        return effects_of(&result)
+            .into_iter()
+            .filter(|effect| !matches!(effect, Dropped::Context | Dropped::Message))
+            .collect();
     }
     if let Some(input) = result.input {
         if let Some(tool) = payload.tool.as_mut() {
@@ -543,6 +577,7 @@ fn merge(
         merged.effect = result.effect;
         merged.reason = result.reason;
     }
+    Vec::new()
 }
 
 /// The characters that show nothing of themselves yet change how the rest
@@ -739,6 +774,9 @@ fn dispatcher_failure(
         .iter()
         .any(|h| h.on_failure == OnFailure::Deny);
     let denies = guarded && can_block && event.mode == Mode::Gate;
+    // A proceeding failure still answers as a pass does: Cursor reads a
+    // permission hook with no output as a block, so silence would deny
+    // every tool call under a deleted or garbled plan.
     let mut answer = if denies {
         encode(
             harness,
@@ -747,7 +785,7 @@ fn dispatcher_failure(
             &HandlerResult::deny(format!("rune hook could not run its handlers: {why}")),
         )
     } else {
-        Answer::default()
+        encode(harness, native_event, event.mode, &HandlerResult::default())
     };
     answer.stderr.insert(
         0,
@@ -841,6 +879,67 @@ fn record_line(
         metrics: None,
         source: None,
         skipped: None,
+        unapplied: None,
+    }
+}
+
+/// What one hook asked for and what the merge discarded of it, by its
+/// record's index; `settle_unapplied` writes the record once the answer
+/// is encoded and the encoder's own drops are known.
+struct Asked {
+    record: usize,
+    effects: Vec<Dropped>,
+    dropped: Vec<Dropped>,
+}
+
+/// The effects one hook's result asks for.
+fn effects_of(result: &HandlerResult) -> Vec<Dropped> {
+    let mut effects = Vec::new();
+    match result.effect {
+        Effect::Pass => {}
+        Effect::Deny => effects.push(Dropped::Denial),
+        Effect::ContinueTurn => effects.push(Dropped::Continuation),
+    }
+    if !result.context.is_empty() {
+        effects.push(Dropped::Context);
+    }
+    if result
+        .message
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty())
+    {
+        effects.push(Dropped::Message);
+    }
+    if result.input.is_some() {
+        effects.push(Dropped::Input);
+    }
+    effects
+}
+
+/// Store on each hook's record the effects it asked for that never reached
+/// the harness: what the merge discarded (a passive event's denial or
+/// replacement input) and what the encoder could not carry on the event.
+/// The spec has the firing record the context as not applied where the
+/// harness has no field for it; the stderr line alone left nothing stored,
+/// and the merge's drops were missed when only the encoder's counted
+/// (review, 2026-11-02). A record with nothing dropped keeps no member, so
+/// older records and readers agree, and absent means everything the hook
+/// asked for reached the harness.
+fn settle_unapplied(records: &mut [Record], asked: Vec<Asked>, unexpressed: &[Dropped]) {
+    for Asked {
+        record,
+        effects,
+        dropped,
+    } in asked
+    {
+        let words: Vec<String> = effects
+            .into_iter()
+            .filter(|effect| dropped.contains(effect) || unexpressed.contains(effect))
+            .map(|effect| effect.member().to_string())
+            .collect();
+        if !words.is_empty() {
+            records[record].unapplied = Some(words);
+        }
     }
 }
 
@@ -971,14 +1070,19 @@ fn passive_note(native_event: &str, harness: Harness, hook: &str, what: &str) ->
 }
 
 /// A registration without handlers: the config changed since the table
-/// was written. Nothing to run, nothing to say on stdout.
+/// was written. Nothing to run; the answer is a pass in the harness's
+/// shape, which is no output where the harness takes silence as a pass
+/// and a valid allow where it does not (Cursor's permission hooks).
 fn unregistered(harness: Harness, native_event: &str) -> Answer {
-    Answer {
-        stderr: vec![format!(
+    let mode = Canonical::from_native(harness, native_event).map_or(Mode::Passive, Canonical::mode);
+    let mut answer = encode(harness, native_event, mode, &HandlerResult::default());
+    answer.stderr.insert(
+        0,
+        format!(
             "rune hook: no handler subscribes to {native_event} on {harness}; run `rune hook install`"
-        )],
-        ..Answer::default()
-    }
+        ),
+    );
+    answer
 }
 
 /// The payload, once it decoded and names the event it was registered for.

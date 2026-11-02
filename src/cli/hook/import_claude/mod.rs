@@ -265,6 +265,7 @@ fn attachment_record(value: &Value, tools: &BTreeMap<String, String>) -> Option<
         metrics: Some(found.metrics()),
         source: None,
         skipped: None,
+        unapplied: None,
     })
 }
 

@@ -1476,7 +1476,7 @@ enum HookAction {
         #[arg(long)]
         write: bool,
     },
-    /// Write the dispatcher entries into the Claude and Codex hook tables
+    /// Write the dispatcher entries into the Claude, Codex, and Cursor hook tables
     Install {
         /// Report what differs from the plan and write nothing; exit 1 on drift.
         #[arg(long)]
@@ -1484,6 +1484,20 @@ enum HookAction {
         /// Print what would be written and write nothing.
         #[arg(long = "dry-run")]
         dry_run: bool,
+        /// Only this harness's table: claude, codex, or cursor. Repeat or
+        /// comma-separate for several; omit for all three.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
+    },
+    /// Take rune's own entries out of the hook tables; every other entry stays
+    Remove {
+        /// Print what would be written and write nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Only this harness's table: claude, codex, or cursor. Repeat or
+        /// comma-separate for several; omit for all three.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
     /// Run one built-in handler over a handler payload on stdin (the dispatcher's entry)
     #[command(hide = true)]
@@ -1517,19 +1531,31 @@ enum HookAction {
         #[command(flatten)]
         filter: RecordFilter,
     },
-    /// Turn one staged hook rune on for one or all providers
+    /// Turn a dispatcher handler on for one or all harnesses, or a staged hook rune on for one or all providers
     On {
+        /// A handler id from `hooks:` in the rune config, or a staged hook rune's name.
         #[arg(value_name = "NAME")]
         name: String,
-        #[arg(long, value_name = "PROVIDER")]
+        /// Provider to toggle a staged hook rune for. Omit to apply to every provider.
+        #[arg(long, value_name = "PROVIDER", conflicts_with = "harness")]
         provider: Option<String>,
+        /// Harness to switch a handler on for, such as cursor. Repeat or
+        /// comma-separate for several; omit for every harness.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
-    /// Turn one staged hook rune off for one or all providers
+    /// Turn a dispatcher handler off for one or all harnesses, or a staged hook rune off for one or all providers
     Off {
+        /// A handler id from `hooks:` in the rune config, or a staged hook rune's name.
         #[arg(value_name = "NAME")]
         name: String,
-        #[arg(long, value_name = "PROVIDER")]
+        /// Provider to toggle a staged hook rune for. Omit to apply to every provider.
+        #[arg(long, value_name = "PROVIDER", conflicts_with = "harness")]
         provider: Option<String>,
+        /// Harness to switch a handler off for, such as cursor. Repeat or
+        /// comma-separate for several; omit for every harness.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
     /// Stage hook runes in the consumer `.rune` manifest
     Add {
@@ -2587,9 +2613,34 @@ pub fn run() -> i32 {
                 Some(HookAction::List { events, write }) => {
                     exit_code(hook::list(events, write, args.json), args.json)
                 }
-                Some(HookAction::Install { check, dry_run }) => {
-                    exit_code(hook::install_tables(check, dry_run, args.json), args.json)
-                }
+                Some(HookAction::Install {
+                    check,
+                    dry_run,
+                    harness,
+                }) => exit_code(
+                    hook::install_tables(
+                        hook::Mode {
+                            check,
+                            dry_run,
+                            remove: false,
+                        },
+                        &harness,
+                        args.json,
+                    ),
+                    args.json,
+                ),
+                Some(HookAction::Remove { dry_run, harness }) => exit_code(
+                    hook::install_tables(
+                        hook::Mode {
+                            check: false,
+                            dry_run,
+                            remove: true,
+                        },
+                        &harness,
+                        args.json,
+                    ),
+                    args.json,
+                ),
                 Some(HookAction::Adapter { name, args }) => hook::adapters::run(&name, &args),
                 Some(HookAction::Run {
                     harness,
@@ -2600,18 +2651,16 @@ pub fn run() -> i32 {
                 Some(HookAction::Record { action, filter }) => {
                     exit_code(hook::record_command(action, filter, args.json), args.json)
                 }
-                Some(HookAction::On { name, provider }) => run_kind_add(
-                    kind,
-                    Some(KindAction::On { name, provider }),
-                    args.no_color,
-                    args.json,
-                ),
-                Some(HookAction::Off { name, provider }) => run_kind_add(
-                    kind,
-                    Some(KindAction::Off { name, provider }),
-                    args.no_color,
-                    args.json,
-                ),
+                Some(HookAction::On {
+                    name,
+                    provider,
+                    harness,
+                }) => hook_switch(name, provider, &harness, true, args.no_color, args.json),
+                Some(HookAction::Off {
+                    name,
+                    provider,
+                    harness,
+                }) => hook_switch(name, provider, &harness, false, args.no_color, args.json),
                 Some(HookAction::Add {
                     name,
                     source,
@@ -3466,6 +3515,55 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
 }
 
 /// Dispatch a kind namespace: bare lists the kind, `add` stages by name.
+/// `rune hook on|off <NAME>`: a name that is a dispatcher handler's id in
+/// the rune config switches that handler per harness; any other name
+/// toggles a staged hook rune per provider, as `rune skill on` does. The
+/// two never share a flag: `--harness` names a handler's harnesses, and
+/// `--provider` a rune's deploy provider.
+fn hook_switch(
+    name: String,
+    provider: Option<String>,
+    harness: &[String],
+    on: bool,
+    no_color: bool,
+    json: bool,
+) -> i32 {
+    let kind = rune::provider::ContentKind::Hooks;
+    let declared = match hook::switches::declares(&name) {
+        Ok(declared) => declared,
+        // A config that does not load still lets a staged rune toggle,
+        // which reads the consumer manifest alone.
+        Err(error) if harness.is_empty() && provider.is_some() => {
+            eprintln!("rune hook: the rune config did not load ({error}); toggling a staged rune");
+            false
+        }
+        Err(error) => return exit_code(Err(error), json),
+    };
+    // The manifest is read only where the name could go either way.
+    let staged =
+        declared && provider.is_none() && harness.is_empty() && add::stages_kind(kind, &name);
+    let flag = if provider.is_some() {
+        hook::switches::Flag::Provider
+    } else if harness.is_empty() {
+        hook::switches::Flag::None
+    } else {
+        hook::switches::Flag::Harness
+    };
+    match hook::switches::route(&name, declared, staged, flag) {
+        Ok(hook::switches::Route::Handler) => {
+            return exit_code(hook::switches::switch(&name, harness, on, json), json);
+        }
+        Ok(hook::switches::Route::Rune) => {}
+        Err(error) => return exit_code(Err(error), json),
+    }
+    let action = if on {
+        KindAction::On { name, provider }
+    } else {
+        KindAction::Off { name, provider }
+    };
+    run_kind_add(kind, Some(action), no_color, json)
+}
+
 fn run_kind_add(
     kind: rune::provider::ContentKind,
     action: Option<KindAction>,

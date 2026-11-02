@@ -67,6 +67,12 @@ pub(crate) struct Record {
     /// dispatcher skipped the hook; absent when the hook ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// The effects this hook asked for that the answer could not carry
+    /// on the event, each a word: `context`, `message`, `denial`,
+    /// `continuation`, `input`. Absent when everything the hook asked for
+    /// reached the harness, so an older record and an older reader agree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unapplied: Option<Vec<String>>,
 }
 
 impl Record {

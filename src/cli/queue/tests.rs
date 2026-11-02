@@ -156,6 +156,50 @@ fn hook_keeps_a_codex_turn_going_with_the_message_at_its_end() {
 }
 
 #[test]
+fn hook_keeps_a_cursor_prompt_message_posted_and_delivers_it_after_a_tool() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    posted(&path, "m-1", "c1");
+
+    // Cursor takes context on `sessionStart` and `postToolUse`, not on
+    // `beforeSubmitPrompt`: a message taken there was marked read and the
+    // encoder dropped it (found 2026-11-02).
+    let result = postbox_at(&hook_payload("cursor", "prompt.before", "c1"), &path).expect("hook");
+    assert!(
+        result.context.is_empty() && result.reason.is_none(),
+        "{result:?}"
+    );
+    let (events, _) = ledger::load(&path).expect("load");
+    assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
+
+    let result = postbox_at(&hook_payload("cursor", "tool.after", "c1"), &path).expect("hook");
+    assert_eq!(result.context.len(), 1, "{result:?}");
+    assert!(result.context[0].contains("Is the deck ready?"));
+}
+
+#[test]
+fn hook_delivers_to_a_cursor_tool_failure_and_keeps_a_message_on_another_extension() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    posted(&path, "m-1", "c1");
+
+    // An extension has no canonical event, and the postbox once answered
+    // nothing on every one, where Cursor's `postToolUseFailure` takes
+    // `additional_context` as `postToolUse` does (review, 2026-11-02).
+    let result = postbox_at(&hook_payload("cursor", "afterFileEdit", "c1"), &path).expect("hook");
+    assert!(result.context.is_empty(), "{result:?}");
+    let (events, _) = ledger::load(&path).expect("load");
+    assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
+
+    let result =
+        postbox_at(&hook_payload("cursor", "postToolUseFailure", "c1"), &path).expect("hook");
+    assert_eq!(result.context.len(), 1, "{result:?}");
+    assert!(result.context[0].contains("Is the deck ready?"));
+}
+
+#[test]
 fn hook_reads_nothing_where_the_harness_cannot_show_it() {
     use crate::cli::hook::adapters::postbox_at;
     let folder = tempfile::tempdir().expect("folder");

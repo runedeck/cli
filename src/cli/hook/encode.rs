@@ -6,7 +6,7 @@
 //! read the context by value once per call.
 #![allow(clippy::match_same_arms, clippy::needless_pass_by_value)]
 
-use rune::hooks::{Canonical, Harness, Mode};
+use rune::hooks::{Canonical, Capability, Harness, Mode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -97,6 +97,35 @@ pub(crate) struct Answer {
     pub stdout: Option<String>,
     pub stderr: Vec<String>,
     pub exit: i32,
+    /// The effects of the merged result the answer could not carry on
+    /// this event, each reported on stderr. The record stores them per
+    /// hook that asked for one, so a reader of the record sees what the
+    /// harness never saw.
+    pub unapplied: Vec<Dropped>,
+}
+
+/// An effect an answer could not carry: the harness has no field for it
+/// on the event, or the event is passive and would read it as steering.
+/// `member` is the word the record stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Dropped {
+    Context,
+    Message,
+    Denial,
+    Continuation,
+    Input,
+}
+
+impl Dropped {
+    pub(crate) const fn member(self) -> &'static str {
+        match self {
+            Self::Context => "context",
+            Self::Message => "message",
+            Self::Denial => "denial",
+            Self::Continuation => "continuation",
+            Self::Input => "input",
+        }
+    }
 }
 
 /// Encode the merged result for one harness and native event, under the
@@ -121,7 +150,13 @@ pub(crate) fn encode(
     let held;
     let result = if passive && (result.effect != Effect::Pass || result.input.is_some()) {
         if result.effect != Effect::Pass {
-            steering(&mut answer, harness, native_event, "a denial decides");
+            steering(
+                &mut answer,
+                harness,
+                native_event,
+                "a denial decides",
+                Dropped::Denial,
+            );
         }
         if result.input.is_some() {
             steering(
@@ -129,6 +164,7 @@ pub(crate) fn encode(
                 harness,
                 native_event,
                 "a replacement input decides",
+                Dropped::Input,
             );
         }
         held = HandlerResult {
@@ -141,6 +177,17 @@ pub(crate) fn encode(
     } else {
         result
     };
+    // Only `tool.before` has a field for a replacement input, in every
+    // harness; a rewriter on another event is heard like any other drop.
+    if result.input.is_some() && canonical != Some(Canonical::ToolBefore) {
+        unexpressed(
+            &mut answer,
+            harness,
+            "a replacement input",
+            native_event,
+            Dropped::Input,
+        );
+    }
     // The reason reaches the harness as the dispatcher's own words, on a
     // stderr line or in a decision field, so it is shown the way a
     // handler's message is: no control or format character gets through.
@@ -163,6 +210,7 @@ pub(crate) fn encode(
     let encoder = match harness {
         Harness::Claude => encode_claude,
         Harness::Codex => encode_codex,
+        Harness::Cursor => encode_cursor,
         Harness::Gemini => encode_gemini,
         Harness::Grok => encode_grok,
         Harness::Antigravity => encode_antigravity,
@@ -182,19 +230,21 @@ struct Notes {
     passive: bool,
 }
 
-fn unexpressed(answer: &mut Answer, harness: Harness, what: &str, event: &str) {
+fn unexpressed(answer: &mut Answer, harness: Harness, what: &str, event: &str, dropped: Dropped) {
     answer.stderr.push(format!(
         "rune hook: {harness} cannot express {what} on {event}; reported, not applied"
     ));
+    answer.unapplied.push(dropped);
 }
 
 /// The note for a field a passive event may not send, because the harness
 /// reads it as a decision or a continuation there. `what` names the field
 /// and what it does, as in `context continues the turn`.
-fn steering(answer: &mut Answer, harness: Harness, event: &str, what: &str) {
+fn steering(answer: &mut Answer, harness: Harness, event: &str, what: &str, dropped: Dropped) {
     answer.stderr.push(format!(
         "rune hook: {event} is passive on {harness}; {what} there and is reported, not applied"
     ));
+    answer.unapplied.push(dropped);
 }
 
 fn encode_claude(
@@ -233,10 +283,16 @@ fn encode_claude(
             Some(Canonical::SessionStart | Canonical::SessionEnd | Canonical::Notification) | None,
             Effect::Deny | Effect::ContinueTurn,
         ) => {
-            unexpressed(answer, Harness::Claude, "a denial", native);
+            unexpressed(answer, Harness::Claude, "a denial", native, Dropped::Denial);
         }
         (_, Effect::ContinueTurn) => {
-            unexpressed(answer, Harness::Claude, "a turn continuation", native);
+            unexpressed(
+                answer,
+                Harness::Claude,
+                "a turn continuation",
+                native,
+                Dropped::Continuation,
+            );
         }
         (_, Effect::Pass) => {}
     }
@@ -264,12 +320,13 @@ fn encode_claude(
                     Harness::Claude,
                     native,
                     "context continues the turn",
+                    Dropped::Context,
                 );
             }
             Some(Canonical::TurnFinish) => {
                 specific.insert("additionalContext".into(), json!(context));
             }
-            _ => unexpressed(answer, Harness::Claude, "context", native),
+            _ => unexpressed(answer, Harness::Claude, "context", native, Dropped::Context),
         }
     }
     if let Some(message) = notes.message {
@@ -286,7 +343,13 @@ fn encode_claude(
             ) => {
                 out.insert("systemMessage".into(), json!(message));
             }
-            _ => unexpressed(answer, Harness::Claude, "a message", native),
+            _ => unexpressed(
+                answer,
+                Harness::Claude,
+                "a message",
+                native,
+                Dropped::Message,
+            ),
         }
     }
     if specific.len() > 1 {
@@ -332,18 +395,124 @@ fn encode_codex(
             answer.stdout = Some(json!({"decision": "block", "reason": reason}).to_string());
         }
         (_, Effect::Deny | Effect::ContinueTurn) => {
-            unexpressed(answer, Harness::Codex, "a denial", native);
+            unexpressed(answer, Harness::Codex, "a denial", native, Dropped::Denial);
         }
         (_, Effect::Pass) => {}
     }
     // The Codex hooks reference (read 2026-10-24) documents no field for
     // context or for a message to the owner on any event.
     if notes.context.is_some() {
-        unexpressed(answer, Harness::Codex, "context", native);
+        unexpressed(answer, Harness::Codex, "context", native, Dropped::Context);
     }
     if notes.message.is_some() {
-        unexpressed(answer, Harness::Codex, "a message", native);
+        unexpressed(
+            answer,
+            Harness::Codex,
+            "a message",
+            native,
+            Dropped::Message,
+        );
     }
+}
+
+/// Cursor's permission hooks beyond `preToolUse`: on each, invalid JSON or
+/// an answer without `permission` blocks the action (hooks reference, read
+/// 2026-11-02). None has a canonical name, so a subscription reaches one
+/// as a `cursor:<name>` extension only.
+pub(crate) fn cursor_permission_event(native: &str) -> bool {
+    matches!(
+        native,
+        "beforeShellExecution"
+            | "beforeMCPExecution"
+            | "beforeReadFile"
+            | "beforeTabFileRead"
+            | "subagentStart"
+    )
+}
+
+/// Cursor's answers, from its hooks reference (read 2026-11-02). Every
+/// answer is one JSON object, `{}` when there is nothing to say: Cursor
+/// counts no output as a failure, and a guarded registration carries
+/// `failClosed`, which turns a failure into a block. `preToolUse` is a
+/// permission hook, so it always carries `permission`; `beforeSubmitPrompt`
+/// always carries `continue`.
+fn encode_cursor(
+    native: &str,
+    canonical: Option<Canonical>,
+    result: &HandlerResult,
+    reason: &str,
+    notes: Notes,
+    answer: &mut Answer,
+) {
+    let mut out = serde_json::Map::new();
+    match (canonical, result.effect) {
+        (Some(Canonical::ToolBefore), Effect::Deny) => {
+            out.insert("permission".into(), json!("deny"));
+            out.insert("user_message".into(), json!(reason));
+            out.insert("agent_message".into(), json!(reason));
+        }
+        (Some(Canonical::ToolBefore), _) => {
+            out.insert("permission".into(), json!("allow"));
+            if let Some(input) = &result.input {
+                out.insert("updated_input".into(), input.clone());
+            }
+        }
+        (Some(Canonical::PromptBefore), Effect::Deny) => {
+            out.insert("continue".into(), json!(false));
+            out.insert("user_message".into(), json!(reason));
+        }
+        (Some(Canonical::PromptBefore), _) => {
+            out.insert("continue".into(), json!(true));
+        }
+        // `followup_message` is the one continuation `stop` takes; Cursor
+        // submits it as the next user message, under the entry's
+        // `loop_limit`.
+        (Some(Canonical::TurnFinish), Effect::ContinueTurn | Effect::Deny) => {
+            out.insert("followup_message".into(), json!(reason));
+        }
+        // A native permission event rune has no canonical name for is
+        // registered as a passive observer, and a passive event never
+        // denies, so its one valid answer is allow.
+        (None, _) if cursor_permission_event(native) => {
+            if result.effect != Effect::Pass {
+                unexpressed(answer, Harness::Cursor, "a denial", native, Dropped::Denial);
+            }
+            out.insert("permission".into(), json!("allow"));
+        }
+        (_, Effect::Deny | Effect::ContinueTurn) => {
+            unexpressed(answer, Harness::Cursor, "a denial", native, Dropped::Denial);
+        }
+        (_, Effect::Pass) => {}
+    }
+    if let Some(context) = notes.context {
+        // `sessionStart`, `postToolUse`, and the extension
+        // `postToolUseFailure` take `additional_context`; no other event
+        // lists a context field. `stop` has only the follow-up, which
+        // steers, so context is reported there.
+        if Capability::Context.supported_on_native(Harness::Cursor, native) {
+            out.insert("additional_context".into(), json!(context));
+        } else {
+            unexpressed(answer, Harness::Cursor, "context", native, Dropped::Context);
+        }
+    }
+    if let Some(message) = notes.message {
+        match canonical {
+            // `preCompact` shows `user_message` when compaction occurs. On
+            // the permission events `user_message` is shown on a denial
+            // only, and that one carries the reason.
+            Some(Canonical::CompactBefore) => {
+                out.insert("user_message".into(), json!(message));
+            }
+            _ => unexpressed(
+                answer,
+                Harness::Cursor,
+                "a message",
+                native,
+                Dropped::Message,
+            ),
+        }
+    }
+    answer.stdout = Some(Value::Object(out).to_string());
 }
 
 fn encode_gemini(
@@ -368,9 +537,17 @@ fn encode_gemini(
                 out.insert("hookSpecificOutput".into(), json!({"tool_input": input}));
             }
         }
-        (_, Effect::Deny) => unexpressed(answer, Harness::Gemini, "a denial", native),
+        (_, Effect::Deny) => {
+            unexpressed(answer, Harness::Gemini, "a denial", native, Dropped::Denial);
+        }
         (_, Effect::ContinueTurn) => {
-            unexpressed(answer, Harness::Gemini, "a turn continuation", native);
+            unexpressed(
+                answer,
+                Harness::Gemini,
+                "a turn continuation",
+                native,
+                Dropped::Continuation,
+            );
         }
         (_, Effect::Pass) => {}
     }
@@ -385,7 +562,7 @@ fn encode_gemini(
                     map.insert("additionalContext".into(), json!(context));
                 }
             }
-            _ => unexpressed(answer, Harness::Gemini, "context", native),
+            _ => unexpressed(answer, Harness::Gemini, "context", native, Dropped::Context),
         }
     }
     if let Some(message) = notes.message {
@@ -397,7 +574,13 @@ fn encode_gemini(
             Some(_) => {
                 out.insert("systemMessage".into(), json!(message));
             }
-            None => unexpressed(answer, Harness::Gemini, "a message", native),
+            None => unexpressed(
+                answer,
+                Harness::Gemini,
+                "a message",
+                native,
+                Dropped::Message,
+            ),
         }
     }
     if !out.is_empty() {
@@ -434,7 +617,7 @@ fn encode_grok(
             answer.exit = 2;
         }
         (_, Effect::Deny | Effect::ContinueTurn) => {
-            unexpressed(answer, Harness::Grok, "a denial", native);
+            unexpressed(answer, Harness::Grok, "a denial", native, Dropped::Denial);
         }
         (_, Effect::Pass) => {}
     }
@@ -448,6 +631,7 @@ fn encode_grok(
                 Harness::Grok,
                 native,
                 "context may continue the turn",
+                Dropped::Context,
             );
         } else {
             out.insert("additionalContext".into(), json!(context));
@@ -455,7 +639,7 @@ fn encode_grok(
     }
     // No reading of the Grok reference documents a message to the owner.
     if notes.message.is_some() {
-        unexpressed(answer, Harness::Grok, "a message", native);
+        unexpressed(answer, Harness::Grok, "a message", native, Dropped::Message);
     }
     if !out.is_empty() {
         answer.stdout = Some(Value::Object(out).to_string());
@@ -485,16 +669,34 @@ fn encode_antigravity(
             answer.stdout = Some("{}".to_string());
         }
         (_, Effect::Deny | Effect::ContinueTurn) => {
-            unexpressed(answer, Harness::Antigravity, "a denial", native);
+            unexpressed(
+                answer,
+                Harness::Antigravity,
+                "a denial",
+                native,
+                Dropped::Denial,
+            );
         }
         (_, Effect::Pass) => {}
     }
     // Antigravity's answers carry a decision alone: no context, no message.
     if notes.context.is_some() {
-        unexpressed(answer, Harness::Antigravity, "context", native);
+        unexpressed(
+            answer,
+            Harness::Antigravity,
+            "context",
+            native,
+            Dropped::Context,
+        );
     }
     if notes.message.is_some() {
-        unexpressed(answer, Harness::Antigravity, "a message", native);
+        unexpressed(
+            answer,
+            Harness::Antigravity,
+            "a message",
+            native,
+            Dropped::Message,
+        );
     }
 }
 
@@ -523,7 +725,13 @@ fn encode_bridge(
         .to_string(),
     );
     if notes.message.is_some() {
-        unexpressed(answer, Harness::Opencode, "a message", native);
+        unexpressed(
+            answer,
+            Harness::Opencode,
+            "a message",
+            native,
+            Dropped::Message,
+        );
     }
 }
 
@@ -834,6 +1042,187 @@ mod tests {
     }
 
     #[test]
+    fn cursor_answers_in_its_own_shape_and_never_in_silence() {
+        // A denial on preToolUse: permission plus both messages.
+        let answer = enc(Harness::Cursor, "preToolUse", &HandlerResult::deny("no"));
+        assert_eq!(
+            parsed(&answer),
+            json!({"permission": "deny", "user_message": "no", "agent_message": "no"})
+        );
+        assert_eq!(answer.exit, 0);
+        // A pass still answers: Cursor blocks a permission hook with no
+        // output when failClosed is set.
+        let answer = enc(Harness::Cursor, "preToolUse", &HandlerResult::default());
+        assert_eq!(parsed(&answer), json!({"permission": "allow"}));
+        let rewritten = HandlerResult {
+            input: Some(json!({"command": "ls"})),
+            ..HandlerResult::default()
+        };
+        assert_eq!(
+            parsed(&enc(Harness::Cursor, "preToolUse", &rewritten)),
+            json!({"permission": "allow", "updated_input": {"command": "ls"}})
+        );
+        // A passive override still answers allow and sends no denial.
+        let answer = encode(
+            Harness::Cursor,
+            "preToolUse",
+            Mode::Passive,
+            &HandlerResult::deny("no"),
+        );
+        assert_eq!(parsed(&answer), json!({"permission": "allow"}));
+        // beforeSubmitPrompt: continue.
+        assert_eq!(
+            parsed(&enc(
+                Harness::Cursor,
+                "beforeSubmitPrompt",
+                &HandlerResult::deny("no")
+            )),
+            json!({"continue": false, "user_message": "no"})
+        );
+        assert_eq!(
+            parsed(&enc(
+                Harness::Cursor,
+                "beforeSubmitPrompt",
+                &HandlerResult::default()
+            )),
+            json!({"continue": true})
+        );
+        // stop: the follow-up keeps the loop going.
+        let go_on = HandlerResult {
+            effect: Effect::ContinueTurn,
+            reason: Some("read the postbox".into()),
+            ..HandlerResult::default()
+        };
+        assert_eq!(
+            parsed(&enc(Harness::Cursor, "stop", &go_on)),
+            json!({"followup_message": "read the postbox"})
+        );
+        assert_eq!(
+            parsed(&enc(Harness::Cursor, "stop", &HandlerResult::default())),
+            json!({})
+        );
+        // Context reaches sessionStart and postToolUse, nowhere else.
+        let both = HandlerResult {
+            context: vec!["remember x".into()],
+            message: Some("id: identity written".into()),
+            ..HandlerResult::default()
+        };
+        for event in ["sessionStart", "postToolUse"] {
+            let answer = enc(Harness::Cursor, event, &both);
+            assert_eq!(
+                parsed(&answer)["additional_context"],
+                "remember x",
+                "{event}"
+            );
+            assert!(
+                answer
+                    .stderr
+                    .iter()
+                    .any(|l| l.contains("cannot express a message")),
+                "{event}: {:?}",
+                answer.stderr
+            );
+        }
+        let answer = enc(Harness::Cursor, "stop", &both);
+        assert_eq!(parsed(&answer), json!({}));
+        assert!(
+            answer
+                .stderr
+                .iter()
+                .any(|l| l
+                    == "rune hook: cursor cannot express context on stop; reported, not applied"),
+            "{:?}",
+            answer.stderr
+        );
+        // preCompact shows the owner a message and nothing else.
+        let answer = enc(Harness::Cursor, "preCompact", &both);
+        assert_eq!(
+            parsed(&answer),
+            json!({"user_message": "id: identity written"})
+        );
+        // sessionEnd is fire and forget; a denial there is reported.
+        let answer = encode(
+            Harness::Cursor,
+            "sessionEnd",
+            Mode::Gate,
+            &HandlerResult::deny("no"),
+        );
+        assert_eq!(parsed(&answer), json!({}));
+        assert!(answer.stderr[0].contains("cannot express a denial on sessionEnd"));
+    }
+
+    #[test]
+    fn context_reaches_cursor_s_tool_failure_event() {
+        // `postToolUseFailure` has no canonical name, and the encoder once
+        // matched context on the canonical event alone, so the context a
+        // handler added after a failed tool was reported and dropped,
+        // where Cursor takes `additional_context` (review, 2026-11-02).
+        let result = HandlerResult {
+            context: vec!["the build log is in target/".into()],
+            ..HandlerResult::default()
+        };
+        let answer = encode(
+            Harness::Cursor,
+            "postToolUseFailure",
+            Mode::Passive,
+            &result,
+        );
+        assert_eq!(
+            parsed(&answer),
+            json!({"additional_context": "the build log is in target/"})
+        );
+        assert!(answer.stderr.is_empty(), "{:?}", answer.stderr);
+        // Another extension without a context field still reports it.
+        let answer = encode(Harness::Cursor, "afterFileEdit", Mode::Passive, &result);
+        assert_eq!(parsed(&answer), json!({}));
+        assert!(
+            answer
+                .stderr
+                .iter()
+                .any(|l| l.contains("cannot express context on afterFileEdit")),
+            "{:?}",
+            answer.stderr
+        );
+    }
+
+    #[test]
+    fn a_cursor_permission_extension_answers_allow_and_an_observer_an_object() {
+        // A `cursor:<name>` subscription registers passively, and Cursor
+        // blocks its permission hooks on an answer without `permission`.
+        for event in [
+            "beforeShellExecution",
+            "beforeMCPExecution",
+            "beforeReadFile",
+            "beforeTabFileRead",
+            "subagentStart",
+        ] {
+            let answer = encode(
+                Harness::Cursor,
+                event,
+                Mode::Passive,
+                &HandlerResult::default(),
+            );
+            assert_eq!(
+                parsed(&answer),
+                json!({"permission": "allow"}),
+                "{event}: {:?}",
+                answer.stdout
+            );
+            assert!(answer.stderr.is_empty(), "{event}: {:?}", answer.stderr);
+        }
+        // An event that reads no decision gets an object with nothing in it.
+        for event in ["afterShellExecution", "afterFileEdit", "afterAgentResponse"] {
+            let answer = encode(
+                Harness::Cursor,
+                event,
+                Mode::Passive,
+                &HandlerResult::default(),
+            );
+            assert_eq!(parsed(&answer), json!({}), "{event}");
+        }
+    }
+
+    #[test]
     fn antigravity_always_answers_its_tool_gate() {
         let answer = enc(
             Harness::Antigravity,
@@ -841,5 +1230,42 @@ mod tests {
             &HandlerResult::default(),
         );
         assert_eq!(answer.stdout.as_deref(), Some("{\"decision\":\"allow\"}"));
+    }
+
+    #[test]
+    fn a_replacement_input_off_tool_before_is_reported_and_stored_as_unapplied() {
+        // Only tool.before has a field for a replacement input. A rewriter
+        // on a collect event, tool.after, had its input merged and then
+        // dropped by the encoder with no line and nothing in `unapplied`
+        // (review, 2026-11-02), so the record said everything reached.
+        let rewritten = HandlerResult {
+            input: Some(json!({"command": "ls"})),
+            ..HandlerResult::default()
+        };
+        for (harness, event) in [
+            (Harness::Cursor, "postToolUse"),
+            (Harness::Claude, "PostToolUse"),
+            (Harness::Codex, "PostToolUse"),
+        ] {
+            let answer = enc(harness, event, &rewritten);
+            assert_eq!(answer.exit, 0, "{harness} {event}");
+            assert_eq!(answer.unapplied, vec![Dropped::Input], "{harness} {event}");
+            assert!(
+                answer.stderr.iter().any(|line| line
+                    == &format!(
+                        "rune hook: {harness} cannot express a replacement input on {event}; reported, not applied"
+                    )),
+                "{harness} {event}: {:?}",
+                answer.stderr
+            );
+        }
+        // On tool.before the input is the answer, and nothing is dropped.
+        let answer = enc(Harness::Cursor, "preToolUse", &rewritten);
+        assert!(answer.unapplied.is_empty(), "{:?}", answer.unapplied);
+        assert!(answer.stderr.is_empty(), "{:?}", answer.stderr);
+        // A passive event reports the input once, as steering.
+        let answer = encode(Harness::Cursor, "sessionEnd", Mode::Passive, &rewritten);
+        assert_eq!(answer.unapplied, vec![Dropped::Input]);
+        assert_eq!(answer.stderr.len(), 1, "{:?}", answer.stderr);
     }
 }

@@ -101,6 +101,18 @@ impl Table {
         })
     }
 
+    /// Add a top-level member with `raw` JSON text when the table has no
+    /// member of that name, after every member it has. Cursor's table
+    /// requires `version`, and a file rune creates would lack it.
+    pub(crate) fn ensure_member(&mut self, key: &str, raw: &str) {
+        if self.members.iter().any(|(name, _)| name == key) {
+            return;
+        }
+        if let Ok(value) = RawValue::from_string(raw.to_string()) {
+            self.members.push((key.to_string(), value));
+        }
+    }
+
     /// The events under `hooks`, in file order.
     pub(crate) fn event_names(&self) -> Vec<String> {
         if self.events.is_empty() {
@@ -259,6 +271,25 @@ mod tests {
         let text = empty.render(&["Stop".to_string()], &changed);
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value, json!({"hooks": {"Stop": [{"hooks": []}]}}));
+    }
+
+    #[test]
+    fn a_missing_member_is_added_once_and_a_present_one_keeps_its_text() {
+        let mut empty = Table::read(Path::new("/nonexistent/hooks.json")).unwrap();
+        empty.ensure_member("version", "1");
+        empty.ensure_member("version", "2");
+        let changed = BTreeMap::from([("stop".to_string(), vec![json!({"command": "x"})])]);
+        let text = empty.render(&["stop".to_string()], &changed);
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value,
+            json!({"version": 1, "hooks": {"stop": [{"command": "x"}]}})
+        );
+        let (_dir, mut owner) = table(r#"{"hooks": {}, "version": 1}"#);
+        owner.ensure_member("version", "2");
+        let text = owner.render(&[], &BTreeMap::new());
+        assert_eq!(text.matches("\"version\"").count(), 1, "{text}");
+        assert!(text.contains("\"version\": 1"), "{text}");
     }
 
     #[test]

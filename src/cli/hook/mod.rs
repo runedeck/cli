@@ -25,6 +25,7 @@ pub(crate) mod retire;
 pub(crate) mod run;
 pub(crate) mod sandbox_guard;
 pub(crate) mod stats;
+pub(crate) mod switches;
 pub(crate) mod table;
 pub(crate) mod wrap;
 
@@ -89,7 +90,17 @@ pub fn list(events: bool, write: bool, json: bool) -> Result<i32, Error> {
         return Ok(print_events(json));
     }
     let config = ontology::load()?;
-    let plan = compile(&config.hooks)?;
+    // A listing that writes is a writer like the install: it takes the
+    // install's whole lock set before it compiles and holds it through
+    // the publish, so the plan it writes carries every switch that
+    // landed before it, and none lands between its compile and its
+    // write. A listing that writes nothing reads without the lock.
+    let _lock = if write {
+        Some(InstallTarget::select(&Harness::REGISTERED)?.lock()?)
+    } else {
+        None
+    };
+    let plan = compile_switched(&config.hooks)?;
     if write {
         let path = plan::write(&plan)?;
         eprintln!("rune hook: plan written to {}", path.display());
@@ -105,15 +116,31 @@ pub fn list(events: bool, write: bool, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
-/// `rune hook install`: render the plan into the harness tables, or check
-/// them (`--check`), and print what happened.
-pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Error> {
-    let Some(report) = install_report(check, dry_run)? else {
-        if !json {
-            println!("no handlers declared under hooks: in the rune config; nothing to register");
-        }
-        return Ok(0);
-    };
+/// What one `rune hook install` or `rune hook remove` does to the chosen
+/// tables.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Mode {
+    /// Report drift and write nothing.
+    pub check: bool,
+    /// Print what would change and write nothing.
+    pub dry_run: bool,
+    /// Reconcile an empty plan: rune's own entries leave the chosen
+    /// tables, and every other entry stays.
+    pub remove: bool,
+}
+
+/// `rune hook install [--harness <h>]...`: render the plan into the harness
+/// tables, or check them (`--check`), and print what happened. `rune hook
+/// remove` is the same with `remove`. No `--harness` means all three
+/// registered harnesses.
+pub fn install_tables(mode: Mode, harness: &[String], json: bool) -> Result<i32, Error> {
+    let Mode {
+        check,
+        dry_run,
+        remove,
+    } = mode;
+    let selected = switches::harnesses(harness, true)?;
+    let report = install_report(check, dry_run, &selected, remove)?;
     if json {
         println!(
             "{}",
@@ -121,116 +148,204 @@ pub fn install_tables(check: bool, dry_run: bool, json: bool) -> Result<i32, Err
                 .map_err(|error| Error::io(error.to_string()))?
         );
     } else {
+        // An install with nothing to do still names the harnesses the
+        // folder rule left out, then says why nothing was written.
         print!("{}", report.render());
+        if report.nothing {
+            let line = if remove {
+                "no rune entry to take back; nothing to remove"
+            } else {
+                "no handlers declared under hooks: in the rune config; nothing to register"
+            };
+            println!("{line}");
+        }
     }
     Ok(i32::from(check && !report.drift.is_empty()))
 }
 
 /// Render the plan into the harness tables, or check them, and return
 /// what happened without printing it: `rune install` folds it into its
-/// own result. `None` when the config declares no handler and no earlier
-/// install left anything to take back.
-pub(crate) fn install_report(check: bool, dry_run: bool) -> Result<Option<install::Report>, Error> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
-    if live_home_in_proof(&home) {
-        return Err(Error::new(
-            ErrorKind::Config,
-            format!(
-                "a proof scene runs with the runner's HOME {}, so it installs no hook there; give the scene a HOME of its own",
-                home.display()
-            ),
-        )
-        .with_code(LIVE_HOME_IN_PROOF));
-    }
-    let config = ontology::load()?;
-    let generations = plan::generations_dir()?;
-    let manifest_path = install::manifest_path()?;
-    // With no handler left, an earlier install still has entries and
-    // generations to take back: reconcile an empty plan, which removes
-    // rune's own commands and keeps every foreign one.
-    let plan = if config.hooks.handlers.is_empty() {
-        if !plan::has_generations(&generations) && !install::has_owned(&manifest_path) {
-            return Ok(None);
-        }
-        Plan {
-            version: 1,
-            ..Plan::default()
-        }
-    } else {
-        compile(&config.hooks)?
-    };
-    let rune = std::env::current_exe()
-        .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
+/// own result. `requested` names the registered harnesses this run
+/// writes; a requested harness whose folder (`~/.claude`, `~/.codex`,
+/// `~/.cursor`) does not exist is skipped and reported, and every
+/// harness not written keeps its table unopened, unlocked, and uncreated.
+/// Nothing is remembered: the next install attempts the same harnesses,
+/// and a harness returns once its folder exists. With `remove`, the
+/// selected harnesses get an empty plan: rune's own entries go, every
+/// other entry stays. When the config declares no handler and no earlier
+/// install left anything to take back, the report says `nothing`, and
+/// still names the skipped harnesses.
+pub(crate) fn install_report(
+    check: bool,
+    dry_run: bool,
+    requested: &[Harness],
+    remove: bool,
+) -> Result<install::Report, Error> {
+    let target = InstallTarget::select(requested)?;
     // One install at a time reads and writes this set of files. A check
     // or a dry run writes nothing and creates no directory, so it reads
     // without the lock.
-    // The generations live under the manifest's directory, so its lock
-    // covers them, from the first generation written to the last deleted.
-    let mut dirs: Vec<std::path::PathBuf> = manifest_path
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .collect();
-    dirs.extend(
-        install::table_files(&home)?
-            .iter()
-            .filter_map(|table| table.parent().map(Path::to_path_buf)),
-    );
     let _lock = if check || dry_run {
         None
     } else {
-        Some(publish::Lock::acquire_dirs(&dirs)?)
+        Some(target.lock()?)
     };
-    // Every table is read and checked before anything changes.
-    let mut prepared = install::prepare(
-        &plan,
-        &home,
-        &rune,
-        &generations,
-        &manifest_path,
-        check,
-        chrono::Utc::now(),
-    )?;
-    let mut report = std::mem::take(&mut prepared.report);
-    if check {
-        // A registration whose generation is gone, or no longer holds the
-        // bytes its name is the digest of, falls to its policy.
-        for generation in &prepared.generations {
-            match std::fs::read_to_string(&generation.path) {
-                Err(_) => report.drift.push(format!(
-                    "the plan generation {} is missing; run `rune hook install`",
-                    generation.path.display()
-                )),
-                Ok(text) if text != generation.text => report.drift.push(format!(
-                    "the plan generation {} was changed after install; run `rune hook install`",
-                    generation.path.display()
-                )),
-                Ok(_) => {}
+    target.install(check, dry_run, remove)
+}
+
+/// The home and the harnesses one install writes: the registered ones
+/// among those requested whose folder exists, and the ones skipped for
+/// want of it. Selected before the lock, since the lock is on the
+/// selected tables' directories; everything the install reads to decide
+/// what to write, the switches first, it reads after the lock.
+pub(crate) struct InstallTarget {
+    home: std::path::PathBuf,
+    selected: Vec<Harness>,
+    skipped: Vec<Harness>,
+}
+
+impl InstallTarget {
+    /// Resolve the home and apply the folder rule to `requested`.
+    pub(crate) fn select(requested: &[Harness]) -> Result<Self, Error> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
+        if live_home_in_proof(&home) {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "a proof scene runs with the runner's HOME {}, so it installs no hook there; give the scene a HOME of its own",
+                    home.display()
+                ),
+            )
+            .with_code(LIVE_HOME_IN_PROOF));
+        }
+        // A skipped harness is out of `selected`: no table of its is read,
+        // locked, or created. The install still runs for the rest, and with
+        // none left it still names every gap, such as a harness under the
+        // XDG config root with no event for a handler.
+        let (selected, skipped) = install::present(&home, requested);
+        Ok(Self {
+            home,
+            selected,
+            skipped,
+        })
+    }
+
+    /// The whole set of directories this install writes, taken as one
+    /// lock in one order: the state directory, which holds the manifest,
+    /// the generations, and the switches, and each selected table's
+    /// directory. Every writer takes its complete set in one call, so no
+    /// two of them hold one directory each while waiting for the other's.
+    pub(crate) fn lock(&self) -> Result<publish::Lock, Error> {
+        let manifest_path = install::manifest_path()?;
+        let mut dirs: Vec<std::path::PathBuf> = manifest_path
+            .parent()
+            .map(Path::to_path_buf)
+            .into_iter()
+            .collect();
+        dirs.extend(
+            install::table_files(&self.home, &self.selected)?
+                .iter()
+                .filter_map(|table| table.parent().map(Path::to_path_buf)),
+        );
+        publish::Lock::acquire_dirs(&dirs)
+    }
+
+    /// Compile and write, or check. A writing caller holds `lock` first:
+    /// the switches are read here, under it, so a switch that lands
+    /// between the compile and the write cannot be undone by a plan
+    /// compiled before it.
+    pub(crate) fn install(
+        &self,
+        check: bool,
+        dry_run: bool,
+        remove: bool,
+    ) -> Result<install::Report, Error> {
+        let home = &self.home;
+        let selected = self.selected.as_slice();
+        let skipped = self.skipped.clone();
+        let config = ontology::load()?;
+        let generations = plan::generations_dir()?;
+        let manifest_path = install::manifest_path()?;
+        // With no handler left, an earlier install still has entries and
+        // generations to take back: reconcile an empty plan, which removes
+        // rune's own commands and keeps every foreign one.
+        let plan = if remove || config.hooks.handlers.is_empty() {
+            if !plan::has_generations(&generations) && !install::has_owned(&manifest_path) {
+                // Nothing to write and nothing to take back; the skip report
+                // still goes out, so a fresh config on a machine without a
+                // harness folder hears which ones were left out.
+                return Ok(install::Report {
+                    nothing: true,
+                    skipped,
+                    ..install::Report::default()
+                });
+            }
+            Plan {
+                version: 1,
+                ..Plan::default()
+            }
+        } else {
+            compile_switched(&config.hooks)?
+        };
+        let rune = std::env::current_exe()
+            .map_or_else(|_| "rune".to_string(), |exe| exe.display().to_string());
+        // Every table is read and checked before anything changes.
+        let mut prepared = install::prepare(
+            &plan,
+            home,
+            &rune,
+            &generations,
+            &manifest_path,
+            selected,
+            check,
+            chrono::Utc::now(),
+        )?;
+        let mut report = std::mem::take(&mut prepared.report);
+        report.skipped = skipped;
+        if check {
+            // A registration whose generation is gone, or no longer holds the
+            // bytes its name is the digest of, falls to its policy.
+            for generation in &prepared.generations {
+                match std::fs::read_to_string(&generation.path) {
+                    Err(_) => report.drift.push(format!(
+                        "the plan generation {} is missing; run `rune hook install`",
+                        generation.path.display()
+                    )),
+                    Ok(text) if text != generation.text => report.drift.push(format!(
+                        "the plan generation {} was changed after install; run `rune hook install`",
+                        generation.path.display()
+                    )),
+                    Ok(_) => {}
+                }
             }
         }
-    }
-    if !check && !dry_run {
-        // The new generations come first. Each is a file of its own that
-        // no install rewrites, so a registration of the old tables reads
-        // the plan it was installed with until the tables change. The
-        // retired records the new tables make stale go next, then the
-        // tables and the manifest change as one step.
-        install::write(&prepared)?;
-        // A fresh read of the tables names every generation still in use.
-        // A session that loaded its hooks before this install still calls
-        // the old paths, so an unnamed generation stays until the tables
-        // have not named it for the retention window. A failed install
-        // writes nothing more, and its new generations wait for the next.
-        if let Err(error) =
-            install::sweep_generations(&home, &generations, &manifest_path, chrono::Utc::now())
-        {
-            report
-                .warnings
-                .push(format!("old plan generations not swept: {error}"));
+        if !check && !dry_run {
+            // The new generations come first. Each is a file of its own that
+            // no install rewrites, so a registration of the old tables reads
+            // the plan it was installed with until the tables change. The
+            // retired records the new tables make stale go next, then the
+            // tables and the manifest change as one step.
+            install::write(&prepared)?;
+            // A fresh read of the tables names every generation still in use.
+            // A session that loaded its hooks before this install still calls
+            // the old paths, so an unnamed generation stays until the tables
+            // have not named it for the retention window. A failed install
+            // writes nothing more, and its new generations wait for the next.
+            if let Err(error) = install::sweep_generations(
+                home,
+                &generations,
+                &manifest_path,
+                selected,
+                chrono::Utc::now(),
+            ) {
+                report
+                    .warnings
+                    .push(format!("old plan generations not swept: {error}"));
+            }
         }
+        Ok(report)
     }
-    Ok(Some(report))
 }
 
 /// The error code of a hook install a proof scene started with the live
@@ -276,9 +391,23 @@ pub(crate) fn live_home_in_proof(home: &std::path::Path) -> bool {
     proof_scene_home().is_some_and(|live| live == home)
 }
 
-/// Compile the config, turning every fault into one error that names it.
+/// Compile the config with no switch set, turning every fault into one
+/// error that names it. The tests read it; the commands compile under
+/// the owner's switches.
+#[cfg(test)]
 pub(crate) fn compile(hooks: &Hooks) -> Result<Plan, Error> {
-    hooks.compile().map_err(|errors| {
+    faults(hooks.compile())
+}
+
+/// Compile the config under the owner's switches from the state
+/// directory: what `rune hook list` shows and `rune hook install` writes.
+pub(crate) fn compile_switched(hooks: &Hooks) -> Result<Plan, Error> {
+    let switches = switches::read()?;
+    faults(hooks.compile_with(&switches))
+}
+
+fn faults(compiled: Result<Plan, Vec<rune::hooks::HooksError>>) -> Result<Plan, Error> {
+    compiled.map_err(|errors| {
         let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
         Error::new(ErrorKind::Config, lines.join("\n")).with_code("hooks.invalid")
     })
@@ -413,6 +542,21 @@ pub(crate) fn render_plan(plan: &Plan) -> String {
             missing.handler
         );
     }
+    // The owner's switches, one line per handler: the harnesses it is
+    // off on, in table order.
+    let mut off: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for switched in &plan.off {
+        off.entry(switched.handler.as_str())
+            .or_default()
+            .push(switched.harness.as_str());
+    }
+    for (handler, harnesses) in off {
+        let _ = writeln!(
+            out,
+            "off: {handler} on {} (rune hook on {handler} --harness <h> turns it back on)",
+            harnesses.join(", ")
+        );
+    }
     out
 }
 
@@ -436,6 +580,39 @@ mod tests {
         assert!(
             text.contains("unsupported: antigravity has no session.end for a"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn the_plan_names_each_switched_off_handler_once() {
+        let hooks: Hooks = serde_yaml::from_str(
+            "handlers:\n  - id: jev\n    exec: [jev]\n    events: [tool.after, turn.finish]\n  - id: cap\n    exec: [cap]\n    events: [turn.finish]\n",
+        )
+        .unwrap();
+        let mut switches = rune::hooks::Switches::default();
+        switches.turn_off("jev", [Harness::Cursor, Harness::Codex]);
+        let plan = hooks.compile_with(&switches).unwrap();
+        let text = render_plan(&plan);
+        assert!(
+            text.contains(
+                "off: jev on codex, cursor (rune hook on jev --harness <h> turns it back on)"
+            ),
+            "{text}"
+        );
+        assert_eq!(text.matches("off: jev").count(), 1, "{text}");
+        let cursor = text.find("cursor\n").unwrap();
+        let claude = text.find("claude\n").unwrap();
+        assert!(
+            text[claude..cursor].contains("jev"),
+            "jev stays on Claude: {text}"
+        );
+        assert!(
+            !text[cursor..]
+                .lines()
+                .skip(1)
+                .take_while(|l| l.starts_with(' '))
+                .any(|l| l.contains("jev")),
+            "jev is out of the Cursor block: {text}"
         );
     }
 

@@ -211,16 +211,73 @@ fn abort(done: &[(PathBuf, Option<PathBuf>)], error: Error) -> Error {
 /// std's file lock on `LOCK_FILE` in the directory, `flock` on Unix and
 /// `LockFileEx` on Windows, so it holds on every shipped target. It is
 /// advisory: only rune takes it. Only a writing install takes it.
+///
+/// A thread that holds a directory may lock it again: the nested value
+/// takes no second file lock, which would wait on the first forever, and
+/// the directory stays locked until the last value drops. `rune hook off`
+/// holds the state directory across its read, its change, and the
+/// install it runs, and that install locks the same directory.
 pub(crate) struct Lock {
-    /// The locked files, released when the value drops. Only a test reads
-    /// them.
+    /// The canonical directories this value holds, each counted in `HELD`.
+    dirs: Vec<PathBuf>,
+    /// How many file locks this value took itself: the directories no
+    /// earlier value of this thread held. Only a test reads it.
     #[cfg_attr(not(test), allow(dead_code))]
-    held: Vec<File>,
+    taken: usize,
+    /// The hold is the thread's: `HELD` is thread-local, so a value
+    /// dropped on another thread would leave its count behind and the
+    /// directory locked for good. A raw pointer keeps the type off
+    /// `Send`.
+    _thread: std::marker::PhantomData<*const ()>,
+}
+
+thread_local! {
+    /// The directories this thread holds: the locked file of each, which
+    /// releases the lock when it drops, and the number of `Lock` values
+    /// that hold the directory. The file goes when the last one drops.
+    static HELD: std::cell::RefCell<std::collections::HashMap<PathBuf, (File, usize)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        HELD.with(|held| {
+            let mut held = held.borrow_mut();
+            for dir in &self.dirs {
+                if let Some((_, count)) = held.get_mut(dir) {
+                    *count -= 1;
+                    if *count == 0 {
+                        held.remove(dir);
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// The file in each locked directory that holds the lock. It stays empty,
 /// and a later install locks it again.
 pub(crate) const LOCK_FILE: &str = ".rune-install.lock";
+
+/// A test's window on the lock: when this variable names a file, the
+/// process appends `wait <dir>` to it before it waits for a directory's
+/// lock and `held <dir>` once it has it. A test that holds a lock reads
+/// the file to know the child has reached its wait, instead of sleeping
+/// and taking a still-running child as evidence (review, 2026-11-02).
+/// Nothing else reads the variable, and an unset one costs nothing.
+pub(crate) const LOCK_TRACE_VAR: &str = "RUNE_HOOK_LOCK_TRACE";
+
+/// Append one line to the lock trace, when a test asked for one. A trace
+/// that cannot be written is dropped: it is the test's, not the lock's.
+fn trace(what: &str, dir: &Path) {
+    let Some(path) = std::env::var_os(LOCK_TRACE_VAR) else {
+        return;
+    };
+    if let Ok(mut file) = File::options().append(true).create(true).open(path) {
+        use std::io::Write as _;
+        let _ = writeln!(file, "{what} {}", dir.display());
+    }
+}
 
 impl Lock {
     /// Lock the directory of every target.
@@ -243,8 +300,27 @@ impl Lock {
         }
         dirs.sort();
         dirs.dedup();
-        let mut held = Vec::new();
+        // Built as it goes, so a failure part way drops what it counted.
+        let mut lock = Self {
+            dirs: Vec::new(),
+            taken: 0,
+            _thread: std::marker::PhantomData,
+        };
         for dir in dirs {
+            let nested = HELD.with(|held| {
+                let mut held = held.borrow_mut();
+                match held.get_mut(&dir) {
+                    Some((_, count)) => {
+                        *count += 1;
+                        true
+                    }
+                    None => false,
+                }
+            });
+            if nested {
+                lock.dirs.push(dir);
+                continue;
+            }
             let path = dir.join(LOCK_FILE);
             let file = File::options()
                 .read(true)
@@ -253,11 +329,15 @@ impl Lock {
                 .truncate(false)
                 .open(&path)
                 .map_err(|e| io(&path, &e))?;
+            trace("wait", &dir);
             file.lock()
                 .map_err(|e| Error::io(format!("{}: cannot lock: {e}", path.display())))?;
-            held.push(file);
+            trace("held", &dir);
+            HELD.with(|held| held.borrow_mut().insert(dir.clone(), (file, 1)));
+            lock.taken += 1;
+            lock.dirs.push(dir);
         }
-        Ok(Self { held })
+        Ok(lock)
     }
 }
 
@@ -396,6 +476,64 @@ mod tests {
         second.join().unwrap();
     }
 
+    #[test]
+    fn a_lock_stays_on_the_thread_that_took_it() {
+        // The hold is counted per thread, so a `Lock` sent to another
+        // thread and dropped there would leave this thread's count behind
+        // (review, 2026-11-02). The type is not `Send`: this is a
+        // compile-time check, ambiguous when `Lock` implements `Send`.
+        trait AmbiguousIfSend<A> {
+            fn check() {}
+        }
+        impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+        impl<T: ?Sized + Send> AmbiguousIfSend<u8> for T {}
+        <Lock as AmbiguousIfSend<_>>::check();
+    }
+
+    #[test]
+    fn a_thread_that_holds_a_directory_locks_it_again_without_waiting() {
+        // `rune hook off` holds the state directory while the install it
+        // runs locks it again. A second file lock waited on the first
+        // forever (review, 2026-11-02), so the acquire runs on a thread
+        // the test gives five seconds. The directory stays locked until
+        // both values drop.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("hooks").join("switches.json");
+        let (sent, got) = std::sync::mpsc::channel::<()>();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder_target = target.clone();
+        let holder = std::thread::spawn(move || {
+            let outer = Lock::acquire(std::slice::from_ref(&holder_target)).unwrap();
+            let inner = Lock::acquire(std::slice::from_ref(&holder_target)).unwrap();
+            assert_eq!(inner.taken, 0, "the nested lock took no file lock");
+            let _ = sent.send(());
+            drop(outer);
+            // The inner value still holds the directory.
+            released.recv().unwrap();
+            drop(inner);
+        });
+        got.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the nested lock waited on itself");
+        let (other_sent, other_got) = std::sync::mpsc::channel();
+        let other_target = target.clone();
+        std::thread::spawn(move || {
+            let lock = Lock::acquire(std::slice::from_ref(&other_target)).unwrap();
+            let _ = other_sent.send(());
+            drop(lock);
+        });
+        assert!(
+            other_got
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "another thread took the lock while the inner value held it"
+        );
+        release.send(()).unwrap();
+        other_got
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the other thread runs once both values dropped");
+        holder.join().unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_directory_named_two_ways_is_locked_once() {
@@ -409,7 +547,7 @@ mod tests {
         // acquire runs on a thread the test gives five seconds.
         let (sent, got) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let lock = Lock::acquire(&targets).map(|lock| lock.held.len());
+            let lock = Lock::acquire(&targets).map(|lock| lock.taken);
             let _ = sent.send(lock);
         });
         let held = got

@@ -47,6 +47,7 @@ pub fn scratch() -> &'static Path {
 const INHERITED: &[&str] = &[
     "RUNE_STATE_DIR",
     "RUNE_PROOF_SCENE",
+    "RUNE_HOOK_LOCK_TRACE",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_PROJECT_DIR",
     "CODEX_HOME",

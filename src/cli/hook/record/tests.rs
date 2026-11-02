@@ -30,6 +30,7 @@ fn record(ts: &str, hook: &str) -> Record {
         metrics: None,
         source: None,
         skipped: None,
+        unapplied: None,
     }
 }
 

@@ -1111,22 +1111,29 @@ fn run_tool(
     ))
 }
 
-/// The command line of a shell tool call, under every name the harnesses
-/// give their shell tool: `Bash` (Claude, Grok, and Codex hooks),
-/// `run_shell_command` (Gemini), `run_command` (Antigravity), and Codex's
-/// own `shell` (an argument list), `shell_command`, and `exec_command`
-/// (whose command is `cmd`). Any other tool has none.
-pub(crate) fn shell_command(tool: &super::payload::ToolPayload) -> Option<String> {
-    if !matches!(
-        tool.name.as_str(),
+/// Whether a tool name is a harness's shell tool: `Bash` (Claude, Grok,
+/// and Codex hooks), `Shell` (Cursor's `preToolUse`, hooks reference read
+/// 2026-11-02), `run_shell_command` (Gemini), `run_command`
+/// (Antigravity), and Codex's own `shell` (an argument list),
+/// `shell_command`, and `exec_command` (whose command is `cmd`).
+pub(crate) fn is_shell_tool(name: &str) -> bool {
+    matches!(
+        name,
         "Bash"
             | "bash"
+            | "Shell"
             | "shell"
             | "shell_command"
             | "exec_command"
             | "run_shell_command"
             | "run_command"
-    ) {
+    )
+}
+
+/// The command line of a shell tool call, under every name
+/// `is_shell_tool` knows. Any other tool has none.
+pub(crate) fn shell_command(tool: &super::payload::ToolPayload) -> Option<String> {
+    if !is_shell_tool(&tool.name) {
         return None;
     }
     ["command", "cmd"]
@@ -1211,7 +1218,7 @@ fn rtk(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     };
     if !matches!(
         tool.name.as_str(),
-        "Bash" | "shell" | "run_shell_command" | "bash"
+        "Bash" | "Shell" | "shell" | "run_shell_command" | "bash"
     ) {
         return Ok(HandlerResult::default());
     }
@@ -1447,12 +1454,28 @@ pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<Hand
     else {
         return Ok(HandlerResult::default());
     };
-    let capability = match payload.event.as_str() {
-        "session.start" | "prompt.before" | "tool.after" => Capability::Context,
-        "turn.finish" => Capability::TurnContinue,
-        _ => return Ok(HandlerResult::default()),
+    let canonical = rune::hooks::Canonical::parse(&payload.event);
+    // A native extension, `None`, delivers context where the harness
+    // takes it on that event by name: Cursor's `postToolUseFailure`.
+    let capability = match canonical {
+        Some(
+            rune::hooks::Canonical::SessionStart
+            | rune::hooks::Canonical::PromptBefore
+            | rune::hooks::Canonical::ToolAfter,
+        )
+        | None => Capability::Context,
+        Some(rune::hooks::Canonical::TurnFinish) => Capability::TurnContinue,
+        Some(_) => return Ok(HandlerResult::default()),
     };
-    if !capability.supported(payload.harness) {
+    // The field must exist on this event, not only somewhere on the
+    // harness: Cursor takes context on `sessionStart` and `postToolUse`
+    // and drops it on `beforeSubmitPrompt`, where a message taken here
+    // would be marked read and lost.
+    let expressed = match canonical {
+        Some(event) => capability.supported_on(payload.harness, event),
+        None => capability.supported_on_native(payload.harness, &payload.native_event),
+    };
+    if !expressed {
         return Ok(HandlerResult::default());
     }
     let messages = ledger::take_posted(ledger, &[session.to_string()], &ledger::now())?;
@@ -1557,6 +1580,25 @@ fn effect_name(effect: Effect) -> &'static str {
 mod tests {
     use super::*;
     use rune::hooks::Harness;
+
+    #[test]
+    fn dcg_reads_cursor_s_shell_tool_as_bash() {
+        let raw = json!({
+            "hook_event_name": "preToolUse", "conversation_id": "c1", "cwd": "/r",
+            "tool_name": "Shell", "tool_use_id": "t1", "tool_input": {"command": "make clean"}
+        });
+        let payload = super::super::payload::decode(Harness::Cursor, "preToolUse", raw);
+        let shaped = dcg_payload(&payload).expect("Cursor's Shell is a shell tool");
+        assert_eq!(shaped["tool_name"], "Bash");
+        assert_eq!(shaped["tool_input"]["command"], "make clean");
+        assert_eq!(shaped["hook_event_name"], "preToolUse");
+        let read = json!({
+            "hook_event_name": "preToolUse", "conversation_id": "c1", "cwd": "/r",
+            "tool_name": "Read", "tool_input": {"path": "/etc/hosts"}
+        });
+        let payload = super::super::payload::decode(Harness::Cursor, "preToolUse", read);
+        assert_eq!(dcg_payload(&payload), None, "Read is no shell tool");
+    }
 
     fn payload(
         harness: Harness,
