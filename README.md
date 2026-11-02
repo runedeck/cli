@@ -505,6 +505,27 @@ Then run `rune hook install`. The hook reads by the session's id, so post to a C
 
 `--json` makes every result one object (`posted`, `queued`, `read`, `list`, `dry_run`). `--dry-run` prints what would be posted with the message as `<message>`. A route that names no harness exits 125 with kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
 
+Keep a copy of every harness session in your data folder:
+
+```sh
+rune session capture --harness claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a
+rune session sweep                   # every source, from launchd every hour
+rune session debt                    # the sessions whose copy failed
+```
+
+Rune copies the session files of Claude Code, Codex (compressed files included), Grok, and Antigravity into `~/Data` (`DATA_DIR` or `capture.data_dir` in the rune config), kind first and harness second: `Sessions/<harness>/` holds the native copies at their path in the store, `SessionVersions/<harness>/` the replaced copies that lost bytes and one database backup per day, `Transcripts/<harness>/` the readable copies (Grok through rune, Claude Code through SpecStory when it is installed), and `Plans/claude/` the plan-mode plans. The copy is read-only on the harness's files, never deletes a copy, and keeps a version only when the new file does not start with the bytes of the old copy. Three callers share it: the `session-capture` hook handler at session end and before compaction, `rune run` and `rune launch` after the harness exits (a clean run is not captured), and the hourly sweep. Each host captures its own sessions.
+
+A session classified as work never reaches the data folder:
+
+```yaml
+capture:
+  exclude:
+    paths: ["~/Developer/acme/**", "/srv/client-*"]
+    sessions: ["0f3c2a1e-work-session-id"]
+```
+
+A capture records debt only when a session file exists and its native copy fails, under `$RUNE_STATE_DIR/capture-debt/`. A later success, or a sweep that finds a complete copy, moves the record to `capture-debt/closed/` with the reason. `rune doctor` prints the open count and the oldest date. A skipped session, a readable copy that fails, or a session that never wrote a file records nothing.
+
 Run a helper script bundled with a skill:
 
 ```sh

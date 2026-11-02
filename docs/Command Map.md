@@ -52,6 +52,16 @@ subject whose bytes changed is not a repair. `adopt reseal --artifact <path>`
 endorses the edit instead. `move <from> <to>` relocates one reviewed
 artifact with its sidecars and records `transferredFrom: <artifact>@<commit>`.
 
+## Keeping sessions
+
+- `session capture`: one harness session into the data folder, scoped by
+  id when the caller knows it. The `session-capture` hook handler starts it
+  detached, and `run` and `launch` call it after the harness exits.
+- `session sweep`: every source, the plans, the daily database backup, and
+  the debt reconciliation. launchd runs it every hour.
+- `session debt`: the records of session files whose copy failed, open
+  first. `doctor` prints their count.
+
 ## Bringing content in
 
 - `import`: one-shot: fetch, align, write provenance sidecars, done.

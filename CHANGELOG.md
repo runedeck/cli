@@ -25,10 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add `rune policy check [--path <DIR>] [--session <ID>] <NAME>...`, which prints `allowed` or `refused` with the deciding layer for each name and exits 1 when any name is refused.
 - Read a repository's `.rune/policy.yaml`, which may only revoke, narrow, or disable names, and a session switch file under the state directory, which turns names off for one session.
 - Show each handler's policy name in its own column of `rune hook list` when any handler names one.
+- Add `rune session capture`, `rune session sweep`, and `rune session debt`: the session files of Claude Code, Codex, Grok, and Antigravity copied into the data folder, kind first and harness second.
+- Keep a replaced session copy as a version only when the new file does not start with the old copy's bytes, and take one `sqlite3` backup per database per day instead of a copy per sweep.
+- Record capture debt only for a session file that exists and failed to copy, close it on a later success or a complete copy into `capture-debt/closed/`, and report the open count in `rune doctor`.
+- Skip a session whose working folder matches `capture.exclude.paths` or whose id is in `capture.exclude.sessions`, without debt.
+- Start `rune session capture` detached from the `session-capture` hook handler, and capture after `rune run` and `rune launch` exit without changing their exit status. A clean run is not captured.
 
 ### Changed
 
 - Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
+
+### Removed
+
+- Stop capturing `OpenCode` and Gemini sessions, and stop calling SpecStory for Codex.
 
 ### Fixed
 

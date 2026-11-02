@@ -39,6 +39,13 @@ endpoint refused or answered without answers, `124` no reply within the
 deadline, `125` a usage or configuration error, and the check's `0`, `1`,
 `2` under `--check`.
 
+`rune session capture` exits `0` on success, on a skipped or deferred
+capture, and on a session without a file. It exits `1` when a native copy
+failed and debt was recorded, and `125` on a usage error (an unknown
+harness, a session id that is not an identity). `rune session sweep` always
+exits `0`: what it could not do is in the log and the debt. A capture that `rune run`, `rune
+launch`, or the hook dispatcher starts never changes their exit status.
+
 Mutating commands hold a per-target lock (`.rune.lock` in the deploy target)
 for the duration of the write: a second `rune install`, `deploy`, or
 `repair` against the same target fails fast with exit 1 instead of
