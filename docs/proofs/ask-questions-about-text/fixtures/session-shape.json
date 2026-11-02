@@ -1,0 +1,7 @@
+{
+  "questions": {
+    "mood": {"type": "noul", "text": "Is the state calm?"},
+    "shape": {"type": "choice", "text": "How did the session go?", "options": ["one sitting", "broken up"]}
+  },
+  "signal": {"weight": 1, "threshold": 0.6, "note": "never leaves the machine"}
+}
