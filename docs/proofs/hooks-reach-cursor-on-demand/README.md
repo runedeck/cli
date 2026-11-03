@@ -1,11 +1,11 @@
 ---
 type: proof
 change: hooks-reach-cursor-on-demand
-head: ebd4ef455e51297fa1fc72a5b2a46f07557dabea
-head_change: wqyztvlolkktnwkuznvtkuvtrryyzqqn
-head_tree: ffd400b0230cfb781795f43dfc0ca7e2ddb71878
-recorded: 2026-11-02
-transcript: c538a2b4a4ddc1509fa53c99a6832cfd6f529797250943f8181302169098d6dc
+head: dd4c080d9b2f6693a5b7bd2417e7022cd233c703
+head_change: prtyxkvlyxmxszrpoztlywntrpqmkrvm
+head_tree: c8c96509ffdd03f070d2cde48cbd218fcde477df
+recorded: 2026-11-03
+transcript: b2b7d6bf435195f4622a77ad93d0b2f24a2844a2a4433658336a3e0efb86fc61
 scenes:
 - scenario: hooks-reach-cursor-on-demand#cursor-hears-the-dispatcher/a-guard-denies-a-tool-in-cursor
   kind: check
@@ -16,6 +16,8 @@ scenes:
 - scenario: hooks-reach-cursor-on-demand#cursor-s-table-keeps-every-other-entry/the-owner-s-guard-and-git-ai-entries-survive
   kind: check
 - scenario: hooks-reach-cursor-on-demand#cursor-s-table-keeps-every-other-entry/a-fresh-table-is-written
+  kind: check
+- scenario: hooks-reach-cursor-on-demand#claude-s-table-steps-aside-in-cursor/cursor-fires-claude-s-tool-entry
   kind: check
 - scenario: hooks-reach-cursor-on-demand#the-owner-chooses-harnesses/a-smaller-plan-goes-into-cursor-alone
   kind: check
@@ -148,6 +150,31 @@ unsupported: cursor has no notification for tmux-status
 $# the version Cursor requires, and one entry per planned event, every one rune's
 $ jq -c '[.version, (.hooks | map_values([.[] | (.command | contains("rune hook run"))]))]' home/.cursor/hooks.json
 [1,{"beforeSubmitPrompt":[true],"postToolUse":[true],"preCompact":[true],"preToolUse":[true],"sessionEnd":[true],"stop":[true]}]
+```
+
+## hooks-reach-cursor-on-demand#claude-s-table-steps-aside-in-cursor/cursor-fires-claude-s-tool-entry
+
+```console
+$# after an install into every harness, rune's entry for the tool event in Claude's table denies on failure
+$ sh -c 'cp -R "$RUNE_PROOF_ROOT/tests/fixtures/hooks/cursor" home && HOME="$PWD/home" RUNE_STATE_DIR=state rune hook install >/dev/null 2>&1 && jq -r ".hooks.PreToolUse[].hooks[] | select(.command | contains(\"rune hook run\")) | .command" home/.claude/settings.json > claude-tool-before && sed "s|^.*/rune hook run|rune hook run|; s|--plan .*/plans/|--plan <state>/hooks/plans/|" claude-tool-before'
+rune hook run --harness claude --native-event PreToolUse --plan <state>/hooks/plans/[..].json --on-failure deny
+$# Cursor fires that entry with its own payload and a command the guard forbids: the answer is an empty object with a zero exit
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state sh -c "$(cat claude-tool-before)" 2>/dev/null; echo "exit $?"'
+< {"hook_event_name":"preToolUse","conversation_id":"c1","workspace_roots":["/w"],"tool_name":"Shell","tool_input":{"command":"rm -rf /tmp/x"}}
+{}
+exit 0
+$# no handler ran: the guard left no trace file, and the store holds no record
+$ sh -c 'test ! -e dcg.json && echo "dcg did not run"; RUNE_STATE_DIR=state rune hook record --json | wc -l | tr -d " "'
+dcg did not run
+0
+$# the dispatcher log names the firing as borrowed by Cursor
+$ tail -n 2 state/hooks/run.log
+[..] claude PreToolUse
+borrowed by cursor: skipped
+$# Claude fires the same entry with its own payload: the guard runs and denies
+$ sh -c 'HOME="$PWD/home" RUNE_STATE_DIR=state sh -c "$(cat claude-tool-before)"'
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"no rm -rf"}}
 ```
 
 ## hooks-reach-cursor-on-demand#the-owner-chooses-harnesses/a-smaller-plan-goes-into-cursor-alone
