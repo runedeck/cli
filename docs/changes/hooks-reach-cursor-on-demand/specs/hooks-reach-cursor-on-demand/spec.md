@@ -39,6 +39,15 @@ The installer MUST write one dispatcher entry per subscribed event into Cursor's
 - **WHEN** no Cursor table exists before the install
 - **THEN** the written table carries the version Cursor requires and one entry per planned event
 
+### Requirement: Claude's Table Steps Aside In Cursor
+
+Cursor runs Claude's table beside its own and sends each entry its own payload. When a payload carries another [harness][HARNESS]'s native name for the event the entry was registered for, the [hook dispatcher][HOOKDISPATCHER] MUST step aside: it MUST run no handler, write no handler record, answer with a JSON object and a zero exit, and log the step-aside. The match MUST come from the event table, not a fixed list. A name that is no [harness][HARNESS]'s word for that event MUST stay a dispatcher failure.
+
+#### Scenario: Cursor fires Claude's tool entry
+
+- **WHEN** Cursor sends its tool payload to the entry rune registered for Claude's tool event, with the entry set to deny on failure
+- **THEN** the answer is an empty object with a zero exit, no handler runs, and the dispatcher log names the firing as borrowed by Cursor
+
 ### Requirement: The Owner Chooses Harnesses
 
 The owner MUST be able to install, check, or remove rune's own entries for named [harnesses][HARNESS]. The installer MUST NOT read, lock, create, or change the table, manifest record, or plan generations of a [harness][HARNESS] that was not named, and a removal MUST keep every entry that is not rune's. An install that names none, and the deck install, MUST attempt every registered [harness][HARNESS], MUST skip and report one whose folder is missing without creating anything for it, and MUST NOT remember a removal. An unknown [harness][HARNESS] name MUST be a structured error that names the registered ones.

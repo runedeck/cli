@@ -1085,7 +1085,10 @@ fn unregistered(harness: Harness, native_event: &str) -> Answer {
     answer
 }
 
-/// The payload, once it decoded and names the event it was registered for.
+/// The payload, once it decoded and names the event it was registered
+/// for. A payload that names another harness's word for the same event
+/// comes from that harness running this table, and the answer steps
+/// aside; any other name is a dispatcher failure.
 fn admit(
     harness: Harness,
     native_event: &str,
@@ -1097,6 +1100,9 @@ fn admit(
     if let Some(carried) = payload_event(harness, &raw)
         && !event_matches(harness, &carried, native_event)
     {
+        if let Some(by) = borrower(harness, native_event, &carried) {
+            return Err(borrowed(harness, native_event, by, log_dir));
+        }
         return Err(dispatcher_failure(
             harness,
             native_event,
@@ -1106,4 +1112,42 @@ fn admit(
         ));
     }
     Ok(raw)
+}
+
+/// The other harness whose native name for the registered event is the
+/// one the payload carries, from the event table. Cursor loads Claude's
+/// settings beside its own table and sends each entry its own payload
+/// (third-party hooks reference, read 2026-11-03), so a Claude
+/// `PreToolUse` entry hears `preToolUse`. A name that is nobody's word
+/// for the registered event is `None`: a `PostToolUse` entry that hears
+/// `preToolUse` is still a mismatch.
+fn borrower(harness: Harness, native_event: &str, carried: &str) -> Option<Harness> {
+    let canonical = Canonical::from_native(harness, native_event)?;
+    Harness::ALL
+        .into_iter()
+        .filter(|other| *other != harness)
+        .find(|other| Canonical::from_native(*other, carried) == Some(canonical))
+}
+
+/// The answer when another harness runs this registration: nothing. The
+/// borrower's own table runs the plan, so the handlers would run twice,
+/// and an owner who removed rune from the borrower would see it return.
+/// No handler runs and no record is written; the log says the firing was
+/// borrowed. The answer is an empty object, never silence, because Cursor
+/// reads a permission hook that prints nothing as a block.
+fn borrowed(harness: Harness, native_event: &str, by: Harness, log_dir: Option<&Path>) -> Answer {
+    append_log(
+        log_dir,
+        harness,
+        native_event,
+        &format!("borrowed by {by}: skipped\n"),
+    );
+    Answer {
+        stdout: Some("{}".to_string()),
+        stderr: vec![format!(
+            "rune hook: {harness} {native_event} borrowed by {by}; nothing run"
+        )],
+        exit: 0,
+        unapplied: Vec::new(),
+    }
 }

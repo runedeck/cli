@@ -913,6 +913,173 @@ fn an_inherited_grok_variable_does_not_switch_the_guard_off() {
     assert!(answer.stderr.contains("fired by grok"), "{}", answer.stderr);
 }
 
+/// A scene whose guard denies every gate event and whose watcher hears
+/// the tool's end, each leaving a `ran` file behind so a firing that ran
+/// one cannot hide; the plan's path, for a registration that names it.
+fn marking_guard(scene: &Scene) -> String {
+    let ran = scene.path("ran");
+    let guard = scene.handler(
+        "guard",
+        &format!(
+            "cat > /dev/null; touch {}; printf '{{\"effect\":\"deny\",\"reason\":\"guard says no\"}}'",
+            ran.display()
+        ),
+    );
+    let watch = scene.handler(
+        "watch",
+        &format!("cat > /dev/null; touch {}; printf '{{}}'", ran.display()),
+    );
+    scene.config(&format!(
+        "hooks:\n  handlers:\n    - id: guard\n      exec: [sh, {guard}]\n      events: [prompt.before, tool.before, turn.finish]\n      on_failure: deny\n    - id: watch\n      exec: [sh, {watch}]\n      events: [tool.after]\n"
+    ));
+    scene.write_plan();
+    scene.state().join("hooks/plan.json").display().to_string()
+}
+
+/// Cursor's payload for one of its events, as its hooks reference shows
+/// it (read 2026-11-03): the common members and the event's own.
+fn cursor_payload(event: &str, own: Value) -> String {
+    let mut payload = serde_json::json!({
+        "conversation_id": "c1", "generation_id": "g1", "hook_event_name": event,
+        "workspace_roots": ["/tmp"], "cursor_version": "3.0.0"
+    });
+    let Value::Object(own) = own else {
+        panic!("the event's own members are an object: {own}");
+    };
+    for (key, value) in own {
+        payload[key] = value;
+    }
+    payload.to_string()
+}
+
+#[test]
+fn a_claude_registration_steps_aside_when_cursor_runs_it() {
+    // Cursor loads `~/.claude/settings.json` beside its own table and
+    // runs every matching entry from both with its own payload, whose
+    // event is Cursor's name. The Claude entry once read `preToolUse`
+    // against `PreToolUse` as a mismatch and denied every tool call of
+    // a Cursor agent under `--on-failure deny` (found 2026-11-03). Its
+    // own table runs the plan, so the Claude entry runs nothing.
+    let scene = Scene::new();
+    let plan = marking_guard(&scene);
+    let cases = [
+        (
+            "PreToolUse",
+            cursor_payload(
+                "preToolUse",
+                serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.md", "contents": "x"}}),
+            ),
+        ),
+        (
+            "UserPromptSubmit",
+            cursor_payload(
+                "beforeSubmitPrompt",
+                serde_json::json!({"prompt": "rm -rf /tmp/x", "attachments": []}),
+            ),
+        ),
+        (
+            "Stop",
+            cursor_payload(
+                "stop",
+                serde_json::json!({"status": "completed", "loop_count": 0}),
+            ),
+        ),
+    ];
+    for (native, payload) in &cases {
+        let args = [
+            "--harness",
+            "claude",
+            "--native-event",
+            native,
+            "--plan",
+            &plan,
+            "--on-failure",
+            "deny",
+        ];
+        let answer = dispatch(scene.rune(), &args, payload);
+        assert_eq!(answer.code, 0, "{native}: {}", answer.stderr);
+        assert_eq!(
+            answer.stdout.trim(),
+            "{}",
+            "{native}: an object, never silence"
+        );
+        assert!(
+            answer.stderr.contains("borrowed by cursor; nothing run"),
+            "{native}: {}",
+            answer.stderr
+        );
+        assert!(
+            !scene.path("ran").exists(),
+            "{native}: the handler ran under a borrowed firing"
+        );
+        let log = std::fs::read_to_string(scene.state().join("hooks/run.log")).unwrap();
+        assert!(
+            log.contains(&format!("claude {native}\nborrowed by cursor: skipped\n")),
+            "{native}: {log}"
+        );
+    }
+    assert!(
+        !scene.state().join("hooks/record").exists(),
+        "no record of a firing that ran nothing"
+    );
+    // The same payload on Cursor's own registration still runs the guard.
+    let answer = dispatch(scene.rune(), &CURSOR_PRE, &cases[0].1);
+    assert_eq!(parsed(&answer)["permission"], "deny", "{}", answer.stderr);
+    assert!(scene.path("ran").exists());
+}
+
+#[test]
+fn a_mismatched_event_that_is_nobody_s_name_for_it_still_fails() {
+    // Stepping aside is for another harness's word for the registered
+    // event, not for any name: `preToolUse` on a `PostToolUse` entry is
+    // a mismatch, and Cursor's `postToolUse` on a `PreToolUse` entry
+    // denies as it did before.
+    let scene = Scene::new();
+    let plan = marking_guard(&scene);
+    let pre = cursor_payload(
+        "preToolUse",
+        serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.md"}}),
+    );
+    let args = [
+        "--harness",
+        "claude",
+        "--native-event",
+        "PostToolUse",
+        "--plan",
+        &plan,
+        "--on-failure",
+        "deny",
+    ];
+    let answer = dispatch(scene.rune(), &args, &pre);
+    assert!(
+        answer
+            .stderr
+            .contains("the payload names `preToolUse` but the registration is for `PostToolUse`"),
+        "{}",
+        answer.stderr
+    );
+    assert!(!answer.stderr.contains("borrowed"), "{}", answer.stderr);
+    let log = std::fs::read_to_string(scene.state().join("hooks/run.log")).unwrap();
+    assert!(log.contains("dispatcher failure"), "{log}");
+    assert!(!log.contains("borrowed"), "{log}");
+    let post = cursor_payload(
+        "postToolUse",
+        serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.md"}, "tool_output": "ok"}),
+    );
+    let mut args = CLAUDE_PRE.to_vec();
+    args.extend(["--plan", &plan, "--on-failure", "deny"]);
+    let answer = dispatch(scene.rune(), &args, &post);
+    assert_eq!(decision(&answer), "deny", "{}", answer.stderr);
+    assert!(
+        answer
+            .stderr
+            .contains("the payload names `postToolUse` but the registration is for `PreToolUse`"),
+        "{}",
+        answer.stderr
+    );
+    assert!(!scene.path("ran").exists(), "a mismatch runs no handler");
+}
+
 #[test]
 fn the_registration_finds_the_plan_under_another_state_directory() {
     let scene = Scene::new();

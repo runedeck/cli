@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add `rune ask <QUESTIONS> [TEXT]`, which asks a judging model a question set about one text and prints the typed answers. The `ask:` section names its routes.
 - Refuse `rune run jev` and `rune launch jev` with a pointer to `rune ask`, because a judging model is a different kind of tool from a harness.
 
+### Fixed
+
+- Step aside when Cursor runs a Claude hook entry: answer `{}` with exit 0, run no handler, and log `borrowed by cursor`. Every Cursor tool call was denied under `--on-failure deny`.
+
 ## [0.6.0] - 2026-10-26
 
 ### Added
