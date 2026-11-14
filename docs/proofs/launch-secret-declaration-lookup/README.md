@@ -1,11 +1,11 @@
 ---
 type: proof
 change: launch-secret-declaration-lookup
-head: 206e206aee13976c3d523119cfad82d825a33f05
-head_change: ztxqkpyrxlpvlvtrsvxnqwoxwzqnvyxv
-head_tree: 606864b7866cbfef1cd97ad0310bb5fdb5930774
-recorded: 2026-11-05
-transcript: 4fd4bc6b5d17ea39667cd5ec03889d86030a0cfb00a231ebbcca47efbba064f1
+head: 0d027ed150d912b5dff7bc2eaa7a45a152dca508
+head_change: usprswrvwzoswvywlwvoqnporzqnrxvw
+head_tree: 2409266ca037be195fb27a0c5a7e45ad16ded06f
+recorded: 2026-11-14
+transcript: 0604106c055b236a9da7534ee334af1547a28d516a47e3b646ef3bac821237a9
 scenes:
 - scenario: launch-secret-declaration-lookup#credentials-read-through-the-secret-manager/credential-absent-from-the-environment
   kind: check
