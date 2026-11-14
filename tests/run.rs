@@ -2877,16 +2877,24 @@ fn changed_files(home: &std::path::Path, repository: &str, change_id: &str) -> V
     .collect()
 }
 
-/// The names in `jj workspace list`.
+/// The names in `jj workspace list`, read through a template: jj 0.47
+/// marks the current workspace in the plain output (`default (current):`).
 #[cfg(unix)]
 fn workspace_names(home: &std::path::Path, repository: &str) -> Vec<String> {
-    jj(home, &["-R", repository, "workspace", "list"])
-        .lines()
-        .filter_map(|line| {
-            line.split_once(':')
-                .map(|(name, _)| name.trim().to_string())
-        })
-        .collect()
+    jj(
+        home,
+        &[
+            "-R",
+            repository,
+            "workspace",
+            "list",
+            "-T",
+            "name ++ \"\\n\"",
+        ],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
 }
 
 /// Every visible change id in the repository, in log order.

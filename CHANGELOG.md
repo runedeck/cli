@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - Step aside when Cursor runs a Claude hook entry: answer `{}` with exit 0, run no handler, and log `borrowed by cursor`. Every Cursor tool call was denied under `--on-failure deny`.
+- Abandon the run workspace's initial working copy under jj 0.47, which names the caller's workspace on its creation. The run kept it and reported `outside_changes`.
 
 ## [0.6.0] - 2026-10-26
 
