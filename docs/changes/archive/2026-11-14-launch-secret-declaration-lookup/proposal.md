@@ -1,7 +1,7 @@
 ---
-adr: docs/changes/launch-secret-declaration-lookup/adr.md
+adr: docs/decisions/CLI-0045 Launch Secrets Through Secretspec.md
 status: proposed
-decisions: ["Launch secrets are read through the secretspec binary"]
+decisions: ["Launch Secrets Through Secretspec"]
 ---
 
 # Launch secret resolution

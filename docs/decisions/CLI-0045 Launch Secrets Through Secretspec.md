@@ -1,5 +1,5 @@
 ---
-title: "Launch secrets are read through the secretspec binary"
+title: "Launch Secrets Through Secretspec"
 description: "A from_env reference that the process environment leaves unset is read with the secretspec binary against one manifest; the env file is the fallback only on a machine without a manifest, and a trait keeps room for the SDK."
 type: adr
 category: architecture
@@ -9,7 +9,7 @@ tags:
     - secrets
 status: proposed
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-14
 author: "@N4M3Z"
 project: cli
 related:
@@ -23,7 +23,7 @@ upstream:
 change: launch-secret-declaration-lookup
 ---
 
-# Launch secrets are read through the secretspec binary
+# Launch Secrets Through Secretspec
 
 ## Context and Problem Statement
 

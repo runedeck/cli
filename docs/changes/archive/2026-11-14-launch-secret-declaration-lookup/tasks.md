@@ -21,4 +21,4 @@
 
 ## 4. Record
 
-- [ ] 4.1 Archive moves `adr.md` to `docs/decisions/` with the next free CLI number
+- [x] 4.1 Archive moves `adr.md` to `docs/decisions/` with the next free CLI number
