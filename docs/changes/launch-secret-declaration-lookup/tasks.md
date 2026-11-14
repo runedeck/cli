@@ -12,6 +12,13 @@
 - [x] 2.3 Recorded proof per scenario under `docs/proofs/launch-secret-declaration-lookup/`
 - [x] 2.4 `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `rune spec validate launch-secret-declaration-lookup`
 
-## 3. Record
+## 3. Secret profile
 
-- [ ] 3.1 Archive moves `adr.md` to `docs/decisions/` with the next free CLI number
+- [x] 3.1 `secrets_profile` config key with the `RUNE_SECRETS_PROFILE` override, `secrets_profile()`, `rune config set secrets_profile`, and the config listing
+- [x] 3.2 `SecretspecBinary::with_profile` adds `--profile <name>` for a name that is not empty, `failure_cause` gains a fixed cause for a profile the manifest does not declare, and `cargo test` covers the set, unset, and empty cases
+- [x] 3.3 Launch help text, `config.example.yaml`, `docs/config-reference.json`, and `CHANGELOG.md`
+- [x] 3.4 Recorded scene for the configured secret profile, against the real secretspec with a file store and fake values
+
+## 4. Record
+
+- [ ] 4.1 Archive moves `adr.md` to `docs/decisions/` with the next free CLI number

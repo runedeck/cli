@@ -47,6 +47,7 @@ Option 2 adds the SDK and its provider clients to every build of rune, for behav
 - Launch credentials can live in the Keychain, Proton Pass, or `pass`. The manifest's provider chain decides, and the owner changes it without a rune release.
 - Rune needs the `secretspec` binary on PATH when a manifest applies. A missing binary stops the launch with a message that names it.
 - Each read is visible in secretspec's audit log with the launch that made it.
+- The config key `secrets_profile` names the secretspec profile, so one manifest serves the owner's Keychain and the agents' file stores.
 - The env file reader stays for machines without a manifest. It is a second code path to keep until the owner retires `~/.env`.
 
 [SECRETSPEC]: https://github.com/cachix/secretspec

@@ -176,9 +176,10 @@ fn resolve_with_config(
     if let Some(profile) = &profile {
         let manifest = context.config.secrets_manifest();
         let env_file = context.config.env_file();
-        let secretspec = manifest
-            .as_deref()
-            .map(|path| secrets::SecretspecBinary::new(path, invocation));
+        let secretspec = manifest.as_deref().map(|path| {
+            secrets::SecretspecBinary::new(path, invocation)
+                .with_profile(context.config.secrets_profile())
+        });
         let fallback = match &secretspec {
             Some(source) => SecretFallback::Manifest(source),
             None => SecretFallback::EnvFile(env_file.as_deref()),

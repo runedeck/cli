@@ -19,7 +19,8 @@ SecretSpec declares the secrets a project needs in one TOML file and reads them 
 - Without a manifest, a launch behaves as before: process environment, then the env file.
 - Each read passes a reason and caller fields, so secretspec's audit log names the launch and the key.
 - A missing manifest, a missing `secretspec` binary, or a failed read stops the launch with the key, the manifest path, and secretspec's reason. No value is printed.
-- `rune config set secrets <path>` and `rune config` list the new key. The launch help text describes the order.
+- A config key `secrets_profile` (environment override `RUNE_SECRETS_PROFILE`) names the secretspec profile for each read. The fleet declaration names the profiles `owner`, `agents`, and `multica`, and no `default` profile, so a read without a name fails there. Without the key, rune names no profile.
+- `rune config set secrets <path>`, `rune config set secrets_profile <name>`, and `rune config` list the new keys. The launch help text describes the order.
 
 ## Capabilities
 

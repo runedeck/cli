@@ -9,6 +9,7 @@ Change `launch-secret-declaration-lookup`: proposal, design, one ADDED delta (`l
 - Add the `secrets` config key and the `RUNE_SECRETS` override (`src/ontology.rs`). With neither set and no env file named, use `~/.config/rune/secretspec.toml` when it exists. An empty value turns the manifest off. `rune config set secrets <path>` works.
 - Add `src/cli/launch/secrets.rs`: the `SecretSource` trait and `SecretspecBinary`, which runs `secretspec get <KEY> --file <manifest>` with a reason and `--caller rune`, and returns stdout byte for byte.
 - Read through the manifest in `apply_profile_env` when one applies, and never read the env file then. Without a manifest, keep the env file fallback. Read each key once per launch.
+- Add the `secrets_profile` config key and the `RUNE_SECRETS_PROFILE` override. A name that is not empty adds `--profile <name>` to each `secretspec get`. Rune never sets `SECRETSPEC_PROFILE`.
 - Stop the launch on a missing manifest, a missing binary, or a failed read, with the key, the manifest path, and a cause from a fixed list. Secretspec's own error text is never repeated, because a dotenv parse error quotes a stored value.
 - Update the launch help text, `config.example.yaml`, `docs/config-reference.json`, `docs/Manual Testing.md`, and `CHANGELOG.md`.
 
@@ -21,4 +22,4 @@ Change `launch-secret-declaration-lookup`: proposal, design, one ADDED delta (`l
 
 ## Release Notes
 
-- `rune launch` and `rune run` read unset `from_env` keys through secretspec from `~/.config/rune/secretspec.toml`, or the manifest that `secrets` or `RUNE_SECRETS` names. Without a manifest, the env file works as before.
+- `rune launch` and `rune run` read unset `from_env` keys through secretspec from `~/.config/rune/secretspec.toml`, or the manifest that `secrets` or `RUNE_SECRETS` names. `secrets_profile` or `RUNE_SECRETS_PROFILE` names the secretspec profile. Without a manifest, the env file works as before.

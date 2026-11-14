@@ -198,6 +198,46 @@ fn secrets_manifest_env_beats_config_and_keeps_a_missing_path() {
 }
 
 #[test]
+fn secrets_profile_env_beats_config_and_an_empty_value_names_none() {
+    assert_eq!(
+        resolve_config(&Config::default(), &no_env).secrets_profile(),
+        None
+    );
+
+    let config = Config {
+        secrets_profile: Some("owner".to_string()),
+        ..Config::default()
+    };
+    let from_config = resolve_config(&config, &no_env);
+    assert_eq!(from_config.secrets_profile(), Some("owner"));
+    let field = fields(&from_config)
+        .into_iter()
+        .find(|field| field.key == "secrets_profile")
+        .expect("secrets_profile field");
+    assert_eq!(field.env, "RUNE_SECRETS_PROFILE");
+    assert_eq!(field.value.as_deref(), Some("owner"));
+    assert_eq!(field.source, Some(Source::Config));
+
+    let from_env = resolve_config(&config, &env_from(&[("RUNE_SECRETS_PROFILE", "agents")]));
+    assert_eq!(from_env.secrets_profile(), Some("agents"));
+    assert_eq!(
+        from_env.secrets_profile.as_ref().map(|value| value.source),
+        Some(Source::Env)
+    );
+
+    let emptied = resolve_config(&config, &env_from(&[("RUNE_SECRETS_PROFILE", "")]));
+    assert_eq!(emptied.secrets_profile(), None);
+    let empty_config = Config {
+        secrets_profile: Some(String::new()),
+        ..Config::default()
+    };
+    assert_eq!(
+        resolve_config(&empty_config, &no_env).secrets_profile(),
+        None
+    );
+}
+
+#[test]
 fn default_manifest_applies_only_when_present_and_no_env_file_is_named() {
     let dir = tempfile::tempdir().expect("tempdir");
     let resolved = resolve_config(&Config::default(), &no_env);

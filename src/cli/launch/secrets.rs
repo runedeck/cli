@@ -23,6 +23,7 @@ pub(crate) trait SecretSource {
 pub(crate) struct SecretspecBinary {
     program: OsString,
     manifest: PathBuf,
+    profile: Option<String>,
     invocation: String,
 }
 
@@ -35,8 +36,18 @@ impl SecretspecBinary {
         Self {
             program,
             manifest: manifest.to_path_buf(),
+            profile: None,
             invocation: invocation.to_string(),
         }
+    }
+
+    /// Names the secretspec profile for each lookup. `None` or an empty
+    /// name leaves the profile out, and secretspec uses its own default.
+    pub(crate) fn with_profile(mut self, profile: Option<&str>) -> Self {
+        self.profile = profile
+            .filter(|profile| !profile.is_empty())
+            .map(str::to_string);
+        self
     }
 
     /// The arguments for one lookup. The reason and the caller fields go
@@ -45,11 +56,17 @@ impl SecretspecBinary {
     /// all resolve a profile this way, so the reason names the profile
     /// resolution and not one command.
     pub(crate) fn arguments(&self, key: &str) -> Vec<OsString> {
-        vec![
+        let mut arguments = vec![
             OsString::from("get"),
             OsString::from(key),
             OsString::from("--file"),
             self.manifest.clone().into_os_string(),
+        ];
+        if let Some(profile) = &self.profile {
+            arguments.push(OsString::from("--profile"));
+            arguments.push(OsString::from(profile));
+        }
+        arguments.extend([
             OsString::from("--reason"),
             OsString::from(format!(
                 "rune resolves the {} launch profile and reads {key} for its environment",
@@ -61,7 +78,8 @@ impl SecretspecBinary {
             OsString::from(env!("CARGO_PKG_VERSION")),
             OsString::from("--caller-operation"),
             OsString::from("resolve-profile"),
-        ]
+        ]);
+        arguments
     }
 }
 
@@ -111,6 +129,8 @@ fn failure_cause(stderr: &str) -> &'static str {
         "secretspec has no provider; run `secretspec config global init`"
     } else if stderr.contains("Failed to load secretspec configuration") {
         "the manifest does not load"
+    } else if stderr.contains("Invalid profile") {
+        "the manifest declares no such profile; config key secrets_profile names one"
     } else if stderr.contains("syntax error") || stderr.contains("error parsing") {
         "a provider in the manifest's chain failed to parse its store"
     } else if stderr.contains("not found") {
@@ -136,6 +156,11 @@ mod tests {
         assert_eq!(
             failure_cause("Error:   × Failed to get secret\n  ╰─▶ Secret 'KEY' not found\n"),
             "no provider in the manifest's chain holds it"
+        );
+        let undeclared = "Error:   × Failed to get secret\n  ╰─▶ Invalid profile: 'default' is not defined in secretspec.toml. Available\n      profiles: agents, owner\n";
+        assert_eq!(
+            failure_cause(undeclared),
+            "the manifest declares no such profile; config key secrets_profile names one"
         );
         assert_eq!(failure_cause("anything else"), "secretspec failed");
     }
@@ -174,6 +199,43 @@ mod tests {
             value_after("--caller-operation").as_deref(),
             Some("resolve-profile")
         );
+    }
+
+    fn profile_arguments(profile: Option<&str>) -> Vec<String> {
+        SecretspecBinary::new(Path::new("/manifests/secretspec.toml"), "sol@claude")
+            .with_profile(profile)
+            .arguments("CLIPROXY_API_KEY")
+            .into_iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn arguments_name_the_configured_profile() {
+        let arguments = profile_arguments(Some("owner"));
+        assert_eq!(
+            &arguments[..6],
+            [
+                "get",
+                "CLIPROXY_API_KEY",
+                "--file",
+                "/manifests/secretspec.toml",
+                "--profile",
+                "owner"
+            ]
+        );
+        assert_eq!(arguments[6], "--reason");
+    }
+
+    #[test]
+    fn arguments_name_no_profile_when_unset_or_empty() {
+        let unset = profile_arguments(None);
+        assert!(
+            !unset.iter().any(|argument| argument == "--profile"),
+            "{unset:?}"
+        );
+        assert_eq!(unset[4], "--reason");
+        assert_eq!(profile_arguments(Some("")), unset);
     }
 
     #[test]

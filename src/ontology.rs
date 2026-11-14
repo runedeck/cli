@@ -20,6 +20,10 @@ pub struct Config {
     /// file is named. An empty value turns the manifest off. With a
     /// manifest, the env file is not read.
     pub secrets: Option<String>,
+    /// Secretspec profile that each manifest read names. Without a value,
+    /// or with an empty one, rune names no profile and secretspec uses its
+    /// own default.
+    pub secrets_profile: Option<String>,
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
@@ -425,6 +429,7 @@ pub struct ResolvedConfig {
     pub deck: Option<ResolvedValue>,
     pub env: Option<ResolvedValue>,
     pub secrets: Option<ResolvedValue>,
+    pub secrets_profile: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
     pub setup: Option<SetupRecord>,
@@ -473,6 +478,16 @@ impl ResolvedConfig {
                 .map(|dir| dir.join(SECRETS_MANIFEST))
                 .filter(|path| path.is_file()),
         }
+    }
+
+    /// The secretspec profile a manifest read names. An empty value means
+    /// no profile, so secretspec uses its own default.
+    #[must_use]
+    pub fn secrets_profile(&self) -> Option<&str> {
+        self.secrets_profile
+            .as_ref()
+            .map(|value| value.value.as_str())
+            .filter(|profile| !profile.is_empty())
     }
 }
 
@@ -690,6 +705,15 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
         source: config.secrets.as_ref().map(|value| value.source),
     });
     fields.push(ResolvedField {
+        key: "secrets_profile",
+        env: "RUNE_SECRETS_PROFILE",
+        value: config
+            .secrets_profile
+            .as_ref()
+            .map(|value| value.value.clone()),
+        source: config.secrets_profile.as_ref().map(|value| value.source),
+    });
+    fields.push(ResolvedField {
         key: "bench",
         env: "",
         value: (!config.bench.is_empty()).then(|| config.bench.join(", ")),
@@ -845,6 +869,17 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
                 source: Source::Config,
             })
         });
+    let secrets_profile = env("RUNE_SECRETS_PROFILE")
+        .map(|value| ResolvedValue {
+            value,
+            source: Source::Env,
+        })
+        .or_else(|| {
+            config.secrets_profile.as_ref().map(|value| ResolvedValue {
+                value: value.clone(),
+                source: Source::Config,
+            })
+        });
     let ontology = ResolvedOntology {
         targets: resolve_key(Key::Targets, &config.ontology, env),
         skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
@@ -868,6 +903,7 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         deck,
         env: env_file,
         secrets,
+        secrets_profile,
         ontology,
         extensions,
         setup: config.setup.clone(),

@@ -1104,6 +1104,11 @@
     },
     {
       "default": null,
+      "key": "secrets_profile",
+      "type": "string | null"
+    },
+    {
+      "default": null,
       "key": "setup",
       "type": "object | null"
     },

@@ -8,6 +8,10 @@
 # the manifest below. Without the key, Rune uses ~/.config/rune/secretspec.toml
 # when that file exists, and otherwise the env file (key `env`, default ~/.env).
 # secrets: ~/.config/rune/secretspec.toml
+#
+# Each secretspec read names the profile below. Without the key, or with an
+# empty value, Rune names no profile and secretspec uses its own default.
+# secrets_profile: owner
 launch:
     models:
         sol:

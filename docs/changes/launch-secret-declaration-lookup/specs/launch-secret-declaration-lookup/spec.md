@@ -30,6 +30,16 @@ The launcher MUST use the secret declaration that the user configuration or the 
 - **THEN** the launch stops before the harness starts
 - **AND** the report names the credential and the missing path
 
+### Requirement: Named secret profile
+
+When the user configuration or the process environment names a secret profile, the launcher MUST read every credential from that profile, and the process environment MUST win over the configuration. When nothing names a profile, or the name is empty, the launcher MUST name no profile, so the secret manager uses its own default. A secret profile is one named set of values in a declaration, such as the owner's set or the agents' set.
+
+#### Scenario: Configured secret profile
+
+- **WHEN** the configuration names a secret profile and a launch profile needs a credential from the declaration
+- **THEN** the secret manager receives a request for that secret profile
+- **AND** the launch uses the value that the secret profile holds
+
 ### Requirement: Default declaration
 
 When nothing names a secret declaration and the user names no environment file, the launcher MUST use the declaration in the user configuration directory if that file exists. Otherwise it MUST read an unset credential from the environment file, as it did before secret declarations existed. An empty declaration name MUST turn the declaration off.

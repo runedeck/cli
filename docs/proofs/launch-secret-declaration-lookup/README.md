@@ -13,6 +13,8 @@ scenes:
   kind: check
 - scenario: launch-secret-declaration-lookup#named-declaration/named-declaration-missing
   kind: check
+- scenario: launch-secret-declaration-lookup#named-secret-profile/configured-secret-profile
+  kind: check
 - scenario: launch-secret-declaration-lookup#default-declaration/no-declaration-on-the-machine
   kind: check
 - scenario: launch-secret-declaration-lookup#default-declaration/named-environment-file-beside-a-default-declaration
@@ -28,6 +30,8 @@ scenes:
 # Proof: launch-secret-declaration-lookup
 
 One scene per scenario, in closure order. Each scene runs the real `rune` binary with `HOME=.` in its scratch directory. The fixture in `tests/fixtures/launch-secret-declaration-lookup/` holds a rune config with the `probe` and `twice` profiles, the default secret declaration, an env file that holds `PROOF_ORIGIN=from-env-file`, and two stubs. `bin/secretspec` stands in for secretspec: it logs each call and its arguments to `secretspec.log`, refuses a key that the declaration does not list, and prints `from-secretspec`, or fails like a dotenv provider that cannot parse its store. `bin/claude` stands in for Claude Code: it writes `claude-started` and prints `PROOF_VALUE`. Its `home.sh` copies them into the scene directory. No scene reads a real secret store, calls a model, or starts a real harness. The dry-run `env_removed` block depends on the parent environment, so the scenes elide it.
+
+The secret profile scene runs the real `secretspec` instead of the stub. Its `profiles.sh` removes `bin/secretspec` and installs `profiles.toml` as the default declaration. That declaration names the profiles `owner` and `agents` and no `default`, and keeps each fake value in a `file:` store beside it. The runner gives each scene a fresh temporary directory, and `HOME=.` keeps secretspec's config and audit log inside it, so the scene never reads a real secret store.
 
 `PROOF_ORIGIN` and `PROOF_VALUE` carry no credential word. A dry run therefore hides a value only when the value came through the secret declaration, and prints a value from the shell or an env file as it is.
 
@@ -85,6 +89,60 @@ bin
 $# a declaration named in the process environment wins over the config, and the harness starts with the value
 $ sh -c 'PATH="$PWD/bin:$PATH" HOME=. RUNE_SECRETS=.config/rune/secretspec.toml rune launch probe@claude'
 PROOF_VALUE=from-secretspec
+```
+
+## launch-secret-declaration-lookup#named-secret-profile/configured-secret-profile
+
+```console
+$# the real secretspec answers here: the declaration names the profiles owner and agents and no default, and each profile keeps one fake value in a file store
+$ sh -c 'sh "$RUNE_PROOF_ROOT/tests/fixtures/launch-secret-declaration-lookup/profiles.sh" && ls bin .config/rune/store/proof'
+.config/rune/store/proof:
+agents
+owner
+
+bin:
+claude
+$# without secrets_profile rune names no profile, secretspec asks for the missing default profile, and the launch stops
+$ sh -c 'HOME=. rune launch probe@claude --dry-run'
+? 2
+fatal: profile references PROOF_ORIGIN, unset in the environment and unreadable from ./.config/rune/secretspec.toml: the manifest declares no such profile; config key secrets_profile names one; `secretspec check --file ./.config/rune/secretspec.toml --explain` prints a trace without values
+$# the config names the owner profile, and the config listing shows the value and its source
+$ sh -c 'HOME=. rune config set secrets_profile owner'
+set secrets_profile = owner
+$ sh -c 'HOME=. rune config | grep secrets_profile'
+   secrets_profile config   owner
+$# the dry run reads from the owner profile and hides the value, and secretspec's audit log names the profile of each read
+$ sh -c 'HOME=. rune launch probe@claude --dry-run'
+tool: claude
+argv: claude
+env:
+  PROOF_VALUE=<redacted>
+...
+$ jq -r 'select(.action == "get") | [.profile, .key, .outcome] | join(" ")' .local/state/secretspec/audit.log
+default PROOF_ORIGIN error
+owner PROOF_ORIGIN found
+$# the harness starts with the owner value
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude'
+PROOF_VALUE=fake-owner-value
+$# the setting changes to the agents profile, and the next dry run and launch read from it
+$ sh -c 'HOME=. rune config set secrets_profile agents'
+set secrets_profile = agents
+$ sh -c 'HOME=. rune launch probe@claude --dry-run'
+tool: claude
+argv: claude
+env:
+  PROOF_VALUE=<redacted>
+...
+$ jq -r 'select(.action == "get") | [.profile, .key, .outcome] | join(" ")' .local/state/secretspec/audit.log
+default PROOF_ORIGIN error
+owner PROOF_ORIGIN found
+owner PROOF_ORIGIN found
+agents PROOF_ORIGIN found
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. rune launch probe@claude'
+PROOF_VALUE=fake-agents-value
+$# the process environment wins over the config
+$ sh -c 'PATH="$PWD/bin:$PATH" HOME=. RUNE_SECRETS_PROFILE=owner rune launch probe@claude'
+PROOF_VALUE=fake-owner-value
 ```
 
 ## launch-secret-declaration-lookup#default-declaration/no-declaration-on-the-machine
