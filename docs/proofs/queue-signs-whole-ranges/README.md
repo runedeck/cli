@@ -1,35 +1,38 @@
 ---
 type: proof
 change: queue-signs-whole-ranges
+head: 88e6ea70c574b43b4c7f896844b21c1e25cb31b7
+head_change: qtupxvvmlqtulvmlulzlqxxspwrmlpll
+head_tree: c2792293ec03977db3b4e05a75f6a56e4147b412
 recorded: 2026-11-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 5ae5be4667abbe41aabba7f13a1e3f2b5f64dc67d5cfcebb5c8122afc02d2ccd
 scenes:
 - scenario: queue-signs-whole-ranges#a-session-queues-a-range-for-one-signing-run/stack-of-model-commits-queued-as-one-range
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-queue-refuses-a-range-it-cannot-sign/bookmark-adds-nothing-to-the-protected-branch
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-owner-sees-every-commit-before-the-key/owner-declines-the-range
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-signer-signs-the-whole-range-in-one-run/range-signed
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-signer-signs-the-whole-range-in-one-run/signer-stopped-after-the-signatures
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-signer-checks-every-commit-after-the-run/key-outside-the-trusted-keys-signs-the-range
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#a-range-request-goes-stale-when-its-range-changes/head-moves-between-queue-and-sign
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#a-range-request-goes-stale-when-its-range-changes/protected-branch-moves-on-the-remote
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-signer-names-each-commit-through-the-commit-id-function/bookmark-named-after-the-commit-id
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-signer-refuses-while-an-alias-redefines-the-commit-id-function/alias-redefines-the-commit-id-function
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#a-signed-request-whose-head-moved-says-so/signed-request-moves-on
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-queue-keeps-its-own-copy-of-the-receipt/receipt-file-deleted-after-queueing
-  kind: unproven
+  kind: check
 - scenario: queue-signs-whole-ranges#the-queue-keeps-its-own-copy-of-the-receipt/receipt-file-edited-after-queueing
-  kind: unproven
+  kind: check
 ---
 
 # Proof: queue-signs-whole-ranges

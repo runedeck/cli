@@ -1,0 +1,273 @@
+## queue-signs-whole-ranges#a-session-queues-a-range-for-one-signing-run/stack-of-model-commits-queued-as-one-range
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log"
+< rune sign show main | grep -E '^(state|kind|range|commits|author) | feat: '
+  queued 1c309a4034de73e0 main at 5a7f36a28aa7 (3 commits): run `rune sign next` at the key
+  state        current
+  kind         range
+  author       Model One <model-one@example.com>
+  range        refs/remotes/origin/main at 0c5fdc9bfc75..5a7f36a28aa7
+  commits      3
+  author       Model One <model-one@example.com> 3
+               7cee9bdc8a33  Model One <model-one@example.com>  feat: top
+               6803422e2984  Model One <model-one@example.com>  feat: one
+               5a7f36a28aa7  Model One <model-one@example.com>  feat: two
+
+## queue-signs-whole-ranges#the-queue-refuses-a-range-it-cannot-sign/bookmark-adds-nothing-to-the-protected-branch
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< printf 'checked %s\nexit=0\n' "$(id change/base)" > "$PROOF_HOME/base.log"
+< rune sign queue change/base --range --receipt "$PROOF_HOME/base.log"; echo "exit=$?"
+< rune sign queue
+  fatal: change/base at 6b94ec0383d9 adds no commit to refs/remotes/origin/main: there is nothing to sign
+  exit=2
+  the signing queue at /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.SJJuoMOisZ/state/sign-queue is empty
+
+## queue-signs-whole-ranges#the-owner-sees-every-commit-before-the-key/owner-declines-the-range
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< printf 'n\n' > "$PROOF_HOME/tty"
+< RUNE_SIGN_TTY="$PROOF_HOME/tty" rune sign next 2>&1 </dev/null; echo "exit=$?"
+< sigs 'change/base..main'
+< rune sign show main | grep '^state'
+  bookmark     main
+  workspace    /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.ecRHsLrlnF/repo
+  range        refs/remotes/origin/main at 52410ae54caa..f61367aea8eb
+  commits      3
+  author       Model One <model-one@example.com> 3
+               e20545b6f985  Model One <model-one@example.com>  feat: top
+               559e44909c2e  Model One <model-one@example.com>  feat: one
+               f61367aea8eb  Model One <model-one@example.com>  feat: two
+  proof        /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.ecRHsLrlnF/main.log
+  kept         /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.ecRHsLrlnF/state/sign-queue/receipts/da83a15c51ace6a0.log
+  exit         exit=0
+  sign 3 commits on main from 52410ae54caa to f61367aea8eb? [y/N] declined main
+  exit=1
+  unsigned feat: top
+  unsigned feat: one
+  unsigned feat: two
+  state        current
+
+## queue-signs-whole-ranges#the-signer-signs-the-whole-range-in-one-run/range-signed
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< printf 'y\n' > "$PROOF_HOME/tty"
+< RUNE_SIGN_TTY="$PROOF_HOME/tty" rune sign next > "$PROOF_HOME/out" 2>&1 </dev/null; echo "exit=$?"
+< grep -E '^(sign |   publish)' "$PROOF_HOME/out"
+< sigs 'change/base::main'
+  exit=0
+  sign 3 commits on main from 197b3ffa5838 to 11a7ddf8963f? [y/N] signed main 70c1717b74f2f44362a91fade4a4777907d1609e
+     publish with: jj git push --remote origin --bookmark main
+  unsigned feat: base
+  signed feat: top
+  signed feat: one
+  signed feat: two
+
+## queue-signs-whole-ranges#the-signer-signs-the-whole-range-in-one-run/signer-stopped-after-the-signatures
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< jj sign -r 'change/base..main' >/dev/null 2>&1 </dev/null
+< RUNE_SIGN_TTY="$PROOF_HOME/no-such-tty" rune sign next 2>&1 </dev/null; echo "exit=$?"
+  signed main ddf1e07435823e895915b37e7a8f1902bf0b14c3
+     publish with: jj git push --remote origin --bookmark main
+  exit=0
+
+## queue-signs-whole-ranges#the-signer-checks-every-commit-after-the-run/key-outside-the-trusted-keys-signs-the-range
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< printf 'y\n' > "$PROOF_HOME/tty"
+< FAKE_GPG_KEY=0123456789ABCDEF0123456789ABCDEF01234567 RUNE_SIGN_TTY="$PROOF_HOME/tty" rune sign next > "$PROOF_HOME/out" 2>&1 </dev/null; echo "exit=$?"
+< grep -E '^sign ' "$PROOF_HOME/out"
+< rune sign show main | grep -E '^(state|failure)'
+< oldest=$(jj log --no-graph --reversed -r 'change/base..main' -T 'commit_id.short(12) ++ "\n"' 2>/dev/null | head -1)
+< named=$(rune sign show main | sed -n 's/^failure *\([0-9a-f]*\):.*/\1/p')
+< [ "$named" = "$oldest" ] && echo "the failure names the oldest commit"
+  exit=1
+  sign 3 commits on main from 313671311f1d to 5d5117ba09ac? [y/N] failed: 7efb546abc5d: signature from key 0123456789ABCDEF0123456789ABCDEF01234567 is not in KEYS main
+  state        failed
+  failure      7efb546abc5d: signature from key 0123456789ABCDEF0123456789ABCDEF01234567 is not in KEYS
+  the failure names the oldest commit
+
+## queue-signs-whole-ranges#a-range-request-goes-stale-when-its-range-changes/head-moves-between-queue-and-sign
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< jj new main -m 'feat: three' >/dev/null 2>&1 && jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1
+< rune sign show main | grep '^state'
+< rune sign next 2>&1 </dev/null; echo "exit=$?"
+< sigs 'change/base..main'
+  state        stale
+  skipped: stale main
+  exit=1
+  unsigned feat: top
+  unsigned feat: one
+  unsigned feat: two
+  unsigned feat: three
+
+## queue-signs-whole-ranges#a-range-request-goes-stale-when-its-range-changes/protected-branch-moves-on-the-remote
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< stack() { jj new change/top -m 'feat: one' >/dev/null 2>&1 && printf 'one\n' > one.txt; jj new -m 'feat: two' >/dev/null 2>&1 && printf 'two\n' > two.txt; jj bookmark set main -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1; printf 'checked %s\nexit=0\n' "$(id main)" > "$PROOF_HOME/main.log"; }
+< stack
+< rune sign queue main --range --receipt "$PROOF_HOME/main.log" >/dev/null
+< git push --quiet origin "$(id change/top):refs/heads/elsewhere" >/dev/null 2>&1
+< git --git-dir="$PROOF_HOME/origin.git" update-ref refs/heads/main "$(id change/top)"
+< printf 'y\n' > "$PROOF_HOME/tty"
+< RUNE_SIGN_TTY="$PROOF_HOME/tty" rune sign next 2>&1 </dev/null; echo "exit=$?"
+< rune sign show main | grep '^state'
+< sigs 'change/base..main'
+  stale: refs/remotes/origin/main moved to 14e2720e3cab since the request: rebase and queue again main
+  exit=1
+  state        stale
+  unsigned feat: top
+  unsigned feat: one
+  unsigned feat: two
+
+## queue-signs-whole-ranges#the-signer-names-each-commit-through-the-commit-id-function/bookmark-named-after-the-commit-id
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< fresh other
+< top=$(id change/top)
+< printf 'checked %s\nexit=0\n' "$top" > "$PROOF_HOME/top.log"
+< rune sign queue change/top --receipt "$PROOF_HOME/top.log" >/dev/null
+< jj bookmark create "$top" -r change/other >/dev/null 2>&1
+< jj log --no-graph -r "bookmarks(exact:\"$top\")" -T '"the bookmark named after the head points at: " ++ description.first_line() ++ "\n"' 2>/dev/null
+< rune sign next 2>&1 </dev/null; echo "exit=$?"
+< sigs 'change/top | change/other'
+  the bookmark named after the head points at: feat: other
+  signed change/top ac9632a60ceafd47a66fbf4e858428c2320f0823
+     publish with: jj git push --remote origin --bookmark change/top
+  exit=0
+  unsigned feat: other
+  signed feat: top
+
+## queue-signs-whole-ranges#the-signer-refuses-while-an-alias-redefines-the-commit-id-function/alias-redefines-the-commit-id-function
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< printf 'checked %s\nexit=0\n' "$(id change/top)" > "$PROOF_HOME/top.log"
+< rune sign queue change/top --receipt "$PROOF_HOME/top.log" >/dev/null
+< printf '[revset-aliases]\n"commit_id(x)" = "all()"\n' >> .jjconfig.toml
+< rune sign next 2>&1 </dev/null; echo "exit=$?"
+< sigs 'change/top'
+  failed: the jj config /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.tkSPAELM3R/repo/.jjconfig.toml defines revset alias revset-aliases."commit_id(x)", which redefines commit_id(): unset it before signing change/top
+  exit=1
+  unsigned feat: top
+
+## queue-signs-whole-ranges#a-signed-request-whose-head-moved-says-so/signed-request-moves-on
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< printf 'checked %s\nexit=0\n' "$(id change/top)" > "$PROOF_HOME/top.log"
+< rune sign queue change/top --receipt "$PROOF_HOME/top.log" >/dev/null
+< rune sign next >/dev/null 2>&1 </dev/null
+< jj new change/top -m 'feat: later' >/dev/null 2>&1 && jj bookmark set change/top -r @ >/dev/null 2>&1 && jj new >/dev/null 2>&1
+< rune sign queue | awk '{ print $1, $3 }'
+< rune sign all 2>&1 </dev/null; echo "exit=$?"
+< rune sign queue --prune
+  moved change/top
+  skipped: moved: signed at a67bc6bb5d8e, the bookmark moved since change/top
+  prune signed requests whose bookmark moved with `rune sign queue --prune`
+  exit=0
+  pruned 0eefaa80ef477f8e change/top (moved)
+
+## queue-signs-whole-ranges#the-queue-keeps-its-own-copy-of-the-receipt/receipt-file-deleted-after-queueing
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< printf 'checked %s\nexit=0\n' "$(id change/top)" > "$PROOF_HOME/top.log"
+< rune sign queue change/top --receipt "$PROOF_HOME/top.log" >/dev/null
+< rm "$PROOF_HOME/top.log"
+< test ! -e "$PROOF_HOME/top.log" && echo "the receipt file is gone"
+< rune sign show change/top | grep -E '^(state|receipt|kept|exit) '
+< rune sign next 2>&1 </dev/null; echo "exit=$?"
+< sigs 'change/top'
+< rune sign queue --prune >/dev/null
+< ls "$RUNE_STATE_DIR/sign-queue/receipts" | wc -l | tr -d ' '
+  the receipt file is gone
+  state        current
+  receipt      /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.i9Or0r3LaU/top.log
+  kept         /var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.i9Or0r3LaU/state/sign-queue/receipts/4bd8f6f3326e40f9.log
+  exit         exit=0
+  signed change/top 359315464eef88621a1545dd3ab436d62d0aa9a4
+     publish with: jj git push --remote origin --bookmark change/top
+  exit=0
+  signed feat: top
+  0
+
+## queue-signs-whole-ranges#the-queue-keeps-its-own-copy-of-the-receipt/receipt-file-edited-after-queueing
+kind: check
+$ bash -s
+< export KEYS_FILE="$RUNE_PROOF_ROOT/KEYS" RUNE=rune
+< . "$RUNE_PROOF_ROOT/docs/proofs/signing-fixture.sh" 2>/dev/null
+< id() { jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; }
+< sigs() { jj log --no-graph --reversed -r "$1" -T 'if(signature, "signed", "unsigned") ++ " " ++ description.first_line() ++ "\n"' 2>/dev/null; }
+< printf 'checked %s\nexit=0\n' "$(id change/top)" > "$PROOF_HOME/top.log"
+< rune sign queue change/top --receipt "$PROOF_HOME/top.log" >/dev/null
+< printf 'checked %s\nexit=1\n' "$(id change/top)" > "$PROOF_HOME/top.log"
+< rune sign next 2>&1 </dev/null; echo "exit=$?"
+< rune sign show change/top | grep -E '^(state|failure) '
+< sigs 'change/top'
+  failed: receipt /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.6BsSK0Dfh6/top.log changed since the request was queued change/top
+  exit=1
+  state        failed
+  failure      receipt /private/var/folders/mj/33qc2qzj3bv1nbphfn99f7k00000gn/T/tmp.6BsSK0Dfh6/top.log changed since the request was queued
+  unsigned feat: top
+
