@@ -63,6 +63,7 @@
     ask         <QUESTIONS> [TEXT|--file <FILE>|--state-file <JSON>]  Ask a judging model a question set about a text
     queue       post <TOOL> --session <ID> [MESSAGE] | read | list    Post and read messages between sessions
     session     capture --harness <NAME> | sweep | debt               Copy harness sessions into the data folder, list capture debt
+    interface   list | status <NAME> | enable <NAME> --dry-run        List interfaces, and show what enable would write
     completion  install [SHELL] | print <SHELL>                       Shell completions (bash|zsh|fish|nushell)
 
   Quick start:

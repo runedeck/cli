@@ -772,7 +772,10 @@ fn apply_profile_model(
     }))
 }
 
-fn resolve_model(alias: &str, launch: &Launch) -> Result<(LaunchModel, ModelSource), String> {
+pub(crate) fn resolve_model(
+    alias: &str,
+    launch: &Launch,
+) -> Result<(LaunchModel, ModelSource), String> {
     if let Some(model) = launch.models.get(alias) {
         return Ok((model.clone(), ModelSource::Config));
     }

@@ -30,6 +30,7 @@ mod graph;
 mod hook;
 mod init;
 pub(crate) mod install;
+mod interface;
 mod launch;
 mod ontology;
 mod output;
@@ -917,6 +918,15 @@ enum Command {
     Session {
         #[command(subcommand)]
         action: session::SessionAction,
+    },
+
+    /// List the interfaces that start harness sessions, and show what rune would install into one
+    #[command(
+        after_help = "EXAMPLES:\n  rune interface list\n  rune interface status t3code\n  rune interface enable t3code --dry-run --json\n\nINTERFACES:\n  t3code reads T3 Code's settings file, userdata/settings.json under\n  T3CODE_HOME or ~/.t3.\n\nPLAN:\n  The dry run names the launch profiles T3 Code can carry, the provider\n  instance of each, the settings keys rune would own, and what T3 Code\n  cannot represent. A profile without environment values adds its model to\n  the native instance. A profile with environment values gets an instance\n  beside it. The plan reads profile data only: it resolves no secret, runs\n  no middleware, and shows a value only for the base URL.\n\nThis release writes nothing: `enable` without --dry-run refuses."
+    )]
+    Interface {
+        #[command(subcommand)]
+        action: Option<interface::InterfaceAction>,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -2533,6 +2543,9 @@ pub fn run() -> i32 {
         }
         Command::Queue { action } => return run_queue(action, args.json),
         Command::Session { action } => return session::run(action, args.json),
+        Command::Interface { action } => {
+            return exit_code(interface::execute(action, args.json), args.json);
+        }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -3266,6 +3279,12 @@ fn plumbing_help(help: &mut String) {
         "session",
         "capture --harness <NAME> | sweep | debt",
         "Copy harness sessions into the data folder, list capture debt",
+    );
+    help_command(
+        help,
+        "interface",
+        "list | status <NAME> | enable <NAME> --dry-run",
+        "List interfaces, and show what enable would write",
     );
     help_command(
         help,

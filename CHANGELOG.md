@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Record capture debt only for a session file that exists and failed to copy, close it on a later success or a complete copy into `capture-debt/closed/`, and report the open count in `rune doctor`.
 - Skip a session whose working folder matches `capture.exclude.paths` or whose id is in `capture.exclude.sessions`, without debt.
 - Start `rune session capture` detached from the `session-capture` hook handler, and capture after `rune run` and `rune launch` exit without changing their exit status. A clean run is not captured.
+- Add `rune interface list` and `rune interface status t3code`, which read T3 Code's settings file and print its provider instances beside the models the launch profiles would own.
+- Add `rune interface enable t3code --dry-run`: the profiles, the provider instance of each, the keys rune would own, and what T3 Code cannot represent. This release writes nothing.
 
 ### Changed
 

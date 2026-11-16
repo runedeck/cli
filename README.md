@@ -526,6 +526,16 @@ capture:
 
 A capture records debt only when a session file exists and its native copy fails, under `$RUNE_STATE_DIR/capture-debt/`. A later success, or a sweep that finds a complete copy, moves the record to `capture-debt/closed/` with the reason. `rune doctor` prints the open count and the oldest date. A skipped session, a readable copy that fails, or a session that never wrote a file records nothing.
 
+See what rune would install into an interface, a program that starts and watches harness sessions:
+
+```sh
+rune interface list                           # the known interfaces, and whether each is on this machine
+rune interface status t3code                  # T3 Code's provider instances, and what the profiles would own
+rune interface enable t3code --dry-run        # the plan, as text or with --json
+```
+
+This release reads T3 Code's settings file (`userdata/settings.json` under `T3CODE_HOME` or `~/.t3`) and never writes it. `rune interface enable t3code` without `--dry-run` refuses. The plan names each launch profile of `claude` and `codex`, the provider instance it goes to, the settings keys rune would own, and what T3 Code cannot represent. A profile without environment values adds its model to the native instance. A profile with a base URL or any other environment value gets an instance of its own beside the native one, and profiles with the same environment share it. The plan reads profile data only: it resolves no secret and runs no middleware. A `from_env` value shows as the name of its variable, and a literal shows only for the base URL. A profile with middleware, arguments, an unknown model route, or a tool that T3 Code has no driver for is rejected whole, with every reason.
+
 Run a helper script bundled with a skill:
 
 ```sh

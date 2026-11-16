@@ -62,6 +62,15 @@ artifact with its sidecars and records `transferredFrom: <artifact>@<commit>`.
 - `session debt`: the records of session files whose copy failed, open
   first. `doctor` prints their count.
 
+## Reaching interfaces
+
+- `interface list`: the programs that start harness sessions, and whether
+  each is on this machine. T3 Code is the first.
+- `interface status t3code`: the provider instances in T3 Code's settings
+  file, and the models that the launch profiles would own.
+- `interface enable t3code --dry-run`: the plan of an installation. This
+  release writes nothing, and `enable` without `--dry-run` refuses.
+
 ## Bringing content in
 
 - `import`: one-shot: fetch, align, write provenance sidecars, done.

@@ -1,9 +1,9 @@
 ## 0. Read-only slice for 0.7.0
 
-- [ ] 0.1 `rune interface list`, `status t3code`, and `enable t3code --dry-run`, with `--json`. `enable` without `--dry-run` refuses
-- [ ] 0.2 The planner: profile data only, the native instance for a profile without environment values, an instance beside it otherwise, and rejection of what T3 Code cannot carry
-- [ ] 0.3 Tests against fixture settings files: the bytes and the modification time do not change, and no secret value reaches any output
-- [ ] 0.4 Behavior proof under `docs/proofs/rune-installs-profiles-into-interfaces/`
+- [x] 0.1 `rune interface list`, `status t3code`, and `enable t3code --dry-run`, with `--json`. `enable` without `--dry-run` refuses
+- [x] 0.2 The planner: profile data only, the native instance for a profile without environment values, an instance beside it otherwise, and rejection of what T3 Code cannot carry
+- [x] 0.3 Tests against fixture settings files: the bytes and the modification time do not change, and no secret value reaches any output
+- [x] 0.4 Behavior proof under `docs/proofs/rune-installs-profiles-into-interfaces/`
 
 ## 1. Command and state record
 

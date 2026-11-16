@@ -54,6 +54,7 @@ const INHERITED: &[&str] = &[
     "SPECSTORY_BIN",
     "SQLITE3_BIN",
     "SESSION_SYNC_LOCK_WAIT",
+    "T3CODE_HOME",
     "RUNE_STATE_DIR",
     "RUNE_POLICY",
     "RUNE_POLICY_DISABLE",

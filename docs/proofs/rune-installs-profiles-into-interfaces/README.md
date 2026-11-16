@@ -1,0 +1,121 @@
+---
+type: proof
+change: rune-installs-profiles-into-interfaces
+recorded: 2026-11-16
+transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+scenes:
+- scenario: install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/dry-run-leaves-the-settings-file-as-it-was
+  kind: unproven
+- scenario: install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/installation-without-the-dry-run
+  kind: unproven
+- scenario: install-profiles-into-interfaces#a-proxy-backed-profile-gets-an-instance-beside-the-native-one/profile-with-a-base-url
+  kind: unproven
+- scenario: install-profiles-into-interfaces#the-planner-rejects-what-the-interface-cannot-carry/profile-with-middleware
+  kind: unproven
+---
+
+# Proof: rune-installs-profiles-into-interfaces
+
+Four scenes for the read-only slice: list, status, and the dry run with the unchanged settings file, the refused write, the instance beside the native one, and a rejected profile. The scenes run the real `rune interface`. The other scenarios of the change belong to later releases and have no scene.
+
+A fixture stands in for the T3 Code settings file, because the owner's file holds private provider settings. Every scene gives rune a HOME of its own, `home`, and copies two fixtures into it: the launch profiles of `tests/fixtures/interface/rune-config.yaml`, and the settings of `tests/fixtures/interface/t3code/settings.json`. The settings fixture holds a sensitive variable with a value, and the profile fixture holds a literal that is not a base URL. The first scene shows that neither value reaches the output, and that the file keeps its bytes and its modification time.
+
+## install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/dry-run-leaves-the-settings-file-as-it-was
+
+```console
+$ sh -s
+< mkdir -p home/.config/rune home/.t3/userdata
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/rune-config.yaml" home/.config/rune/config.yaml
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/t3code/settings.json" home/.t3/userdata/settings.json
+< touch -t 202601010000 home/.t3/userdata/settings.json
+< python3 -c 'import hashlib, os; p = "home/.t3/userdata/settings.json"; print(hashlib.sha256(open(p, "rb").read()).hexdigest(), os.stat(p).st_mtime_ns)' > before
+$ HOME=home XDG_CONFIG_HOME=home/.config rune interface list
+t3code  present  home/.t3/userdata/settings.json
+$ HOME=home XDG_CONFIG_HOME=home/.config rune interface status t3code
+t3code  present  home/.t3/userdata/settings.json
+instance claudeAgent  driver claudeAgent  enabled
+  model  owner-model
+  model  gpt-5.6-sol  "Sol"
+  env    OWNER_VARIABLE  (sensitive)
+instance codex  driver codex  enabled
+instance cursor  driver cursor  disabled
+rune profiles
+  grok@claude -> claudeAgent  grok-4.6  model not installed
+  hub@claude -> rune_claude_hub  lumo-max  instance not installed
+  sol@claude -> claudeAgent  gpt-5.6-sol  installed
+  wrapped@codex  cannot be installed
+$ HOME=home XDG_CONFIG_HOME=home/.config rune interface enable t3code --dry-run
+dry run: rune writes nothing
+settings  home/.t3/userdata/settings.json (present)
+profiles
+  grok@claude -> claudeAgent  grok-4.6
+  hub@claude -> rune_claude_hub  lumo-max
+  sol@claude -> claudeAgent  gpt-5.6-sol
+instances
+  claudeAgent  driver claudeAgent  native, in the settings file
+    model  grok-4.6  "grok"  add
+    model  gpt-5.6-sol  "sol"  in the list
+    owns   providerInstances.claudeAgent.config.customModels[slug=grok-4.6]
+  rune_claude_hub  driver claudeAgent  new, beside the native instance
+    name   claude through rune (hub)
+    env    ANTHROPIC_AUTH_TOKEN  from_env HUB_KEY  (a secret: enter its value in T3 Code)
+    env    ANTHROPIC_BASE_URL = http://127.0.0.1:8317
+    env    EXTRA_HEADER  (a literal, not shown)
+    model  lumo-max  "hub"  add
+    owns   providerInstances.rune_claude_hub
+rejected
+  wrapped@codex
+    with: the middleware (otel) runs in rune's launcher, and T3 Code starts the harness itself
+cannot represent
+  grok@claude  launch.models.grok: rune sets the context window and the compact threshold of a Claude route through the environment at launch, and a T3 Code custom model carries a slug and a name only
+  hub@claude  launch.models.lumo: rune sets the context window and the compact threshold of a Claude route through the environment at launch, and a T3 Code custom model carries a slug and a name only
+  sol@claude  launch.models.sol: rune sets the context window and the compact threshold of a Claude route through the environment at launch, and a T3 Code custom model carries a slug and a name only
+$ sh -s
+< python3 -c 'import hashlib, os; p = "home/.t3/userdata/settings.json"; print(hashlib.sha256(open(p, "rb").read()).hexdigest(), os.stat(p).st_mtime_ns)' > after
+< cmp before after && echo "the settings file has the same bytes and the same modification time"
+< ls home/.t3/userdata
+the settings file has the same bytes and the same modification time
+settings.json
+```
+
+## install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/installation-without-the-dry-run
+
+```console
+$ sh -s
+< mkdir -p home/.config/rune home/.t3/userdata
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/rune-config.yaml" home/.config/rune/config.yaml
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/t3code/settings.json" home/.t3/userdata/settings.json
+$ HOME=home XDG_CONFIG_HOME=home/.config rune interface enable t3code
+? 2
+[..]writing the T3 Code settings file is not in this release: run `rune interface enable t3code --dry-run` to see what rune would write
+$ sh -c 'cmp "$RUNE_PROOF_ROOT/tests/fixtures/interface/t3code/settings.json" home/.t3/userdata/settings.json && echo "the settings file is as it was"'
+the settings file is as it was
+```
+
+## install-profiles-into-interfaces#a-proxy-backed-profile-gets-an-instance-beside-the-native-one/profile-with-a-base-url
+
+```console
+$ sh -s
+< mkdir -p home/.config/rune home/.t3/userdata
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/rune-config.yaml" home/.config/rune/config.yaml
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/t3code/settings.json" home/.t3/userdata/settings.json
+$ sh -c 'HOME=home XDG_CONFIG_HOME=home/.config rune --json interface enable t3code --dry-run | jq -c ".instances[] | {id, native, exists, environment: [.environment[].name], owned_keys}"'
+{"id":"claudeAgent","native":true,"exists":true,"environment":[],"owned_keys":["providerInstances.claudeAgent.config.customModels[slug=grok-4.6]"]}
+{"id":"rune_claude_hub","native":false,"exists":false,"environment":["ANTHROPIC_AUTH_TOKEN","ANTHROPIC_BASE_URL","EXTRA_HEADER"],"owned_keys":["providerInstances.rune_claude_hub"]}
+$ sh -c 'HOME=home XDG_CONFIG_HOME=home/.config rune --json interface enable t3code --dry-run | jq -c ".instances[1].environment[]"'
+{"from_env":"HUB_KEY","name":"ANTHROPIC_AUTH_TOKEN","sensitive":true,"source":"from_env"}
+{"name":"ANTHROPIC_BASE_URL","sensitive":false,"source":"literal","value":"http://127.0.0.1:8317"}
+{"name":"EXTRA_HEADER","sensitive":false,"source":"literal"}
+```
+
+## install-profiles-into-interfaces#the-planner-rejects-what-the-interface-cannot-carry/profile-with-middleware
+
+```console
+$ sh -s
+< mkdir -p home/.config/rune home/.t3/userdata
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/rune-config.yaml" home/.config/rune/config.yaml
+< cp "$RUNE_PROOF_ROOT/tests/fixtures/interface/t3code/settings.json" home/.t3/userdata/settings.json
+$ sh -c 'HOME=home XDG_CONFIG_HOME=home/.config rune --json interface enable t3code --dry-run | jq -c ".rejected[], [.profiles[].profile]"'
+{"profile":"wrapped@codex","reasons":["with: the middleware (otel) runs in rune's launcher, and T3 Code starts the harness itself"]}
+["grok@claude","hub@claude","sol@claude"]
+```
