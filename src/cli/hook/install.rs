@@ -338,8 +338,7 @@ fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str
     let name = |word: &String| {
         Path::new(word)
             .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .map_or_default(|n| n.to_string_lossy().into_owned())
     };
     let program = name(words.first()?);
     let second = words.get(1).map(String::as_str);
@@ -872,7 +871,7 @@ fn prepare_in(
             let adapters = if flat {
                 Vec::new()
             } else {
-                events.get(name).map(adapters_of).unwrap_or_default()
+                events.get(name).map_or_default(adapters_of)
             };
             let mut event = Event {
                 harness,
@@ -978,9 +977,7 @@ fn prepare_in(
             }
         }
         for (name, trust, slot) in &untrusted {
-            let at = slot
-                .map(|s| format!(" at {}", slot_word(s)))
-                .unwrap_or_default();
+            let at = slot.map_or_default(|s| format!(" at {}", slot_word(s)));
             report.trust.push(format!(
                 "{harness}: the rune entry for {name}{at} is {}: run `/hooks` in {harness} and trust it there, then run `rune hook install`; the entries it replaces stay until then",
                 trust.word()
@@ -1795,7 +1792,7 @@ fn legacy_codex_toml(
     report: &mut Report,
 ) {
     for hook in hooks {
-        let adapters = events.get(&hook.event).map(adapters_of).unwrap_or_default();
+        let adapters = events.get(&hook.event).map_or_default(adapters_of);
         let (by, alone) = match predecessor(&hook.command, &adapters) {
             Some(Predecessor::Alone(by)) => (by, true),
             Some(Predecessor::Compound(by)) => (by, false),
@@ -1806,7 +1803,7 @@ fn legacy_codex_toml(
         } else {
             format!("runs {by} with other commands; split it in config.toml")
         };
-        let at = hook.line.map(|line| format!(":{line}")).unwrap_or_default();
+        let at = hook.line.map_or_default(|line| format!(":{line}"));
         report.legacy_toml.push(format!(
             "{}{at}: `{}` {what} by hand, rune does not rewrite that file",
             path.display(),
@@ -2328,15 +2325,12 @@ mod tests {
 
     /// The commands of one Cursor event, in table order.
     fn cursor_commands(table: &Value, event: &str) -> Vec<String> {
-        table["hooks"][event]
-            .as_array()
-            .map(|entries| {
-                entries
-                    .iter()
-                    .map(|e| e["command"].as_str().unwrap().to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
+        table["hooks"][event].as_array().map_or_default(|entries| {
+            entries
+                .iter()
+                .map(|e| e["command"].as_str().unwrap().to_string())
+                .collect()
+        })
     }
 
     #[test]
@@ -2934,16 +2928,13 @@ mod tests {
         .unwrap();
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let commands = |event: &str| -> Vec<String> {
-            table["hooks"][event]
-                .as_array()
-                .map(|groups| {
-                    groups
-                        .iter()
-                        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                        .map(|h| h["command"].as_str().unwrap().to_string())
-                        .collect()
-                })
-                .unwrap_or_default()
+            table["hooks"][event].as_array().map_or_default(|groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_string())
+                    .collect()
+            })
         };
         assert_eq!(
             commands("Stop"),
@@ -3323,16 +3314,13 @@ mod tests {
         .unwrap();
         let commands = |path: &Path, event: &str| -> Vec<String> {
             let table: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-            table["hooks"][event]
-                .as_array()
-                .map(|groups| {
-                    groups
-                        .iter()
-                        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                        .map(|h| h["command"].as_str().unwrap().to_string())
-                        .collect()
-                })
-                .unwrap_or_default()
+            table["hooks"][event].as_array().map_or_default(|groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_string())
+                    .collect()
+            })
         };
         assert!(
             !commands(&claude, "PreToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()),
@@ -4290,16 +4278,13 @@ mod tests {
             .find(|staged| staged.target.ends_with(file))
             .unwrap_or_else(|| panic!("{file} is staged: {:?}", prepared.files));
         let table: Value = serde_json::from_str(&staged.text).unwrap();
-        table["hooks"][event]
-            .as_array()
-            .map(|groups| {
-                groups
-                    .iter()
-                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                    .map(|h| h["command"].as_str().unwrap().to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
+        table["hooks"][event].as_array().map_or_default(|groups| {
+            groups
+                .iter()
+                .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                .map(|h| h["command"].as_str().unwrap().to_string())
+                .collect()
+        })
     }
 
     #[test]

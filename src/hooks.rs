@@ -1849,8 +1849,7 @@ handlers:
         let plan = hooks.compile_with(&switches).expect("compiles");
         let ids = |harness: Harness, event: &str| -> Vec<String> {
             plan.event(harness, event)
-                .map(|e| e.handlers.iter().map(|h| h.id.clone()).collect())
-                .unwrap_or_default()
+                .map_or_default(|e| e.handlers.iter().map(|h| h.id.clone()).collect())
         };
         assert_eq!(ids(Harness::Cursor, "stop"), ["cap"]);
         assert_eq!(

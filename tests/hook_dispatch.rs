@@ -140,8 +140,7 @@ fn plan_of(command: &str) -> String {
 /// The plan generations under a state directory, sorted.
 fn generations(state: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(state.join("hooks/plans"))
-        .map(|entries| entries.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
+        .map_or_default(|entries| entries.flatten().map(|e| e.path()).collect());
     found.sort();
     found
 }
@@ -1896,13 +1895,12 @@ fn planned_handlers(entry: &str, harness: &str, native: &str) -> Vec<String> {
     let plan = json_at(Path::new(&plan_of(entry)));
     plan["harnesses"][harness][native]["handlers"]
         .as_array()
-        .map(|handlers| {
+        .map_or_default(|handlers| {
             handlers
                 .iter()
                 .map(|h| h["id"].as_str().unwrap().to_string())
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 #[test]
@@ -2015,13 +2013,12 @@ fn a_listing_that_writes_compiles_under_the_install_s_lock() {
         let plan = json_at(&scene.state().join("hooks/plan.json"));
         plan["harnesses"]["cursor"]["preToolUse"]["handlers"]
             .as_array()
-            .map(|handlers| {
+            .map_or_default(|handlers| {
                 handlers
                     .iter()
                     .map(|h| h["id"].as_str().unwrap().to_string())
                     .collect()
             })
-            .unwrap_or_default()
     };
     scene.write_plan();
     assert_eq!(written(&scene), ["b"]);

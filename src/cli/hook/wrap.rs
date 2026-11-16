@@ -184,7 +184,7 @@ fn alone(root: &Path, key: &str) -> bool {
     let Ok(slot) = read_slot(&dir.join(SLOT)) else {
         return false;
     };
-    let mut keys = slot.map(|slot| slot.keys).unwrap_or_default();
+    let mut keys = slot.map_or_default(|slot| slot.keys);
     if let Ok(markers) = fs::read_dir(dir.join(TOUCHED)) {
         keys.extend(
             markers

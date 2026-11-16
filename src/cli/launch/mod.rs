@@ -682,8 +682,7 @@ fn profile_names(tool: &str, launch: &Launch) -> Vec<String> {
     let mut profiles: Vec<String> = launch
         .profiles
         .get(tool)
-        .map(|profiles| profiles.keys().cloned().collect())
-        .unwrap_or_default();
+        .map_or_default(|profiles| profiles.keys().cloned().collect());
     profiles.extend(
         BUILT_IN_PROFILES
             .iter()

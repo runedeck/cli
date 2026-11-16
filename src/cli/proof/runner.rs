@@ -189,9 +189,7 @@ fn marker(capture_dir: &Path) -> PathBuf {
 /// line, in a file nobody else made.
 fn write_marker(capture_dir: &Path) -> Result<(), String> {
     use std::io::Write as _;
-    let home = dirs::home_dir()
-        .map(|home| home.display().to_string())
-        .unwrap_or_default();
+    let home = dirs::home_dir().map_or_default(|home| home.display().to_string());
     File::options()
         .write(true)
         .create_new(true)
@@ -314,8 +312,7 @@ fn execute(
     let mut path = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .map(|dir| dir.as_os_str().to_os_string())
-        .unwrap_or_default();
+        .map_or_default(|dir| dir.as_os_str().to_os_string());
     if let Some(existing) = std::env::var_os("PATH") {
         if !path.is_empty() {
             path.push(":");

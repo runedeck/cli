@@ -125,9 +125,9 @@ fn load_selections(root: &Path) -> Result<Vec<SelectionBrief>, Error> {
         selections.push(SelectionBrief {
             source: label.clone(),
             origin: describe_source(source),
-            casts: runes.map(|entry| entry.casts.clone()).unwrap_or_default(),
-            include: runes.map(|entry| entry.include.clone()).unwrap_or_default(),
-            exclude: runes.map(|entry| entry.exclude.clone()).unwrap_or_default(),
+            casts: runes.map_or_default(|entry| entry.casts.clone()),
+            include: runes.map_or_default(|entry| entry.include.clone()),
+            exclude: runes.map_or_default(|entry| entry.exclude.clone()),
         });
     }
     Ok(selections)

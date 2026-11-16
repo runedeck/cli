@@ -414,8 +414,7 @@ pub(crate) fn switch(name: &str, values: &[String], on: bool, json: bool) -> Res
     let off: Vec<&str> = switches
         .off
         .get(name)
-        .map(|set| set.iter().map(|h| h.as_str()).collect())
-        .unwrap_or_default();
+        .map_or_default(|set| set.iter().map(|h| h.as_str()).collect());
     let names: Vec<&str> = chosen.iter().map(|h| h.as_str()).collect();
     let state = if on { "on" } else { "off" };
     let message = format!("{name} {state} on {}", names.join(", "));

@@ -298,9 +298,7 @@ pub fn load_settings_filenames(module_root: &Path) -> Vec<String> {
         }
     };
     if from_module.is_empty() {
-        SourceConfig::installed_defaults()
-            .map(|config| config.dashboard.settings_files)
-            .unwrap_or_default()
+        SourceConfig::installed_defaults().map_or_default(|config| config.dashboard.settings_files)
     } else {
         from_module
     }
@@ -320,13 +318,7 @@ pub(crate) fn source_adr_prefixes(config: &str) -> Option<String> {
 
 pub(crate) fn source_validate_excludes(config: &str) -> Vec<String> {
     source::validate(config)
-        .map(|config| {
-            config
-                .exclude
-                .map(|exclude| exclude.items())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
+        .map_or_default(|config| config.exclude.map_or_default(|exclude| exclude.items()))
 }
 
 /// Load remap-tools.yaml from the module, falling back to embedded defaults.

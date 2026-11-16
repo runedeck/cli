@@ -132,10 +132,7 @@ fn free_name(directory: &Path, name: &Path) -> PathBuf {
     if std::fs::symlink_metadata(&first).is_err() {
         return first;
     }
-    let stem = name
-        .file_stem()
-        .map(OsStr::to_os_string)
-        .unwrap_or_default();
+    let stem = name.file_stem().map_or_default(OsStr::to_os_string);
     let mut index = 1_u32;
     loop {
         let mut candidate = stem.clone();

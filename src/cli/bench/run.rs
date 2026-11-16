@@ -114,15 +114,12 @@ fn plan_for_model(
 
     for (test_index, test_case) in suite.tests.iter().enumerate() {
         let signature = compute_test_signature(&suite.system_prompt, test_case);
-        let candidates: Vec<&ReusableEntry> = reusable
-            .get(&signature)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter(|entry| entry.model == model_id)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let candidates: Vec<&ReusableEntry> = reusable.get(&signature).map_or_default(|entries| {
+            entries
+                .iter()
+                .filter(|entry| entry.model == model_id)
+                .collect()
+        });
         #[allow(clippy::cast_possible_truncation)]
         let reuse_for_test = (candidates.len() as u32).min(runs_wanted);
 

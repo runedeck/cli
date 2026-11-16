@@ -299,8 +299,7 @@ pub(crate) fn checkpoint_tools(dir: &Path, file: &Path) -> std::collections::BTr
     checkpoint
         .files
         .get(&key.display().to_string())
-        .map(|s| s.tools.keys().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|s| s.tools.keys().cloned().collect())
 }
 
 #[cfg(test)]

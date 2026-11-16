@@ -377,8 +377,7 @@ pub fn list_kind(
             .manifest
             .runes
             .get(&target.source_label)
-            .map(|entry| entry.include.iter().cloned().collect())
-            .unwrap_or_default(),
+            .map_or_default(|entry| entry.include.iter().cloned().collect()),
     };
 
     let sheet = crate::cli::style::Sheet::detect(no_color);

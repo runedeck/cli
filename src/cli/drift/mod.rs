@@ -663,8 +663,7 @@ fn collect_provenance_sidecars(
             };
             let stem = path
                 .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|stem| stem.to_string_lossy().into_owned());
             let local_md = parent.join(format!("{stem}.md"));
             let local_relative = local_md
                 .strip_prefix(base_directory)

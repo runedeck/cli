@@ -128,9 +128,7 @@ fn install_deck_source(
     source_path: Option<&str>,
     skills: &str,
 ) -> assert_cmd::assert::Assert {
-    let path_line = source_path
-        .map(|path| format!("    path: {path}\n"))
-        .unwrap_or_default();
+    let path_line = source_path.map_or_default(|path| format!("    path: {path}\n"));
     fs::write(
         consumer.join(".rune"),
         format!(

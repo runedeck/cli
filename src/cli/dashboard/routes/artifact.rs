@@ -151,8 +151,7 @@ fn primary_deployed_content(
         return String::new();
     };
     read_deployed_file(root, &provider_dir, &entry.deployed_path)
-        .map(|(_, content)| content)
-        .unwrap_or_default()
+        .map_or_default(|(_, content)| content)
 }
 
 pub(super) async fn companion_detail(
@@ -406,9 +405,7 @@ pub(super) async fn version_page(
     });
     let short: String = sha.chars().take(7).collect();
     let files = content.map_or_else(Vec::new, |body| {
-        let path = located
-            .map(|(_, source_path)| source_path)
-            .unwrap_or_default();
+        let path = located.map_or_default(|(_, source_path)| source_path);
         vec![templates::ConfigFile {
             label: format!("{kind}/{name} @ {short}"),
             path,

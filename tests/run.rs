@@ -4287,14 +4287,12 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
 /// guard. None after a run means the run took its guard with it.
 fn guard_folders(home: &std::path::Path) -> Vec<String> {
     let config_root = home.join(".config/jj/workspaces");
-    let mut names: Vec<String> = std::fs::read_dir(config_root)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut names: Vec<String> = std::fs::read_dir(config_root).map_or_default(|entries| {
+        entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect()
+    });
     names.sort();
     names
 }

@@ -74,8 +74,7 @@ fn armed_root() -> tempfile::TempDir {
 fn keys(root: &Path) -> Vec<String> {
     read_slot(&root.join(".jj").join(SLOT))
         .unwrap()
-        .map(|slot| slot.keys.into_iter().collect())
-        .unwrap_or_default()
+        .map_or_default(|slot| slot.keys.into_iter().collect())
 }
 
 #[test]

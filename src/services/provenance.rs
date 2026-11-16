@@ -144,8 +144,7 @@ pub(super) fn parse_sidecar(
         .join("/");
     let deployed_path = provider_path.join(&deployed_rel);
     let deployed_sha = fs::read_to_string(&deployed_path)
-        .map(|content| manifest::content_sha256(&content))
-        .unwrap_or_default();
+        .map_or_default(|content| manifest::content_sha256(&content));
     let verified = !expected_sha.is_empty() && deployed_sha == expected_sha;
     let input_sha = recorded_input_sha(sidecar_content).unwrap_or_default();
     ProvenanceArtifact {

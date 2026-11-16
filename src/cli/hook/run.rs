@@ -61,8 +61,7 @@ pub fn run(harness: &str, native_event: &str, plan: Option<&Path>, on_failure: &
         .as_ref()
         .ok()
         .and_then(|path| cover::path_beside(path, harness, native_event))
-        .map(|path| cover::read(&path, harness, native_event))
-        .unwrap_or_default();
+        .map_or_default(|path| cover::read(&path, harness, native_event));
     let env = cover::Environment::from_process();
     // The owner's switches as they are now, beside the plan, anchored to
     // its canonical path. A registration an install could not replace,

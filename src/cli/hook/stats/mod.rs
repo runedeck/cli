@@ -63,8 +63,7 @@ fn rules_of(record: &Record) -> Vec<String> {
         .as_ref()
         .and_then(|m| m.get("rules"))
         .and_then(Value::as_object)
-        .map(|o| o.keys().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|o| o.keys().cloned().collect())
 }
 
 fn causes_of(record: &Record) -> BTreeSet<String> {
@@ -73,13 +72,12 @@ fn causes_of(record: &Record) -> BTreeSet<String> {
         .as_ref()
         .and_then(|m| m.get("cause"))
         .and_then(Value::as_array)
-        .map(|a| {
+        .map_or_default(|a| {
             a.iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 impl Filter {

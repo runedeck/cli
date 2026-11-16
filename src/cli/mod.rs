@@ -3324,14 +3324,13 @@ fn install_theme() {
     let selection = rune::ontology::load()
         .ok()
         .and_then(|config| config.theme)
-        .map(|config| theme::ThemeSelection {
+        .map_or_default(|config| theme::ThemeSelection {
             name: config.name,
             auto_switch: config.auto_switch,
             dark_name: config.dark_name,
             light_name: config.light_name,
             custom: config.custom,
-        })
-        .unwrap_or_default();
+        });
     let appearance = theme::appearance_from_colorfgbg(std::env::var("COLORFGBG").ok().as_deref());
     let (tones, warnings) = theme::resolve(&selection, appearance);
     let sheet = style::Sheet::detect_stderr(false);

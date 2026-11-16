@@ -431,8 +431,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         });
     let workspace_lines = finished
         .as_ref()
-        .map(|(workspace, outcome)| workspace_lines(workspace, outcome))
-        .unwrap_or_default();
+        .map_or_default(|(workspace, outcome)| workspace_lines(workspace, outcome));
     let mut outcome = match result {
         Err(message) => {
             configuration_with_workspace(options, message, workspace_json, &workspace_lines)

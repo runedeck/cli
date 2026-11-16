@@ -519,9 +519,7 @@ fn hook_line(entry: &std::fs::DirEntry) -> Option<String> {
     } else {
         "file"
     };
-    let target = std::fs::read_link(&path)
-        .map(|target| target.display().to_string())
-        .unwrap_or_default();
+    let target = std::fs::read_link(&path).map_or_default(|target| target.display().to_string());
     #[cfg(unix)]
     let mode = {
         use std::os::unix::fs::PermissionsExt;
@@ -531,9 +529,7 @@ fn hook_line(entry: &std::fs::DirEntry) -> Option<String> {
     let mode = u32::from(metadata.permissions().readonly());
     // The content of the file the entry resolves to: a dangling symlink or
     // a directory has none.
-    let content = std::fs::read(&path)
-        .map(|bytes| sha256_hex(&bytes))
-        .unwrap_or_default();
+    let content = std::fs::read(&path).map_or_default(|bytes| sha256_hex(&bytes));
     Some(format!(
         "hook:{}={kind}:{target}:{mode:o}:{content}",
         entry.file_name().to_string_lossy()
@@ -821,8 +817,7 @@ fn subfolder_of(repository: &Path, root: &Path) -> PathBuf {
     let canonical = std::fs::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
     canonical
         .strip_prefix(root)
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
+        .map_or_default(Path::to_path_buf)
 }
 
 /// Plan the workspace for one run: where it goes, what it is called, and

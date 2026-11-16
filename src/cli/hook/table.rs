@@ -87,8 +87,7 @@ impl Table {
         let raw_hooks = members.iter().find(|(key, _)| key == "hooks");
         let events = raw_hooks
             .and_then(|(_, raw)| serde_json::from_str::<Members>(raw.get()).ok())
-            .map(|m| m.0)
-            .unwrap_or_default();
+            .map_or_default(|m| m.0);
         let hooks = value
             .get("hooks")
             .and_then(Value::as_object)

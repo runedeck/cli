@@ -413,8 +413,7 @@ fn record_wiring(
         provider: file
             .parent()
             .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default(),
+            .map_or_default(|name| name.to_string_lossy().to_string()),
     });
 }
 

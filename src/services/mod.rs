@@ -139,7 +139,7 @@ pub fn build_view(
         let repo_vcs = cached.and_then(|(state, _)| state.as_ref());
         module.local_path = repo.cloned();
         module.vcs = repo_vcs.map(vcs::RepoVcs::module_state);
-        module.git_log = cached.map(|(_, log)| log.clone()).unwrap_or_default();
+        module.git_log = cached.map_or_default(|(_, log)| log.clone());
         let tint = module_index % 8;
         for artifact in &mut module.artifacts {
             artifact.module.clone_from(&module.name);
@@ -158,9 +158,9 @@ pub fn build_view(
             );
             artifact.broken_refs = broken;
             artifact.age_days = age;
-            artifact.variants = repo
-                .map(|repo| collect_variants(repo, &artifact.relative_path, &provider_names))
-                .unwrap_or_default();
+            artifact.variants = repo.map_or_default(|repo| {
+                collect_variants(repo, &artifact.relative_path, &provider_names)
+            });
         }
     }
 

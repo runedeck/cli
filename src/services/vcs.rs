@@ -103,8 +103,7 @@ pub(super) fn repo_vcs(module_dir: &Path) -> Option<RepoVcs> {
 /// then a branch pointing at HEAD, then the short sha.
 fn branch_label(dir: &Path, jj_colocated: bool) -> String {
     let named = git_stdout(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .map(|out| out.trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|out| out.trim().to_string());
     if !named.is_empty() && named != "HEAD" {
         return named;
     }
@@ -144,8 +143,7 @@ fn branch_label(dir: &Path, jj_colocated: bool) -> String {
         return pointing;
     }
     git_stdout(dir, &["rev-parse", "--short", "HEAD"])
-        .map(|out| format!("detached {}", out.trim()))
-        .unwrap_or_default()
+        .map_or_default(|out| format!("detached {}", out.trim()))
 }
 
 /// Most recent commits across the whole repo, for the repository detail view.

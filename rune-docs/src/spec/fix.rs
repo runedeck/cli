@@ -168,8 +168,7 @@ fn draft_terms(
     for draft in &mut output.drafts {
         draft.page = vocabulary
             .by_iri(&format!("{namespace}{}", draft.name))
-            .map(|term: &Term| vocabulary.page_name(term).to_string())
-            .unwrap_or_default();
+            .map_or_default(|term: &Term| vocabulary.page_name(term).to_string());
     }
     write_glossary_output(source, None)?;
     output.pages_written = true;

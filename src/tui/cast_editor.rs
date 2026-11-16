@@ -140,13 +140,12 @@ impl CastEditor {
                 .manifest
                 .as_ref()
                 .and_then(|manifest| manifest.runes.get(&source_label))
-                .map(|list| {
+                .map_or_default(|list| {
                     list.casts
                         .iter()
                         .map(String::as_str)
                         .collect::<BTreeSet<_>>()
-                })
-                .unwrap_or_default();
+                });
             for cast in deck
                 .casts()
                 .filter(|cast| active_casts.contains(cast.name.as_str()))

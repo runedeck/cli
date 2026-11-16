@@ -506,8 +506,7 @@ fn unknown_key_issue(
 ) -> ConfigIssue {
     let impact = unknown_key_impact(behavior);
     let suggestion = nearest_known_key(scope, &key)
-        .map(|known| format!("; nearest known key: '{known}'"))
-        .unwrap_or_default();
+        .map_or_default(|known| format!("; nearest known key: '{known}'"));
     let error = Error::config(format!(
         "{} contains the unknown key '{key}'{suggestion}",
         path.display()

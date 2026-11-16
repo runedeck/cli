@@ -763,8 +763,7 @@ pub fn reseal(root: &Path, artifact: Option<&str>) -> Result<i32, String> {
             .provenance
             .subject
             .first()
-            .map(|subject| subject.digest.sha256.as_str())
-            .unwrap_or_default();
+            .map_or_default(|subject| subject.digest.sha256.as_str());
         if digest != recorded {
             println!(
                 "resealing {} (content changed)",
