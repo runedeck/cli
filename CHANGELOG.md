@@ -35,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
 - Embed the skeleton at commit `d7c9bdf`, so `rune init` records that commit in `answers.yaml`. A new repository gets the secret declarations, the `trash` script, and the current ceremony rule set.
-- Spell the segment `gpt` of a model id as `GPT` in the identity that the hook writes for a model the roster does not list, as the skeleton's `author-identity.py` now does. A listed identity keeps its spelling.
+- Spell the id segment `gpt` as `GPT` in the identity the hook writes for a model the roster does not list, as the skeleton's `author-identity.py` does. A listed identity keeps its spelling.
 
 ### Removed
 
@@ -47,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Abandon the run workspace's initial working copy under jj 0.47, which names the caller's workspace on its creation. The run kept it and reported `outside_changes`.
 - Record a queued Codex message as `read` when the `postbox` hook sees its session's turn start with it, and list a message posted by name under the thread id Codex printed.
 - Warn before `rune queue post` looks a Codex session up by name, and add a `hint` with the UUID when Codex refuses the name and names the session it matched.
-- Keep the signing queue's own copy of each receipt under `sign-queue/receipts/`. A request whose receipt file is gone at the key, as a file in a cleared scratch folder is, signs from the copy. A receipt that changed is still refused.
+- Keep the signing queue's own copy of each receipt under `sign-queue/receipts/`, so a request signs after its receipt file is gone. A receipt that changed is still refused.
 - Take the release notes from the changelog section of the tag when no pull request merged since the last release. The notes said `No user-facing changes` for a release pushed straight to `main`.
 
 ## [0.6.0] - 2026-10-26
