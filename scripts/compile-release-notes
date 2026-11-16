@@ -26,7 +26,41 @@ fi
 
 mapfile -t merge_commits < <(git log --first-parent --merges --format='%H' "$merge_range")
 
+# The section of CHANGELOG.md, as the tagged commit has it, under the
+# heading `## [<version>]` of this tag: every line up to the next `## `
+# heading, without the blank lines around it. The heading must name the
+# whole version, so `## [0.7.0]` never answers for another tag.
+changelog_section() {
+    local heading="## [${tag_name#v}]"
+    git show "$current_commit:CHANGELOG.md" 2>/dev/null | awk -v heading="$heading" '
+        !in_section && index($0, heading) == 1 {
+            rest = substr($0, length(heading) + 1)
+            if (rest == "" || rest ~ /^[[:space:]]/) { in_section = 1 }
+            next
+        }
+        in_section && /^## / { exit }
+        in_section && !started && /^[[:space:]]*$/ { next }
+        in_section { started = 1; lines[++count] = $0 }
+        END {
+            while (count > 0 && lines[count] ~ /^[[:space:]]*$/) { count-- }
+            for (line = 1; line <= count; line++) { print lines[line] }
+        }
+    '
+}
+
 printf '# %s\n\n' "$tag_name"
+
+# A release whose commits were pushed straight to the protected branch has
+# no merged pull request, so no pull request body holds its notes. The
+# notes are then the changelog section of the tag, and no API call is made.
+if [ "${#merge_commits[@]}" -eq 0 ]; then
+    section=$(changelog_section)
+    if [ -n "$section" ]; then
+        printf '%s\n' "$section"
+        exit 0
+    fi
+fi
+
 found_release_note=false
 
 for merge_commit in "${merge_commits[@]}"; do
