@@ -164,12 +164,9 @@ pub fn capture(config: &Config, request: &Request) -> Result<Outcome, String> {
         close_matching(&store, request, &started_at, Closed::NoSessionFile, &log);
         return Ok(Outcome::NoSessionFile);
     }
-    let (kept, skipped): (Vec<SessionFile>, Vec<SessionFile>) =
-        selected.into_iter().partition(|file| {
-            !config
-                .exclude
-                .matches(file.session.as_deref(), file.cwd.as_deref())
-        });
+    let (kept, skipped): (Vec<SessionFile>, Vec<SessionFile>) = selected
+        .into_iter()
+        .partition(|file| !file.excluded(&config.exclude));
     let copied = copy_all(config, harness, &kept);
     drop(lock);
     log.note(&format!(

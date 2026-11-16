@@ -51,7 +51,7 @@ capture:
 
 ## Excluded sessions
 
-A session classified as work never reaches the data folder. The hook capture reads the working folder from the payload. The sweep reads it from the session file: Claude Code writes `cwd` on each line, and Codex writes it in the `session_meta` line. Rune reads the first 64 KiB of a file for a `cwd` field and matches the value against `capture.exclude.paths` after tilde expansion. A glob matches the folder itself and, with `/**`, everything under it. A session with no readable working folder is matched by id alone. A skipped session records no debt and leaves no log line beyond one `skipped` entry. A copy made before the owner excluded the session stays, because capture never deletes captured data.
+A session classified as work never reaches the data folder. The hook capture reads the working folder from the payload. The sweep reads it from the session file: Claude Code writes `cwd` on each line, and Codex writes it in the `session_meta` line. Rune reads the first 64 KiB of a file for a `cwd` field and matches the value against `capture.exclude.paths` after tilde expansion. A glob matches the folder itself and, with `/**`, everything under it. A compressed Codex file is decompressed in memory for the same 64 KiB, and a compressed file that Rune cannot read stays out while a path glob is set. A session with no readable working folder is matched by id alone. An excluded Antigravity conversation gets no native copy and no daily backup. A skipped session records no debt and leaves no log line beyond one `skipped` entry. A copy made before the owner excluded the session stays, because capture never deletes captured data.
 
 ## Data folder layout
 

@@ -201,6 +201,131 @@ fn a_session_the_config_excludes_is_skipped_without_debt() {
     assert_eq!(scene.debt_open(), 0);
 }
 
+/// Every file under `root`, as a path below it, sorted.
+#[cfg(unix)]
+fn files_under(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(relative) = path.strip_prefix(root) {
+                found.push(relative.to_string_lossy().into_owned());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A stand-in for `sqlite3 <db> ".backup '<file>'"` that copies the
+/// database, so the test needs no `sqlite3` on the host.
+#[cfg(unix)]
+fn fake_sqlite3(scene: &Scene) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = scene.home.join("fake-sqlite3");
+    std::fs::write(
+        &path,
+        "#!/bin/sh\ntarget=${2#.backup \\'}\ncp \"$1\" \"${target%\\'}\"\n",
+    )
+    .expect("fake sqlite3");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("permissions");
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn the_sweep_copies_no_file_of_an_excluded_session_and_backs_none_up() {
+    let scene = Scene::new();
+    scene.config(
+        "capture:\n  exclude:\n    paths: [\"~/work/**\"]\n    sessions: [private-session]\n",
+    );
+    let work = scene.home.join("work/app");
+    std::fs::create_dir_all(&work).unwrap();
+    let rollout = |cwd: &str| {
+        ruzstd::encoding::compress_to_vec(
+            format!("{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{cwd}\"}}}}\n").as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        )
+    };
+    let day = scene.home.join(".codex/sessions/2026/11/17");
+    std::fs::create_dir_all(&day).unwrap();
+    std::fs::write(
+        day.join("rollout-2026-11-17-11111111-2222-3333-4444-555555555555.jsonl.zst"),
+        rollout(&work.display().to_string()),
+    )
+    .unwrap();
+    std::fs::write(
+        day.join("rollout-2026-11-17-99999999-2222-3333-4444-555555555555.jsonl.zst"),
+        rollout("/tmp/own"),
+    )
+    .unwrap();
+    scene.write(
+        ".gemini/antigravity-cli/conversations/private-session.db",
+        "private",
+    );
+    scene.write(
+        ".gemini/antigravity-cli/conversations/own-session.db",
+        "own",
+    );
+
+    let output = scene
+        .rune()
+        .env("SQLITE3_BIN", fake_sqlite3(&scene))
+        .args(["--json", "session", "sweep"])
+        .output()
+        .expect("sweep");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let report = json_of(&output);
+    assert_eq!(report["harnesses"]["codex"]["files"], 1, "{report}");
+    assert_eq!(report["harnesses"]["codex"]["skipped"], 1, "{report}");
+    assert_eq!(report["harnesses"]["antigravity"]["files"], 1, "{report}");
+    assert_eq!(report["harnesses"]["antigravity"]["skipped"], 1, "{report}");
+    assert_eq!(report["backups"], 1, "{report}");
+    assert!(report.get("backup_error").is_none(), "{report}");
+
+    let day_folder = format!(
+        "SessionVersions/antigravity/{}-daily",
+        backup_day(&scene.data)
+    );
+    assert_eq!(
+        files_under(&scene.data),
+        [
+            format!("{day_folder}/own-session.db"),
+            "Sessions/antigravity/own-session.db".to_string(),
+            "Sessions/codex/2026/11/17/rollout-2026-11-17-99999999-2222-3333-4444-555555555555.jsonl.zst"
+                .to_string(),
+        ],
+        "the data folder holds the sessions that are not excluded, and no other file"
+    );
+    assert_eq!(scene.debt_open(), 0);
+}
+
+/// The day in the name of the one daily backup folder of Antigravity.
+#[cfg(unix)]
+fn backup_day(data: &Path) -> String {
+    let versions = data.join("SessionVersions/antigravity");
+    let mut days: Vec<String> = std::fs::read_dir(&versions)
+        .expect("the backup folder")
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .strip_suffix("-daily")
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(days.len(), 1, "one day folder under {}", versions.display());
+    days.remove(0)
+}
+
 #[test]
 fn a_failed_copy_exits_one_and_records_debt_that_debt_lists() {
     let scene = Scene::new();

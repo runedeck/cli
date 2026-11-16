@@ -13,6 +13,8 @@ pub struct Report {
     pub backed_up: usize,
     /// The databases that already had today's backup or did not change.
     pub current: usize,
+    /// The databases of excluded sessions, left without a backup.
+    pub skipped: usize,
     /// `sqlite3` was not found; nothing was backed up.
     pub tool_missing: bool,
     /// The first failure, when one database could not be backed up.
@@ -26,8 +28,16 @@ pub fn day_dir(versions: &Path, day: &str) -> PathBuf {
 }
 
 /// Back up every `*.db` directly under `conversations` into the day's
-/// folder, at most once per database per day.
-pub fn daily(conversations: &Path, versions: &Path, day: &str, sqlite3: &Path) -> Report {
+/// folder, at most once per database per day. `excluded` gets the
+/// conversation id of each database. A database it names gets no backup,
+/// as it gets no native copy.
+pub fn daily(
+    conversations: &Path,
+    versions: &Path,
+    day: &str,
+    sqlite3: &Path,
+    excluded: &dyn Fn(&str) -> bool,
+) -> Report {
     let mut report = Report::default();
     let Ok(entries) = std::fs::read_dir(conversations) else {
         return report;
@@ -46,6 +56,10 @@ pub fn daily(conversations: &Path, versions: &Path, day: &str, sqlite3: &Path) -
         let Some(name) = database.file_name() else {
             continue;
         };
+        if super::source::antigravity_session(&name.to_string_lossy()).is_some_and(excluded) {
+            report.skipped += 1;
+            continue;
+        }
         let target = today.join(name);
         if target.exists() || !changed_since_last_backup(&database, versions, name) {
             report.current += 1;

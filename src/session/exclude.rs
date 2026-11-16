@@ -111,14 +111,53 @@ fn canonical_glob(glob: &str) -> String {
 
 /// The working folder a session file records: the first `cwd` member in
 /// its first 64 KiB. Claude Code writes one on every line and Codex in
-/// its `session_meta` line.
+/// its `session_meta` line. A compressed file goes through
+/// [`cwd_in_compressed_file`].
 #[must_use]
 pub fn cwd_in_file(path: &Path) -> Option<PathBuf> {
-    use std::io::Read as _;
     let file = std::fs::File::open(path).ok()?;
-    let mut text = String::new();
-    let _ = file.take(SCAN_BYTES).read_to_string(&mut text);
-    cwd_in_text(&text)
+    cwd_in_text(&head(file))
+}
+
+/// What a compressed session file says about its working folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompressedCwd {
+    /// The first `cwd` member in the first 64 KiB of the decompressed text.
+    Found(PathBuf),
+    /// The text was read, and it holds no `cwd` member.
+    Absent,
+    /// The file is not a zstd frame that Rune can read, so its working
+    /// folder is unknown.
+    Unreadable,
+}
+
+/// The working folder a zstd-compressed session file records. Codex
+/// compresses an older rollout as it is, so the `session_meta` line is the
+/// start of the decompressed text.
+#[must_use]
+pub fn cwd_in_compressed_file(path: &Path) -> CompressedCwd {
+    let Ok(file) = std::fs::File::open(path) else {
+        return CompressedCwd::Unreadable;
+    };
+    let Ok(decoder) = ruzstd::decoding::StreamingDecoder::new(file) else {
+        return CompressedCwd::Unreadable;
+    };
+    let text = head(decoder);
+    match cwd_in_text(&text) {
+        Some(cwd) => CompressedCwd::Found(cwd),
+        None if text.is_empty() => CompressedCwd::Unreadable,
+        None => CompressedCwd::Absent,
+    }
+}
+
+/// The first 64 KiB a reader gives, as text. A read error ends the text
+/// where it happened. A cut inside a character, or a byte that is not
+/// UTF-8, becomes a replacement character and loses nothing before it.
+fn head(reader: impl std::io::Read) -> String {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    let _ = reader.take(SCAN_BYTES).read_to_end(&mut bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// The first `cwd` member of a JSON text, unescaped.

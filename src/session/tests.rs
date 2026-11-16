@@ -196,6 +196,74 @@ fn the_working_folder_is_read_from_the_first_cwd_member() {
     assert_eq!(exclude::percent_decode("%2"), None);
 }
 
+/// A Codex rollout of five lines, compressed by the reference encoder:
+/// `zstd -19`, with a checksum. Its `session_meta` line names the working
+/// folder `/home/owner/work/app`.
+const REFERENCE_ROLLOUT: [u8; 154] = [
+    0x28, 0xb5, 0x2f, 0xfd, 0x04, 0x68, 0x6d, 0x04, 0x00, 0x02, 0x09, 0x1c, 0x19, 0x70, 0xad, 0x0e,
+    0x30, 0x96, 0x96, 0x3a, 0x56, 0x64, 0x10, 0x14, 0x8a, 0x04, 0x55, 0xf5, 0x0d, 0x1c, 0x9b, 0xa1,
+    0x63, 0x28, 0xfd, 0xdc, 0x63, 0x01, 0x5c, 0x29, 0x8d, 0x8f, 0x36, 0xec, 0x7e, 0x1b, 0xf9, 0xee,
+    0x14, 0x5a, 0xfa, 0xe0, 0x73, 0xfb, 0xb9, 0xfb, 0x36, 0x3c, 0x9d, 0xa5, 0xf0, 0xd8, 0x8e, 0x2c,
+    0x7b, 0x27, 0x30, 0x4d, 0x97, 0xf2, 0x2d, 0x66, 0x72, 0x5d, 0x73, 0x63, 0xe5, 0xb5, 0x0e, 0x2f,
+    0xeb, 0xee, 0x49, 0x45, 0x1e, 0xbc, 0x50, 0xad, 0x35, 0x43, 0x31, 0xc6, 0x08, 0x35, 0xa8, 0x1d,
+    0x1e, 0x43, 0x9a, 0x22, 0xdc, 0x3d, 0x81, 0x97, 0xdc, 0x93, 0xc7, 0x4d, 0xf4, 0xe4, 0x83, 0x3f,
+    0xba, 0xce, 0x11, 0x19, 0x76, 0x6f, 0xdf, 0x7d, 0x65, 0x44, 0x2f, 0x05, 0x09, 0x00, 0x60, 0x06,
+    0x85, 0x73, 0x22, 0x0c, 0x02, 0x48, 0xe0, 0x07, 0x86, 0x88, 0xc6, 0x38, 0xe4, 0x0f, 0x1c, 0xf4,
+    0x03, 0x46, 0x12, 0x00, 0x40, 0x01, 0xaa, 0xbb, 0xbe, 0xb4,
+];
+
+fn compressed(text: &str) -> Vec<u8> {
+    ruzstd::encoding::compress_to_vec(text.as_bytes(), ruzstd::encoding::CompressionLevel::Fastest)
+}
+
+#[test]
+fn the_working_folder_is_read_from_a_compressed_file() {
+    use exclude::CompressedCwd;
+    let dir = tempfile::tempdir().expect("dir");
+    let reference = dir.path().join("reference.jsonl.zst");
+    std::fs::write(&reference, REFERENCE_ROLLOUT).unwrap();
+    assert_eq!(
+        exclude::cwd_in_compressed_file(&reference),
+        CompressedCwd::Found(PathBuf::from("/home/owner/work/app"))
+    );
+    let without = dir.path().join("without.jsonl.zst");
+    std::fs::write(&without, compressed("{\"type\":\"response_item\"}\n")).unwrap();
+    assert_eq!(
+        exclude::cwd_in_compressed_file(&without),
+        CompressedCwd::Absent
+    );
+    let broken = dir.path().join("broken.jsonl.zst");
+    std::fs::write(&broken, [0x28, 0xb5, 0x2f, 0xfd, b'c', b'z']).unwrap();
+    assert_eq!(
+        exclude::cwd_in_compressed_file(&broken),
+        CompressedCwd::Unreadable
+    );
+    assert_eq!(
+        exclude::cwd_in_compressed_file(&dir.path().join("absent.jsonl.zst")),
+        CompressedCwd::Unreadable
+    );
+}
+
+#[test]
+fn a_character_cut_at_the_scan_limit_does_not_hide_the_working_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("long.jsonl");
+    // The first line names the folder. The text then runs past 64 KiB in
+    // three-byte characters, so the limit falls inside one of them.
+    let mut text = String::from("{\"cwd\":\"/home/owner/work\",\"text\":\"x");
+    assert_ne!(
+        (64 * 1024 - text.len()) % 3,
+        0,
+        "the cut is inside a character"
+    );
+    text.push_str(&"€".repeat(64 * 1024 / 3 + 8));
+    write(&file, &text);
+    assert_eq!(
+        exclude::cwd_in_file(&file),
+        Some(PathBuf::from("/home/owner/work"))
+    );
+}
+
 // --------------------------------------------------------------- grok ----
 
 #[test]
@@ -492,15 +560,127 @@ fn a_real_database_gets_one_backup_per_day() {
     assert!(status.success());
     let versions = f.config.data_dir.join("SessionVersions/antigravity");
     let day = super::today();
-    let first = super::backup::daily(&conversations, &versions, &day, &sqlite3);
+    let first = super::backup::daily(&conversations, &versions, &day, &sqlite3, &|_| false);
     assert_eq!((first.backed_up, first.current), (1, 0), "{first:?}");
-    let second = super::backup::daily(&conversations, &versions, &day, &sqlite3);
+    let second = super::backup::daily(&conversations, &versions, &day, &sqlite3, &|_| false);
     assert_eq!((second.backed_up, second.current), (0, 1), "{second:?}");
     assert!(
         super::backup::day_dir(&versions, &day)
             .join("conv-9.db")
             .is_file()
     );
+}
+
+/// A stand-in for `sqlite3 <db> ".backup '<file>'"` that copies the
+/// database, so a backup test needs no `sqlite3` on the host.
+#[cfg(unix)]
+fn fake_sqlite3(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = dir.join("fake-sqlite3");
+    std::fs::write(
+        &path,
+        "#!/bin/sh\ntarget=${2#.backup \\'}\ncp \"$1\" \"${target%\\'}\"\n",
+    )
+    .expect("fake sqlite3");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("permissions");
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn the_database_of_an_excluded_session_gets_no_backup() {
+    let mut f = fixture();
+    f.config.sqlite3 = fake_sqlite3(&f.home);
+    f.config.exclude = Exclude::resolve(&[], &["private-1".to_string()], &f.home);
+    let conversations = f.home.join(".gemini/antigravity-cli/conversations");
+    write(&conversations.join("private-1.db"), "private");
+    write(&conversations.join("private-1.db-wal"), "");
+    write(&conversations.join("open-1.db"), "open");
+
+    let report = sweep(&f.config);
+    assert_eq!(report.backups, 1, "{report:?}");
+    assert_eq!(report.backup_error, None, "{report:?}");
+    let day = super::backup::day_dir(
+        &f.config.data_dir.join("SessionVersions/antigravity"),
+        &super::today(),
+    );
+    assert_eq!(read(&day.join("open-1.db")), "open");
+    let mut copies = Vec::new();
+    super::source::walk(&f.config.data_dir, &mut copies).unwrap();
+    let leaked: Vec<&PathBuf> = copies
+        .iter()
+        .filter(|path| path.to_string_lossy().contains("private-1"))
+        .collect();
+    assert_eq!(
+        leaked,
+        Vec::<&PathBuf>::new(),
+        "an excluded file was copied"
+    );
+}
+
+#[test]
+fn a_compressed_codex_session_of_an_excluded_folder_is_skipped() {
+    let mut f = fixture();
+    f.config.exclude = Exclude::resolve(&["/home/owner/work/**".to_string()], &[], &f.home);
+    let day = f.home.join(".codex/sessions/2026/10/01");
+    std::fs::create_dir_all(&day).unwrap();
+    let rollout =
+        |id: &str| format!("rollout-2026-10-01T10-00-00-0f3c2a1e-1111-4222-8333-{id}.jsonl.zst");
+    let meta = |cwd: &str| {
+        compressed(&format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{cwd}\"}}}}\n"
+        ))
+    };
+    std::fs::write(day.join(rollout("111111111111")), REFERENCE_ROLLOUT).unwrap();
+    std::fs::write(
+        day.join(rollout("222222222222")),
+        meta("/home/owner/work/x"),
+    )
+    .unwrap();
+    std::fs::write(day.join(rollout("333333333333")), meta("/home/owner/own")).unwrap();
+    // Not a frame Rune can read: its folder is unknown, so it stays out
+    // while a folder is excluded.
+    std::fs::write(
+        day.join(rollout("444444444444")),
+        [0x28, 0xb5, 0x2f, 0xfd, b'c', b'z'],
+    )
+    .unwrap();
+
+    let outcome = capture(
+        &f.config,
+        &request(Harness::Codex, Some("0f3c2a1e-1111-4222-8333-111111111111")),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Copied {
+                files: 0,
+                skipped: 1,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+
+    let report = sweep(&f.config);
+    assert_eq!(
+        report.harnesses["codex"],
+        super::SweepOutcome::Copied {
+            files: 1,
+            versions: 0,
+            skipped: 3
+        },
+        "{report:?}"
+    );
+    let copies = f.config.data_dir.join("Sessions/codex/2026/10/01");
+    let names: Vec<String> = std::fs::read_dir(&copies)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, [rollout("333333333333")]);
+    assert_eq!(Store::new(&f.config.state_dir).open().unwrap(), []);
 }
 
 #[test]

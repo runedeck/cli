@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::exclude;
+use super::exclude::{self, CompressedCwd};
 
 /// A harness whose sessions Rune copies. `OpenCode` and Gemini are not
 /// here: the owner dropped them on 2026-11-02.
@@ -148,6 +148,21 @@ pub struct SessionFile {
     /// The working folder of the session, when the file or the layout
     /// records one.
     pub cwd: Option<PathBuf>,
+    /// A compressed file that Rune could not read, so no one knows its
+    /// working folder.
+    pub cwd_unknown: bool,
+}
+
+impl SessionFile {
+    /// Whether the exclude configuration keeps the file out of the data
+    /// folder: its session id is listed, or its working folder matches a
+    /// glob. A file whose working folder is unknown stays out while any
+    /// glob is set, because it can be a session of an excluded folder.
+    #[must_use]
+    pub fn excluded(&self, exclude: &exclude::Exclude) -> bool {
+        exclude.matches(self.session.as_deref(), self.cwd.as_deref())
+            || (self.cwd_unknown && !exclude.paths.is_empty())
+    }
 }
 
 /// The files of a store. `None` when the store folder is absent, which a
@@ -238,6 +253,7 @@ fn claude_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
                 relative,
                 session,
                 cwd,
+                cwd_unknown: false,
             }
         })
         .collect()
@@ -245,7 +261,8 @@ fn claude_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
 
 /// Codex: `sessions/YYYY/MM/DD/rollout-<stamp>-<uuid>.jsonl`, compressed
 /// to `.jsonl.zst` when older. The uuid is the session id, and the
-/// `session_meta` line names the working folder.
+/// `session_meta` line names the working folder, in a compressed file
+/// too.
 fn codex_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
     paths
         .iter()
@@ -253,14 +270,21 @@ fn codex_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let stem = name.split('.').next().unwrap_or(name);
             let session = codex_session_id(stem);
-            let cwd = (kind_of(path) != Kind::Compressed)
-                .then(|| exclude::cwd_in_file(path))
-                .flatten();
+            let (cwd, cwd_unknown) = if kind_of(path) == Kind::Compressed {
+                match exclude::cwd_in_compressed_file(path) {
+                    CompressedCwd::Found(cwd) => (Some(cwd), false),
+                    CompressedCwd::Absent => (None, false),
+                    CompressedCwd::Unreadable => (None, true),
+                }
+            } else {
+                (exclude::cwd_in_file(path), false)
+            };
             SessionFile {
                 path: path.clone(),
                 relative: relative_to(root, path),
                 session: Some(session),
                 cwd,
+                cwd_unknown,
             }
         })
         .collect()
@@ -312,6 +336,7 @@ fn grok_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
                 relative,
                 session,
                 cwd,
+                cwd_unknown: false,
             }
         })
         .collect()
@@ -324,19 +349,23 @@ fn antigravity_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
         .iter()
         .map(|path| {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let session = name
-                .split(".db")
-                .next()
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
             SessionFile {
                 path: path.clone(),
                 relative: relative_to(root, path),
-                session,
+                session: antigravity_session(name).map(str::to_string),
                 cwd: None,
+                cwd_unknown: false,
             }
         })
         .collect()
+}
+
+/// The conversation id in the name of an Antigravity database file or of
+/// its `-wal` or `-shm` file. The daily backup reads the same id, so one
+/// exclusion covers the native copy and the backup.
+#[must_use]
+pub fn antigravity_session(name: &str) -> Option<&str> {
+    name.split(".db").next().filter(|id| !id.is_empty())
 }
 
 fn relative_to(root: &Path, path: &Path) -> PathBuf {

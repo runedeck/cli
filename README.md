@@ -524,6 +524,8 @@ capture:
     sessions: ["0f3c2a1e-work-session-id"]
 ```
 
+`paths` matches the working folder that a session file records, and rune reads it in a compressed Codex file too. While `paths` is set, a compressed file that rune cannot read stays out, because its working folder is unknown. `sessions` matches the session id. For Antigravity that is the conversation id, and its database gets no native copy and no daily backup.
+
 A capture records debt only when a session file exists and its native copy fails, under `$RUNE_STATE_DIR/capture-debt/`. A later success, or a sweep that finds a complete copy, moves the record to `capture-debt/closed/` with the reason. `rune doctor` prints the open count and the oldest date. A skipped session, a readable copy that fails, or a session that never wrote a file records nothing.
 
 See what rune would install into an interface, a program that starts and watches harness sessions:

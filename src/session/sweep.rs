@@ -116,12 +116,9 @@ fn sweep_harness(config: &Config, harness: Harness, store: &debt::Store) -> Harn
             return HarnessOutcome::Failed { message };
         }
     };
-    let (kept, skipped): (Vec<SessionFile>, Vec<SessionFile>) =
-        files.into_iter().partition(|file| {
-            !config
-                .exclude
-                .matches(file.session.as_deref(), file.cwd.as_deref())
-        });
+    let (kept, skipped): (Vec<SessionFile>, Vec<SessionFile>) = files
+        .into_iter()
+        .partition(|file| !file.excluded(&config.exclude));
     let copied = copy_all(config, harness, &kept);
     drop(lock);
     log.note(&format!(
@@ -144,9 +141,10 @@ fn sweep_harness(config: &Config, harness: Harness, store: &debt::Store) -> Harn
     }
 }
 
-/// One online backup per database per UTC day. A host without `sqlite3`
-/// records one debt record, reason `backup-tool-missing`, and not a
-/// second one while that record is open.
+/// One online backup per database per UTC day, and none for a database
+/// of an excluded session. A host without `sqlite3` records one debt
+/// record, reason `backup-tool-missing`, and not a second one while that
+/// record is open.
 fn backup_databases(config: &Config, store: &debt::Store) -> backup::Report {
     let log = config.log();
     let conversations = &config.stores.antigravity_conversations;
@@ -158,10 +156,11 @@ fn backup_databases(config: &Config, store: &debt::Store) -> backup::Report {
         &config.layout().versions(Harness::Antigravity),
         &super::today(),
         &config.sqlite3,
+        &|session| config.exclude.session(session),
     );
     log.note(&format!(
-        "antigravity backups: {} new, {} current",
-        report.backed_up, report.current
+        "antigravity backups: {} new, {} current, {} skipped",
+        report.backed_up, report.current, report.skipped
     ));
     if report.tool_missing {
         let already = store.open().is_ok_and(|open| {

@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Warn before `rune queue post` looks a Codex session up by name, and add a `hint` with the UUID when Codex refuses the name and names the session it matched.
 - Keep the signing queue's own copy of each receipt under `sign-queue/receipts/`, so a request signs after its receipt file is gone. A receipt that changed is still refused.
 - Take the release notes from the changelog section of the tag when no pull request merged since the last release. The notes said `No user-facing changes` for a release pushed straight to `main`.
+- Keep a compressed Codex session of an excluded folder, and the daily backup of an excluded Antigravity database, out of the data folder. The sweep copied both.
 
 ## [0.6.0] - 2026-10-26
 

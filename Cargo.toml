@@ -71,6 +71,10 @@ regex = "1"
 # `new URL()` reads it in the harness: a hand-written slash rule missed
 # `https:\\u:p@h`, `https:/u:p@h`, `https:///u:p@h`, and `https:u:p@h`.
 url = "2"
+# A zstd decoder in Rust, with no C library to link on any release
+# target. Codex compresses an older session file, and session capture
+# must read the working folder in it before it copies the file.
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 console = "0.15"
 base64 = "0.22"
 dirs = "6"
