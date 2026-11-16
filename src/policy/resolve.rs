@@ -126,9 +126,7 @@ fn containing<'a>(scopes: &'a [Scope], at: &str, env: &Environment) -> Vec<&'a S
 /// policy.
 fn repository(real: &Path) -> Option<(PathBuf, Result<RepositoryPolicy, String>)> {
     let root = paths::repository_root(real)?;
-    if !root.join(".rune").is_dir() {
-        return None;
-    }
+    crate::consumer::directory(&root)?;
     let path = root.join(REPOSITORY_FILE);
     let file = match std::fs::read_to_string(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
