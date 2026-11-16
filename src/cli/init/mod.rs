@@ -19,7 +19,7 @@ const EMBEDDED_SKELETON_SOURCE: &str = "https://github.com/runedeck/skeleton.git
 const EMBEDDED_SKELETON_RELEASE: Option<&str> = None;
 /// The skeleton commit the embedded copy equals. `answers.yaml` records it
 /// when no release is set, so `copier update` starts from the truth.
-const EMBEDDED_SKELETON_COMMIT: &str = "6374d8fccf0643b1925da0a384b46f02e8ef905a";
+const EMBEDDED_SKELETON_COMMIT: &str = "d7c9bdf752b6d8790f54687d770f60e6afa72caa";
 
 /// The reference a project scaffolded from the embedded copy records.
 fn embedded_skeleton_reference() -> &'static str {

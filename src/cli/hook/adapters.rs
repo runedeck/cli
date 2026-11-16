@@ -377,10 +377,23 @@ fn title(segment: &str) -> String {
         .collect()
 }
 
+/// The segments the helper spells as acronyms, its `ACRONYMS` table.
+const ACRONYMS: &[(&str, &str)] = &[("gpt", "GPT")];
+
+/// The segment as the helper spells it: an acronym from its table, else
+/// title case.
+fn spelled(segment: &str) -> String {
+    ACRONYMS
+        .iter()
+        .find(|(word, _)| segment.eq_ignore_ascii_case(word))
+        .map_or_else(|| title(segment), |(_, acronym)| (*acronym).to_string())
+}
+
 /// The display name the helper mints: `claude-fable-5-1` under claude is
-/// `Claude Fable 5.1`, `gpt-6-astra` under codex is `Codex Gpt 6 Astra`.
-/// Segments title-case, a run of numeric segments joins with dots, and
-/// the harness leads unless the first segment names it.
+/// `Claude Fable 5.1`, `gpt-6-astra` under codex is `Codex GPT 6 Astra`.
+/// Segments title-case except the helper's acronyms, a run of numeric
+/// segments joins with dots, and the harness leads unless the first
+/// segment names it.
 pub(crate) fn display_name(model: &str, harness: &str) -> String {
     let digits = |word: &str| !word.is_empty() && word.chars().all(|c| c.is_ascii_digit());
     let mut words: Vec<String> = Vec::new();
@@ -390,7 +403,7 @@ pub(crate) fn display_name(model: &str, harness: &str) -> String {
                 last.push('.');
                 last.push_str(segment);
             }
-            _ => words.push(title(segment)),
+            _ => words.push(spelled(segment)),
         }
     }
     if words
@@ -1654,7 +1667,7 @@ mod tests {
         assert_eq!(opus.name, "Claude Opus 5.5 (claude-opus-5-5)");
         assert_eq!(opus.email, "claude-opus-5-5@claude.noreply.nexus.local");
         let sol = resolve_identity(&policy, "claude", "gpt-5.6-sol").unwrap();
-        assert_eq!(sol.name, "Claude Gpt 5.6 Sol (gpt-5.6-sol)");
+        assert_eq!(sol.name, "Claude GPT 5.6 Sol (gpt-5.6-sol)");
         // The legacy alias resolves to the model it means.
         let legacy = resolve_identity(&policy, "claude", "claude-opus-51m").unwrap();
         assert_eq!(legacy.email, "claude-opus-5@claude.noreply.nexus.local");
@@ -1671,10 +1684,10 @@ mod tests {
             display_name("claude-fable-5-1", "claude"),
             "Claude Fable 5.1"
         );
-        assert_eq!(display_name("gpt-6-astra", "codex"), "Codex Gpt 6 Astra");
+        assert_eq!(display_name("gpt-6-astra", "codex"), "Codex GPT 6 Astra");
         assert_eq!(display_name("kimi-k3", "kimi"), "Kimi K3");
         assert_eq!(display_name("grok-4.6", "grok"), "Grok 4.6");
-        assert_eq!(display_name("gpt-4o-mini", "codex"), "Codex Gpt 4O Mini");
+        assert_eq!(display_name("gpt-4o-mini", "codex"), "Codex GPT 4O Mini");
         assert_eq!(
             display_name("gemini-3-pro", "open-code"),
             "Open-Code Gemini 3 Pro"

@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
+- Embed the skeleton at commit `d7c9bdf`, so `rune init` records that commit in `answers.yaml`. A new repository gets the secret declarations, the `trash` script, and the current ceremony rule set.
+- Spell the segment `gpt` of a model id as `GPT` in the identity that the hook writes for a model the roster does not list, as the skeleton's `author-identity.py` now does. A listed identity keeps its spelling.
 
 ### Removed
 

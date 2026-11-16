@@ -637,7 +637,7 @@ fn embedded_init_writes_tagged_copier_metadata_offline() {
     assert!(copier_answers.contains("BRIEF: Works offline"));
     assert!(copier_answers.contains("NAME: offline-copy"));
     // No skeleton release is tagged, so the embedded copy pins its commit.
-    assert!(copier_answers.contains("_commit: 6374d8fccf0643b1925da0a384b46f02e8ef905a"));
+    assert!(copier_answers.contains("_commit: d7c9bdf752b6d8790f54687d770f60e6afa72caa"));
     assert!(copier_answers.contains("_src_path: https://github.com/runedeck/skeleton.git"));
     assert!(!destination.join("AGENTS.md.jinja").exists());
     let agents = fs::read_to_string(destination.join("AGENTS.md")).unwrap();
@@ -645,7 +645,7 @@ fn embedded_init_writes_tagged_copier_metadata_offline() {
     let workflow = fs::read_to_string(destination.join(".github/workflows/quality.yaml")).unwrap();
     assert!(workflow.contains("${{ github.ref }}"));
     let overlay = fs::read_to_string(destination.join(".rune-skeleton-overlay.yaml")).unwrap();
-    assert!(overlay.contains("release: 6374d8fccf0643b1925da0a384b46f02e8ef905a"));
+    assert!(overlay.contains("release: d7c9bdf752b6d8790f54687d770f60e6afa72caa"));
     assert!(overlay.contains("owner: runedeck/cli"));
     for path in [
         "scripts/author-identity.py",

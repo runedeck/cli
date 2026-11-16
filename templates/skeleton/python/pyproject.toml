@@ -1,6 +1,9 @@
 [project]
 name = "${NAME}"
 version = "0.1.0"
+# Basic string: rune init, the only renderer of this layer, escapes the
+# brief for one, so quotes, backslashes, and control characters stay
+# valid TOML. A literal string cannot hold an apostrophe.
 description = "${BRIEF}"
 license = "EUPL-1.2"
 requires-python = ">=3.12"
