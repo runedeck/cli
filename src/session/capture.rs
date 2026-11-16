@@ -120,8 +120,7 @@ pub fn capture(config: &Config, request: &Request) -> Result<Outcome, String> {
         request
             .session
             .as_deref()
-            .map(|id| format!(" session {id}"))
-            .unwrap_or_default(),
+            .map_or_default(|id| format!(" session {id}")),
         request
             .cwd
             .as_deref()

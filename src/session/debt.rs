@@ -219,8 +219,7 @@ fn free_name(path: &Path) -> PathBuf {
     }
     let stem = path
         .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|s| s.to_string_lossy().into_owned());
     let parent = path.parent().map_or_else(PathBuf::new, Path::to_path_buf);
     (1..u32::MAX)
         .map(|index| parent.join(format!("{stem}-{index}.json")))

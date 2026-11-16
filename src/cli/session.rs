@@ -111,8 +111,7 @@ fn describe(outcome: &session::Outcome) -> String {
             "{files} file(s) copied, {versions} version(s) kept, {skipped} skipped{}",
             readable_error
                 .as_deref()
-                .map(|error| format!("; readable copy failed: {error}"))
-                .unwrap_or_default()
+                .map_or_default(|error| format!("; readable copy failed: {error}"))
         ),
         session::Outcome::Skipped => "skipped, excluded by configuration".to_string(),
         session::Outcome::Deferred => "deferred, another capture holds the lock".to_string(),
@@ -189,8 +188,7 @@ fn debt_command(json: bool) -> i32 {
             record
                 .cwd
                 .as_deref()
-                .map(|cwd| format!(" in {cwd}"))
-                .unwrap_or_default()
+                .map_or_default(|cwd| format!(" in {cwd}"))
         );
     }
     for record in &closed {

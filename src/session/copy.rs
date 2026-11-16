@@ -149,8 +149,7 @@ pub fn copy_atomic(source: &Path, destination: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     let name = destination
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|name| name.to_string_lossy().into_owned());
     let temporary = parent.join(format!(".{name}.tmp-{}", std::process::id()));
     let result = std::fs::copy(source, &temporary)
         .map_err(|error| {

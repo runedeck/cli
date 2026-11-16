@@ -72,7 +72,7 @@ fn sync(binary: &Path, session: Option<&str>, cwd: &Path, output: &Path) -> Resu
     } else {
         Err(format!(
             "specstory sync claude{} failed in {}: {}",
-            session.map(|id| format!(" -s {id}")).unwrap_or_default(),
+            session.map_or_default(|id| format!(" -s {id}")),
             cwd.display(),
             String::from_utf8_lossy(&result.stderr).trim()
         ))
