@@ -6,7 +6,8 @@
 //! driver's own `config`, where `customModels` holds the model names the
 //! picker offers. This module reads what `rune interface` shows: the
 //! instance ids, drivers, model slugs, and the names of the environment
-//! variables. It never reads a variable's value into its output, and no
+//! variables. It never reads a variable's value into its output: the
+//! planner gets the value as a [`Hidden`], which it can only compare. No
 //! function here opens the file for writing.
 
 use std::path::{Path, PathBuf};
@@ -63,6 +64,29 @@ pub(crate) struct Model {
 pub(crate) struct Variable {
     pub name: String,
     pub sensitive: bool,
+    /// The value in the file, kept to compare with a planned value. T3
+    /// Code keeps a sensitive value in its own store, and the file then
+    /// holds an empty one.
+    #[serde(skip)]
+    pub value: Option<Hidden>,
+}
+
+/// A value of the settings file that reaches no output. It has no
+/// `Serialize`, and `Debug` prints no part of it. The one thing a caller
+/// can do with it is compare it.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Hidden(String);
+
+impl Hidden {
+    pub(crate) fn is(&self, text: &str) -> bool {
+        self.0 == text
+    }
+}
+
+impl std::fmt::Debug for Hidden {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<hidden>")
+    }
 }
 
 impl Settings {
@@ -185,6 +209,10 @@ fn variables_of(entry: &Value) -> Vec<Variable> {
                             .get("sensitive")
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
+                        value: variable
+                            .get("value")
+                            .and_then(Value::as_str)
+                            .map(|value| Hidden(value.to_string())),
                     })
                 })
                 .collect()

@@ -340,6 +340,82 @@ fn a_credential_in_the_query_of_a_base_url_reaches_no_output() {
 }
 
 #[test]
+fn an_existing_instance_on_another_route_does_not_read_as_installed() {
+    let scene = Scene::new();
+    scene.configure(
+        "launch:\n  profiles:\n    codex:\n      hub:\n        model: sol\n        env:\n          OPENAI_BASE_URL: https://new.example/v1\n",
+    );
+    let instance = |url: &str, sensitive: bool| {
+        format!(
+            r#"{{"providerInstances": {{"rune_codex_hub": {{"driver": "codex",
+                "environment": [{{"name": "OPENAI_BASE_URL", "value": "{url}", "sensitive": {sensitive}}}],
+                "config": {{"customModels": [{{"slug": "gpt-5.6-sol", "name": "hub"}}]}}}}}}}}"#
+        )
+    };
+    let status_line = |scene: &Scene| {
+        let (code, stdout, stderr) = scene.run(&["interface", "status", "t3code"]);
+        assert_eq!(code, Some(0), "{stderr}");
+        stdout
+            .lines()
+            .find(|line| line.trim_start().starts_with("hub@codex"))
+            .unwrap_or_else(|| panic!("no hub@codex line in:\n{stdout}"))
+            .to_string()
+    };
+
+    // The instance takes the profile's route.
+    fs::write(scene.settings(), instance("https://new.example/v1", false)).expect("settings");
+    assert_eq!(
+        status_line(&scene),
+        "  hub@codex -> rune_codex_hub  gpt-5.6-sol  installed"
+    );
+
+    // The same id and model, on another route.
+    fs::write(scene.settings(), instance("https://old.example/v1", false)).expect("settings");
+    let before = scene.snapshot();
+    assert_eq!(
+        status_line(&scene),
+        "  hub@codex -> rune_codex_hub  gpt-5.6-sol  conflict"
+    );
+    let plan = scene.json(&["interface", "enable", "t3code", "--dry-run", "--json"]);
+    let planned = &plan["instances"][0];
+    assert_eq!(planned["id"], "rune_codex_hub", "{plan}");
+    assert_eq!(planned["exists"], true, "{plan}");
+    assert_eq!(
+        planned["conflict"],
+        "the settings file has an instance rune_codex_hub on another route: its OPENAI_BASE_URL has another value",
+        "{plan}"
+    );
+    assert_eq!(planned["owned_keys"], serde_json::json!([]), "{plan}");
+    for arguments in COMMANDS {
+        let (_, stdout, stderr) = scene.run(arguments);
+        assert!(
+            !stdout.contains("old.example") && !stderr.contains("old.example"),
+            "{arguments:?} shows the value of the settings file:\n{stdout}{stderr}"
+        );
+    }
+    assert_eq!(scene.snapshot(), before);
+
+    // The route is a secret in T3 Code's store: rune cannot compare it.
+    fs::write(scene.settings(), instance("", true)).expect("settings");
+    assert_eq!(
+        status_line(&scene),
+        "  hub@codex -> rune_codex_hub  gpt-5.6-sol  route unknown"
+    );
+    let plan = scene.json(&["interface", "enable", "t3code", "--dry-run", "--json"]);
+    assert!(
+        plan["instances"][0]["route_unknown"]
+            .as_str()
+            .is_some_and(|why| why.ends_with("its OPENAI_BASE_URL is a secret")),
+        "{plan}"
+    );
+    assert_eq!(
+        plan["instances"][0]["owned_keys"],
+        serde_json::json!([]),
+        "{plan}"
+    );
+}
+
+#[test]
 fn enable_without_the_dry_run_refuses() {
     let scene = Scene::new();
     let before = scene.snapshot();

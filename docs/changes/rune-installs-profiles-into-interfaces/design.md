@@ -132,6 +132,13 @@ a key. For an accepted profile it names what T3 Code loses, such as the
 context window of a Claude route. A dry run shows a value only for the base URL. Every other literal and every
 reference stays out of the output.
 
+An instance beside the native one that the settings file already has is the profile's destination only when
+it takes the profile's route. The planner compares the two environments by name. A literal must have the same
+value in the file. A reference must be a secret of the same name, and its value is not compared. A variable on
+one side only, or another value, is a conflict. When a comparison needs a secret, the route is unknown. In
+both cases the plan owns no key of that instance, and the status does not say `installed`. A value of the
+settings file reaches no output.
+
 | Command | Reads | Writes |
 | --- | --- | --- |
 | `rune interface list` | whether the settings file exists | nothing |

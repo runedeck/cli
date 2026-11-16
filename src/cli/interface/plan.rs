@@ -68,9 +68,14 @@ pub(crate) struct PlannedInstance {
     /// Whether the settings file already has an instance of this id.
     pub exists: bool,
     /// Why rune would not touch the instance, when one of this id exists
-    /// with another driver.
+    /// with another driver or on another route.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conflict: Option<String>,
+    /// Why rune cannot tell whether the existing instance takes the route
+    /// of its profiles: the answer needs a secret, and the planner
+    /// resolves none. rune would not touch such an instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_unknown: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub environment: Vec<PlannedVariable>,
@@ -304,6 +309,12 @@ fn place(
             driver.clone()
         };
         let existing = settings.instance(&id);
+        // An instance beside the native one is the profile's destination
+        // only when it takes the profile's route. The native instance is
+        // the owner's, and rune compares nothing in it.
+        let route = existing
+            .filter(|instance| beside && instance.driver == driver)
+            .map_or(Route::Same, |instance| route_of(instance, &variables));
         let conflict = existing
             .filter(|instance| instance.driver != driver)
             .map(|instance| {
@@ -311,7 +322,19 @@ fn place(
                     "the settings file has an instance {id} with the driver {}",
                     instance.driver
                 )
+            })
+            .or_else(|| match &route {
+                Route::Differs(why) => Some(format!(
+                    "the settings file has an instance {id} on another route: {why}"
+                )),
+                Route::Same | Route::Unknown(_) => None,
             });
+        let route_unknown = match route {
+            Route::Unknown(why) if conflict.is_none() => Some(format!(
+                "rune cannot tell whether the instance {id} of the settings file takes this route: {why}"
+            )),
+            _ => None,
+        };
         let mut models: Vec<PlannedCustomModel> = Vec::new();
         for member in &members {
             profiles.push(PlannedProfile {
@@ -332,7 +355,7 @@ fn place(
                 present: existing.is_some_and(|instance| instance.has_model(&model.id)),
             });
         }
-        let owned_keys = if conflict.is_some() {
+        let owned_keys = if conflict.is_some() || route_unknown.is_some() {
             Vec::new()
         } else if beside && existing.is_none() {
             vec![format!("providerInstances.{id}")]
@@ -360,12 +383,67 @@ fn place(
             id,
             driver,
             conflict,
+            route_unknown,
             models,
             owned_keys,
         });
     }
     profiles.sort_by(|left, right| (&left.tool, &left.profile).cmp(&(&right.tool, &right.profile)));
     (profiles, instances)
+}
+
+/// Whether an instance of the settings file takes the route of the
+/// profiles that would use it.
+enum Route {
+    Same,
+    /// The environments differ. The text names each variable and no value.
+    Differs(String),
+    /// A comparison needs a secret. The text names each variable.
+    Unknown(String),
+}
+
+/// Compare the environment of `existing` with the planned `variables`. A
+/// literal must be in the file with the same value. A reference must be a
+/// secret of the same name: its value is the owner's to enter, and rune
+/// compares none. A variable on one side only is another route.
+fn route_of(existing: &super::t3code::Instance, variables: &[Variable]) -> Route {
+    let mut differs: Vec<String> = Vec::new();
+    let mut unknown: Vec<String> = Vec::new();
+    for variable in variables {
+        let name = &variable.name;
+        let Some(found) = existing.environment.iter().find(|v| v.name == *name) else {
+            differs.push(format!("it sets no {name}"));
+            continue;
+        };
+        match (&variable.literal, &variable.from_env, found.sensitive) {
+            (Some(literal), _, false) => {
+                if !found.value.as_ref().is_some_and(|value| value.is(literal)) {
+                    differs.push(format!("its {name} has another value"));
+                }
+            }
+            (Some(_), _, true) => unknown.push(format!("its {name} is a secret")),
+            (None, _, true) => {}
+            (None, reference, false) => unknown.push(format!(
+                "its {name} is a value in the file, and the profile reads {}",
+                reference.as_deref().unwrap_or("a variable")
+            )),
+        }
+    }
+    for found in &existing.environment {
+        if !variables.iter().any(|v| v.name == found.name) {
+            differs.push(format!(
+                "it sets {}, which the profile does not",
+                found.name
+            ));
+        }
+    }
+    if !differs.is_empty() {
+        Route::Differs(differs.join(", and "))
+    } else if !unknown.is_empty() {
+        Route::Unknown(unknown.join(", and "))
+    } else {
+        Route::Same
+    }
 }
 
 /// The variable as the plan prints it. Only the base URL shows its value.

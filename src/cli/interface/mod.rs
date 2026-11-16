@@ -233,6 +233,8 @@ pub(crate) fn render_status(settings: &Settings, plan: &Plan) -> String {
                 });
                 if instance.conflict.is_some() {
                     "conflict"
+                } else if instance.route_unknown.is_some() {
+                    "route unknown"
                 } else if !instance.exists {
                     "instance not installed"
                 } else if model_present {
@@ -298,6 +300,9 @@ pub(crate) fn render_plan(settings: &Settings, plan: &Plan) -> String {
         let _ = writeln!(out, "  {}  driver {}  {kind}", instance.id, instance.driver);
         if let Some(conflict) = &instance.conflict {
             let _ = writeln!(out, "    conflict  {conflict}");
+        }
+        if let Some(why) = &instance.route_unknown {
+            let _ = writeln!(out, "    route unknown  {why}");
         }
         if let Some(name) = &instance.display_name {
             let _ = writeln!(out, "    name   {name}");

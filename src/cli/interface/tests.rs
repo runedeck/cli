@@ -285,6 +285,125 @@ fn an_instance_of_the_same_id_with_another_driver_is_a_conflict() {
     );
 }
 
+/// A profile behind a hub, with a literal base URL and a secret reference.
+const HUB_PROFILE: &str = "profiles:\n  codex:\n    hub:\n      model: sol\n      env:\n        OPENAI_BASE_URL: https://new.example/v1\n        OPENAI_API_KEY:\n          from_env: HUB_KEY\n";
+
+/// Settings with the instance of [`HUB_PROFILE`], its model, and the
+/// given environment.
+fn hub_settings(environment: &str) -> Settings {
+    settings(&format!(
+        r#"{{"providerInstances": {{"rune_codex_hub": {{"driver": "codex", "environment": {environment},
+            "config": {{"customModels": [{{"slug": "gpt-5.6-sol", "name": "hub"}}]}}}}}}}}"#
+    ))
+}
+
+#[test]
+fn an_existing_instance_on_the_same_route_is_installed() {
+    let existing = hub_settings(
+        r#"[{"name": "OPENAI_BASE_URL", "value": "https://new.example/v1", "sensitive": false},
+            {"name": "OPENAI_API_KEY", "value": "", "sensitive": true}]"#,
+    );
+    let plan = planned(HUB_PROFILE, &existing);
+    let instance = &plan.instances[0];
+    assert!(instance.exists, "{instance:?}");
+    assert_eq!(instance.conflict, None);
+    assert_eq!(instance.route_unknown, None);
+    let text = render_status(&existing, &plan);
+    assert!(
+        text.contains("hub@codex -> rune_codex_hub  gpt-5.6-sol  installed"),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_existing_instance_on_another_route_is_a_conflict() {
+    let old = "https://old.example/v1";
+    for (environment, why) in [
+        (
+            format!(
+                r#"[{{"name": "OPENAI_BASE_URL", "value": "{old}", "sensitive": false}},
+                    {{"name": "OPENAI_API_KEY", "value": "", "sensitive": true}}]"#
+            ),
+            "its OPENAI_BASE_URL has another value",
+        ),
+        (
+            r#"[{"name": "OPENAI_API_KEY", "value": "", "sensitive": true}]"#.to_string(),
+            "it sets no OPENAI_BASE_URL",
+        ),
+        (
+            format!(
+                r#"[{{"name": "OPENAI_BASE_URL", "value": "https://new.example/v1"}},
+                    {{"name": "OPENAI_API_KEY", "value": "", "sensitive": true}},
+                    {{"name": "HTTPS_PROXY", "value": "{old}"}}]"#
+            ),
+            "it sets HTTPS_PROXY, which the profile does not",
+        ),
+    ] {
+        let existing = hub_settings(&environment);
+        let plan = planned(HUB_PROFILE, &existing);
+        let instance = &plan.instances[0];
+        assert!(instance.exists);
+        let conflict = instance.conflict.as_deref().unwrap_or_default();
+        assert!(
+            conflict
+                .starts_with("the settings file has an instance rune_codex_hub on another route: ")
+                && conflict.contains(why),
+            "{conflict}"
+        );
+        assert_eq!(instance.route_unknown, None);
+        assert_eq!(instance.owned_keys, Vec::<String>::new());
+        let json = serde_json::to_string(&plan).expect("the plan serializes");
+        let status = render_status(&existing, &plan);
+        let text = render_plan(&existing, &plan);
+        for output in [&json, &status, &text] {
+            assert!(!output.contains(old), "the file's value is shown: {output}");
+        }
+        assert!(
+            status.contains("hub@codex -> rune_codex_hub  gpt-5.6-sol  conflict"),
+            "{status}"
+        );
+        assert!(text.contains("    conflict  the settings file"), "{text}");
+    }
+}
+
+#[test]
+fn a_route_that_needs_a_secret_to_compare_is_unknown() {
+    for (environment, why) in [
+        (
+            r#"[{"name": "OPENAI_BASE_URL", "value": "", "sensitive": true},
+                {"name": "OPENAI_API_KEY", "value": "", "sensitive": true}]"#,
+            "its OPENAI_BASE_URL is a secret",
+        ),
+        (
+            r#"[{"name": "OPENAI_BASE_URL", "value": "https://new.example/v1"},
+                {"name": "OPENAI_API_KEY", "value": "do-not-print-this-value"}]"#,
+            "its OPENAI_API_KEY is a value in the file, and the profile reads HUB_KEY",
+        ),
+    ] {
+        let existing = hub_settings(environment);
+        let plan = planned(HUB_PROFILE, &existing);
+        let instance = &plan.instances[0];
+        assert_eq!(instance.conflict, None, "{instance:?}");
+        let unknown = instance.route_unknown.as_deref().unwrap_or_default();
+        assert!(unknown.contains(why), "{unknown}");
+        assert_eq!(instance.owned_keys, Vec::<String>::new());
+        let status = render_status(&existing, &plan);
+        assert!(
+            status.contains("hub@codex -> rune_codex_hub  gpt-5.6-sol  route unknown"),
+            "{status}"
+        );
+        let text = render_plan(&existing, &plan);
+        assert!(
+            text.contains("    route unknown  rune cannot tell"),
+            "{text}"
+        );
+        let json = serde_json::to_string(&plan).expect("the plan serializes");
+        for output in [&json, &status, &text, &format!("{existing:?}")] {
+            assert!(!output.contains(SECRET), "{output}");
+        }
+    }
+}
+
 #[test]
 fn what_the_interface_loses_is_named() {
     let plan = planned(
