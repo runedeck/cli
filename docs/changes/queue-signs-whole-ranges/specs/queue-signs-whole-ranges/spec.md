@@ -167,3 +167,17 @@ Every piece of repository text the view prints, a message line, an author, a boo
 
 - **WHEN** a commit in the range has a first line that holds an escape sequence that clears the line above
 - **THEN** the view prints the sequence as its escaped form, and every line above it stays
+
+### Requirement: The queue keeps its own copy of the receipt
+
+When the queue records a request with a receipt, it MUST keep its own copy of that receipt beside the request and record where the copy is. The signer MUST check the copy when the file that the session named is gone, so a receipt in a scratch folder that was cleared does not block the signature. When the named file still exists, it MUST be unchanged, and the copy MUST be unchanged in every case. Removal of a request MUST remove its copy and MUST leave the session's file.
+
+#### Scenario: Receipt file deleted after queueing
+
+- **WHEN** a session queues a head with a receipt, and the receipt file is deleted before the owner signs
+- **THEN** the signer checks the queue's copy and signs the head
+
+#### Scenario: Receipt file edited after queueing
+
+- **WHEN** the receipt file changes after the request was queued
+- **THEN** the signer signs nothing and says that the receipt changed

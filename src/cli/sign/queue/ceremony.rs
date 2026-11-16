@@ -253,10 +253,14 @@ fn receipt_lines(request: &Request) -> Vec<String> {
     let Some(receipt) = &request.receipt else {
         return Vec::new();
     };
-    vec![
-        format!("proof        {}", shown(&receipt.path)),
-        format!("exit         {}", shown(&receipt.exit_line)),
-    ]
+    let mut lines = vec![format!("proof        {}", shown(&receipt.path))];
+    // The queue's own copy, which the signer reads when the session's
+    // file is gone.
+    if let Some(copy) = &receipt.copy {
+        lines.push(format!("kept         {}", shown(copy)));
+    }
+    lines.push(format!("exit         {}", shown(&receipt.exit_line)));
+    lines
 }
 
 /// The range, its size, one line per author with that author's count, and

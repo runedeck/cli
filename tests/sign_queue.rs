@@ -540,6 +540,156 @@ fn a_signature_from_a_key_outside_keys_is_a_failure() {
         .stdout(predicate::str::contains("failed"));
 }
 
+/// A receipt outside the workspace, as a session's scratch folder is.
+fn scratch_receipt(fixture: &Fixture, name: &str, commit: &str) -> PathBuf {
+    let path = fixture.workspace.parent().expect("parent").join(name);
+    fs::write(
+        &path,
+        format!("bookmark: x [move sideways from 0000 to {commit}]\nexit=0\n"),
+    )
+    .expect("receipt");
+    path
+}
+
+/// The queue's copies of the receipts, by file name.
+fn kept_receipts(fixture: &Fixture) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(fixture.state.join("sign-queue/receipts"))
+        .map_or_default(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        });
+    names.sort();
+    names
+}
+
+/// The receipt of 2026-11-14 sat in a session scratch folder that was gone
+/// when the owner came to the key, and the request could never be signed.
+#[test]
+fn a_receipt_deleted_after_queueing_still_signs_from_the_queue_s_copy() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    assert_eq!(kept_receipts(&fixture).len(), 1, "one copy is kept");
+
+    fs::remove_file(&receipt).expect("the scratch folder is cleared");
+    rune(&fixture)
+        .args(["sign", "show", "change/base"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kept"))
+        .stdout(predicate::str::contains("sign-queue/receipts/"));
+    rune(&fixture)
+        .args(["sign", "all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/base"));
+    assert!(head_is_signed(&fixture, "change/base"));
+
+    rune(&fixture)
+        .args(["sign", "queue", "--prune"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pruned"));
+    assert_eq!(
+        kept_receipts(&fixture),
+        Vec::<String>::new(),
+        "the copy leaves with its request"
+    );
+}
+
+/// A later check that failed writes the same path. The request must not
+/// sign on the strength of the copy then.
+#[test]
+fn a_receipt_edited_after_queueing_is_refused_although_the_copy_holds() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    fs::write(
+        &receipt,
+        format!("bookmark: x [move sideways from 0000 to {base}]\nexit=1\n"),
+    )
+    .expect("a later check failed");
+
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "changed since the request was queued",
+        ));
+    assert!(!head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+fn a_changed_copy_is_refused_when_the_receipt_is_gone() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    fs::remove_file(&receipt).expect("the scratch folder is cleared");
+    let kept = kept_receipts(&fixture);
+    let copy = fixture.state.join("sign-queue/receipts").join(&kept[0]);
+    fs::write(&copy, format!("{base}\nexit=0\nedited\n")).expect("the copy is edited");
+
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("the queue's copy of the receipt,"))
+        .stdout(predicate::str::contains(
+            "changed since the request was queued",
+        ));
+    assert!(!head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+fn dropping_a_request_removes_the_queue_s_copy() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    assert_eq!(kept_receipts(&fixture).len(), 1);
+    rune(&fixture)
+        .args(["sign", "drop", "change/base"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dropped"));
+    assert_eq!(kept_receipts(&fixture), Vec::<String>::new());
+    assert!(receipt.is_file(), "the session's own file is never removed");
+}
+
 #[test]
 fn a_repository_level_signing_program_is_never_run() {
     let Some(fixture) = fixture() else {
