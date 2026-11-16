@@ -1,19 +1,22 @@
 ---
 type: proof
 change: policy-gates-hook-handlers
+head: 2e140d5db596b2d6ed2225475e4335c63bebb1a8
+head_change: nwxppvtzsvoswsnzmprxnnnymmvptkxr
+head_tree: 39f354860f6eea8c950f62041d677e8977d62c30
 recorded: 2026-11-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 32047dad36761ca6dbfe2a00a45777cc77bfbdfb24588076d1f72dedf0affab3
 scenes:
 - scenario: policy-gates-hook-handlers#the-dispatcher-skips-a-handler-the-policy-refuses/refused-guard-does-not-start
-  kind: unproven
+  kind: check
 - scenario: policy-gates-hook-handlers#the-dispatcher-skips-a-handler-the-policy-refuses/allowed-handler-runs
-  kind: unproven
+  kind: check
 - scenario: policy-gates-hook-handlers#a-session-switch-turns-names-off-for-one-session/switch-file-for-this-session
-  kind: unproven
+  kind: check
 - scenario: policy-gates-hook-handlers#the-owner-checks-names-before-an-event/one-name-refused
-  kind: unproven
+  kind: check
 - scenario: policy-gates-hook-handlers#the-hook-list-shows-each-policy-name/one-handler-names-a-policy-entry
-  kind: unproven
+  kind: check
 ---
 
 # Proof: policy-gates-hook-handlers

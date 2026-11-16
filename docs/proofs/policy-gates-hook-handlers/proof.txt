@@ -1,0 +1,217 @@
+## policy-gates-hook-handlers#the-dispatcher-skips-a-handler-the-policy-refuses/refused-guard-does-not-start
+kind: check
+$ sh -s
+< mkdir -p home/.config/rune home/work home/other
+< cat > home/.config/rune/config.yaml <<'EOF'
+< hooks:
+<   handlers:
+<     - id: guard
+<       exec: [sh, -c, 'cat >/dev/null; touch ../../guard-started; printf "{\"effect\":\"deny\",\"reason\":\"guard says no\"}"']
+<       events: [tool.before]
+<       policy: guard.deny
+< EOF
+< cat > home/.config/rune/policy.yaml <<'EOF'
+< version: 1
+< grant: [guard.*]
+< scopes:
+<   - path: ~/work
+<     revoke: [guard.deny]
+< EOF
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook list --write
+  rune hook: plan written to /tmp/claude-501/rune-proof-23887-state-3111f748-1-0/hooks/plan.json
+  claude
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  codex
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  cursor
+    preToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  gemini  (decoded, not registered by this release)
+    BeforeTool         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  opencode  (decoded, not registered by this release)
+    tool.execute.before tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  grok  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  antigravity  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook run --harness claude --native-event PreToolUse
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":"home/work","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}
+$ sh -c 'test ! -e guard-started && echo "the guard did not start"'
+  the guard did not start
+$ sh -c 'grep "skipped by policy" "$RUNE_STATE_DIR/hooks/run.log"'
+  guard skipped by policy: guard.deny (scope ~/work)
+
+## policy-gates-hook-handlers#the-dispatcher-skips-a-handler-the-policy-refuses/allowed-handler-runs
+kind: check
+$ sh -s
+< mkdir -p home/.config/rune home/work home/other
+< cat > home/.config/rune/config.yaml <<'EOF'
+< hooks:
+<   handlers:
+<     - id: guard
+<       exec: [sh, -c, 'cat >/dev/null; touch ../../guard-started; printf "{\"effect\":\"deny\",\"reason\":\"guard says no\"}"']
+<       events: [tool.before]
+<       policy: guard.deny
+< EOF
+< cat > home/.config/rune/policy.yaml <<'EOF'
+< version: 1
+< grant: [guard.*]
+< scopes:
+<   - path: ~/work
+<     revoke: [guard.deny]
+< EOF
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook list --write
+  rune hook: plan written to /tmp/claude-501/rune-proof-23887-state-33393860-9-0/hooks/plan.json
+  claude
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  codex
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  cursor
+    preToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  gemini  (decoded, not registered by this release)
+    BeforeTool         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  opencode  (decoded, not registered by this release)
+    tool.execute.before tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  grok  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  antigravity  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook run --harness claude --native-event PreToolUse
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":"home/other","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}
+  {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"guard says no"}}
+$ sh -c 'test -e guard-started && echo "the guard started"'
+  the guard started
+$ sh -c 'tail -n 1 "$RUNE_STATE_DIR/hooks/run.log"'
+  guard deny
+
+## policy-gates-hook-handlers#a-session-switch-turns-names-off-for-one-session/switch-file-for-this-session
+kind: check
+$ sh -s
+< mkdir -p home/.config/rune home/work home/other "$RUNE_STATE_DIR/policy/session"
+< cat > home/.config/rune/config.yaml <<'EOF'
+< hooks:
+<   handlers:
+<     - id: guard
+<       exec: [sh, -c, 'cat >/dev/null; touch ../../guard-started; printf "{\"effect\":\"deny\",\"reason\":\"guard says no\"}"']
+<       events: [tool.before]
+<       policy: guard.deny
+< EOF
+< cat > home/.config/rune/policy.yaml <<'EOF'
+< version: 1
+< grant: [guard.*]
+< scopes:
+<   - path: ~/work
+<     revoke: [guard.deny]
+< EOF
+< echo 'disabled: [guard.*]' > "$RUNE_STATE_DIR/policy/session/s1.yaml"
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook list --write
+  rune hook: plan written to /tmp/claude-501/rune-proof-23887-state-371c8158-17-0/hooks/plan.json
+  claude
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  codex
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  cursor
+    preToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  gemini  (decoded, not registered by this release)
+    BeforeTool         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  opencode  (decoded, not registered by this release)
+    tool.execute.before tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  grok  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+  antigravity  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook run --harness claude --native-event PreToolUse
+< {"hook_event_name":"PreToolUse","session_id":"s1","cwd":"home/other","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}
+$ sh -c 'test ! -e guard-started && echo "the guard did not start for session s1"'
+  the guard did not start for session s1
+$ sh -c 'grep "skipped by policy" "$RUNE_STATE_DIR/hooks/run.log"'
+  guard skipped by policy: guard.deny (session s1)
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook run --harness claude --native-event PreToolUse
+< {"hook_event_name":"PreToolUse","session_id":"s2","cwd":"home/other","tool_name":"Bash","tool_use_id":"t2","tool_input":{"command":"ls"}}
+  {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"guard says no"}}
+$ sh -c 'test -e guard-started && echo "the guard started for session s2"'
+  the guard started for session s2
+
+## policy-gates-hook-handlers#the-owner-checks-names-before-an-event/one-name-refused
+kind: check
+$ sh -s
+< mkdir -p home/.config/rune home/work home/other
+< cat > home/.config/rune/policy.yaml <<'EOF'
+< version: 1
+< grant: [guard.*]
+< scopes:
+<   - path: ~/work
+<     revoke: [guard.deny]
+< EOF
+$ HOME=home XDG_CONFIG_HOME=home/.config rune policy check --path home/work guard.deny guard.watch
+  guard.deny   refused  scope ~/work (revoke guard.deny)
+  guard.watch  allowed  top level (grant guard.*)
+$ HOME=home XDG_CONFIG_HOME=home/.config rune policy check --path home/other guard.deny
+  guard.deny  allowed  top level (grant guard.*)
+
+## policy-gates-hook-handlers#the-hook-list-shows-each-policy-name/one-handler-names-a-policy-entry
+kind: check
+$ sh -s
+< mkdir -p home/.config/rune
+< cat > home/.config/rune/config.yaml <<'EOF'
+< hooks:
+<   handlers:
+<     - id: guard
+<       exec: [guard]
+<       events: [tool.before]
+<       policy: guard.deny
+<     - id: lint
+<       exec: [lint]
+<       events: [tool.before]
+<       order: 200
+< EOF
+$ HOME=home XDG_CONFIG_HOME=home/.config rune hook list
+  claude
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  codex
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  cursor
+    preToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  gemini  (decoded, not registered by this release)
+    BeforeTool         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  opencode  (decoded, not registered by this release)
+    tool.execute.before tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  grok  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+  antigravity  (decoded, not registered by this release)
+    PreToolUse         tool.before     gate       3000ms
+       100  guard                 500ms  warn  guard.deny
+       200  lint                  500ms  warn  -
+
