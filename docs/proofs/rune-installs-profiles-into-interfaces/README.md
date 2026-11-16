@@ -1,17 +1,20 @@
 ---
 type: proof
 change: rune-installs-profiles-into-interfaces
+head: e9f479ab84c513e04af23032141dfd01d9ea4e8f
+head_change: lzntrmqtmqkslpwpwrmrsysnonwnxzsw
+head_tree: d41298ea44c91772f0ca0677f44d94a986105e98
 recorded: 2026-11-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: e220227ba7a7bea8cef47dffbf18b432ad649cdf70e4e9f3d0bbd845655629b0
 scenes:
 - scenario: install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/dry-run-leaves-the-settings-file-as-it-was
-  kind: unproven
+  kind: check
 - scenario: install-profiles-into-interfaces#the-first-slice-reads-and-never-writes/installation-without-the-dry-run
-  kind: unproven
+  kind: check
 - scenario: install-profiles-into-interfaces#a-proxy-backed-profile-gets-an-instance-beside-the-native-one/profile-with-a-base-url
-  kind: unproven
+  kind: check
 - scenario: install-profiles-into-interfaces#the-planner-rejects-what-the-interface-cannot-carry/profile-with-middleware
-  kind: unproven
+  kind: check
 ---
 
 # Proof: rune-installs-profiles-into-interfaces
