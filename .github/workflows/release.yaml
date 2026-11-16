@@ -61,8 +61,8 @@ jobs:
             - name: Validate
               run: |
                   cargo fmt --all -- --check
-                  cargo clippy --workspace --all-targets --all-features -- -D warnings
-                  cargo test --workspace --all-features
+                  cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+                  cargo test --locked --workspace --all-features
                   bash scripts/validate.sh
 
     build:
@@ -101,7 +101,7 @@ jobs:
               run: sudo apt-get install -y musl-tools
 
             - name: Build
-              run: cargo build --release --target ${{ matrix.target }}
+              run: cargo build --release --locked --target ${{ matrix.target }}
 
             - name: Package (unix)
               if: runner.os != 'Windows'

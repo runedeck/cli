@@ -56,7 +56,6 @@ config.yaml
 /target-*/
 /target[0-9]*/
 /bin/
-Cargo.lock
 **/*.rs.bk
 /build/
 **/user/

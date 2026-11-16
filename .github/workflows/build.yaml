@@ -24,7 +24,7 @@ jobs:
                   components: rustfmt, clippy
 
             - name: Build
-              run: cargo build --release
+              run: cargo build --release --locked
 
             - name: Upload binary
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -56,13 +56,13 @@ jobs:
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
             - name: Build dashboard feature in isolation
-              run: cargo build --no-default-features --features dashboard
+              run: cargo build --locked --no-default-features --features dashboard
 
             - name: Clippy dashboard
-              run: cargo clippy --features dashboard -- -D warnings
+              run: cargo clippy --locked --features dashboard -- -D warnings
 
             - name: Test dashboard
-              run: cargo test --features dashboard
+              run: cargo test --locked --features dashboard
 
     quality:
         needs: build
