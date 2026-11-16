@@ -176,6 +176,45 @@ fn a_profile_the_interface_cannot_carry_is_rejected_whole() {
 }
 
 #[test]
+fn a_base_url_with_a_query_or_a_fragment_is_rejected_and_never_shown() {
+    for url in [
+        format!("https://gateway.example/v1?api_key={SECRET}"),
+        format!("https://gateway.example/v1#{SECRET}"),
+        format!("gateway.example/v1?token={SECRET}&x=1"),
+    ] {
+        let plan = planned(
+            &format!(
+                "profiles:\n  codex:\n    hub:\n      model: sol\n      env:\n        OPENAI_BASE_URL: \"{url}\"\n"
+            ),
+            &no_settings(),
+        );
+        assert_eq!(plan.profiles, [], "{url}");
+        assert_eq!(plan.instances, [], "{url}");
+        assert_eq!(plan.rejected.len(), 1, "{url}");
+        assert_eq!(plan.rejected[0].profile, "hub@codex");
+        assert!(
+            plan.rejected[0].reasons[0]
+                .starts_with("env.OPENAI_BASE_URL: the base URL has a query string or a fragment"),
+            "{:?}",
+            plan.rejected
+        );
+        let json = serde_json::to_string(&plan).expect("the plan serializes");
+        assert!(!json.contains(SECRET), "{json}");
+        let text = render_plan(&no_settings(), &plan);
+        assert!(!text.contains(SECRET), "{text}");
+        let status = render_status(&no_settings(), &plan);
+        assert!(!status.contains(SECRET), "{status}");
+    }
+    // The rule is for the value the plan prints. Another literal is never
+    // shown, so a `?` in it rejects nothing.
+    let plan = planned(
+        "profiles:\n  codex:\n    hub:\n      env:\n        OPENAI_BASE_URL: http://hub/v1\n        EXTRA: \"a?b#c\"\n",
+        &no_settings(),
+    );
+    assert_eq!(plan.rejected, []);
+}
+
+#[test]
 fn a_literal_that_is_not_the_base_url_is_never_shown() {
     let plan = planned(
         &format!(

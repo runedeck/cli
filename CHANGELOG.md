@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Keep the signing queue's own copy of each receipt under `sign-queue/receipts/`, so a request signs after its receipt file is gone. A receipt that changed is still refused.
 - Take the release notes from the changelog section of the tag when no pull request merged since the last release. The notes said `No user-facing changes` for a release pushed straight to `main`.
 - Keep a compressed Codex session of an excluded folder, and the daily backup of an excluded Antigravity database, out of the data folder. The sweep copied both.
+- Reject a profile whose base URL has a query string or a fragment in `rune interface`. The dry run and its JSON printed the URL whole, with a key in it.
 
 ## [0.6.0] - 2026-10-26
 

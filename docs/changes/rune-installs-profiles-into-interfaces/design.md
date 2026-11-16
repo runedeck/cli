@@ -127,7 +127,8 @@ slice of 0.7.0 follows them.
 
 The planner reads profile data only. It resolves no secret and runs no middleware. It rejects a profile whole
 when T3 Code cannot carry it: a tool with no T3 Code driver, middleware (`with`), arguments, an unknown model
-route, or a URL that holds a credential. For an accepted profile it names what T3 Code loses, such as the
+route, a URL with a user name or a password, or a base URL with a query string or a fragment, which can hold
+a key. For an accepted profile it names what T3 Code loses, such as the
 context window of a Claude route. A dry run shows a value only for the base URL. Every other literal and every
 reference stays out of the output.
 

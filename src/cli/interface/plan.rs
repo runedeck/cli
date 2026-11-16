@@ -240,6 +240,14 @@ fn check(
                         "env.{key}: the value is a URL with a user name or a password, and no credential goes into a settings file"
                     ));
                 }
+                // The base URL is the one literal the plan prints. What
+                // follows `?` or `#` can be a key, and nothing tells a key
+                // from another parameter, so no such URL reaches the plan.
+                if base_url_env.as_deref() == Some(key.as_str()) && text.contains(['?', '#']) {
+                    reasons.push(format!(
+                        "env.{key}: the base URL has a query string or a fragment, which can hold a credential, and no credential goes into a settings file. A `from_env` reference can carry the whole URL"
+                    ));
+                }
                 Variable {
                     name: key.clone(),
                     literal: Some(text.clone()),

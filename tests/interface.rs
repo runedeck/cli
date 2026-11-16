@@ -73,6 +73,11 @@ impl Scene {
         self.home.join(".t3/userdata/settings.json")
     }
 
+    /// Replace the rune configuration of the scene.
+    fn configure(&self, yaml: &str) {
+        fs::write(self.home.join(".config/rune/config.yaml"), yaml).expect("rune configuration");
+    }
+
     fn rune(&self) -> Command {
         let mut command = support::rune();
         command.env("HOME", &self.home);
@@ -119,6 +124,22 @@ impl Scene {
         serde_json::from_str(&stdout)
             .unwrap_or_else(|error| panic!("{arguments:?} is not JSON ({error}): {stdout}"))
     }
+}
+
+/// The reasons the plan rejects `profile` for, joined by newlines.
+fn reasons_of(plan: &Value, profile: &str) -> String {
+    plan["rejected"]
+        .as_array()
+        .expect("rejected")
+        .iter()
+        .find(|rejected| rejected["profile"] == profile)
+        .unwrap_or_else(|| panic!("{profile} is not rejected in {plan}"))["reasons"]
+        .as_array()
+        .expect("reasons")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Every command of the slice, the refused write among them.
@@ -280,6 +301,42 @@ fn the_dry_run_text_says_that_nothing_is_written() {
             "missing `{line}` in:\n{stdout}"
         );
     }
+}
+
+#[test]
+fn a_credential_in_the_query_of_a_base_url_reaches_no_output() {
+    const QUERY_SECRET: &str = "fixture-url-secret";
+    let scene = Scene::new();
+    scene.configure(&format!(
+        "launch:\n  profiles:\n    codex:\n      hub:\n        model: sol\n        env:\n          OPENAI_BASE_URL: https://gateway.example/v1?api_key={QUERY_SECRET}\n"
+    ));
+    let before = scene.snapshot();
+    for arguments in COMMANDS {
+        let (code, stdout, stderr) = scene.run(arguments);
+        assert!(code.is_some(), "{arguments:?} was killed");
+        assert!(
+            !stdout.contains(QUERY_SECRET) && !stderr.contains(QUERY_SECRET),
+            "{arguments:?} shows the credential:\n{stdout}{stderr}"
+        );
+    }
+    assert_eq!(scene.snapshot(), before);
+
+    let plan = scene.json(&["interface", "enable", "t3code", "--dry-run", "--json"]);
+    assert_eq!(plan["profiles"], serde_json::json!([]), "{plan}");
+    assert_eq!(plan["instances"], serde_json::json!([]), "{plan}");
+    // rune's own default profiles are rejected too, for their middleware.
+    assert!(
+        reasons_of(&plan, "hub@codex")
+            .starts_with("env.OPENAI_BASE_URL: the base URL has a query string or a fragment"),
+        "{plan}"
+    );
+    let (_, stdout, _) = scene.run(&["interface", "status", "t3code"]);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "  hub@codex  cannot be installed"),
+        "{stdout}"
+    );
 }
 
 #[test]
