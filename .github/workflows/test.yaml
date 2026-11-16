@@ -1,6 +1,10 @@
 name: Test
 
 on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
     workflow_dispatch:
 
 permissions:
@@ -15,12 +19,18 @@ jobs:
                   persist-credentials: false
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
 
-            # The run tests create jj repositories for isolated runs.
-            - name: Install jj
+            # The run tests create jj repositories for isolated runs, and
+            # tests/runeshell.rs runs the standalone mdschema checker.
+            - name: Install jj and mdschema
               run: |
-                  bash scripts/install-tools jj
+                  bash scripts/install-tools jj mdschema
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+            - name: Show the mdschema version
+              run: mdschema version
 
             - name: Test
               run: cargo test --workspace

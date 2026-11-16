@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Check that every workflow job that runs cargo installs the pinned Rust.
+
+A job runs cargo when a step calls `cargo`, runs the prek hooks (`prek run`,
+the prek action, `make validate`), or builds through `.githooks/rune-here`.
+Such a job needs a `dtolnay/rust-toolchain` step with `toolchain: <pin>`
+before its first cargo step. Without the pin the job takes the runner's
+stable Rust, and a new clippy lint turns every open pull request red.
+
+The pin lives here and nowhere else. To move Rust, change RUST_TOOLCHAIN,
+then change every `toolchain:` line this check reports.
+
+Standard library only: the Test workflow runs this through `cargo test`
+on a runner with no YAML package. The reader below handles the block style
+that the workflow files use, not all of YAML.
+"""
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+RUST_TOOLCHAIN = "1.100.0"
+
+TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@"
+
+# Workflows that Copier renders from the skeleton template. A pin there is a
+# template change, made in runedeck/skeleton and synced to every consumer.
+TEMPLATE_OWNED = {"module-release.yaml", "template-update.yaml"}
+
+CARGO_PATTERNS = (
+    re.compile(r"(^|[\s;&|(])cargo\s"),
+    re.compile(r"(^|[\s;&|(=\"'])prek\s+run\b"),
+    re.compile(r"(^|[\s;&|(])make\s+validate\b"),
+    re.compile(r"\.githooks/rune-here\b"),
+    re.compile(r"uses:\s*[\"']?j178/prek-action@"),
+)
+
+
+def indent_of(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def is_content(line):
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
+
+
+def read_jobs(text):
+    """Return [(job name, [step text, ...])] for one workflow file."""
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if re.match(r"^jobs:\s*(#.*)?$", line))
+    except StopIteration:
+        return []
+
+    body = []
+    for line in lines[start + 1 :]:
+        if is_content(line) and indent_of(line) == 0:
+            break
+        body.append(line)
+
+    content = [line for line in body if is_content(line)]
+    if not content:
+        return []
+    job_indent = indent_of(content[0])
+
+    jobs = []
+    current = None
+    for line in body:
+        if is_content(line) and indent_of(line) == job_indent:
+            name = line.strip().split(":", 1)[0]
+            current = (name, [])
+            jobs.append(current)
+        elif current is not None:
+            current[1].append(line)
+
+    return [(name, read_steps(job_lines)) for name, job_lines in jobs]
+
+
+def read_steps(job_lines):
+    steps_at = None
+    for index, line in enumerate(job_lines):
+        if re.match(r"^\s*steps:\s*(#.*)?$", line):
+            steps_at = index
+            break
+    if steps_at is None:
+        return []
+
+    steps_indent = indent_of(job_lines[steps_at])
+    item_indent = None
+    steps = []
+    for line in job_lines[steps_at + 1 :]:
+        if not is_content(line):
+            if steps:
+                steps[-1].append(line)
+            continue
+        indent = indent_of(line)
+        if indent <= steps_indent and not line.lstrip().startswith("- "):
+            break
+        if item_indent is None and line.lstrip().startswith("- "):
+            item_indent = indent
+        if indent == item_indent and line.lstrip().startswith("- "):
+            steps.append([line])
+        elif steps:
+            steps[-1].append(line)
+    return ["\n".join(step) for step in steps]
+
+
+def without_comments(step):
+    return "\n".join(line for line in step.splitlines() if is_content(line))
+
+
+def toolchain_of(step):
+    """Return the `toolchain:` value of a rust-toolchain step, or None."""
+    match = re.search(r"^\s*toolchain:\s*[\"']?([^\"'\s#]+)", without_comments(step), re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def is_toolchain_step(step):
+    return re.search(r"uses:\s*[\"']?" + re.escape(TOOLCHAIN_ACTION), without_comments(step)) is not None
+
+
+def runs_cargo(step):
+    text = without_comments(step)
+    return any(pattern.search(text) for pattern in CARGO_PATTERNS)
+
+
+def check_workflow(path, expected):
+    findings = []
+    for job, steps in read_jobs(path.read_text(encoding="utf-8")):
+        pinned = False
+        for step in steps:
+            if is_toolchain_step(step):
+                found = toolchain_of(step)
+                if found == expected:
+                    pinned = True
+                elif found is None:
+                    findings.append(
+                        f"{path.name}: job {job}: the rust-toolchain step has no `toolchain: {expected}`"
+                    )
+                else:
+                    findings.append(
+                        f"{path.name}: job {job}: the rust-toolchain step pins {found}, expected {expected}"
+                    )
+                continue
+            if runs_cargo(step) and not pinned:
+                findings.append(
+                    f"{path.name}: job {job}: a step runs cargo before a rust-toolchain step pinned to {expected}"
+                )
+                break
+    return findings
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--workflows", default=".github/workflows", help="workflow directory")
+    parser.add_argument("--expect", default=RUST_TOOLCHAIN, help="pinned Rust version")
+    arguments = parser.parse_args()
+
+    directory = Path(arguments.workflows)
+    paths = sorted(list(directory.glob("*.yaml")) + list(directory.glob("*.yml")))
+    if not paths:
+        print(f"fatal: no workflow file in {directory}", file=sys.stderr)
+        return 2
+
+    findings = []
+    for path in paths:
+        if path.name in TEMPLATE_OWNED:
+            continue
+        findings.extend(check_workflow(path, arguments.expect))
+
+    for finding in findings:
+        print(finding)
+    if findings:
+        return 1
+    print(f"Every job that runs cargo pins Rust {arguments.expect}.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
