@@ -416,6 +416,48 @@ fn an_existing_instance_on_another_route_does_not_read_as_installed() {
 }
 
 #[test]
+fn two_profiles_never_get_one_instance_id() {
+    let scene = Scene::new();
+    scene.configure(
+        "launch:\n  profiles:\n    claude:\n      a.b:\n        model: sol\n        env:\n          ANTHROPIC_BASE_URL: http://one.example\n      a-b:\n        model: lumo\n        env:\n          ANTHROPIC_BASE_URL: http://two.example\n",
+    );
+    let plan = scene.json(&["interface", "enable", "t3code", "--dry-run", "--json"]);
+    let instances = plan["instances"].as_array().expect("instances");
+    let mut ids: Vec<&str> = instances
+        .iter()
+        .map(|instance| instance["id"].as_str().expect("id"))
+        .collect();
+    let planned = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        planned,
+        "an instance id is planned twice: {plan}"
+    );
+    let owned: Vec<&str> = instances
+        .iter()
+        .flat_map(|instance| instance["owned_keys"].as_array().expect("owned keys"))
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        !owned.contains(&"providerInstances.rune_claude_a-b"),
+        "{plan}"
+    );
+    let reason = "instance: the profiles a-b@claude and a.b@claude would get the same instance id rune_claude_a-b with different environments. Rename one of them";
+    assert_eq!(reasons_of(&plan, "a.b@claude"), reason);
+    assert_eq!(reasons_of(&plan, "a-b@claude"), reason);
+
+    let (code, stdout, stderr) = scene.run(&["interface", "enable", "t3code", "--dry-run"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        !stdout.contains("rune_claude_a-b  driver"),
+        "the text plans the instance:\n{stdout}"
+    );
+    assert!(stdout.contains(&format!("    {reason}")), "{stdout}");
+}
+
+#[test]
 fn enable_without_the_dry_run_refuses() {
     let scene = Scene::new();
     let before = scene.snapshot();

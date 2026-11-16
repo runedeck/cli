@@ -495,6 +495,59 @@ fn an_instance_id_is_one_t3_code_accepts() {
 }
 
 #[test]
+fn profiles_that_would_share_an_instance_id_are_rejected() {
+    // `a.b` and `a-b` after the character replacement.
+    let plan = planned(
+        "profiles:\n  claude:\n    a.b:\n      model: sol\n      env:\n        ANTHROPIC_BASE_URL: http://one.example\n    a-b:\n      model: lumo\n      env:\n        ANTHROPIC_BASE_URL: http://two.example\n    friend:\n      model: sol\n      env:\n        ANTHROPIC_BASE_URL: http://two.example\n    other:\n      model: sol\n      env:\n        ANTHROPIC_BASE_URL: http://three.example\n",
+        &no_settings(),
+    );
+    let ids: Vec<&str> = plan.instances.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["rune_claude_other"],
+        "no instance of the shared id is planned"
+    );
+    let carried: Vec<&str> = plan.profiles.iter().map(|p| p.profile.as_str()).collect();
+    assert_eq!(carried, ["other@claude"]);
+    let rejected: Vec<&str> = plan.rejected.iter().map(|r| r.profile.as_str()).collect();
+    // `friend` shares the environment of `a-b`, so it has no instance.
+    assert_eq!(rejected, ["a-b@claude", "a.b@claude", "friend@claude"]);
+    for gone in &plan.rejected {
+        assert_eq!(
+            gone.reasons,
+            [
+                "instance: the profiles a-b@claude and a.b@claude would get the same instance id rune_claude_a-b with different environments. Rename one of them"
+            ]
+        );
+    }
+    let lost: Vec<&str> = plan
+        .unrepresented
+        .iter()
+        .map(|u| u.profile.as_str())
+        .collect();
+    assert_eq!(lost, ["other@claude"], "a rejected profile loses nothing");
+
+    // Two long names after the cut at 64 characters.
+    let long = "x".repeat(70);
+    let plan = planned(
+        &format!(
+            "profiles:\n  codex:\n    {long}a:\n      env:\n        OPENAI_BASE_URL: http://one.example\n    {long}b:\n      env:\n        OPENAI_BASE_URL: http://two.example\n"
+        ),
+        &no_settings(),
+    );
+    assert_eq!(plan.instances, []);
+    assert_eq!(plan.rejected.len(), 2);
+
+    // The same environment is one group, and one id is no collision.
+    let plan = planned(
+        "profiles:\n  claude:\n    a.b:\n      model: sol\n      env:\n        ANTHROPIC_BASE_URL: http://one.example\n    a-b:\n      model: lumo\n      env:\n        ANTHROPIC_BASE_URL: http://one.example\n",
+        &no_settings(),
+    );
+    assert_eq!(plan.rejected, []);
+    assert_eq!(plan.instances.len(), 1);
+}
+
+#[test]
 fn the_plan_text_says_that_nothing_is_written() {
     let existing = settings(NATIVE);
     let plan = planned(

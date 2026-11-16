@@ -139,6 +139,10 @@ one side only, or another value, is a conflict. When a comparison needs a secret
 both cases the plan owns no key of that instance, and the status does not say `installed`. A value of the
 settings file reaches no output.
 
+An instance id keeps letters, digits, `_`, and `-`, and at most 64 characters, so two profile names can give
+one id: `a.b` and `a-b`, or two long names. When their environments differ, the planner rejects the profiles
+of both groups and plans no instance of that id.
+
 | Command | Reads | Writes |
 | --- | --- | --- |
 | `rune interface list` | whether the settings file exists | nothing |

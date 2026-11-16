@@ -186,7 +186,20 @@ pub(crate) fn plan(launch: &Launch, settings: &Settings) -> Plan {
         }
     }
 
-    let (profiles, instances) = place(&accepted, settings);
+    let (profiles, instances, collided) = place(&accepted, settings);
+    // A rejected profile loses nothing in T3 Code: it is not carried.
+    unrepresented.retain(|lost| !collided.iter().any(|gone| gone.profile == lost.profile));
+    rejected.extend(collided);
+    // By tool, then by name, as the profiles are read.
+    rejected.sort_by(|left, right| {
+        let key = |rejected: &Rejected| {
+            rejected
+                .profile
+                .rsplit_once('@')
+                .map(|(name, tool)| (tool.to_string(), name.to_string()))
+        };
+        key(left).cmp(&key(right))
+    });
     Plan {
         profiles,
         instances,
@@ -285,10 +298,15 @@ fn check(
 /// environment goes to the driver's native instance. Profiles of one tool
 /// with the same environment share one instance beside the native one,
 /// named for the first of them. The native instance is never repointed.
+///
+/// Two such groups can get one id: `a.b` and `a-b` after the character
+/// replacement, or two long names after the cut at 64 characters. One
+/// settings key cannot hold two environments, so the profiles of both
+/// groups are rejected, and the plan holds no instance of that id.
 fn place(
     accepted: &[Accepted],
     settings: &Settings,
-) -> (Vec<PlannedProfile>, Vec<PlannedInstance>) {
+) -> (Vec<PlannedProfile>, Vec<PlannedInstance>, Vec<Rejected>) {
     let mut groups: BTreeMap<(bool, String, Vec<Variable>), Vec<&Accepted>> = BTreeMap::new();
     for profile in accepted {
         let native = profile.variables.is_empty();
@@ -297,99 +315,138 @@ fn place(
             .or_default()
             .push(profile);
     }
+    let id_of = |beside: bool, tool: &str, members: &[&Accepted]| {
+        if beside {
+            instance_id(tool, &members[0].name)
+        } else {
+            driver_of(tool).unwrap_or_default().to_string()
+        }
+    };
+    // Each id, with the profile that every group of that id is named for.
+    let mut named_for: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for ((beside, tool, _), members) in &groups {
+        named_for
+            .entry(id_of(*beside, tool, members))
+            .or_default()
+            .push(format!("{}@{tool}", members[0].name));
+    }
 
     let mut profiles: Vec<PlannedProfile> = Vec::new();
     let mut instances: Vec<PlannedInstance> = Vec::new();
+    let mut rejected: Vec<Rejected> = Vec::new();
     for ((beside, tool, variables), members) in groups {
-        let driver = driver_of(&tool).unwrap_or_default().to_string();
-        let first = members[0];
-        let id = if beside {
-            instance_id(&tool, &first.name)
-        } else {
-            driver.clone()
-        };
-        let existing = settings.instance(&id);
-        // An instance beside the native one is the profile's destination
-        // only when it takes the profile's route. The native instance is
-        // the owner's, and rune compares nothing in it.
-        let route = existing
-            .filter(|instance| beside && instance.driver == driver)
-            .map_or(Route::Same, |instance| route_of(instance, &variables));
-        let conflict = existing
-            .filter(|instance| instance.driver != driver)
-            .map(|instance| {
-                format!(
-                    "the settings file has an instance {id} with the driver {}",
-                    instance.driver
-                )
-            })
-            .or_else(|| match &route {
-                Route::Differs(why) => Some(format!(
-                    "the settings file has an instance {id} on another route: {why}"
-                )),
-                Route::Same | Route::Unknown(_) => None,
-            });
-        let route_unknown = match route {
-            Route::Unknown(why) if conflict.is_none() => Some(format!(
-                "rune cannot tell whether the instance {id} of the settings file takes this route: {why}"
-            )),
-            _ => None,
-        };
-        let mut models: Vec<PlannedCustomModel> = Vec::new();
-        for member in &members {
-            profiles.push(PlannedProfile {
+        let id = id_of(beside, &tool, &members);
+        if let Some(sources) = named_for.get(&id).filter(|sources| sources.len() > 1) {
+            let mut sources = sources.clone();
+            sources.sort();
+            let reason = format!(
+                "instance: the profiles {} would get the same instance id {id} with different environments. Rename one of them",
+                sources.join(" and ")
+            );
+            rejected.extend(members.iter().map(|member| Rejected {
                 profile: format!("{}@{}", member.name, member.tool),
-                tool: member.tool.clone(),
-                model: member.model.clone(),
-                instance: id.clone(),
-            });
-            let Some(model) = &member.model else {
-                continue;
-            };
-            if models.iter().any(|known| known.slug == model.id) {
-                continue;
-            }
-            models.push(PlannedCustomModel {
-                slug: model.id.clone(),
-                name: member.name.clone(),
-                present: existing.is_some_and(|instance| instance.has_model(&model.id)),
-            });
+                reasons: vec![reason.clone()],
+            }));
+            continue;
         }
-        let owned_keys = if conflict.is_some() || route_unknown.is_some() {
-            Vec::new()
-        } else if beside && existing.is_none() {
-            vec![format!("providerInstances.{id}")]
-        } else {
-            models
-                .iter()
-                .filter(|model| !model.present)
-                .map(|model| {
-                    format!(
-                        "providerInstances.{id}.config.customModels[slug={}]",
-                        model.slug
-                    )
-                })
-                .collect()
-        };
-        let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
-        instances.push(PlannedInstance {
-            display_name: beside.then(|| format!("{tool} through rune ({})", names.join(", "))),
-            environment: variables
-                .iter()
-                .map(|variable| shown(variable, first.base_url_env.as_deref()))
-                .collect(),
-            native: !beside,
-            exists: existing.is_some(),
-            id,
-            driver,
-            conflict,
-            route_unknown,
-            models,
-            owned_keys,
-        });
+        profiles.extend(members.iter().map(|member| PlannedProfile {
+            profile: format!("{}@{}", member.name, member.tool),
+            tool: member.tool.clone(),
+            model: member.model.clone(),
+            instance: id.clone(),
+        }));
+        instances.push(instance_of(
+            id, beside, &tool, &variables, &members, settings,
+        ));
     }
     profiles.sort_by(|left, right| (&left.tool, &left.profile).cmp(&(&right.tool, &right.profile)));
-    (profiles, instances)
+    (profiles, instances, rejected)
+}
+
+/// The instance `id` of one group of profiles, against what the settings
+/// file holds under that id.
+fn instance_of(
+    id: String,
+    beside: bool,
+    tool: &str,
+    variables: &[Variable],
+    members: &[&Accepted],
+    settings: &Settings,
+) -> PlannedInstance {
+    let driver = driver_of(tool).unwrap_or_default().to_string();
+    let existing = settings.instance(&id);
+    // An instance beside the native one is the profile's destination only
+    // when it takes the profile's route. The native instance is the
+    // owner's, and rune compares nothing in it.
+    let route = existing
+        .filter(|instance| beside && instance.driver == driver)
+        .map_or(Route::Same, |instance| route_of(instance, variables));
+    let conflict = existing
+        .filter(|instance| instance.driver != driver)
+        .map(|instance| {
+            format!(
+                "the settings file has an instance {id} with the driver {}",
+                instance.driver
+            )
+        })
+        .or_else(|| match &route {
+            Route::Differs(why) => Some(format!(
+                "the settings file has an instance {id} on another route: {why}"
+            )),
+            Route::Same | Route::Unknown(_) => None,
+        });
+    let route_unknown = match route {
+        Route::Unknown(why) if conflict.is_none() => Some(format!(
+            "rune cannot tell whether the instance {id} of the settings file takes this route: {why}"
+        )),
+        _ => None,
+    };
+    let mut models: Vec<PlannedCustomModel> = Vec::new();
+    for member in members {
+        let Some(model) = &member.model else {
+            continue;
+        };
+        if models.iter().any(|known| known.slug == model.id) {
+            continue;
+        }
+        models.push(PlannedCustomModel {
+            slug: model.id.clone(),
+            name: member.name.clone(),
+            present: existing.is_some_and(|instance| instance.has_model(&model.id)),
+        });
+    }
+    let owned_keys = if conflict.is_some() || route_unknown.is_some() {
+        Vec::new()
+    } else if beside && existing.is_none() {
+        vec![format!("providerInstances.{id}")]
+    } else {
+        models
+            .iter()
+            .filter(|model| !model.present)
+            .map(|model| {
+                format!(
+                    "providerInstances.{id}.config.customModels[slug={}]",
+                    model.slug
+                )
+            })
+            .collect()
+    };
+    let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
+    PlannedInstance {
+        display_name: beside.then(|| format!("{tool} through rune ({})", names.join(", "))),
+        environment: variables
+            .iter()
+            .map(|variable| shown(variable, members[0].base_url_env.as_deref()))
+            .collect(),
+        native: !beside,
+        exists: existing.is_some(),
+        id,
+        driver,
+        conflict,
+        route_unknown,
+        models,
+        owned_keys,
+    }
 }
 
 /// Whether an instance of the settings file takes the route of the
