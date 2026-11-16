@@ -1,21 +1,24 @@
 ---
 type: proof
 change: rune-captures-every-session
+head: 294f47daddb01ca88b775ed9b87f3b08424d3c4c
+head_change: qyxrottqksxutrlwwuwrttttlrlwszps
+head_tree: 6689c21b4c8a17b85b2d1959f5d4cf5f8b0dffd1
 recorded: 2026-11-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: e7ff772e29a92753bcc46054f1437d6c6a4855eae00e0a2b681f097b676f6f76
 scenes:
 - scenario: rune-captures-every-session#native-copies-of-harness-sessions/session-end-copies-the-named-session
-  kind: unproven
+  kind: check
 - scenario: rune-captures-every-session#work-sessions-stay-out/working-folder-matches-a-glob
-  kind: unproven
+  kind: check
 - scenario: rune-captures-every-session#supported-sources/source-folder-absent
-  kind: unproven
+  kind: check
 - scenario: rune-captures-every-session#versions-only-for-lost-bytes/session-grew
-  kind: unproven
+  kind: check
 - scenario: rune-captures-every-session#versions-only-for-lost-bytes/session-rewritten
-  kind: unproven
+  kind: check
 - scenario: rune-captures-every-session#capture-debt/session-without-files
-  kind: unproven
+  kind: check
 ---
 
 # Proof: rune-captures-every-session
