@@ -43,8 +43,17 @@ pub fn scratch() -> &'static Path {
 
 /// Variables that point rune, or a harness it reads, at a directory
 /// outside HOME, mark a proof scene, or refuse agent policy names. A test
-/// never inherits them from the developer.
+/// never inherits them from the developer. The session capture copies
+/// into `DATA_DIR` and reads `ANTIGRAVITY_EXECUTABLE_DATA_DIR`, and
+/// `rune run` and `rune launch` start it, so a test that kept either
+/// variable would write a fixture session into the developer's own data
+/// folder. `tests/capture_isolation.rs` is the regression.
 const INHERITED: &[&str] = &[
+    "DATA_DIR",
+    "ANTIGRAVITY_EXECUTABLE_DATA_DIR",
+    "SPECSTORY_BIN",
+    "SQLITE3_BIN",
+    "SESSION_SYNC_LOCK_WAIT",
     "RUNE_STATE_DIR",
     "RUNE_POLICY",
     "RUNE_POLICY_DISABLE",
