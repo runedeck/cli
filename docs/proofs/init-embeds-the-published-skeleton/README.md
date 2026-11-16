@@ -1,13 +1,16 @@
 ---
 type: proof
 change: init-embeds-the-published-skeleton
+head: 6236233efa28d8f79dc3b6c6999d30b8d4d17dd1
+head_change: nrkttutrnknosunuulqmlvuzporktprt
+head_tree: 0e3c0c852ea08e60a7fc8a84835d8939557f6138
 recorded: 2026-11-16
-transcript: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+transcript: 2ec44928ba3fffe30dbaeb19e99efa0ba1cbe02ce4ffb896120740244f88eeba
 scenes:
 - scenario: init-embeds-the-published-skeleton#a-new-repository-records-the-embedded-skeleton-commit/new-repository-names-the-embedded-commit
-  kind: unproven
+  kind: check
 - scenario: init-embeds-the-published-skeleton#the-embedded-files-keep-the-cli-overlay/new-rust-repository-carries-the-overlay
-  kind: unproven
+  kind: check
 ---
 
 # Proof: init-embeds-the-published-skeleton

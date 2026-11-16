@@ -1,0 +1,274 @@
+## init-embeds-the-published-skeleton#a-new-repository-records-the-embedded-skeleton-commit/new-repository-names-the-embedded-commit
+kind: check
+$ sh -s
+< mkdir -p home quests
+$ HOME=home RUNE_QUESTS=quests rune init demo --with shell,tool --brief "A demo"
+  destination: quests/demo
+  layers: base, shell, tool
+  git: initialized main with core.hooksPath=.githooks
+  setup: skipped in noninteractive mode
+
+   ✓ base
+     files 100
+     ● .ceremony-divergences.yaml
+     ● .coderabbit.yaml
+     ● .cursor/BUGBOT.md
+     ● .dcg/fixtures.txt
+     ● .dcg/packs/homebrew.yaml
+     ● .dcg/packs/parsers.yaml
+     ● .dcg/packs/provenance.yaml
+     ● .dcg/packs/push.yaml
+     ● .dcg/packs/rtk.yaml
+     ● .dcg/packs/search.yaml
+     ● .dcg/packs/secrets.yaml
+     ● .dcg/test-config.toml
+     ● .dcg.toml
+     ● .editorconfig
+     ● .gitattributes
+     ● .githooks/jj-push
+     ● .githooks/jj-push-bookmark.py
+     ● .githooks/pre-commit
+     ● .githooks/pre-push
+     ● .github/PULL_REQUEST_TEMPLATE.md
+     ● .github/actionlint.yaml
+     ● .github/labeler.yml
+     ● .github/lanes.json
+     ● .github/rulesets/ceremony-base.json
+     ● .github/rulesets/owner-veto.json
+     ● .github/workflows/attestations.yaml
+     ● .github/workflows/autofix-comment.yaml
+     ● .github/workflows/autofix-suggest.yaml
+     ● .github/workflows/congrats.yaml
+     ● .github/workflows/draft-open.yaml
+     ● .github/workflows/issue-dedup.yaml
+     ● .github/workflows/owner-seal.yaml
+     ● .github/workflows/pr-lint.yaml
+     ● .github/workflows/quality.yaml
+     ● .github/workflows/review-cascade.yaml
+     ● .github/workflows/review-correctness.yaml
+     ● .github/workflows/review-cursor.yaml
+     ● .github/workflows/review-pragent.yaml
+     ● .github/workflows/secret-scan.yaml
+     ● .github/workflows/template-update.yaml
+     ● .github/zizmor.yml
+     ● .gitignore
+     ● .gitleaks.toml
+     ● .macroscope/check-run-agents/ceremony-conventions.md
+     ● .pre-commit-config.yaml
+     ● .rumdl.toml
+     ● .rune-skeleton-overlay.yaml
+     ● .vale/ste-source.json
+     ● .vale/ste-source.yaml
+     ● styles/Core/AIVocabulary.yml
+     ● styles/Core/AIVocabularyDensity.yml
+     ● styles/Core/BoldOveruse.yml
+     ● styles/Core/NegativeParallelism.yml
+     ● styles/Core/NoEmDash.yml
+     ● styles/Core/UndefinedTerm.yml
+     ● styles/STE/BannedWords.yml
+     ● styles/STE/Contractions.yml
+     ● styles/STE/FillerPhrases.yml
+     ● styles/STE/Marketing.yml
+     ● styles/STE/OverusedArm.yml
+     ● styles/STE/OverusedGate.yml
+     ● styles/STE/OverusedKnob.yml
+     ● styles/STE/OverusedLandscape.yml
+     ● styles/STE/OverusedLane.yml
+     ● styles/STE/OverusedSignificant.yml
+     ● styles/STE/OverusedSurface.yml
+     ● styles/STE/OverusedVarious.yml
+     ● styles/STE/PhrasalVerbs.yml
+     ● styles/STE/Semicolons.yml
+     ● styles/STE/StrictWords.yml
+     ● styles/STE/Substitutions.yml
+     ● styles/STE/VerbOnlyWords.yml
+     ● .vale.ini
+     ● AGENTS.md
+     ● CHANGELOG.md
+     ● CODEOWNERS
+     ● CONTRIBUTING.md
+     ● INSTALL.md
+     ● KEYS
+     ● LICENSE
+     ● Makefile
+     ● answers.yaml
+     ● authors.yaml
+     ● docs/decisions/.mdschema
+     ● specs/commit-attribution/spec.md
+     ● schemas/INSTALL.mdschema
+     ● schemas/PULL_REQUEST.mdschema
+     ● scripts/author-identity.py
+     ● scripts/check-authorship
+     ● scripts/ci-status
+     ● scripts/generate-vale-style.py
+     ● scripts/install-tools
+     ● scripts/test-dcg-packs
+     ● scripts/tool-versions
+     ● scripts/trash
+     ● scripts/trusted-keys
+     ● scripts/verify-range-signatures
+     ● scripts/verify-seal
+     ● secretspec.toml
+     ● typos.toml
+   ✓ shell
+     files 2
+     ● .shellcheckrc
+     ● bin/demo
+   ✓ tool
+     files 1
+     ● README.md
+
+   ● 103 created
+
+  next steps:
+    cd quests/demo
+    make install
+    rune add <deck>
+    rune tui --edit
+$ sh -c 'grep -E "^_(commit|src_path):" quests/demo/answers.yaml'
+  _commit: d7c9bdf752b6d8790f54687d770f60e6afa72caa
+  _src_path: https://github.com/runedeck/skeleton.git
+$ sh -c 'grep -E "source:|release:" quests/demo/.rune-skeleton-overlay.yaml'
+      source: https://github.com/runedeck/skeleton.git
+      release: d7c9bdf752b6d8790f54687d770f60e6afa72caa
+
+## init-embeds-the-published-skeleton#the-embedded-files-keep-the-cli-overlay/new-rust-repository-carries-the-overlay
+kind: check
+$ sh -s
+< mkdir -p home quests
+$ HOME=home RUNE_QUESTS=quests rune init demo --with rust,tool --brief "A demo"
+  destination: quests/demo
+  layers: base, rust, tool
+  git: initialized main with core.hooksPath=.githooks
+  setup: skipped in noninteractive mode
+
+   ✓ base
+     files 100
+     ● .ceremony-divergences.yaml
+     ● .coderabbit.yaml
+     ● .cursor/BUGBOT.md
+     ● .dcg/fixtures.txt
+     ● .dcg/packs/homebrew.yaml
+     ● .dcg/packs/parsers.yaml
+     ● .dcg/packs/provenance.yaml
+     ● .dcg/packs/push.yaml
+     ● .dcg/packs/rtk.yaml
+     ● .dcg/packs/search.yaml
+     ● .dcg/packs/secrets.yaml
+     ● .dcg/test-config.toml
+     ● .dcg.toml
+     ● .editorconfig
+     ● .gitattributes
+     ● .githooks/jj-push
+     ● .githooks/jj-push-bookmark.py
+     ● .githooks/pre-commit
+     ● .githooks/pre-push
+     ● .github/PULL_REQUEST_TEMPLATE.md
+     ● .github/actionlint.yaml
+     ● .github/labeler.yml
+     ● .github/lanes.json
+     ● .github/rulesets/ceremony-base.json
+     ● .github/rulesets/owner-veto.json
+     ● .github/workflows/attestations.yaml
+     ● .github/workflows/autofix-comment.yaml
+     ● .github/workflows/autofix-suggest.yaml
+     ● .github/workflows/congrats.yaml
+     ● .github/workflows/draft-open.yaml
+     ● .github/workflows/issue-dedup.yaml
+     ● .github/workflows/owner-seal.yaml
+     ● .github/workflows/pr-lint.yaml
+     ● .github/workflows/quality.yaml
+     ● .github/workflows/review-cascade.yaml
+     ● .github/workflows/review-correctness.yaml
+     ● .github/workflows/review-cursor.yaml
+     ● .github/workflows/review-pragent.yaml
+     ● .github/workflows/secret-scan.yaml
+     ● .github/workflows/template-update.yaml
+     ● .github/zizmor.yml
+     ● .gitignore
+     ● .gitleaks.toml
+     ● .macroscope/check-run-agents/ceremony-conventions.md
+     ● .pre-commit-config.yaml
+     ● .rumdl.toml
+     ● .rune-skeleton-overlay.yaml
+     ● .vale/ste-source.json
+     ● .vale/ste-source.yaml
+     ● styles/Core/AIVocabulary.yml
+     ● styles/Core/AIVocabularyDensity.yml
+     ● styles/Core/BoldOveruse.yml
+     ● styles/Core/NegativeParallelism.yml
+     ● styles/Core/NoEmDash.yml
+     ● styles/Core/UndefinedTerm.yml
+     ● styles/STE/BannedWords.yml
+     ● styles/STE/Contractions.yml
+     ● styles/STE/FillerPhrases.yml
+     ● styles/STE/Marketing.yml
+     ● styles/STE/OverusedArm.yml
+     ● styles/STE/OverusedGate.yml
+     ● styles/STE/OverusedKnob.yml
+     ● styles/STE/OverusedLandscape.yml
+     ● styles/STE/OverusedLane.yml
+     ● styles/STE/OverusedSignificant.yml
+     ● styles/STE/OverusedSurface.yml
+     ● styles/STE/OverusedVarious.yml
+     ● styles/STE/PhrasalVerbs.yml
+     ● styles/STE/Semicolons.yml
+     ● styles/STE/StrictWords.yml
+     ● styles/STE/Substitutions.yml
+     ● styles/STE/VerbOnlyWords.yml
+     ● .vale.ini
+     ● AGENTS.md
+     ● CHANGELOG.md
+     ● CODEOWNERS
+     ● CONTRIBUTING.md
+     ● INSTALL.md
+     ● KEYS
+     ● LICENSE
+     ● Makefile
+     ● answers.yaml
+     ● authors.yaml
+     ● docs/decisions/.mdschema
+     ● specs/commit-attribution/spec.md
+     ● schemas/INSTALL.mdschema
+     ● schemas/PULL_REQUEST.mdschema
+     ● scripts/author-identity.py
+     ● scripts/check-authorship
+     ● scripts/ci-status
+     ● scripts/generate-vale-style.py
+     ● scripts/install-tools
+     ● scripts/test-dcg-packs
+     ● scripts/tool-versions
+     ● scripts/trash
+     ● scripts/trusted-keys
+     ● scripts/verify-range-signatures
+     ● scripts/verify-seal
+     ● secretspec.toml
+     ● typos.toml
+   ✓ rust
+     files 2
+     ● Cargo.toml
+     ● src/main.rs
+   ✓ tool
+     files 1
+     ● README.md
+
+   ● 103 created
+
+  next steps:
+    cd quests/demo
+    make install
+    rune add <deck>
+    rune tui --edit
+$ sh -c 'grep -E "owner:|specification:" quests/demo/.rune-skeleton-overlay.yaml'
+      owner: runedeck/cli
+      specification: docs/specs/commit-attribution/spec.md
+$ sh -c 'test -f quests/demo/docs/specs/commit-attribution/spec.md && grep -c "commit-attribution/spec.md" quests/demo/authors.yaml'
+  1
+$ sh -c 'grep "^pedantic" quests/demo/Cargo.toml'
+  pedantic = { level = "warn", priority = -1 }
+$ sh -c 'grep -c "\[ -f .rune/manifest.yaml \]" quests/demo/.pre-commit-config.yaml'
+  1
+$ sh -c 'ls quests/demo/secretspec.toml quests/demo/scripts/trash'
+  quests/demo/scripts/trash
+  quests/demo/secretspec.toml
+
