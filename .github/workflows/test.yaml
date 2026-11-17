@@ -34,3 +34,37 @@ jobs:
 
             - name: Test
               run: cargo test --workspace
+
+    # release.yaml builds for Windows only on a signed tag, and the release
+    # rehearsal runs only when a release input changes. A pull request that
+    # changes Rust code alone reached a tag with a Windows build that did
+    # not compile. This job compiles every target of the workspace for
+    # Windows on every pull request, and a warning fails it. It then runs
+    # the release build command, which compiles code that only the release
+    # profile enables and links rune.exe, and the rune-docs tests.
+    windows:
+        runs-on: windows-latest
+        env:
+            RUSTFLAGS: -D warnings
+        steps:
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              with:
+                  persist-credentials: false
+
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
+
+            - name: Check
+              run: cargo check --locked --workspace --all-features --all-targets
+
+            # The same command as the Windows row of the release matrix.
+            - name: Build the release binary
+              run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+            # Spec transactions open, link, rename, and flush files through
+            # Windows calls, and file identity comes from an open handle.
+            # Only a Windows runner can prove that a transaction completes
+            # there and that a hard link equals its target.
+            - name: Test rune-docs
+              run: cargo test --locked -p rune-docs --all-features
