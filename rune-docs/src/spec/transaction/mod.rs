@@ -725,4 +725,6 @@ fn io_error(action: &str, path: &Path, error: impl std::fmt::Display) -> Error {
 }
 
 #[cfg(test)]
+mod identity_tests;
+#[cfg(test)]
 mod tests;
