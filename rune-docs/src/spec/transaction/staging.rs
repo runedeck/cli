@@ -120,10 +120,28 @@ pub(super) fn write_file_atomic(path: &Path, content: &[u8]) -> Result<(), Error
             io_error("replace", path, error),
         ));
     }
-    let directory = File::open(parent).map_err(|error| io_error("open", parent, error))?;
-    directory
+    sync_directory(parent)
+}
+
+/// Flushes a directory, so a rename or a hard link made in it survives a
+/// power loss.
+///
+/// Windows skips the flush. `File::open` cannot open a directory there:
+/// it fails with an access error, because a directory opens only with
+/// `FILE_FLAG_BACKUP_SEMANTICS`. The flush behind `sync_all` is
+/// `FlushFileBuffers`, and Microsoft documents it for a file, a volume, a
+/// pipe, and a communications device, not for a directory. A flush that
+/// one file system refuses would fail every transaction on it. The file
+/// content is flushed before this call, and the file system keeps the
+/// directory entry.
+pub(super) fn sync_directory(directory: &Path) -> Result<(), Error> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    File::open(directory)
+        .map_err(|error| io_error("open", directory, error))?
         .sync_all()
-        .map_err(|error| io_error("sync", parent, error))
+        .map_err(|error| io_error("sync", directory, error))
 }
 
 pub(super) fn replace_file_from_backup(
