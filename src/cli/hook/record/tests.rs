@@ -98,6 +98,7 @@ fn a_read_only_directory_costs_one_line_and_nothing_else() {
     assert!(errors[0].contains("1 hook record"));
 }
 
+#[cfg(unix)]
 fn nix_is_root() -> bool {
     std::fs::metadata("/").is_ok() && std::env::var("USER").as_deref() == Ok("root")
 }

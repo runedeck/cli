@@ -336,6 +336,7 @@ fn retired(scene: &Scene) -> Vec<PathBuf> {
 }
 
 /// The command of the Claude `PreToolUse` registration.
+#[cfg(unix)]
 fn pre_tool_command(scene: &Scene) -> String {
     json_at(&claude_settings(scene))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         .as_str()
@@ -346,6 +347,7 @@ fn pre_tool_command(scene: &Scene) -> String {
 /// A scene whose config guards `tool.before` with `dcg` under `deny`,
 /// installed, and the observer config that gives `dcg`'s id to a handler
 /// that allows every call.
+#[cfg(unix)]
 fn guarded_scene() -> (Scene, String) {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
@@ -365,6 +367,7 @@ fn guarded_scene() -> (Scene, String) {
 }
 
 /// What the registered `command` answers for `rm -rf /tmp/x`.
+#[cfg(unix)]
 fn registration_answers(scene: &Scene, command: &str) -> String {
     let mut args = CLAUDE_PRE.to_vec();
     let plan = plan_of(command);
@@ -1540,6 +1543,7 @@ fn a_switch_rewrites_the_harness_table_at_once() {
 /// Trust the first rune entry of one Codex event the way `/hooks` records
 /// it: the sha256 of the hook's identity, keyed by table, event label,
 /// group, and handler, appended to the Codex config.
+#[cfg(unix)]
 fn trust_codex(scene: &Scene, event: &str, label: &str) {
     use sha2::Digest as _;
     let table = scene.home().join(".codex/hooks.json");

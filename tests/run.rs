@@ -498,6 +498,7 @@ printf '%s\n' '{"type":"turn.failed","error":{"message":null}}'
 
 /// The message of a run that failed on a JSON line rune cannot read: the
 /// tool, the line on stdout, and serde's reason for the truncated object.
+#[cfg(unix)]
 fn assert_unreadable_line(result: &serde_json::Value, tool: &str, line: usize) {
     let message = result["details"]["message"].as_str().unwrap_or_default();
     let prefix =
@@ -4285,6 +4286,7 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
 /// The names of the folders jj keeps under `<home>/.config/jj/workspaces`:
 /// one for each workspace with its own configuration, such as a run's
 /// guard. None after a run means the run took its guard with it.
+#[cfg(unix)]
 fn guard_folders(home: &std::path::Path) -> Vec<String> {
     let config_root = home.join(".config/jj/workspaces");
     let mut names: Vec<String> = std::fs::read_dir(config_root).map_or_default(|entries| {
@@ -5854,7 +5856,6 @@ fn marking_provider(home: &std::path::Path, name: &str, reply: &str) -> std::pat
     )
 }
 
-#[cfg(unix)]
 fn confirmation_of(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(

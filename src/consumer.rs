@@ -61,7 +61,9 @@ pub fn user_directory(home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{MANIFEST_IN_DIRECTORY, is_linked_directory, manifest_exists, manifest_path};
+    #[cfg(unix)]
+    use super::is_linked_directory;
+    use super::{MANIFEST_IN_DIRECTORY, manifest_exists, manifest_path};
     use std::path::Path;
 
     #[test]
