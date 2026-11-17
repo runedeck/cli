@@ -120,10 +120,20 @@ pub(super) fn write_file_atomic(path: &Path, content: &[u8]) -> Result<(), Error
             io_error("replace", path, error),
         ));
     }
-    let directory = File::open(parent).map_err(|error| io_error("open", parent, error))?;
-    directory
+    sync_directory(parent)
+}
+
+/// Flush a directory after an entry in it changed. Windows cannot open a
+/// directory through `File::open`, so the change is left to the filesystem
+/// journal there.
+pub(super) fn sync_directory(directory: &Path) -> Result<(), Error> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    let handle = File::open(directory).map_err(|error| io_error("open", directory, error))?;
+    handle
         .sync_all()
-        .map_err(|error| io_error("sync", parent, error))
+        .map_err(|error| io_error("sync", directory, error))
 }
 
 pub(super) fn replace_file_from_backup(

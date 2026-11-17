@@ -651,7 +651,7 @@ fn collect_managed_files_recursive(
                     format!("cannot relativize {}: {error}", entry_path.display()),
                 )
             })?;
-            files.push(relative.to_string_lossy().into_owned());
+            files.push(rune::services::paths::slash_text(relative));
         }
     }
     Ok(())

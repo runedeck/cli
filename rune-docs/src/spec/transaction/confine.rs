@@ -18,32 +18,59 @@ pub(super) struct FileIdentity {
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FileIdentity {
-    volume: Option<u32>,
-    index: Option<u64>,
+    volume: u64,
+    index: u64,
 }
 
 #[cfg(not(any(unix, windows)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FileIdentity;
 
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 pub(super) fn metadata_identity(metadata: &fs::Metadata) -> FileIdentity {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        }
+    use std::os::unix::fs::MetadataExt as _;
+    FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt as _;
-        FileIdentity {
-            volume: metadata.volume_serial_number(),
-            index: metadata.file_index(),
-        }
-    }
+}
+
+/// Stable std keeps the volume serial number and file index of
+/// `fs::Metadata` behind an unstable feature on Windows, so the identity is
+/// read from the open handle.
+#[cfg(windows)]
+pub(super) fn handle_identity(file: &fs::File) -> io::Result<FileIdentity> {
+    let information = winapi_util::file::information(file)?;
+    Ok(FileIdentity {
+        volume: information.volume_serial_number(),
+        index: information.file_index(),
+    })
+}
+
+/// Metadata and identity of `path` itself, taken from one inspection so the
+/// two cannot describe different files. A symlink is never followed.
+#[cfg(unix)]
+fn inspect_without_following(path: &Path) -> io::Result<(fs::Metadata, FileIdentity)> {
+    let metadata = fs::symlink_metadata(path)?;
+    let identity = metadata_identity(&metadata);
+    Ok((metadata, identity))
+}
+
+#[cfg(windows)]
+fn inspect_without_following(path: &Path) -> io::Result<(fs::Metadata, FileIdentity)> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    // The reparse-point flag opens a symlink itself rather than its target;
+    // backup semantics lets a directory open so the caller rejects it by kind
+    // instead of by an access error.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let file = fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    let identity = handle_identity(&file)?;
+    Ok((metadata, identity))
 }
 
 pub(super) fn file_identity(path: &Path) -> Result<FileIdentity, Error> {
@@ -57,15 +84,15 @@ pub(super) fn file_identity(path: &Path) -> Result<FileIdentity, Error> {
     }
     #[cfg(any(unix, windows))]
     {
-        let metadata =
-            fs::symlink_metadata(path).map_err(|error| io_error("inspect", path, error))?;
+        let (metadata, identity) =
+            inspect_without_following(path).map_err(|error| io_error("inspect", path, error))?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(Error::new(
                 ErrorKind::Io,
                 format!("transaction path is not a regular file: {}", path.display()),
             ));
         }
-        Ok(metadata_identity(&metadata))
+        Ok(identity)
     }
 }
 

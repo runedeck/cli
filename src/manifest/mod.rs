@@ -62,10 +62,9 @@ pub fn provenance_path(manifest_key: &str) -> String {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
     let provenance_dir = parent.join(PROVENANCE_DIRECTORY);
-    provenance_dir
-        .join(format!("{file_name}.{SIDECAR_EXTENSION}"))
-        .to_string_lossy()
-        .to_string()
+    crate::services::paths::slash_text(
+        &provenance_dir.join(format!("{file_name}.{SIDECAR_EXTENSION}")),
+    )
 }
 
 /// The stem-named sidecar location written by earlier versions
@@ -77,10 +76,7 @@ pub fn legacy_provenance_path(manifest_key: &str) -> String {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
 
     let provenance_dir = parent.join(PROVENANCE_DIRECTORY);
-    provenance_dir
-        .join(format!("{stem}.{SIDECAR_EXTENSION}"))
-        .to_string_lossy()
-        .to_string()
+    crate::services::paths::slash_text(&provenance_dir.join(format!("{stem}.{SIDECAR_EXTENSION}")))
 }
 
 /// Sidecar path beside a file on disk, full-filename encoded.

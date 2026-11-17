@@ -192,11 +192,7 @@ fn scan_hook_kind(root: &Path) -> Vec<ArtifactView> {
             if !file_type.is_file() {
                 continue;
             }
-            let relative_path = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let relative_path = super::paths::slash_text(path.strip_prefix(root).unwrap_or(&path));
             let Some(name) = relative_path
                 .strip_prefix("hooks/")
                 .map(Path::new)

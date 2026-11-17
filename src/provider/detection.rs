@@ -1180,7 +1180,7 @@ fn inspect_build_kind(
         let Ok(relative) = build_path.strip_prefix(&kind_root) else {
             continue;
         };
-        let key = format!("{kind}/{}", relative.to_string_lossy());
+        let key = format!("{kind}/{}", crate::services::paths::slash_text(relative));
         build_keys.insert((target.clone(), key.clone()));
         inspect_build_file(
             &build_path,

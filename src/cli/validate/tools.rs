@@ -129,15 +129,12 @@ fn check_json_syntax(
 }
 
 pub(super) fn is_excluded(path: &Path, module_root: &Path, patterns: &[String]) -> bool {
-    let relative = path
-        .strip_prefix(module_root)
-        .unwrap_or(path)
-        .to_string_lossy();
+    let relative = relative_path(path, module_root);
     patterns.iter().any(|pattern| {
         if let Some(prefix) = pattern.strip_suffix("/*") {
             relative.starts_with(prefix)
         } else {
-            relative.as_ref() == pattern.as_str()
+            relative == pattern.as_str()
         }
     })
 }
@@ -155,12 +152,7 @@ fn check_shellcheck(module_root: &Path, report: &mut ValidationReport) {
     let mut arguments = vec!["-S", "warning"];
     let paths: Vec<String> = shell_files
         .iter()
-        .map(|path| {
-            path.strip_prefix(module_root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string()
-        })
+        .map(|path| relative_path(path, module_root))
         .collect();
     for path in &paths {
         arguments.push(path);
@@ -314,10 +306,7 @@ fn run_command_with_env(
 }
 
 fn relative_path(path: &Path, module_root: &Path) -> String {
-    path.strip_prefix(module_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    rune::services::paths::slash_text(path.strip_prefix(module_root).unwrap_or(path))
 }
 
 fn find_text_files(module_root: &Path) -> Vec<std::path::PathBuf> {

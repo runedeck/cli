@@ -36,6 +36,9 @@ fn flatten_tree(
         let Some(key_string) = key.as_str() else {
             continue;
         };
+        // A manifest written on Windows by an earlier deploy tool carries
+        // `\` inside its keys; read it as the same file the `/` key names.
+        let key_string = crate::services::paths::slash_separators(key_string);
 
         let full_path = if prefix.is_empty() {
             key_string.to_string()
@@ -49,7 +52,9 @@ fn flatten_tree(
 
         if child_map.contains_key("fingerprint") {
             let fingerprint = super::extract::string_field(value, "fingerprint", &full_path)?;
-            let provenance = super::extract::string_field(value, "provenance", &full_path).ok();
+            let provenance = super::extract::string_field(value, "provenance", &full_path)
+                .ok()
+                .map(|path| crate::services::paths::slash_separators(&path).into_owned());
 
             entries.insert(
                 full_path,

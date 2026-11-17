@@ -360,7 +360,7 @@ fn owned_source(root: &Path, bundle: &BundleInspection) -> Result<Option<SourceI
     let prefix = root
         .strip_prefix(provider_root)
         .map_err(|error| error.to_string())?;
-    let primary = prefix.join("SKILL.md").display().to_string();
+    let primary = crate::services::paths::slash_text(&prefix.join("SKILL.md"));
     if !claims.contains_key(&primary) {
         return Ok(None);
     }

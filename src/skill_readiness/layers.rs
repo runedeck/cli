@@ -227,7 +227,7 @@ fn collect_text(
         report.problem(
             "CSI008_LAYER_SOURCE",
             "generic",
-            &relative.display().to_string(),
+            &crate::services::paths::slash_text(relative),
             "",
             "source traversal exceeds the bounded inspection limit",
         );
@@ -254,13 +254,14 @@ fn collect_text(
                 match String::from_utf8(bytes) {
                     Ok(content) if !content.contains('\0') => {
                         let path = logical.to_str().ok_or("source paths must be valid UTF-8")?;
-                        files.insert(path.into(), content.replace("\r\n", "\n"));
+                        let path = crate::services::paths::slash_separators(path);
+                        files.insert(path.into_owned(), content.replace("\r\n", "\n"));
                     }
                     _ if required_text(&logical) => {
                         report.problem(
                             "CSI008_LAYER_SOURCE",
                             "generic",
-                            &logical.display().to_string(),
+                            &crate::services::paths::slash_text(&logical),
                             "",
                             "instruction text is not valid UTF-8 text",
                         );
@@ -277,7 +278,7 @@ fn collect_text(
         report.problem(
             "CSI008_LAYER_SOURCE",
             "generic",
-            &relative.display().to_string(),
+            &crate::services::paths::slash_text(relative),
             "",
             &message,
         );

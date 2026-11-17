@@ -461,11 +461,8 @@ fn collect_recursive(base: &Path, current: &Path, files: &mut BTreeMap<String, V
         if path.is_dir() {
             collect_recursive(base, &path, files);
         } else if let Ok(content) = fs::read(&path) {
-            let relative = path
-                .strip_prefix(base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let relative =
+                rune::services::paths::slash_text(path.strip_prefix(base).unwrap_or(&path));
             files.insert(relative, content);
         }
     }

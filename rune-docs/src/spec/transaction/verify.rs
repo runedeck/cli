@@ -2,7 +2,11 @@
 //! a deterministic tree digest (sorted entries, kind- and length-prefixed)
 //! that proves a copied archive matches its source byte for byte.
 
-use super::confine::{FileIdentity, metadata_identity, reject_symlink};
+#[cfg(windows)]
+use super::confine::handle_identity;
+#[cfg(unix)]
+use super::confine::metadata_identity;
+use super::confine::{FileIdentity, reject_symlink};
 use super::io_error;
 use crate::error::{Error, ErrorKind};
 use sha2::{Digest, Sha256};
@@ -45,7 +49,10 @@ pub(super) fn hash_file_with_identity(path: &Path) -> Result<(String, FileIdenti
                 format!("transaction path is not a regular file: {}", path.display()),
             ));
         }
+        #[cfg(unix)]
         let identity = metadata_identity(&metadata);
+        #[cfg(windows)]
+        let identity = handle_identity(&file).map_err(|error| io_error("inspect", path, error))?;
         Ok((hash_open_file(&mut file, path)?, identity))
     }
 }

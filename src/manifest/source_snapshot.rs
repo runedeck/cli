@@ -299,10 +299,11 @@ fn validate_symlink(relative: &Path, target: &Path) -> Result<(), String> {
 
 fn path_text(path: &Path) -> Result<String, String> {
     let text = path.to_str().ok_or("source paths must be valid UTF-8")?;
+    let text = crate::services::paths::slash_separators(text);
     if text.contains('\\') || text.chars().any(char::is_control) {
         return Err("source path has an ambiguous separator or control character".into());
     }
-    Ok(text.into())
+    Ok(text.into_owned())
 }
 
 fn valid_label(label: &str) -> bool {
