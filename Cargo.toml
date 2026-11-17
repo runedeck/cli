@@ -84,9 +84,6 @@ ureq = { version = "3", default-features = false, features = ["rustls", "platfor
 webpki-root-certs = "1"
 signal-hook = "=0.3.18"
 
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
-
 # git
 gix = { version = "0.66", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }
 
@@ -108,6 +105,11 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 ansi-to-tui = { version = "8.0.1", optional = true }
 unicode-width = { version = "0.2", optional = true }
 edtui = { version = "0.11", default-features = false, optional = true }
+
+# Only nix is Unix-only. This table stays after every other dependency:
+# a dependency written below a target table header belongs to that target.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
 
 [build-dependencies]
 sha2 = "0.10"
