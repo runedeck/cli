@@ -363,12 +363,9 @@ fn collect_pending(dir: &Path, module_root: &Path, pending: &mut Vec<String>) {
             effective_review_state(&path, module_root),
             AdoptReviewState::Deployable
         ) {
-            pending.push(
-                path.strip_prefix(module_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string(),
-            );
+            pending.push(rune::services::paths::slash_text(
+                path.strip_prefix(module_root).unwrap_or(&path),
+            ));
         }
     }
 }
@@ -440,11 +437,8 @@ fn walk_content_dir(
 
         base_filenames.insert(filename);
 
-        let relative = path
-            .strip_prefix(module_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative =
+            rune::services::paths::slash_text(path.strip_prefix(module_root).unwrap_or(&path));
 
         let Some(content) = read_source_text(&path)? else {
             continue;
@@ -512,11 +506,8 @@ fn walk_hook_dir(
         let Some(content) = read_source_text(&path)? else {
             continue;
         };
-        let relative_path = path
-            .strip_prefix(module_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative_path =
+            rune::services::paths::slash_text(path.strip_prefix(module_root).unwrap_or(&path));
         sources.push(SourceFile {
             relative_path,
             full_path: path.to_string_lossy().to_string(),
@@ -655,11 +646,8 @@ fn walk_qualifier_dir(
         if base_filenames.contains(&filename) {
             continue;
         }
-        let relative = path
-            .strip_prefix(module_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative =
+            rune::services::paths::slash_text(path.strip_prefix(module_root).unwrap_or(&path));
         let Some(content) = read_source_text(&path)? else {
             continue;
         };

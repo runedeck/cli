@@ -118,6 +118,7 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"\x00\xff binary");
     }
 
+    #[cfg(unix)]
     #[test]
     fn refuses_a_symlinked_destination() {
         let root = tempfile::tempdir().unwrap();

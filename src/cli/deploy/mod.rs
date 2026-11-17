@@ -492,11 +492,9 @@ fn deploy_provider_kind_files(
             continue;
         }
 
-        let relative = build_path
-            .strip_prefix(kind_dir)
-            .unwrap_or(&build_path)
-            .to_string_lossy()
-            .to_string();
+        let relative = rune::services::paths::slash_text(
+            build_path.strip_prefix(kind_dir).unwrap_or(&build_path),
+        );
         let manifest_key = format!("{kind}/{relative}");
         if only.is_some_and(|prefix| !only_matches(&manifest_key, prefix)) {
             continue;

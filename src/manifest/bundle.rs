@@ -153,6 +153,7 @@ impl Inventory {
                 ));
                 continue;
             };
+            let path_text = crate::services::paths::slash_separators(path_text);
             if path_text.contains('\\') || path_text.chars().any(char::is_control) {
                 self.problems.push(BundleProblem::new(
                     BundleProblemKind::InvalidPath,
@@ -516,7 +517,7 @@ fn check_references(
         match result {
             Ok(target)
                 if target.as_os_str().is_empty()
-                    || entries.contains_key(target.to_string_lossy().as_ref()) => {}
+                    || entries.contains_key(&crate::services::paths::slash_text(&target)) => {}
             Ok(_) => problems.push(BundleProblem::new(
                 BundleProblemKind::BrokenReference,
                 Path::new(document),

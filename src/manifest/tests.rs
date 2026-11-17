@@ -158,6 +158,22 @@ fn read_parses_all_entries() {
     assert!(entries.contains_key("rules/CodeStyle.md"));
 }
 
+#[cfg(windows)]
+#[test]
+fn read_treats_windows_separators_in_keys_as_slashes() {
+    let manifest = "skills:\n    Explain\\SKILL.md:\n        fingerprint: abc\n        provenance: skills/Explain\\.provenance\\SKILL.md.yaml\n";
+
+    let entries = read(manifest).unwrap();
+
+    let entry = entries
+        .get("skills/Explain/SKILL.md")
+        .expect("the key reads with slashes");
+    assert_eq!(
+        entry.provenance.as_deref(),
+        Some("skills/Explain/.provenance/SKILL.md.yaml")
+    );
+}
+
 #[test]
 fn read_ignores_entries_without_fingerprint() {
     let entries = read(MANIFEST_INVALID).unwrap();

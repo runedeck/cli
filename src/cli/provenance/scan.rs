@@ -115,11 +115,8 @@ fn collect_recursive(
             continue;
         }
 
-        let relative = path
-            .strip_prefix(target_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative =
+            rune::services::paths::slash_text(path.strip_prefix(target_root).unwrap_or(&path));
 
         let Ok(sidecar) = read_sidecar(&super::resolve_sidecar_path(&path)) else {
             orphans.push(relative);

@@ -256,10 +256,7 @@ impl<I: TransactionIo> Transaction<I> {
         fs::hard_link(&install, &destination)
             .map_err(|error| io_error("install create-only destination", &destination, error))?;
         verify_file_hash(&destination, &write.intended_sha256)?;
-        let directory = File::open(parent).map_err(|error| io_error("open", parent, error))?;
-        directory
-            .sync_all()
-            .map_err(|error| io_error("sync", parent, error))
+        super::staging::sync_directory(parent)
     }
 
     fn create_conversion_destination_directories(

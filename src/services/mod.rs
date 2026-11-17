@@ -13,6 +13,7 @@ mod discovery;
 pub mod editing;
 pub mod files;
 mod history;
+pub mod paths;
 mod provenance;
 mod references;
 mod sidecar;
@@ -809,11 +810,7 @@ pub(super) fn collect_variants(
 }
 
 pub(super) fn make_variant(repo: &Path, provider: &str, model: &str, file: &Path) -> Variant {
-    let relative_path = file
-        .strip_prefix(repo)
-        .unwrap_or(file)
-        .to_string_lossy()
-        .to_string();
+    let relative_path = paths::slash_text(file.strip_prefix(repo).unwrap_or(file));
     let content = fs::read_to_string(file).unwrap_or_default();
     let mode = match extract_frontmatter_field(&content, "mode") {
         mode if mode.is_empty() => "replace".to_string(),

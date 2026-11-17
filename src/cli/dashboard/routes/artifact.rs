@@ -543,11 +543,7 @@ fn resolve_effective_content(
     use rune::assemble::variants;
     match variant_path {
         Some(path) => {
-            let label = path
-                .strip_prefix(repo)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let label = rune::services::paths::slash_text(path.strip_prefix(repo).unwrap_or(path));
             let variant_content = match std::fs::read_to_string(path) {
                 Ok(content) => content,
                 Err(error) => {

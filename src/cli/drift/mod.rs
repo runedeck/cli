@@ -666,11 +666,9 @@ fn collect_provenance_sidecars(
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let local_md = parent.join(format!("{stem}.md"));
-            let local_relative = local_md
-                .strip_prefix(base_directory)
-                .unwrap_or(&local_md)
-                .to_string_lossy()
-                .to_string();
+            let local_relative = rune::services::paths::slash_text(
+                local_md.strip_prefix(base_directory).unwrap_or(&local_md),
+            );
 
             let source = sidecar
                 .provenance
@@ -735,11 +733,9 @@ fn collect_text_recursive(
         if path.is_dir() {
             collect_text_recursive(base_directory, &path, files);
         } else if let Ok(content) = fs::read_to_string(&path) {
-            let relative = path
-                .strip_prefix(base_directory)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let relative = rune::services::paths::slash_text(
+                path.strip_prefix(base_directory).unwrap_or(&path),
+            );
             files.insert(relative, content);
         }
     }
@@ -767,11 +763,9 @@ fn collect_markdown_recursive(
         if path.is_dir() {
             collect_markdown_recursive(base_directory, &path, files);
         } else if path.extension().is_some_and(|extension| extension == "md") {
-            let relative = path
-                .strip_prefix(base_directory)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let relative = rune::services::paths::slash_text(
+                path.strip_prefix(base_directory).unwrap_or(&path),
+            );
 
             if let Ok(content) = fs::read_to_string(&path) {
                 files.insert(relative, content);
