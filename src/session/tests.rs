@@ -245,6 +245,32 @@ fn the_working_folder_is_read_from_a_compressed_file() {
 }
 
 #[test]
+fn a_compressed_file_is_read_for_a_path_glob_and_not_for_the_listing() {
+    let f = fixture();
+    let day = f.home.join(".codex/sessions/2026/10/01");
+    std::fs::create_dir_all(&day).unwrap();
+    std::fs::write(
+        day.join("rollout-2026-10-01T10-00-00-0f3c2a1e-1111-4222-8333-111111111111.jsonl.zst"),
+        REFERENCE_ROLLOUT,
+    )
+    .unwrap();
+    let files = super::source::list(Harness::Codex, &f.config.stores)
+        .unwrap()
+        .unwrap();
+    assert_eq!(files.len(), 1);
+    // The listing decompresses nothing: a capture of one session lists the
+    // whole store, and must not pay for every compressed file in it.
+    assert_eq!(files[0].cwd, None);
+    let by_folder = Exclude::resolve(&["/home/owner/work/**".to_string()], &[], &f.home);
+    assert!(files[0].excluded(&by_folder));
+    let other_folder = Exclude::resolve(&["/home/owner/else/**".to_string()], &[], &f.home);
+    assert!(!files[0].excluded(&other_folder));
+    let by_id = Exclude::resolve(&[], &["another-session".to_string()], &f.home);
+    assert!(!files[0].excluded(&by_id));
+    assert!(!files[0].excluded(&Exclude::default()));
+}
+
+#[test]
 fn a_character_cut_at_the_scan_limit_does_not_hide_the_working_folder() {
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("long.jsonl");

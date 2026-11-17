@@ -146,22 +146,36 @@ pub struct SessionFile {
     /// The session the file belongs to, when the layout names one.
     pub session: Option<String>,
     /// The working folder of the session, when the file or the layout
-    /// records one.
+    /// records one. A compressed file has none here: [`Self::excluded`]
+    /// reads it when a path glob needs it.
     pub cwd: Option<PathBuf>,
-    /// A compressed file that Rune could not read, so no one knows its
-    /// working folder.
-    pub cwd_unknown: bool,
 }
 
 impl SessionFile {
     /// Whether the exclude configuration keeps the file out of the data
     /// folder: its session id is listed, or its working folder matches a
-    /// glob. A file whose working folder is unknown stays out while any
-    /// glob is set, because it can be a session of an excluded folder.
+    /// glob.
+    ///
+    /// The working folder of a compressed file is read here and not in
+    /// the listing, because the read decompresses the start of the file.
+    /// A listing covers the whole store, and most captures copy one
+    /// session of it. So the read happens only for a file that a capture
+    /// selected, and only while a path glob is set. A compressed file
+    /// that cannot be read then stays out: its working folder is unknown,
+    /// and it can be a session of an excluded folder.
     #[must_use]
     pub fn excluded(&self, exclude: &exclude::Exclude) -> bool {
-        exclude.matches(self.session.as_deref(), self.cwd.as_deref())
-            || (self.cwd_unknown && !exclude.paths.is_empty())
+        if exclude.matches(self.session.as_deref(), self.cwd.as_deref()) {
+            return true;
+        }
+        if exclude.paths.is_empty() || kind_of(&self.path) != Kind::Compressed {
+            return false;
+        }
+        match exclude::cwd_in_compressed_file(&self.path) {
+            CompressedCwd::Found(cwd) => exclude.folder(&cwd),
+            CompressedCwd::Absent => false,
+            CompressedCwd::Unreadable => true,
+        }
     }
 }
 
@@ -253,7 +267,6 @@ fn claude_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
                 relative,
                 session,
                 cwd,
-                cwd_unknown: false,
             }
         })
         .collect()
@@ -261,8 +274,8 @@ fn claude_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
 
 /// Codex: `sessions/YYYY/MM/DD/rollout-<stamp>-<uuid>.jsonl`, compressed
 /// to `.jsonl.zst` when older. The uuid is the session id, and the
-/// `session_meta` line names the working folder, in a compressed file
-/// too.
+/// `session_meta` line names the working folder. A compressed file is
+/// not read here: see [`SessionFile::excluded`].
 fn codex_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
     paths
         .iter()
@@ -270,21 +283,14 @@ fn codex_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let stem = name.split('.').next().unwrap_or(name);
             let session = codex_session_id(stem);
-            let (cwd, cwd_unknown) = if kind_of(path) == Kind::Compressed {
-                match exclude::cwd_in_compressed_file(path) {
-                    CompressedCwd::Found(cwd) => (Some(cwd), false),
-                    CompressedCwd::Absent => (None, false),
-                    CompressedCwd::Unreadable => (None, true),
-                }
-            } else {
-                (exclude::cwd_in_file(path), false)
-            };
+            let cwd = (kind_of(path) != Kind::Compressed)
+                .then(|| exclude::cwd_in_file(path))
+                .flatten();
             SessionFile {
                 path: path.clone(),
                 relative: relative_to(root, path),
                 session: Some(session),
                 cwd,
-                cwd_unknown,
             }
         })
         .collect()
@@ -336,7 +342,6 @@ fn grok_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
                 relative,
                 session,
                 cwd,
-                cwd_unknown: false,
             }
         })
         .collect()
@@ -354,7 +359,6 @@ fn antigravity_files(root: &Path, paths: &[PathBuf]) -> Vec<SessionFile> {
                 relative: relative_to(root, path),
                 session: antigravity_session(name).map(str::to_string),
                 cwd: None,
-                cwd_unknown: false,
             }
         })
         .collect()
