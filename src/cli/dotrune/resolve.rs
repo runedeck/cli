@@ -50,12 +50,12 @@ pub fn resolve_sources(
                         ),
                     ));
                 }
-                filter_to_requested(
-                    sources::collect(module_root, valid_qualifiers)?,
-                    rune_list,
-                    source_label,
-                    module_root,
-                )?
+                let module_source_uri = crate::cli::config::load_source_uri(module_root);
+                let mut files = sources::collect(module_root, valid_qualifiers)?;
+                for file in &mut files {
+                    file.source_uri = Some(module_source_uri.clone());
+                }
+                filter_to_requested(files, rune_list, source_label, module_root)?
             }
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();

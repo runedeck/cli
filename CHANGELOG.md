@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Build on Windows: read the file identity for spec transactions through a stable API, and keep the dependencies that every platform needs out of the Unix-only target table.
 - Install a deck on Windows: write manifest keys, provenance paths, and snapshot entries with `/`, and read a manifest that an earlier tool wrote with `\`. `rune install` stopped with `source path has an ambiguous separator or control character`.
+- Record the module name as the provenance source for a single-module source in `.rune`. The source was empty, and every install ended with `source snapshot remains unverified`.
 - Step aside when Cursor runs a Claude hook entry: answer `{}` with exit 0, run no handler, and log `borrowed by cursor`. Every Cursor tool call was denied under `--on-failure deny`.
 - Abandon the run workspace's initial working copy under jj 0.47, which names the caller's workspace on its creation. The run kept it and reported `outside_changes`.
 
