@@ -50,6 +50,7 @@ impl Folder {
     /// folder the check judged, `checked`, by device and inode, so a folder
     /// swapped for another folder between the check and the open is refused
     /// as well.
+    #[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))] // the Unix form can fail
     fn open(root: &Path, path: &Path, checked: &std::fs::Metadata) -> std::io::Result<Self> {
         #[cfg(unix)]
         {

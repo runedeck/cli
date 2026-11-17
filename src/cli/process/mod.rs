@@ -269,6 +269,7 @@ impl SignalFlags {
     }
 
     #[cfg(not(unix))]
+    #[allow(clippy::unnecessary_wraps)] // the Unix form can fail
     fn register() -> Result<Self, ProcessFailure> {
         Ok(Self {
             interrupt: Arc::new(AtomicBool::new(false)),
@@ -277,6 +278,7 @@ impl SignalFlags {
         })
     }
 
+    #[cfg_attr(not(unix), allow(clippy::unused_self))] // only Unix has signals to read
     fn received(&self) -> Option<i32> {
         #[cfg(unix)]
         {
@@ -330,6 +332,7 @@ impl SignalWatch {
     /// forwarded it to the harness and reported it), so it is not reported
     /// twice. A signal of the other kind, or one that arrives later, stays
     /// pending.
+    #[cfg_attr(not(unix), allow(clippy::unused_self))] // only Unix has signals to read
     pub(crate) fn acknowledge(&self, signal: i32) {
         #[cfg(unix)]
         {
@@ -718,7 +721,10 @@ fn stopping_signal(failure: &ProcessFailure) -> i32 {
         }
     }
     #[cfg(not(unix))]
-    0
+    {
+        let _ = failure;
+        0
+    }
 }
 
 fn wait_for_process(

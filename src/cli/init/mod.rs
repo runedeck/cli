@@ -1397,6 +1397,7 @@ fn is_vcs_internal(name: &std::ffi::OsStr) -> bool {
 /// enforces in the generated project (EXE001, EXE002), so a hook module
 /// without a shebang stays 644 and a script with one becomes executable
 /// wherever it lives.
+#[cfg(any(unix, test))]
 pub(crate) fn wants_executable_bit(contents: &[u8]) -> bool {
     contents.starts_with(b"#!")
 }
@@ -1421,6 +1422,7 @@ fn make_executable_if_needed(target: &Path, contents: &[u8]) -> Result<(), Error
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // the Unix form can fail
 fn make_executable_if_needed(_target: &Path, _contents: &[u8]) -> Result<(), Error> {
     Ok(())
 }

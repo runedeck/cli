@@ -1229,6 +1229,20 @@ fn ensure_destination_within(target_path: &Path, base: &Path) -> Result<(), Erro
     })
 }
 
+#[cfg(unix)]
+fn create_deployed_symlink(link: &Path, target: &Path) -> Result<(), Error> {
+    std::os::unix::fs::symlink(link, target)
+        .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))
+}
+
+#[cfg(not(unix))]
+fn create_deployed_symlink(_link: &Path, _target: &Path) -> Result<(), Error> {
+    Err(Error::new(
+        ErrorKind::Validate,
+        "symbolic link deployment is unsupported on this platform",
+    ))
+}
+
 /// Copy a file, creating parent directories as needed.
 fn copy_file(source: &Path, target: &Path) -> Result<(), Error> {
     if let Some(parent) = target.parent() {
@@ -1246,15 +1260,7 @@ fn copy_file(source: &Path, target: &Path) -> Result<(), Error> {
             fs::remove_file(target)
                 .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
         }
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(link, target)
-            .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
-        #[cfg(not(unix))]
-        return Err(Error::new(
-            ErrorKind::Validate,
-            "symbolic link deployment is unsupported on this platform",
-        ));
-        return Ok(());
+        return create_deployed_symlink(&link, target);
     }
     if fs::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
         fs::remove_file(target).map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
@@ -1311,19 +1317,18 @@ fn same_entry_semantics(left: &Path, right: &Path) -> bool {
     let (Ok(left), Ok(right)) = (fs::symlink_metadata(left), fs::symlink_metadata(right)) else {
         return false;
     };
-    if left.file_type().is_symlink() != right.file_type().is_symlink() {
-        return false;
-    }
+    let same_kind = left.file_type().is_symlink() == right.file_type().is_symlink();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if !left.file_type().is_symlink()
+        if same_kind
+            && !left.file_type().is_symlink()
             && left.permissions().mode() & 0o111 != right.permissions().mode() & 0o111
         {
             return false;
         }
     }
-    true
+    same_kind
 }
 
 /// Check if a stale manifest entry was installed by the current module.
