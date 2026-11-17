@@ -1188,7 +1188,13 @@ fn dcg_judges_cursor_s_shell_tool_through_the_dispatcher() {
     )
     .unwrap();
     set_mode(&dcg, 0o755);
-    scene.config(DCG_GUARD);
+    // The guard gets 20 seconds here. The default deadline of a handler is
+    // 500 ms, and a loaded machine can take longer than that to start the
+    // adapter and the script, which then reads as a timeout and not as the
+    // guard's answer. The test is about the tool name, not the deadline.
+    scene.config(
+        "hooks:\n  events:\n    tool.before: {budget_ms: 30000}\n  handlers:\n    - id: dcg\n      exec: [rune-hook-dcg]\n      events: [tool.before]\n      timeout_ms: 20000\n      on_failure: deny\n",
+    );
     scene.write_plan();
     let path = format!(
         "{}:{}",
