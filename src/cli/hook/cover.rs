@@ -632,6 +632,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_command_matches_by_program_file_and_exact_arguments() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
@@ -699,6 +703,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn what_an_adapter_runs_follows_the_harness_the_event_and_the_home() {
         let home = tempfile::tempdir().unwrap();
         let at = |event: &str, adapter: &str, harness: Harness| {
@@ -823,6 +831,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_environment_names_the_home_and_the_harness_folder_the_harness_reads() {
         let env = Environment {
             home: Some("/h".into()),

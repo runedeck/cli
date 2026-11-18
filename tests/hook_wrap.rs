@@ -643,6 +643,10 @@ fn a_session_that_wrote_a_file_from_another_directory_touched_the_workspace() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_session_whose_shell_command_named_the_workspace_touched_it() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -847,6 +851,10 @@ fn a_turn_after_a_failed_stop_handler_waits_for_the_next_stop() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_first_touch_keeps_its_key_when_the_snapshot_runs_past_the_timeout() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -974,6 +982,10 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
     let Some(scene) = Scene::new() else { return };
     scene.config(PATIENT_WRAPPER);
@@ -1068,6 +1080,10 @@ fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);

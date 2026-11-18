@@ -441,6 +441,10 @@ fn a_session_is_alone_with_its_own_key_or_an_empty_set_and_never_as_unknown() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_shell_command_registers_the_session_in_every_workspace_it_names() {
     let root = armed_root();
     let elsewhere = tempfile::tempdir().unwrap();
@@ -496,6 +500,10 @@ fn a_shell_command_registers_the_session_in_every_workspace_it_names() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn the_paths_a_command_names_come_from_its_words_without_a_shell() {
     let home = Path::new("/home/owner");
     let base = Path::new("/work");

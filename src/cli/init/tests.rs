@@ -146,6 +146,7 @@ fn setup_prompt_is_explicit_and_defaults_to_no() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs make")]
 fn setup_failure_remains_a_reported_optional_outcome() {
     let project = TempDir::new().unwrap();
     std::fs::write(

@@ -2094,6 +2094,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn an_immutable_working_copy_commit_keeps_its_author() {
         let home = config_home();
         let dir = jj_checkout();
@@ -2117,6 +2121,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn an_unlisted_models_commit_fails_the_authorship_check() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2207,6 +2212,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_dormant_worktree_config_keeps_the_extension_off() {
         let home = config_home();
         let a = jj_checkout();
@@ -2395,6 +2404,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_unlisted_identity_is_refused_by_the_push_gate() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2442,6 +2452,7 @@ mod tests {
     /// spelled as the helper spells it. A model under no rule gets the
     /// unlisted one, and the note names the policy file and the rule.
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_repository_policy_admits_the_models_the_gate_admits() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");

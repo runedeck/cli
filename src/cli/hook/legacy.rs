@@ -756,6 +756,10 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_dispatcher_is_read_only_in_its_exact_shapes() {
         let home = Path::new("/Users/x");
         let of = |c: &str| dispatcher(&w(&expand_home_in(c, home)));
@@ -824,6 +828,10 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_direct_script_needs_exactly_bin_sh_in_its_shebang() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("hook");
@@ -985,6 +993,10 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_part_has_one_exec_line_and_at_most_one_guard() {
         let home = tempfile::tempdir().unwrap();
         let bin = home.path().join(".local").join("bin");

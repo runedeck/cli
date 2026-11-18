@@ -461,6 +461,10 @@ fn checkout(config: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_manifest_path_under_a_configured_target_dir_gets_advice() {
     let (dir, ws) = checkout(Some("[build]\ntarget-dir = \"target\"\n"));
     let manifest = ws.join("Cargo.toml");

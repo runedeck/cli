@@ -843,6 +843,10 @@ fn tui_snapshot_renders_batched_deck_history() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "runs a shell script through bash, and on Windows the bash in System32 is the WSL launcher"
+)]
 fn exec_shell_fixture_round_trips_json() {
     let root = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();

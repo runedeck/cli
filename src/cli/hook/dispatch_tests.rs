@@ -1300,6 +1300,10 @@ fn two_hooks_on_one_event_leave_two_records_in_order_with_the_answer() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_budget_spent_before_a_hook_records_the_budget_failure() {
     let temp = tempfile::tempdir().unwrap();
     let plan = plan(

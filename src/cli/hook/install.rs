@@ -2151,6 +2151,10 @@ mod tests {
     const LIVE: &str = r#"{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]},{"hooks":[{"type":"command","command":"sh /Users/x/.sd/hook PreToolUse"}]},{"matcher":"*","hooks":[{"type":"command","command":"/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin"}]}],"Notification":[{"hooks":[{"type":"command","command":"cmux hooks claude Notification"}]}]}}"#;
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn foreign_entries_survive_predecessors_are_adopted_and_one_rune_entry_per_event() {
         let home = tempfile::tempdir().unwrap();
         let path = settings(home.path(), LIVE);
@@ -2981,6 +2985,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_sweep_keeps_an_unnamed_generation_and_records_when_it_went() {
         let (home, plans, manifest) = sweep_home();
         let now = at("2026-10-24T12:00:00Z");
@@ -2998,6 +3006,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_sweep_deletes_only_a_generation_retire_lets_go() {
         let (home, plans, manifest) = sweep_home();
         for name in [
@@ -3248,6 +3260,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_compound_legacy_command_stays_and_is_named_for_a_hand_split() {
         let home = tempfile::tempdir().unwrap();
         let compound = "sh ~/.sd/hook PreToolUse && /owner/check-policy";
@@ -3484,6 +3500,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn removing_rune_s_earlier_entry_waits_while_it_would_move_a_trusted_hook() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
@@ -3570,6 +3590,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn rune_s_trusted_codex_entry_stays_until_codex_trusts_its_replacement() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
@@ -3670,6 +3694,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn rune_s_trusted_postbox_entries_stay_at_group_one_until_codex_trusts_group_two() {
         const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
         let home = tempfile::tempdir().unwrap();
@@ -3780,6 +3808,10 @@ mod tests {
     /// 2026-10-26). Install reads the trust at that position and asks
     /// for nothing.
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn removing_a_trusted_preview_entry_keeps_the_live_entry_at_its_trusted_slot() {
         const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
         let home = tempfile::tempdir().unwrap();
@@ -3887,6 +3919,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_codex_predecessor_stays_until_codex_trusts_its_replacement() {
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join(".codex").join("hooks.json");
@@ -3990,6 +4026,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_codex_predecessor_before_rune_in_its_group_stays_although_rune_is_trusted() {
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join(".codex").join("hooks.json");
@@ -4289,6 +4329,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_owner_s_stop_parts_cover_tmux_alone_on_claude() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh $HOME/.config/just/hook Stop";
@@ -4390,6 +4434,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_owner_s_turn_wrap_part_is_the_wrapper_and_runs_twice_behind_the_first() {
         let home = owner_home(STOP_PARTS);
         // The script the part runs, so the part's command resolves.
@@ -4555,6 +4603,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_covered_handler_is_skipped_at_each_firing_and_runs_once_its_part_goes() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh ~/.config/just/hook Stop";
@@ -4659,6 +4711,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_covered_wrapper_holds_no_time_back_from_the_handlers_before_it() {
         // The wrap part first in the owner's Stop.d, with its script, so
         // the cover skips the wrapper at each firing.
@@ -4830,6 +4886,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_rewriter_is_never_covered_even_by_a_part_that_runs_its_command() {
         // A rewriter's output is the call the handlers after it read. A
         // part's output is not: with rtk covered, dcg read `git status`
@@ -5042,6 +5102,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_first_part_without_the_shape_covers_nothing_and_is_named() {
         // The first part has no exec line, so the folder covers nothing,
         // even when a later part runs a handler's command: rune reads the
@@ -5239,6 +5303,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_matcher_covers_nothing() {
         let mixed = mixed_install();
         let report = &mixed.prepared.report;
@@ -5263,6 +5331,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_compound_line_covers_nothing() {
         let mixed = mixed_install();
         let report = &mixed.prepared.report;
@@ -5363,6 +5435,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_gone_dispatcher_entry_an_earlier_install_adopted_is_named() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh ~/.config/just/hook Stop";
@@ -5526,6 +5602,10 @@ mod tests {
     const PLAIN_ENTRY: &str = "sh ~/.config/just/hook Stop";
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn an_entry_with_a_key_rune_does_not_read_covers_nothing() {
         // Claude reads `if`, `args`, and `async` on a hook, and each
         // changes whether and how the command runs. Install names the key.
@@ -5605,6 +5685,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_firing_covers_nothing_unless_home_and_the_harness_folder_are_install_s() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5660,6 +5744,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_handler_that_is_not_the_recorded_one_is_not_covered() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5728,6 +5816,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn one_firing_reads_the_table_the_script_and_the_parts_once() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5747,6 +5839,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_cover_that_holds_past_the_budget_still_skips_its_handler() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path().to_path_buf();
@@ -5784,6 +5880,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_slot_is_the_entry_s_place_in_the_table_install_writes() {
         // An adopted entry before the dispatcher goes at this install, so
         // the dispatcher's slot is read from the table as written, and
@@ -5939,6 +6039,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_firing_whose_sh_is_not_bin_sh_runs_every_handler() {
         let installed =
             installed(&json!({"type": "command", "command": "/bin/sh ~/.config/just/hook Stop"}));
@@ -5981,6 +6085,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_folder_past_a_limit_covers_nothing_at_install_and_at_the_firing() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -6068,6 +6176,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_first_part_with_an_unquoted_glob_covers_nothing_and_a_later_one_blocks_nothing() {
         // `b[ab]` names one word to rune and the files it matches to the
         // shell, so a part that holds one has no shape rune reads. First
@@ -6135,6 +6247,10 @@ mod tests {
     const SNAPSHOT_WITH_COMMENT: &str = "#!/bin/sh\n# Snapshot the footprint so the ± segment and review see the turn.\n[ -f \"$HOME/.config/just/claude/turn/checkpoint\" ] || exit 0\nexec sh \"$HOME/.config/just/claude/turn/checkpoint\" snapshot\n";
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_comment_in_a_later_part_keeps_the_handler_it_runs_named() {
         // The shell runs no comment, so the message about a later part
         // drops it before the text is checked: the `±` keeps turn named.
@@ -6179,6 +6295,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_later_part_that_cannot_be_read_is_named_as_unreadable() {
         // A `±` on a line that runs is text rune does not read. The part
         // is named as unreadable, for no handler, and blocks nothing.
