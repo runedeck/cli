@@ -15,6 +15,7 @@
 //    transaction journal wins so recovery reacquires the same lock. Two
 //    journals, or none, stay ambiguous and require `spec.root`.
 
+use crate::support::Canonical as _;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
@@ -86,7 +87,7 @@ pub(crate) fn resolve_confined_destination(
             .ok_or_else(|| format!("cannot resolve spec path: {}", candidate.display()))?;
     }
 
-    let resolved_existing = existing.canonicalize().map_err(|error| {
+    let resolved_existing = existing.canonical().map_err(|error| {
         format!("cannot resolve spec path {}: {error}", existing.display())
     })?;
     if !resolved_existing.starts_with(repository) {

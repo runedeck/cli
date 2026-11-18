@@ -1154,7 +1154,7 @@ fn jj_path(workspace: &Path, args: &[&str]) -> Result<PathBuf, Error> {
 
 /// The path with symlinks resolved when it exists, as given otherwise.
 fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    rune::folders::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// jj on the workspace with the git it runs pinned to `git` on PATH: the

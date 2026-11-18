@@ -38,7 +38,15 @@ pub fn resolve_paths(
                 .ok_or_else(|| "Project scope requires home_directory".to_string())?;
             let cwd = std::env::current_dir().unwrap_or_default();
             let cwd_string = cwd.to_string_lossy().to_string();
-            let project_key = cwd_string.replace('/', "-");
+            // The key is one path part. A Windows working directory holds
+            // `\` and a drive colon: left in, the key is an absolute path,
+            // and joining it drops the home before it.
+            let separators: &[char] = if cfg!(windows) {
+                &['/', '\\', ':']
+            } else {
+                &['/']
+            };
+            let project_key = cwd_string.replace(separators, "-");
             let project_key = project_key.trim_start_matches('-');
 
             let path = home

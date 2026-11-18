@@ -260,8 +260,8 @@ pub(crate) fn is_shell(word: &str) -> bool {
 /// The canonical path of `path` when it is the system `sh`: the file
 /// `/bin/sh` is, after symlinks.
 fn canonical_sh(path: &Path) -> Option<PathBuf> {
-    let canonical = fs::canonicalize(path).ok()?;
-    (fs::canonicalize(SYSTEM_SH).ok()? == canonical).then_some(canonical)
+    let canonical = rune::folders::canonicalize(path).ok()?;
+    (rune::folders::canonicalize(SYSTEM_SH).ok()? == canonical).then_some(canonical)
 }
 
 /// The shell `word` names, as the shell that runs the line finds it:

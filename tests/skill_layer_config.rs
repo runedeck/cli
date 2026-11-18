@@ -89,9 +89,8 @@ fn source_target_directory_can_select_multiple_providers() {
                     finding["code"] == "CSI007_HARNESS_LEAKAGE"
                         && finding["layer"] == format!("effective:{provider}")
                         && finding["token"] == "AskUserQuestion"
-                        && finding["path"]
-                            .as_str()
-                            .unwrap()
+                        // By path part: the separator differs by platform.
+                        && Path::new(finding["path"].as_str().unwrap())
                             .ends_with("skills/Portable/SKILL.md")
                 }),
             "{report}"
@@ -137,10 +136,7 @@ fn invalid_provider_configuration_cannot_fall_back_to_defaults() {
                 .iter()
                 .any(|finding| {
                     finding["code"] == "SL000_INVALID_INPUT"
-                        && finding["path"]
-                            .as_str()
-                            .unwrap()
-                            .ends_with("skills/Portable")
+                        && Path::new(finding["path"].as_str().unwrap()).ends_with("skills/Portable")
                 }),
             "{report}"
         );

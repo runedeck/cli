@@ -72,7 +72,10 @@ fn write(path: &Path, text: &str) {
 }
 
 fn claude_line(cwd: &str, text: &str) -> String {
-    format!("{{\"cwd\":\"{cwd}\",\"type\":\"user\",\"message\":\"{text}\"}}\n")
+    // The folder goes in as a JSON string: a Windows path holds `\`, which
+    // JSON writes as `\\`.
+    let cwd = serde_json::to_string(cwd).expect("a path is a JSON string");
+    format!("{{\"cwd\":{cwd},\"type\":\"user\",\"message\":\"{text}\"}}\n")
 }
 
 fn json_of(output: &std::process::Output) -> Value {

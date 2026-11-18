@@ -817,9 +817,9 @@ pub(crate) fn trash_orphaned_sidecar(
 ) -> Result<PathBuf, String> {
     // Both sides canonical, so a `/var` versus `/private/var` root never
     // turns the relative path into an absolute one that renames onto itself.
-    let module_root = fs::canonicalize(module_root)
+    let module_root = rune::folders::canonicalize(module_root)
         .map_err(|error| format!("cannot resolve {}: {error}", module_root.display()))?;
-    let canonical = fs::canonicalize(sidecar_path)
+    let canonical = rune::folders::canonicalize(sidecar_path)
         .map_err(|error| format!("cannot resolve {}: {error}", sidecar_path.display()))?;
     let relative = canonical.strip_prefix(&module_root).map_err(|_| {
         format!(
@@ -1776,7 +1776,7 @@ pub(super) fn module_root_for(path: &Path) -> Result<PathBuf, String> {
     };
     for directory in start.ancestors() {
         if directory.join("module.yaml").is_file() {
-            return fs::canonicalize(directory).map_err(|error| {
+            return rune::folders::canonicalize(directory).map_err(|error| {
                 format!(
                     "cannot resolve module root {}: {error}",
                     directory.display()
@@ -1809,8 +1809,8 @@ fn git_session_root(module_root: &Path) -> Option<PathBuf> {
 }
 
 fn fallback_session_root(module_root: &Path) -> Result<PathBuf, String> {
-    let base = dirs::state_dir()
-        .or_else(dirs::cache_dir)
+    let base = rune::folders::state_dir()
+        .or_else(rune::folders::cache_dir)
         .ok_or_else(|| "cannot resolve a user state or cache directory".to_string())?;
     let key = manifest::content_sha256(&path_to_slash(module_root));
     Ok(base.join("rune").join(SESSION_DIRECTORY).join(key))

@@ -1,6 +1,7 @@
 mod support;
 use assert_cmd::Command;
 use predicates::prelude::*;
+use rune::folders::Canonical as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -410,7 +411,8 @@ fn setup_invalid_selection_names_the_retry_command() {
 }
 
 fn create_setup_deck(home: &std::path::Path) -> std::path::PathBuf {
-    let deck = home.join("Developer/demo");
+    // Joined part by part: a test compares this path as text.
+    let deck = home.join("Developer").join("demo");
     std::fs::create_dir_all(&deck).unwrap();
     std::fs::write(deck.join("deck.yaml"), "name: demo\n").unwrap();
     deck
@@ -565,12 +567,12 @@ fn setup_prints_every_write_before_apply() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     let apply = stdout.find(" Apply").unwrap();
+    // Joined part by part, as rune prints them: the text is compared.
     let paths = [
-        home.path().join(".config/rune/config.yaml"),
+        rune::folders::join(home.path(), ".config/rune/config.yaml"),
         source.path().join("config.yaml"),
-        home.path()
-            .join(".local/share/bash-completion/completions/rune"),
-        home.path().join(".agents/skills/rune/SKILL.md"),
+        rune::folders::join(home.path(), ".local/share/bash-completion/completions/rune"),
+        rune::folders::join(home.path(), ".agents/skills/rune/SKILL.md"),
     ];
     for path in paths {
         let path = path.display().to_string();
@@ -608,7 +610,7 @@ fn strict_install_error_uses_the_resolved_review_command() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(output.stderr, [] as [u8; 0]);
     let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let source = source.canonicalize().unwrap();
+    let source = source.canonical().unwrap();
     let expected = format!(
         "rune adopt status --root {}",
         shell_quote_for_test(&source.to_string_lossy())

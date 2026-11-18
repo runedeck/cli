@@ -5,6 +5,7 @@
 
 mod support;
 
+use rune::folders::Canonical as _;
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -419,7 +420,7 @@ fn the_switch_round_trips_and_reads_from_a_subdirectory() {
     assert_eq!(out["turn_wrap"], "on");
     assert_eq!(
         out["root"].as_str().map(PathBuf::from),
-        Some(scene.repo().canonicalize().unwrap())
+        Some(scene.repo().canonical().unwrap())
     );
     scene
         .rune()
@@ -959,7 +960,7 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
         .success()
         .stdout(format!(
             "turn wrap reset in {}: forgot {listed}\n",
-            scene.repo().canonicalize().unwrap().display()
+            scene.repo().canonical().unwrap().display()
         ));
     let stop = scene.turn("s1", "c.txt", "three\n");
     assert!(
@@ -1072,11 +1073,7 @@ fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
     scene.config(WRAPPER);
     scene.write_plan();
     scene.switch_on();
-    let lock = scene
-        .repo()
-        .canonicalize()
-        .unwrap()
-        .join(".jj/turn-wrap.lock");
+    let lock = scene.repo().canonical().unwrap().join(".jj/turn-wrap.lock");
     let held = std::fs::File::create(&lock).unwrap();
     held.try_lock().unwrap();
     let stop = scene.turn("s1", "a.txt", "one\n");
@@ -1119,7 +1116,7 @@ fn a_malformed_slot_wraps_nothing_until_the_owner_resets() {
     assert!(
         message.starts_with(&format!(
             "turn-wrap: nothing wrapped: {} is not a turn-wrap slot: ",
-            scene.slot().canonicalize().unwrap().display()
+            scene.slot().canonical().unwrap().display()
         )),
         "{message}"
     );

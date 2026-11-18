@@ -1,3 +1,4 @@
+use rune::folders::Canonical as _;
 use rune::skill_readiness::{self, SkillReadiness};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,11 +47,11 @@ fn sibling_directory_aliases_remain_distinct_without_native_evidence() {
     use std::os::unix::fs::symlink;
 
     let fixture = tempfile::tempdir().unwrap();
-    let workspace = fixture.path().canonicalize().unwrap();
+    let workspace = fixture.path().canonical().unwrap();
     let original = write_skill(&workspace, "original");
     let alias = original.parent().unwrap().join("alias");
     symlink("original", &alias).unwrap();
-    assert_eq!(alias.canonicalize().unwrap(), original);
+    assert_eq!(alias.canonical().unwrap(), original);
 
     let report = inspect(&workspace);
     // Static candidates retain logical paths until native evidence resolves discovery.
@@ -60,13 +61,10 @@ fn sibling_directory_aliases_remain_distinct_without_native_evidence() {
 #[test]
 fn distinct_physical_same_name_skills_remain_duplicates() {
     let fixture = tempfile::tempdir().unwrap();
-    let workspace = fixture.path().canonicalize().unwrap();
+    let workspace = fixture.path().canonical().unwrap();
     let first = write_skill(&workspace, "first");
     let second = write_skill(&workspace, "second");
-    assert_ne!(
-        first.canonicalize().unwrap(),
-        second.canonicalize().unwrap()
-    );
+    assert_ne!(first.canonical().unwrap(), second.canonical().unwrap());
     assert_eq!(
         fs::read(first.join("SKILL.md")).unwrap(),
         fs::read(second.join("SKILL.md")).unwrap()

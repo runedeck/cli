@@ -28,7 +28,7 @@ pub(super) fn collect_provenance(
 /// Short label for a deployment target base: `~` for the home directory,
 /// otherwise the final path component.
 pub(super) fn deployment_target_label(target_base: &Path) -> String {
-    if let Some(home) = dirs::home_dir()
+    if let Some(home) = crate::folders::home_dir()
         && target_base == home
     {
         return "~".to_string();

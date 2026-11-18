@@ -1,5 +1,6 @@
 //! Read-only skill inventory. Native discovery is a separate evidence gate.
 
+use crate::folders::Canonical as _;
 use crate::manifest::{
     self,
     bundle::{BundleEntryKind, BundleInspection, inspect_bundle},
@@ -113,7 +114,7 @@ pub fn inspect(
     roots: &[(PathBuf, String)],
     configuration_digest: String,
 ) -> SkillReadiness {
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd = cwd.canonical().unwrap_or_else(|_| cwd.to_path_buf());
     let boundary = cwd
         .ancestors()
         .find(|path| path.join(".git").exists() || path.join(".jj").exists());
@@ -237,7 +238,9 @@ fn inspect_expected_claims(root: &Path, report: &mut SkillReadiness) {
                     );
                     continue;
                 }
-                let expected = provider.join(key);
+                // The key is written with `/`: joined part by part, the
+                // finding names the file with one kind of separator.
+                let expected = crate::folders::join(provider, key);
                 if expected.starts_with(root)
                     && expected.file_name().is_some_and(|name| name == "SKILL.md")
                     && !expected.is_file()
@@ -266,7 +269,7 @@ fn scan(
     report: &mut SkillReadiness,
     ancestors: &mut BTreeSet<PathBuf>,
 ) -> Result<(), String> {
-    let canonical = root.canonicalize().map_err(|error| error.to_string())?;
+    let canonical = root.canonical().map_err(|error| error.to_string())?;
     if !ancestors.insert(canonical.clone()) {
         return Err(format!("cyclic discovery directory: {}", root.display()));
     }
@@ -310,7 +313,11 @@ fn inspect_skill(root: &Path, scope: &str, report: &mut SkillReadiness) {
         report.finding(
             "CSI003_INVALID_BUNDLE",
             name.clone(),
-            vec![root.join(&problem.path).display().to_string()],
+            vec![
+                crate::folders::join(root, &problem.path)
+                    .display()
+                    .to_string(),
+            ],
             &problem.message,
         );
     }
@@ -360,7 +367,8 @@ fn owned_source(root: &Path, bundle: &BundleInspection) -> Result<Option<SourceI
     let prefix = root
         .strip_prefix(provider_root)
         .map_err(|error| error.to_string())?;
-    let primary = prefix.join("SKILL.md").display().to_string();
+    // A manifest key has `/` between its parts on every platform.
+    let primary = manifest::slash_lossy(&prefix.join("SKILL.md"));
     if !claims.contains_key(&primary) {
         return Ok(None);
     }
@@ -371,7 +379,7 @@ fn owned_source(root: &Path, bundle: &BundleInspection) -> Result<Option<SourceI
         if entry.kind == BundleEntryKind::Directory {
             continue;
         }
-        let key = prefix.join(&entry.path).display().to_string();
+        let key = manifest::slash_lossy(&prefix.join(&entry.path));
         let claim = claims
             .get(&key)
             .ok_or_else(|| format!("bundle entry has no manifest claim: {key}"))?;
@@ -395,11 +403,11 @@ fn owned_source(root: &Path, bundle: &BundleInspection) -> Result<Option<SourceI
         }
         let sidecar_path = provider_root.join(sidecar);
         let canonical = sidecar_path
-            .canonicalize()
+            .canonical()
             .map_err(|error| error.to_string())?;
         if !canonical.starts_with(
             provider_root
-                .canonicalize()
+                .canonical()
                 .map_err(|error| error.to_string())?,
         ) {
             return Err(format!("provenance link escapes target: {key}"));
@@ -452,7 +460,7 @@ fn verify_complete_bundle_claims(
         .entries
         .iter()
         .filter(|entry| entry.kind != BundleEntryKind::Directory)
-        .map(|entry| prefix.join(&entry.path).display().to_string())
+        .map(|entry| manifest::slash_lossy(&prefix.join(&entry.path)))
         .collect();
     for key in claims
         .keys()

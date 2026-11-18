@@ -1,6 +1,7 @@
 //! Strict source lint without deployment or external checkers.
 
 use rune::error::Error;
+use rune::folders::Canonical as _;
 use rune::provider::ProviderConfig;
 use rune::skill_readiness::layers::{
     SourceLayerFinding, SourceLayerReport, inspect_source_with_providers,
@@ -18,7 +19,7 @@ pub(crate) fn execute(source: &str, json: bool) -> Result<i32, Error> {
         findings: Vec::new(),
         valid: false,
     };
-    match requested.canonicalize() {
+    match requested.canonical() {
         Ok(root) => {
             report.root = root.display().to_string();
             inspect_selected(&root, &mut report);

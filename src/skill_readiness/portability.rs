@@ -1,5 +1,6 @@
 //! Literal harness rules for rendered instructions and source validation.
 
+use crate::folders::Canonical as _;
 use crate::manifest::{
     self,
     bundle::{BundleEntry, BundleEntryKind, BundleInspection},
@@ -224,7 +225,11 @@ pub(super) fn inspect_rendered(root: &Path, bundle: &BundleInspection) -> Vec<Fi
         {
             continue;
         }
-        let path = root.join(&entry.path).display().to_string();
+        // The entry's path is written with `/`: joined part by part, the
+        // finding names the file with the platform's separator throughout.
+        let path = crate::folders::join(root, &entry.path)
+            .display()
+            .to_string();
         match read_text(root, entry).and_then(|content| {
             content.map_or_else(
                 || Ok(Vec::new()),
@@ -266,8 +271,8 @@ fn read_text(root: &Path, entry: &BundleEntry) -> Result<Option<String>, String>
     {
         return Err("instruction file changed its type after bundle inspection".into());
     }
-    let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
-    let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_root = root.canonical().map_err(|error| error.to_string())?;
+    let canonical = path.canonical().map_err(|error| error.to_string())?;
     if canonical != canonical_root.join(relative) {
         return Err("instruction path changed or leaves its bundle".into());
     }

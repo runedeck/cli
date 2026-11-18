@@ -9,7 +9,6 @@
 //! but neither adds days on which an install ran.
 
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -56,7 +55,7 @@ pub(crate) fn fresh(path: &Path, now: DateTime<Utc>, install: u64) -> Retired {
 
 /// A path as the file system names it, or as given when it is gone.
 pub(crate) fn canonical(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    rune::folders::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn keys(paths: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {

@@ -207,7 +207,7 @@ pub(crate) struct InstallTarget {
 impl InstallTarget {
     /// Resolve the home and apply the folder rule to `requested`.
     pub(crate) fn select(requested: &[Harness]) -> Result<Self, Error> {
-        let home = dirs::home_dir()
+        let home = rune::folders::home_dir()
             .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
         if live_home_in_proof(&home) {
             return Err(Error::new(

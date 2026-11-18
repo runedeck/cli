@@ -6,6 +6,7 @@
 //! A refusal is a [`Violation`], so a caller can keep its own wording for
 //! each kind while the walk itself lives here once.
 
+use crate::folders::Canonical as _;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -150,11 +151,10 @@ pub fn confine_for_write(base: &Path, candidate: &Path) -> Result<(), Violation>
 }
 
 fn canonicalize(path: &Path) -> Result<PathBuf, Violation> {
-    path.canonicalize()
-        .map_err(|error| Violation::Unresolvable {
-            path: path.to_path_buf(),
-            error,
-        })
+    path.canonical().map_err(|error| Violation::Unresolvable {
+        path: path.to_path_buf(),
+        error,
+    })
 }
 
 #[cfg(test)]
@@ -168,7 +168,7 @@ mod tests {
         std::fs::write(&inside, "content for the confinement test\n").unwrap();
 
         let resolved = confine_existing(root.path(), &inside).unwrap();
-        assert_eq!(resolved, inside.canonicalize().unwrap());
+        assert_eq!(resolved, inside.canonical().unwrap());
     }
 
     #[test]

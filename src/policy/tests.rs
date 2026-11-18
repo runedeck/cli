@@ -19,7 +19,7 @@ impl Scene {
         let root = tempfile::tempdir().unwrap();
         // The real path, so a scope written under the temp root compares
         // equal to a resolved subject.
-        let dir = std::fs::canonicalize(root.path()).unwrap();
+        let dir = crate::folders::canonicalize(root.path()).unwrap();
         let home = dir.join("home");
         for sub in ["Developer/work/mail", "Atlas/notes", "Agents/deck"] {
             std::fs::create_dir_all(home.join(sub)).unwrap();
@@ -52,11 +52,14 @@ impl Scene {
         Reader::load(env)
     }
 
+    /// A path under the home, with the platform's separator between its
+    /// parts: `relative` is written with `/`, and a test compares the
+    /// result with a path the policy resolved.
     fn at(&self, relative: &str) -> PathBuf {
         if relative.is_empty() {
             self.home.clone()
         } else {
-            self.home.join(relative)
+            self.home.join(relative).components().collect()
         }
     }
 }
@@ -424,10 +427,13 @@ fn letter_case_is_ignored_where_the_file_system_ignores_it() {
 
 #[test]
 fn a_scope_contains_itself_and_its_children_not_a_sibling_with_its_prefix() {
-    assert!(contains("/a/b", "/a/b"));
-    assert!(contains("/a/b", "/a/b/c"));
-    assert!(!contains("/a/b", "/a/bc"));
-    assert!(contains("/", "/a"));
+    // Normalized paths carry the platform's separator.
+    let separator = std::path::MAIN_SEPARATOR_STR;
+    let path = |parts: &[&str]| format!("{separator}{}", parts.join(separator));
+    assert!(contains(&path(&["a", "b"]), &path(&["a", "b"])));
+    assert!(contains(&path(&["a", "b"]), &path(&["a", "b", "c"])));
+    assert!(!contains(&path(&["a", "b"]), &path(&["a", "bc"])));
+    assert!(contains(separator, &path(&["a"])));
 }
 
 #[test]

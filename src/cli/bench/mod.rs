@@ -13,6 +13,7 @@ mod tests;
 use crate::cli::style::Sheet;
 use clap::Subcommand;
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::ontology;
 use std::path::{Path, PathBuf};
 
@@ -155,12 +156,12 @@ impl Workspace {
 
     fn owning_root(&self, suite_path: &Path) -> Option<PathBuf> {
         let canonical_suite = suite_path
-            .canonicalize()
+            .canonical()
             .unwrap_or_else(|_| suite_path.to_path_buf());
         self.roots
             .iter()
             .find(|root| {
-                let canonical_root = root.canonicalize().unwrap_or_else(|_| (*root).clone());
+                let canonical_root = root.canonical().unwrap_or_else(|_| (*root).clone());
                 canonical_suite.starts_with(&canonical_root)
             })
             .cloned()
@@ -168,12 +169,12 @@ impl Workspace {
 
     fn is_private_suite(&self, suite_path: &Path) -> bool {
         let canonical_suite = suite_path
-            .canonicalize()
+            .canonical()
             .unwrap_or_else(|_| suite_path.to_path_buf());
         self.roots.iter().any(|root| {
             let private_dir = root.join("suites").join("private");
             let canonical_private = private_dir
-                .canonicalize()
+                .canonical()
                 .unwrap_or_else(|_| private_dir.clone());
             canonical_suite.starts_with(&canonical_private)
         })
@@ -248,7 +249,7 @@ fn resolve_workspace(config: &ontology::ResolvedConfig) -> Result<Workspace, Str
             candidates.push(parent.join("bench"));
         }
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = rune::folders::home_dir() {
         candidates.push(home.join("Developer/runedeck/bench"));
     }
     let found = candidates

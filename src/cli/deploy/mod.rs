@@ -321,7 +321,7 @@ pub fn execute(
 /// under it), where wiring another harness's global instruction file is
 /// appropriate. Project-scope installs are left untouched.
 fn is_home_target(target: &str) -> bool {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = rune::folders::home_dir() else {
         return false;
     };
     let expanded = if let Some(rest) = target.strip_prefix("~/") {
@@ -333,8 +333,8 @@ fn is_home_target(target: &str) -> bool {
     };
     // Canonicalize both sides: on macOS the home path may resolve through
     // /private symlinks, so a raw compare spuriously fails.
-    let canonical_home = fs::canonicalize(&home).unwrap_or(home);
-    fs::canonicalize(&expanded).is_ok_and(|resolved| resolved == canonical_home)
+    let canonical_home = rune::folders::canonicalize(&home).unwrap_or(home);
+    rune::folders::canonicalize(&expanded).is_ok_and(|resolved| resolved == canonical_home)
 }
 
 /// The instruction-file (or config) wiring for one harness, keyed off the
@@ -351,7 +351,7 @@ fn wire_harness_rules(
     if !deploy_rules.iter().any(|rule| rule == "rulesync") {
         return Ok(());
     }
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = rune::folders::home_dir() else {
         return Ok(());
     };
     // Rule bodies come from the build tree so wiring is independent of whether
@@ -491,11 +491,9 @@ fn deploy_provider_kind_files(
             continue;
         }
 
-        let relative = build_path
-            .strip_prefix(kind_dir)
-            .unwrap_or(&build_path)
-            .to_string_lossy()
-            .to_string();
+        let relative = build_path.strip_prefix(kind_dir).unwrap_or(&build_path);
+        // A manifest key has `/` between its parts on every platform.
+        let relative = manifest::slash_lossy(relative);
         let manifest_key = format!("{kind}/{relative}");
         if only.is_some_and(|prefix| !only_matches(&manifest_key, prefix)) {
             continue;

@@ -39,7 +39,7 @@ pub fn show() -> i32 {
 pub fn install(directory: Option<&str>, json: bool) -> Result<i32, Error> {
     let root = match directory {
         Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir()
+        None => rune::folders::home_dir()
             .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?,
     };
     let content = rendered();
@@ -130,7 +130,7 @@ impl InstallPlan {
     pub(crate) fn destinations(&self) -> Vec<PathBuf> {
         self.targets
             .iter()
-            .map(|(_, base)| base.join("rune/SKILL.md"))
+            .map(|(_, base)| rune::folders::join(base, "rune/SKILL.md"))
             .collect()
     }
 
@@ -151,7 +151,7 @@ impl InstallPlan {
         let mut kept = 0usize;
         let mut failing = Vec::new();
         for (provider, base) in &self.targets {
-            let path = base.join("rune/SKILL.md");
+            let path = rune::folders::join(base, "rune/SKILL.md");
             match std::fs::read_to_string(&path) {
                 Ok(existing) if existing == self.content => current += 1,
                 Ok(existing)
@@ -194,7 +194,7 @@ pub(crate) fn plan_install_with(
 ) -> Result<InstallPlan, Error> {
     let root = match directory {
         Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir().ok_or_else(|| {
+        None => rune::folders::home_dir().ok_or_else(|| {
             Error::new(ErrorKind::Config, "cannot resolve home directory")
                 .with_code("skill.home_unavailable")
                 .with_fix_command("printenv HOME")

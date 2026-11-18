@@ -1,6 +1,7 @@
 //! Source policies for a shared skill and its explicit qualifier variants.
 
 use super::portability::{self, Policy};
+use crate::folders::Canonical as _;
 use crate::manifest::bundle;
 use crate::provider::ProviderConfig;
 use serde::{Deserialize, Serialize};
@@ -147,7 +148,7 @@ pub fn inspect_source_with_providers(
         );
         return report.finish();
     }
-    let root = match skill_root.canonicalize() {
+    let root = match skill_root.canonical() {
         Ok(root) if root.is_dir() => root,
         result => {
             let message = result.map_or_else(
@@ -227,7 +228,7 @@ fn collect_text(
         report.problem(
             "CSI008_LAYER_SOURCE",
             "generic",
-            &relative.display().to_string(),
+            &report_path(relative),
             "",
             "source traversal exceeds the bounded inspection limit",
         );
@@ -253,14 +254,15 @@ fn collect_text(
                 let bytes = fs::read(&physical).map_err(|error| error.to_string())?;
                 match String::from_utf8(bytes) {
                     Ok(content) if !content.contains('\0') => {
-                        let path = logical.to_str().ok_or("source paths must be valid UTF-8")?;
-                        files.insert(path.into(), content.replace("\r\n", "\n"));
+                        let path = crate::manifest::slash_text(&logical)
+                            .ok_or("source paths must be valid UTF-8")?;
+                        files.insert(path, content.replace("\r\n", "\n"));
                     }
                     _ if required_text(&logical) => {
                         report.problem(
                             "CSI008_LAYER_SOURCE",
                             "generic",
-                            &logical.display().to_string(),
+                            &report_path(&logical),
                             "",
                             "instruction text is not valid UTF-8 text",
                         );
@@ -277,11 +279,16 @@ fn collect_text(
         report.problem(
             "CSI008_LAYER_SOURCE",
             "generic",
-            &relative.display().to_string(),
+            &report_path(relative),
             "",
             &message,
         );
     }
+}
+
+/// A source path as a finding names it, with `/` between its parts.
+fn report_path(path: &Path) -> String {
+    crate::manifest::slash_lossy(path)
 }
 
 fn required_text(path: &Path) -> bool {

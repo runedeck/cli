@@ -133,8 +133,5 @@ fn push_diagnostics(diagnostics: Vec<Diagnostic>, result: &mut rune::result::Act
 }
 
 fn relative_path(module_root: &Path, path: &Path) -> String {
-    path.strip_prefix(module_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(path))
 }

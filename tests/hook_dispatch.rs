@@ -1699,7 +1699,7 @@ fn a_switch_waits_for_the_lock_before_it_reads_the_state() {
     assert!(
         !so_far.contains(&format!(
             "held {}\n",
-            std::fs::canonicalize(&hooks).unwrap().display()
+            rune::folders::canonicalize(&hooks).unwrap().display()
         )),
         "the switch took the lock the test holds: {so_far}"
     );
@@ -1858,7 +1858,7 @@ fn rune_in(scene: &Scene, args: &[&str], trace: &Path) -> std::process::Child {
 /// holds and nothing more. A fixed sleep and a child still running proved
 /// neither (review, 2026-11-02). Returns the trace so far.
 fn waits_for(child: &mut std::process::Child, trace: &Path, dir: &Path) -> String {
-    let dir = std::fs::canonicalize(dir).unwrap();
+    let dir = rune::folders::canonicalize(dir).unwrap();
     let line = format!("wait {}\n", dir.display());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {

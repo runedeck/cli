@@ -100,7 +100,9 @@ fn fixture() -> Option<Fixture> {
     fs::write(
         &config,
         format!(
-            "[signing]\nbehavior = \"drop\"\nbackend = \"ssh\"\nkey = \"{}\"\n[revset-aliases]\n\"immutable_heads()\" = \"none()\"\n",
+            // The key is a TOML literal string, in single quotes: a Windows
+            // path holds `\`, which a basic string reads as an escape.
+            "[signing]\nbehavior = \"drop\"\nbackend = \"ssh\"\nkey = '{}'\n[revset-aliases]\n\"immutable_heads()\" = \"none()\"\n",
             key.display()
         ),
     )

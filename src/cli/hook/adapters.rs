@@ -1207,7 +1207,7 @@ fn dcg(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 fn git_ai(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     let preset = payload.harness.as_str();
     let stdin = serde_json::to_vec(&payload.raw).map_err(|e| e.to_string())?;
-    let program = dirs::home_dir()
+    let program = rune::folders::home_dir()
         .map(|h| h.join(".git-ai/bin/git-ai"))
         .filter(|p| p.is_file())
         .map_or_else(|| "git-ai".to_string(), |p| p.display().to_string());
@@ -1430,7 +1430,7 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(script) = dirs::home_dir().and_then(|home| checkpoint_script(&home)) else {
+    let Some(script) = rune::folders::home_dir().and_then(|home| checkpoint_script(&home)) else {
         return Ok(HandlerResult::default());
     };
     let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
@@ -1523,7 +1523,7 @@ fn tmux_status(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(program) = dirs::home_dir()
+    let Some(program) = rune::folders::home_dir()
         .map(|h| h.join(".local/bin/claude-tmux-status"))
         .filter(|p| p.is_file())
     else {

@@ -208,8 +208,7 @@ fn the_store_keeps_its_own_copy_of_a_receipt_and_removes_it_with_the_request() {
         .expect("the copy is kept");
     assert_eq!(
         copy,
-        dir.path()
-            .join("queue/receipts/one.log")
+        rune::folders::join(dir.path(), "queue/receipts/one.log")
             .to_string_lossy()
             .as_ref()
     );

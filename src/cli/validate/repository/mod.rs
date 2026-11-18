@@ -1,3 +1,4 @@
+use rune::folders::Canonical as _;
 use rune::manifest;
 use std::path::Path;
 
@@ -76,7 +77,7 @@ fn template_hash(filename: &str, module_name: &str) -> Option<String> {
 
 fn resolve_module_name(module_root: &Path) -> String {
     module_root
-        .canonicalize()
+        .canonical()
         .unwrap_or_else(|_| module_root.to_path_buf())
         .file_name()
         .unwrap_or_default()

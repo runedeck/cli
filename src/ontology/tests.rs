@@ -174,7 +174,7 @@ fn secrets_manifest_env_beats_config_and_keeps_a_missing_path() {
         ..Config::default()
     };
     let from_config = resolve_config(&config, &no_env);
-    let home = dirs::home_dir().expect("home for test");
+    let home = crate::folders::home_dir().expect("home for test");
     assert_eq!(
         from_config.secrets_manifest(),
         Some(home.join("configured/secretspec.toml")),
@@ -259,7 +259,7 @@ fn default_manifest_applies_only_when_present_and_no_env_file_is_named() {
 
 #[test]
 fn tilde_expansion_resolves_under_home() {
-    let home = dirs::home_dir().expect("home for test");
+    let home = crate::folders::home_dir().expect("home for test");
     assert_eq!(expand_tilde("~/Agents"), home.join("Agents"));
 }
 

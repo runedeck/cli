@@ -91,7 +91,7 @@ pub fn execute(
         // A local directory without --source-url records its canonical
         // location as a file URL, the same shape classify_url accepts, so the
         // upstream field never carries a bare relative path.
-        let canonical = fs::canonicalize(&directory)
+        let canonical = rune::folders::canonicalize(&directory)
             .map_err(|error| format!("cannot resolve {}: {error}", directory.display()))?;
         let attribution =
             source_url.map_or_else(|| format!("file://{}", canonical.display()), str::to_string);
@@ -492,7 +492,7 @@ fn classify_url(url: &str) -> Result<ClassifiedUrl, String> {
     }
 
     if !SCHEME_RE.is_match(url) {
-        let path = fs::canonicalize(url).map_err(|error| {
+        let path = rune::folders::canonicalize(url).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 format!("local source does not exist: {url}")
             } else {
@@ -563,7 +563,7 @@ fn fetch(source: &ClassifiedUrl) -> Result<Vec<u8>, String> {
 }
 
 fn canonical_module_root(module: &Path) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(module).map_err(|error| {
+    let root = rune::folders::canonicalize(module).map_err(|error| {
         format!(
             "cannot canonicalize rune source {}: {error}",
             module.display()

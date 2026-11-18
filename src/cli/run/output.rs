@@ -171,21 +171,21 @@ pub(crate) fn caller_repository_root() -> Option<PathBuf> {
 /// hidden-folder rule is judged from the closest one.
 fn permitted_roots(repository: Option<&Path>) -> Vec<(&'static str, PathBuf)> {
     let mut roots = Vec::new();
-    if let Some(root) = repository.and_then(|path| std::fs::canonicalize(path).ok()) {
+    if let Some(root) = repository.and_then(|path| rune::folders::canonicalize(path).ok()) {
         roots.push(("the repository", root));
     }
     for (label, path) in [
         ("the temporary directory", std::env::temp_dir()),
         ("the temporary directory", PathBuf::from("/tmp")),
     ] {
-        if let Ok(root) = std::fs::canonicalize(&path)
+        if let Ok(root) = rune::folders::canonicalize(&path)
             && !roots.iter().any(|(_, known)| *known == root)
         {
             roots.push((label, root));
         }
     }
     if let Ok(state) = crate::cli::sign::state_dir()
-        && let Ok(root) = std::fs::canonicalize(&state)
+        && let Ok(root) = rune::folders::canonicalize(&state)
         && !roots.iter().any(|(_, known)| *known == root)
     {
         roots.push(("the rune state directory", root));
@@ -216,7 +216,7 @@ pub(crate) fn accept(path: &Path, repository: Option<&Path>) -> Result<Destinati
         ));
     }
     let parent = absolute.parent().unwrap_or(Path::new("/"));
-    let parent = std::fs::canonicalize(parent).map_err(|error| {
+    let parent = rune::folders::canonicalize(parent).map_err(|error| {
         format!(
             "the parent folder of output file {} cannot take a file: {error}",
             path.display()

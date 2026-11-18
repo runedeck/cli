@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use rune::hooks::{Harness, OnFailure, PlannedHandler};
@@ -211,7 +210,7 @@ fn tables_in(dir: &Path, harness: Harness) -> Vec<PathBuf> {
 fn same_path(a: &Path, b: &Path) -> bool {
     a == b
         || matches!(
-            (fs::canonicalize(a), fs::canonicalize(b)),
+            (rune::folders::canonicalize(a), rune::folders::canonicalize(b)),
             (Ok(x), Ok(y)) if x == y
         )
 }
@@ -413,7 +412,7 @@ fn same_program(a: &str, b: &str) -> bool {
     match (a.contains('/'), b.contains('/')) {
         (false, false) => a == b,
         (true, true) => matches!(
-            (fs::canonicalize(a), fs::canonicalize(b)),
+            (rune::folders::canonicalize(a), rune::folders::canonicalize(b)),
             (Ok(x), Ok(y)) if x == y
         ),
         _ => false,
@@ -621,6 +620,7 @@ pub(crate) fn holds(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     fn w(words: &[&str]) -> Vec<String> {
         words.iter().map(ToString::to_string).collect()

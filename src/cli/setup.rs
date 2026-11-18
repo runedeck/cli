@@ -135,7 +135,7 @@ fn build_plan(automatic: bool) -> Result<SetupPlan, Error> {
         .with_code("setup.current_directory_unavailable")
         .with_fix_command("pwd")
     })?;
-    let home = dirs::home_dir().ok_or_else(|| {
+    let home = rune::folders::home_dir().ok_or_else(|| {
         Error::new(ErrorKind::Config, "Rune cannot resolve the home directory.")
             .with_code("setup.home_unavailable")
             .with_fix_command("printenv HOME")
@@ -642,7 +642,7 @@ fn setup_error(error: &Error, code: &'static str, fix_command: &str) -> Error {
 
 /// Scan two levels under ~/Developer for directories with deck.yaml.
 fn discover_decks() -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = rune::folders::home_dir() else {
         return Vec::new();
     };
     let developer = home.join("Developer");

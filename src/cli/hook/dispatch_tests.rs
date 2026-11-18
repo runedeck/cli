@@ -1681,7 +1681,7 @@ const POLICY_PLAN: &str = "handlers:\n  - id: guard\n    exec: [guard]\n    even
 /// everywhere and revokes `guard.deny` under `work/`.
 fn policy_scene() -> (tempfile::TempDir, std::path::PathBuf) {
     let temp = tempfile::tempdir().unwrap();
-    let dir = std::fs::canonicalize(temp.path()).unwrap();
+    let dir = rune::folders::canonicalize(temp.path()).unwrap();
     for sub in ["work", "other", "record", "session"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }

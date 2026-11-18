@@ -41,9 +41,9 @@ pub fn holder_relative_name(module_root: &Path, holder: &Path, subject_name: &st
         .file_name()
         .unwrap_or_default()
         .to_os_string();
-    let holder = std::fs::canonicalize(holder).unwrap_or_else(|_| holder.to_path_buf());
+    let holder = rune::folders::canonicalize(holder).unwrap_or_else(|_| holder.to_path_buf());
     let module_root =
-        std::fs::canonicalize(module_root).unwrap_or_else(|_| module_root.to_path_buf());
+        rune::folders::canonicalize(module_root).unwrap_or_else(|_| module_root.to_path_buf());
     let file = holder.join(file_name);
     file.strip_prefix(&module_root)
         .unwrap_or(&file)

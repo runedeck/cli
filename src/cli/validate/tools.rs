@@ -155,12 +155,7 @@ fn check_shellcheck(module_root: &Path, report: &mut ValidationReport) {
     let mut arguments = vec!["-S", "warning"];
     let paths: Vec<String> = shell_files
         .iter()
-        .map(|path| {
-            path.strip_prefix(module_root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string()
-        })
+        .map(|path| rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(path)))
         .collect();
     for path in &paths {
         arguments.push(path);
@@ -314,10 +309,7 @@ fn run_command_with_env(
 }
 
 fn relative_path(path: &Path, module_root: &Path) -> String {
-    path.strip_prefix(module_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(path))
 }
 
 fn find_text_files(module_root: &Path) -> Vec<std::path::PathBuf> {

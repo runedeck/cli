@@ -69,8 +69,9 @@ impl Scene {
         .expect("settings fixture");
     }
 
+    /// Joined part by part, as rune prints it: a test compares the text.
     fn settings(&self) -> PathBuf {
-        self.home.join(".t3/userdata/settings.json")
+        rune::folders::join(&self.home, ".t3/userdata/settings.json")
     }
 
     /// Replace the rune configuration of the scene.
@@ -514,7 +515,7 @@ fn list_says_whether_the_interface_is_present_and_follows_t3code_home() {
     let scene = Scene::without_t3code();
     let (code, stdout, _) = scene.run(&["interface", "list"]);
     assert_eq!(code, Some(0));
-    let expected = scene.home.join(".t3/userdata/settings.json");
+    let expected = scene.settings();
     assert_eq!(
         stdout.trim_end(),
         format!("t3code  absent  {}", expected.display())
@@ -541,8 +542,7 @@ fn list_says_whether_the_interface_is_present_and_follows_t3code_home() {
     assert_eq!(listed[0]["present"], true);
     assert_eq!(
         listed[0]["settings"],
-        elsewhere
-            .join("userdata/settings.json")
+        rune::folders::join(&elsewhere, "userdata/settings.json")
             .to_string_lossy()
             .as_ref()
     );

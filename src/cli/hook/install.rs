@@ -505,7 +505,7 @@ pub(crate) fn present(home: &Path, requested: &[Harness]) -> (Vec<Harness>, Vec<
 /// write lands in the owner's file and the link stays a link.
 fn resolved(path: &Path) -> Result<PathBuf, Error> {
     if path.is_symlink() {
-        fs::canonicalize(path).map_err(|error| {
+        rune::folders::canonicalize(path).map_err(|error| {
             Error::io(format!(
                 "{} is a link rune cannot follow: {error}",
                 path.display()

@@ -4,6 +4,7 @@
 
 use super::io_error;
 use crate::error::{Error, ErrorKind};
+use crate::support::Canonical as _;
 use std::fs;
 use std::io;
 use std::path::{Component, Path};
@@ -231,7 +232,7 @@ pub(super) fn inspect_existing_ancestors(root: &Path, candidate: &Path) -> Resul
             }
             Ok(_) => {
                 let resolved = current
-                    .canonicalize()
+                    .canonical()
                     .map_err(|error| io_error("resolve", &current, error))?;
                 if !resolved.starts_with(root) {
                     return Err(Error::new(
