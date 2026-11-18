@@ -155,17 +155,22 @@ verified_archive() {
     local binary_name=$4
     local scratch_directory
     scratch_directory=$(mktemp -d "${TMPDIR:-/tmp}/rune-tools.XXXXXX")
+    # A Windows release holds the tool as an .exe.
+    local executable=$binary_name
+    if [ "$(platform)" = "windows" ]; then
+        executable="$binary_name.exe"
+    fi
 
     if ! (
         cd "$scratch_directory" \
             && curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-connrefused "$archive_url" -o "$archive_name" \
             && printf '%s  %s\n' "$expected_digest" "$archive_name" > selected-checksum \
             && digest_matches selected-checksum \
-            && tar -xf "$archive_name" \
-            && extracted_binary=$(find . -type f -name "$binary_name" -perm -u+x -print -quit) \
+            && extract_archive "$archive_name" \
+            && extracted_binary=$(find . -type f -name "$executable" -perm -u+x -print -quit) \
             && [ -n "$extracted_binary" ] \
             && mkdir -p "$INSTALL_DIRECTORY" \
-            && install -m 0755 "$extracted_binary" "$INSTALL_DIRECTORY/$binary_name"
+            && install -m 0755 "$extracted_binary" "$INSTALL_DIRECTORY/$executable"
     ); then
         command rm -rf "$scratch_directory"
         fail "could not install verified archive $archive_name: digest or extraction failed"
@@ -201,10 +206,22 @@ verified_binary() {
     export PATH="$INSTALL_DIRECTORY:$PATH"
 }
 
+# A release archive is a tarball, or a zip for Windows.
+extract_archive() {
+    case "$1" in
+        *.zip) unzip -q "$1" ;;
+        *) tar -xf "$1" ;;
+    esac
+}
+
+# Windows is Git Bash, which a Windows runner starts this script in. Only
+# jj and mdschema have a Windows digest: the Windows job runs the tests,
+# and the checks that need the other tools run on Linux.
 platform() {
     case "$(uname -s)" in
         Darwin) printf 'darwin\n' ;;
         Linux) printf 'linux\n' ;;
+        MINGW*|MSYS*) printf 'windows\n' ;;
         *) fail "unsupported operating system: $(uname -s)" ;;
     esac
 }
@@ -240,10 +257,13 @@ install_gitleaks() {
 install_mdschema() {
     tool_matches_version mdschema "$MDSCHEMA_VERSION" && return
 
-    local system_name machine_name archive_name digest
+    local system_name machine_name archive_name digest extension=tar.gz
     system_name=$(platform)
     machine_name=$(architecture)
-    archive_name="mdschema_${MDSCHEMA_VERSION}_${system_name}_${machine_name}.tar.gz"
+    if [ "$system_name" = "windows" ]; then
+        extension=zip
+    fi
+    archive_name="mdschema_${MDSCHEMA_VERSION}_${system_name}_${machine_name}.${extension}"
     digest=$(archive_digest mdschema "$system_name" "$machine_name")
     log "Installing digest-verified mdschema $MDSCHEMA_VERSION"
     verified_archive \
@@ -259,6 +279,7 @@ rust_target() {
         darwin:amd64) printf 'x86_64-apple-darwin\n' ;;
         linux:arm64) printf 'aarch64-unknown-linux-%s\n' "$1" ;;
         linux:amd64) printf 'x86_64-unknown-linux-%s\n' "$1" ;;
+        windows:amd64) printf 'x86_64-pc-windows-msvc\n' ;;
         *) fail "no release archive for $(platform)/$(architecture)" ;;
     esac
 }
@@ -400,11 +421,15 @@ install_dcg() {
         "$archive_name" "$digest" dcg
 }
 
-# jj publishes musl archives for linux and one per Apple target.
+# jj publishes musl archives for linux, one per Apple target, and a zip
+# for Windows.
 install_jj() {
     tool_matches_version jj "$JJ_VERSION" && return
-    local archive_name digest
-    archive_name="jj-v${JJ_VERSION}-$(rust_target musl).tar.gz"
+    local archive_name digest extension=tar.gz
+    if [ "$(platform)" = "windows" ]; then
+        extension=zip
+    fi
+    archive_name="jj-v${JJ_VERSION}-$(rust_target musl).${extension}"
     digest=$(archive_digest jj "$(platform)" "$(architecture)")
     log "Installing digest-verified jj $JJ_VERSION"
     verified_archive \
