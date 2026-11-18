@@ -112,11 +112,7 @@ impl Environment {
     /// because the rune state directory is a CLI concern.
     #[must_use]
     pub fn from_process(session_dir: Option<PathBuf>) -> Self {
-        let home = std::env::var_os("HOME")
-            .filter(|home| !home.is_empty())
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir)
-            .unwrap_or_default();
+        let home = crate::folders::home_dir().unwrap_or_default();
         let file = path_from(std::env::var_os(POLICY_ENV).as_deref(), &home);
         let disable = disabled_from(std::env::var(DISABLE_ENV).ok().as_deref());
         Self {

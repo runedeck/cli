@@ -68,17 +68,29 @@ const INHERITED: &[&str] = &[
     "CURSOR_API_KEY",
 ];
 
-/// The variables to drop and the one to set for an isolated command. With
+/// The variables to drop and the ones to set for an isolated command. With
 /// every `XDG_*` variable and directory override gone, rune's config and
 /// state, and the config of jj and git, all follow HOME, so a test that
 /// sets a HOME of its own moves all of them with it.
-fn isolation() -> (Vec<std::ffi::OsString>, [(&'static str, PathBuf); 1]) {
+///
+/// On Windows rune follows HOME as well, but the tools a test starts read
+/// the profile folders from USERPROFILE, APPDATA, and LOCALAPPDATA. Those
+/// name the scratch HOME too, so jj reads no config of the developer's.
+fn isolation() -> (Vec<std::ffi::OsString>, Vec<(&'static str, PathBuf)>) {
     let mut removed: Vec<std::ffi::OsString> = std::env::vars_os()
         .map(|(key, _)| key)
         .filter(|key| key.to_string_lossy().starts_with("XDG_"))
         .collect();
     removed.extend(INHERITED.iter().map(std::ffi::OsString::from));
-    (removed, [("HOME", scratch().join("home"))])
+    let home = scratch().join("home");
+    let mut set = Vec::new();
+    if cfg!(windows) {
+        set.push(("USERPROFILE", home.clone()));
+        set.push(("APPDATA", home.join("AppData").join("Roaming")));
+        set.push(("LOCALAPPDATA", home.join("AppData").join("Local")));
+    }
+    set.push(("HOME", home));
+    (removed, set)
 }
 
 /// Point a command at the scratch HOME, and drop every inherited `XDG_*`
