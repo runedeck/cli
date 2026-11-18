@@ -597,6 +597,24 @@ fn assemble_binary_passthrough(
     }))
 }
 
+#[cfg(unix)]
+fn create_skill_symlink(target: &Path, output_path: &Path) -> Result<(), Error> {
+    std::os::unix::fs::symlink(target, output_path).map_err(|error| {
+        Error::new(
+            rune::error::ErrorKind::Io,
+            format!("cannot create link {}: {error}", output_path.display()),
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn create_skill_symlink(_target: &Path, _output_path: &Path) -> Result<(), Error> {
+    Err(Error::new(
+        rune::error::ErrorKind::Validate,
+        "skill symlink assembly requires a supported Unix filesystem",
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assemble_symlink_passthrough(
     source: &sources::SourceFile,
@@ -642,18 +660,7 @@ fn assemble_symlink_passthrough(
         std::fs::create_dir_all(parent)
             .map_err(|error| Error::new(rune::error::ErrorKind::Io, error.to_string()))?;
     }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&target, &output_path).map_err(|error| {
-        Error::new(
-            rune::error::ErrorKind::Io,
-            format!("cannot create link {}: {error}", output_path.display()),
-        )
-    })?;
-    #[cfg(not(unix))]
-    return Err(Error::new(
-        rune::error::ErrorKind::Validate,
-        "skill symlink assembly requires a supported Unix filesystem",
-    ));
+    create_skill_symlink(&target, &output_path)?;
 
     let statement = provenance::build_statement_bytes(
         &format!("{provider_name}/{deploy_relative}"),
@@ -805,7 +812,11 @@ fn rewrite_command_values(value: &mut serde_json::Value, deployed_root: &str) {
     }
 }
 
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))] // the Unix form can fail
 fn preserve_executable_bit(source: &sources::SourceFile, output_path: &Path) -> Result<(), Error> {
+    // Only Unix has an executable bit to carry over.
+    #[cfg(not(unix))]
+    let _ = (source, output_path);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

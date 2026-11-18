@@ -63,6 +63,7 @@ fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // the Unix form can fail
 fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }

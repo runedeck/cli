@@ -65,6 +65,7 @@ fn json_of(output: &std::process::Output) -> serde_json::Value {
     })
 }
 
+#[cfg(unix)]
 const RECEIPT: &str = "Queued message msg-41 for thread 019a-ouroboros.\n";
 
 #[cfg(unix)]

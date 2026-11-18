@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "rune-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "ansi-to-tui",
  "askama",
@@ -3656,6 +3656,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "tempfile",
+ "winapi-util",
 ]
 
 [[package]]

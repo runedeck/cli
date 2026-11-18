@@ -386,6 +386,7 @@ fn only_matches_keeps_separated_names_distinct() {
     assert!(only_matches("skills/a-b/SKILL.md", "skills/a-b"));
 }
 
+#[cfg(unix)]
 #[test]
 fn ensure_destination_within_rejects_symlink_escape() {
     let temp_directory = TempDir::new().unwrap();

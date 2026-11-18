@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+[0.7.1]: https://github.com/runedeck/rune/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/runedeck/rune/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/runedeck/rune/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/runedeck/rune/compare/v0.4.0...v0.5.0
@@ -13,6 +14,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.3.0]: https://github.com/runedeck/rune/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
+
+## [0.7.1] - 2026-11-17
+
+### Fixed
+
+- Build for Windows again. The 0.7.0 release build for `x86_64-pc-windows-msvc` did not compile.
+- Read a file's identity on Windows from an open handle, as the volume serial number and the file index, so the spec transaction can tell a replaced file from the one it hashed.
+- Skip the directory flush on Windows, where a directory does not open as a file. Spec transactions no longer fail there when they sync a directory.
+- Compile `gix`, `jsonschema`, and the dashboard and terminal UI dependencies on every platform. They sat in the Unix-only dependency table with `nix`.
 
 ## [0.7.0] - 2026-11-16
 

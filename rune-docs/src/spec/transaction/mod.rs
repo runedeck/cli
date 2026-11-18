@@ -27,7 +27,7 @@ use journal::{
 use serde::{Deserialize, Serialize};
 use staging::{
     archive_staging_path, copy_file_exclusive, copy_tree_exclusive, remove_verified_tree,
-    replace_file_from_backup, write_file_exclusive,
+    replace_file_from_backup, sync_directory, write_file_exclusive,
 };
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -724,5 +724,7 @@ fn io_error(action: &str, path: &Path, error: impl std::fmt::Display) -> Error {
     )
 }
 
+#[cfg(test)]
+mod identity_tests;
 #[cfg(test)]
 mod tests;

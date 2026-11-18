@@ -1,3 +1,6 @@
+// Every plugin here is a shell script with the executable bit set.
+#![cfg(unix)]
+
 mod support;
 use assert_cmd::Command;
 use std::fs;

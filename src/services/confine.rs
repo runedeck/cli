@@ -202,6 +202,7 @@ mod tests {
         assert!(matches!(future, Violation::Escape { .. }), "{future:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_escape_is_rejected() {
         let root = tempfile::tempdir().unwrap();
@@ -242,6 +243,7 @@ mod tests {
         assert!(matches!(error, Violation::Escape { .. }), "{error:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn dangling_symlink_destination_is_rejected() {
         let root = tempfile::tempdir().unwrap();

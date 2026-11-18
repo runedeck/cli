@@ -307,16 +307,14 @@ pub(crate) fn shebang_shell(text: &str) -> Option<PathBuf> {
 /// process runs as, not by the mode bits alone. A file with an
 /// executable bit for its group only is not executable by its owner.
 pub(crate) fn executable(path: &Path) -> bool {
-    if !fs::metadata(path).is_ok_and(|m| m.is_file()) {
-        return false;
-    }
+    let is_file = fs::metadata(path).is_ok_and(|m| m.is_file());
     #[cfg(unix)]
     {
-        nix::unistd::access(path, nix::unistd::AccessFlags::X_OK).is_ok()
+        is_file && nix::unistd::access(path, nix::unistd::AccessFlags::X_OK).is_ok()
     }
     #[cfg(not(unix))]
     {
-        true
+        is_file
     }
 }
 
