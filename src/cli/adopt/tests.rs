@@ -826,6 +826,32 @@ fn verdicts_carry_timestamp_and_transport() {
     assert!(decided.contains('T'), "RFC 3339 timestamp, got: {decided}");
 }
 
+/// The hand `mv` of a folder a test has just written into. Windows refuses
+/// a rename with "Access is denied" while any program has a file in the
+/// folder open, and a virus scanner opens each new file for a moment. On a
+/// loaded machine that moment outlasts the test's next line, so the rename
+/// is tried again for up to five seconds.
+fn move_folder(from: &std::path::Path, to: &std::path::Path) {
+    let started = std::time::Instant::now();
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return,
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == std::io::ErrorKind::PermissionDenied
+                    && started.elapsed() < std::time::Duration::from_secs(5) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!(
+                "cannot rename {} to {}: {error}",
+                from.display(),
+                to.display()
+            ),
+        }
+    }
+}
+
 fn finalize_all_keep(dir: &tempfile::TempDir, root: &std::path::Path) {
     let record_path = session_path(root);
     let record: serde_yaml::Value =
@@ -959,16 +985,30 @@ fn modules_in_one_repository_use_distinct_session_directories() {
 /// process's directory, so a relative path has to climb from cargo's
 /// directory to a repository under the temp directory. The base is made
 /// canonical first, since `..` climbs the physical tree.
-fn relative_path(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
+///
+/// `None` when no relative path leads there: on Windows, when the two are
+/// on different drives.
+fn relative_path(base: &std::path::Path, target: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+
     let base = base.canonical().expect("canonical base");
+    let is_root =
+        |component: &Component| matches!(component, Component::Prefix(_) | Component::RootDir);
+    if !base
+        .components()
+        .take_while(is_root)
+        .eq(target.components().take_while(is_root))
+    {
+        return None;
+    }
     let mut relative = std::path::PathBuf::new();
-    for _ in base.components().skip(1) {
+    for _ in base.components().skip_while(is_root) {
         relative.push("..");
     }
-    for component in target.components().skip(1) {
+    for component in target.components().skip_while(is_root) {
         relative.push(component);
     }
-    relative
+    Some(relative)
 }
 
 #[test]
@@ -980,6 +1020,13 @@ fn relative_root_selects_an_open_session_by_artifact() {
     // names its artifact relative to the canonical module root.
     let repository = tempfile::tempdir().expect("repository");
     let root = repository.path().canonical().expect("canonical repository");
+    let current = std::env::current_dir().expect("current directory");
+    let Some(relative_root) = relative_path(&current, &root) else {
+        // A GitHub Windows runner: the checkout is on `D:` and the temp
+        // folder is on `C:`.
+        eprintln!("skipped: the temp folder is on another drive than the current directory");
+        return;
+    };
     init_git(&root);
     std::fs::write(root.join("module.yaml"), "name: fixture\n").expect("module");
 
@@ -991,9 +1038,8 @@ fn relative_root_selects_an_open_session_by_artifact() {
             .expect("session opens");
     }
 
-    let current = std::env::current_dir().expect("current directory");
-    let relative_root = relative_path(&current, &root);
     assert!(relative_root.is_relative(), "{}", relative_root.display());
+    assert!(!relative_root.has_root(), "{}", relative_root.display());
     assert_eq!(
         review::next(&relative_root, Some("skills/Second"), 1, true).expect("session selected"),
         0
@@ -1242,7 +1288,7 @@ fn doctor_flags_subject_name_disagreeing_with_holder() {
     finalize_all_keep(&dir, &root);
     // A hand `mv` leaves the sidecar recording the old module-relative name.
     let moved = dir.path().join("skills/Renamed");
-    std::fs::rename(&root, &moved).unwrap();
+    move_folder(&root, &moved);
 
     assert_eq!(review::doctor(dir.path(), false).unwrap(), 1);
     let sidecar = manifest::provenance::read(&moved.join(".provenance/SKILL.md.yaml")).unwrap();
@@ -1258,7 +1304,7 @@ fn repair_rewrites_stale_subject_name_and_reseal_agrees() {
     let root = adopt_fixture_skill(&dir);
     finalize_all_keep(&dir, &root);
     let moved = dir.path().join("skills/Renamed");
-    std::fs::rename(&root, &moved).unwrap();
+    move_folder(&root, &moved);
 
     assert_eq!(review::repair_source(dir.path()).unwrap().len(), 1);
     let sidecar = manifest::provenance::read(&moved.join(".provenance/SKILL.md.yaml")).unwrap();
@@ -1280,7 +1326,7 @@ fn source_dry_run_plans_the_rename_and_changes_nothing() {
     let root = adopt_fixture_skill(&dir);
     finalize_all_keep(&dir, &root);
     let moved = dir.path().join("skills/Renamed");
-    std::fs::rename(&root, &moved).unwrap();
+    move_folder(&root, &moved);
 
     let planned = review::plan_source_repairs(dir.path()).unwrap();
     assert_eq!(planned.len(), 1);
