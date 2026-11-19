@@ -208,8 +208,7 @@ fn the_store_keeps_its_own_copy_of_a_receipt_and_removes_it_with_the_request() {
         .expect("the copy is kept");
     assert_eq!(
         copy,
-        dir.path()
-            .join("queue/receipts/one.log")
+        rune::folders::join(dir.path(), "queue/receipts/one.log")
             .to_string_lossy()
             .as_ref()
     );
@@ -266,6 +265,10 @@ fn removing_a_request_without_a_copy_succeeds() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a Windows file lock is mandatory, so the holder line cannot be read while the lock is held"
+)]
 fn repository_lock_refuses_a_live_holder_and_releases_on_drop() {
     let dir = TempDir::new().expect("tempdir");
     std::fs::create_dir_all(dir.path().join("locks")).expect("locks dir");

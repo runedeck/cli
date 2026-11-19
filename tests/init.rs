@@ -23,6 +23,20 @@ fn skeleton_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/skeleton")
 }
 
+/// Whether `make` starts on this machine. rune checks this before it
+/// offers the project setup, and a run that cannot start `make` says so
+/// instead of naming the noninteractive run. A Windows machine often has
+/// no `make`.
+fn make_starts() -> bool {
+    std::process::Command::new("make")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 fn init(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     rune()
         .env("HOME", home)
@@ -452,12 +466,15 @@ fn noninteractive_init_without_templates_applies_base_only() {
     let quests = tempfile::tempdir().unwrap();
     let destination = quests.path().join("base-only");
 
+    let setup = if make_starts() {
+        "setup: skipped in noninteractive mode"
+    } else {
+        "setup: make is unavailable"
+    };
     init(home.path(), quests.path(), &["base-only"])
         .success()
         .stdout(predicate::str::contains("layers: base"))
-        .stdout(predicate::str::contains(
-            "setup: skipped in noninteractive mode",
-        ))
+        .stdout(predicate::str::contains(setup))
         .stdout(predicate::str::contains("  make install"));
 
     assert!(destination.join("Makefile").is_file());
@@ -559,7 +576,14 @@ fn dry_run_predicts_gitignore_retrofit_performed_by_real_init() {
     .clone();
     let real_run_result: serde_json::Value = serde_json::from_slice(&real_run_output).unwrap();
     assert_eq!(dry_run_result["setup"]["status"], "dry_run");
-    assert_eq!(real_run_result["setup"]["status"], "non_interactive");
+    assert_eq!(
+        real_run_result["setup"]["status"],
+        if make_starts() {
+            "non_interactive"
+        } else {
+            "make_unavailable"
+        }
+    );
     let real_run_gitignore = real_run_result["installed"]
         .as_array()
         .unwrap()

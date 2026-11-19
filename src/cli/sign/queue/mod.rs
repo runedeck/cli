@@ -454,7 +454,7 @@ fn qualify_receipt(path: &Path, commit_id: &str) -> Result<Receipt, Error> {
     }
     // The owner signs from another directory, so the record keeps the
     // absolute path the session named.
-    let absolute = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let absolute = rune::folders::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     Ok(Receipt {
         path: absolute.to_string_lossy().into_owned(),
         digest: store::file_digest(path)?,
@@ -1642,7 +1642,7 @@ fn notify(message: &str) {
 }
 
 fn notification_icon() -> Option<PathBuf> {
-    let directory = dirs::cache_dir()?.join("rune");
+    let directory = rune::folders::cache_dir()?.join("rune");
     let path = directory.join("icon.png");
     if !path.is_file() {
         fs::create_dir_all(&directory).ok()?;

@@ -1,4 +1,5 @@
 use super::*;
+use rune::folders::Canonical as _;
 
 const UPSTREAM: &str = "---\nname: upstream-skill\ndescription: Use when adopting fixtures.\nlicense: MIT\n---\n\n# Upstream\n\nBody.\n";
 
@@ -204,7 +205,7 @@ fn plain_local_file_path_is_canonicalized() {
     std::fs::write(&source_path, "Rule body.\n").expect("source file");
 
     let source = classify_url(source_path.to_str().expect("utf8 path")).expect("local source");
-    let canonical = source_path.canonicalize().expect("canonical source");
+    let canonical = source_path.canonical().expect("canonical source");
 
     assert_eq!(
         source.original_url,
@@ -225,7 +226,7 @@ fn relative_local_file_path_is_canonicalized() {
 
     let source = classify_url(relative.to_str().expect("utf8 path")).expect("local source");
     assert!(
-        matches!(source.fetch_url, FetchUrl::File(path) if path == source_path.canonicalize().expect("canonical source"))
+        matches!(source.fetch_url, FetchUrl::File(path) if path == source_path.canonical().expect("canonical source"))
     );
 }
 
@@ -698,7 +699,7 @@ fn adopt_rule_places_single_file_with_session() {
     )
     .expect("rule adopt succeeds");
     let root = adopted.artifact_root.expect("artifact root");
-    let canonical_module = dir.path().canonicalize().expect("canonical temp dir");
+    let canonical_module = dir.path().canonical().expect("canonical temp dir");
     assert_eq!(root, canonical_module.join("rules/NoTabs.md"));
     review::open_session(&root, &adopted.upstream_uri, &adopted.upstream_digest)
         .expect("session opens");
@@ -959,7 +960,7 @@ fn modules_in_one_repository_use_distinct_session_directories() {
 /// directory to a repository under the temp directory. The base is made
 /// canonical first, since `..` climbs the physical tree.
 fn relative_path(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
-    let base = base.canonicalize().expect("canonical base");
+    let base = base.canonical().expect("canonical base");
     let mut relative = std::path::PathBuf::new();
     for _ in base.components().skip(1) {
         relative.push("..");
@@ -978,10 +979,7 @@ fn relative_root_selects_an_open_session_by_artifact() {
     // open on canonical paths, as `rune adopt` hands them over: a session
     // names its artifact relative to the canonical module root.
     let repository = tempfile::tempdir().expect("repository");
-    let root = repository
-        .path()
-        .canonicalize()
-        .expect("canonical repository");
+    let root = repository.path().canonical().expect("canonical repository");
     init_git(&root);
     std::fs::write(root.join("module.yaml"), "name: fixture\n").expect("module");
 
@@ -1685,7 +1683,7 @@ fn directory_source_records_canonical_file_url() {
     .unwrap();
     let expected = format!(
         "file://{}",
-        std::fs::canonicalize(&source_root).unwrap().display()
+        rune::folders::canonicalize(&source_root).unwrap().display()
     );
     assert_eq!(adopted.upstream_uri, expected);
     let sidecar = manifest::provenance::read(

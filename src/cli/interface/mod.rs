@@ -88,7 +88,7 @@ fn known(name: &str) -> Result<(), Error> {
 
 /// T3 Code's settings, read from this machine.
 fn read_settings() -> Result<Settings, Error> {
-    let home = dirs::home_dir()
+    let home = rune::folders::home_dir()
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
     let path = t3code::settings_path(&home, std::env::var_os("T3CODE_HOME").as_deref());
     Settings::read(&path)

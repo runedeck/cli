@@ -102,7 +102,7 @@ pub fn collect_dashboard_config_files(
         root,
         provider_targets,
         settings_filenames,
-        dirs::home_dir().as_deref(),
+        crate::folders::home_dir().as_deref(),
     )
 }
 
@@ -127,7 +127,7 @@ pub fn collect_dashboard_config_files_with_home(
 /// Rune config files at the scanned root plus allowlisted rune config files.
 #[must_use]
 pub fn collect_rune_config_files(root: &Path) -> Vec<ConfigFile> {
-    collect_rune_config_files_with_home(root, dirs::home_dir().as_deref())
+    collect_rune_config_files_with_home(root, crate::folders::home_dir().as_deref())
 }
 
 /// Rune config files using an explicit home directory, useful for tests.
@@ -184,7 +184,12 @@ pub fn settings_by_harness(
     provider_targets: &[(String, String)],
     allowed: &[String],
 ) -> Vec<HarnessFiles> {
-    settings_by_harness_with_home(root, provider_targets, allowed, dirs::home_dir().as_deref())
+    settings_by_harness_with_home(
+        root,
+        provider_targets,
+        allowed,
+        crate::folders::home_dir().as_deref(),
+    )
 }
 
 /// Settings/config files grouped per harness using an explicit home directory.
@@ -251,7 +256,7 @@ pub fn schemas_by_source(
     local_repos: &HashMap<String, PathBuf>,
     allowed: &HashSet<String>,
 ) -> Vec<SchemaGroup> {
-    let home = dirs::home_dir();
+    let home = crate::folders::home_dir();
     schemas_by_source_with_home(
         root,
         provider_targets,

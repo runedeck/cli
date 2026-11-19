@@ -221,7 +221,7 @@ pub(crate) fn detect_registered_providers(
     let search_path = std::env::var_os("PATH");
     // Provider trees resolve under the target base, but opencode's wiring
     // lives under the home directory wherever the trees are.
-    let home = dirs::home_dir().ok_or_else(|| {
+    let home = rune::folders::home_dir().ok_or_else(|| {
         Error::new(ErrorKind::Config, "cannot resolve home directory")
             .with_code("provider.home_unavailable")
             .with_fix_command("printenv HOME")

@@ -48,7 +48,7 @@ pub fn execute(target: Option<&str>, clone: bool, unbind: bool, list: bool) -> R
 
 pub(crate) fn bind_existing(target: &Path) -> Result<(), Error> {
     let resolved =
-        std::fs::canonicalize(target).map_err(|error| io_error(target, "read", &error))?;
+        rune::folders::canonicalize(target).map_err(|error| io_error(target, "read", &error))?;
     write_binding(&state_path()?, &resolved)
 }
 
@@ -169,7 +169,8 @@ fn unbind_target(state_path: &Path) -> Result<i32, Error> {
 fn resolve_target(requested: &str, clone: bool) -> Result<PathBuf, Error> {
     let as_path = PathBuf::from(requested);
     if as_path.is_dir() {
-        return std::fs::canonicalize(&as_path).map_err(|error| io_error(&as_path, "read", &error));
+        return rune::folders::canonicalize(&as_path)
+            .map_err(|error| io_error(&as_path, "read", &error));
     }
 
     let targets_root = targets_root()?;
@@ -182,7 +183,7 @@ fn resolve_target(requested: &str, clone: bool) -> Result<PathBuf, Error> {
     }
     let candidate = targets_root.join(name);
     if candidate.is_dir() {
-        return std::fs::canonicalize(&candidate)
+        return rune::folders::canonicalize(&candidate)
             .map_err(|error| io_error(&candidate, "read", &error));
     }
 
@@ -235,7 +236,7 @@ fn clone_target(slug: &str, destination: &Path) -> Result<PathBuf, Error> {
             format!("git clone {url} failed with {status}"),
         ));
     }
-    std::fs::canonicalize(destination).map_err(|error| io_error(destination, "read", &error))
+    rune::folders::canonicalize(destination).map_err(|error| io_error(destination, "read", &error))
 }
 
 fn write_binding(state_path: &Path, target: &Path) -> Result<(), Error> {

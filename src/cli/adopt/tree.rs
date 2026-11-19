@@ -26,7 +26,7 @@ pub(super) fn adopt_tree(
     source_url: &str,
     dry_run: bool,
 ) -> Result<Adopted, String> {
-    let skill_root = std::fs::canonicalize(source_dir)
+    let skill_root = rune::folders::canonicalize(source_dir)
         .map_err(|error| format!("cannot resolve {}: {error}", source_dir.display()))?;
     let skill_md = skill_root.join("SKILL.md");
     if !skill_md.is_file() {

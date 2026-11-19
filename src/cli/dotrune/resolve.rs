@@ -4,7 +4,6 @@
 
 use rune::error::{Error, ErrorKind};
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::assemble::sources::{self, SourceFile};
@@ -200,7 +199,7 @@ fn canonicalize_local(path: &Path, source_label: &str, repo_root: &Path) -> Resu
     } else {
         repo_root.join(path)
     };
-    fs::canonicalize(&resolved).map_err(|error| {
+    rune::folders::canonicalize(&resolved).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(
@@ -216,7 +215,7 @@ fn canonicalize_subpath(
     subpath: Option<&Path>,
     source_label: &str,
 ) -> Result<PathBuf, Error> {
-    let materialized = fs::canonicalize(materialized).map_err(|error| {
+    let materialized = rune::folders::canonicalize(materialized).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(
@@ -229,7 +228,7 @@ fn canonicalize_subpath(
         return Ok(materialized);
     };
     let joined = materialized.join(subpath);
-    let canonical = fs::canonicalize(&joined).map_err(|error| {
+    let canonical = rune::folders::canonicalize(&joined).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(

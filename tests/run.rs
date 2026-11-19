@@ -2578,7 +2578,7 @@ fn artifacts_of(output: &std::process::Output) -> Vec<String> {
 
 #[cfg(unix)]
 fn canonical(path: &std::path::Path) -> String {
-    std::fs::canonicalize(path)
+    rune::folders::canonicalize(path)
         .expect("canonical path")
         .to_string_lossy()
         .into_owned()

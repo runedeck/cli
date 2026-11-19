@@ -7,7 +7,7 @@ fn resolve_passes_through_absolute_paths() {
 
 #[test]
 fn resolve_expands_leading_tilde() {
-    let home = dirs::home_dir().expect("home dir for test");
+    let home = rune::folders::home_dir().expect("home dir for test");
     assert_eq!(resolve("~/rune"), Some(home.join("rune")));
 }
 

@@ -1,4 +1,5 @@
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::manifest;
 use rune::ontology;
 use rune::result::{ActionResult, DeployedFile, SkipReason, SkippedFile};
@@ -503,20 +504,20 @@ fn dry_run_result(
         };
         if !will_write {
             action.skipped.push(SkippedFile {
-                target: relative.to_string_lossy().into_owned(),
+                target: rune::manifest::slash_lossy(relative),
                 provider: template.layer.clone(),
                 reason: SkipReason::AlreadyExists,
             });
             continue;
         }
         action.installed.push(DeployedFile {
-            source: template
-                .source
-                .strip_prefix(skeleton)
-                .unwrap_or(&template.source)
-                .to_string_lossy()
-                .into_owned(),
-            target: relative.to_string_lossy().into_owned(),
+            source: rune::manifest::slash_lossy(
+                template
+                    .source
+                    .strip_prefix(skeleton)
+                    .unwrap_or(&template.source),
+            ),
+            target: rune::manifest::slash_lossy(relative),
             provider: template.layer.clone(),
         });
     }
@@ -590,7 +591,7 @@ fn embedded_skeleton_cache_name() -> String {
 /// skeleton root and no network. Extraction lands in a per-version cache
 /// directory and is skipped when already present.
 fn materialize_embedded_skeleton() -> Result<PathBuf, Error> {
-    let cache_base = dirs::cache_dir().ok_or_else(|| {
+    let cache_base = rune::folders::cache_dir().ok_or_else(|| {
         Error::new(
             ErrorKind::Config,
             "cannot resolve the user cache directory; set a skeleton root with `rune config set skeleton <dir>`".to_string(),
@@ -810,7 +811,7 @@ fn bind_quest_if_requested(destination: &Path, requested: bool) -> Result<bool, 
 fn resolve_external_skeleton(
     configured_root: &Path,
 ) -> Result<(PathBuf, String, Option<String>), Error> {
-    let canonical_root = configured_root.canonicalize().map_err(|error| {
+    let canonical_root = configured_root.canonical().map_err(|error| {
         Error::new(
             ErrorKind::Io,
             format!("cannot resolve {}: {error}", configured_root.display()),
@@ -938,7 +939,7 @@ fn resolve_project_context(
     // (resolving `.` and `..` components) before the containment check.
     // The root itself is not "under" the root.
     let canonical_root = targets_root
-        .canonicalize()
+        .canonical()
         .unwrap_or_else(|_| targets_root.clone());
     let normalized_destination = lexically_normalized(&destination);
     let under_workshop_root = (normalized_destination.starts_with(&targets_root)
@@ -975,7 +976,7 @@ fn resolve_destination(
     if is_explicit_path(requested, &expanded) {
         if expanded.is_dir() {
             return expanded
-                .canonicalize()
+                .canonical()
                 .map(|path| (path, None))
                 .map_err(|error| {
                     Error::new(
@@ -1019,16 +1020,16 @@ fn write_templates(
     let mut installed_paths = Vec::new();
     for (relative, template) in templates {
         let target_path = destination.join(&relative);
-        let target_display = relative.to_string_lossy().into_owned();
+        let target_display = rune::manifest::slash_lossy(&relative);
         if relative == Path::new(".gitignore") && target_path.is_file() {
             if append_missing_gitignore_entries(&target_path, &template.contents)? {
                 action.installed.push(DeployedFile {
-                    source: template
-                        .source
-                        .strip_prefix(skeleton)
-                        .unwrap_or(&template.source)
-                        .to_string_lossy()
-                        .into_owned(),
+                    source: rune::manifest::slash_lossy(
+                        template
+                            .source
+                            .strip_prefix(skeleton)
+                            .unwrap_or(&template.source),
+                    ),
                     target: target_display,
                     provider: template.layer,
                 });
@@ -1066,12 +1067,12 @@ fn write_templates(
         make_executable_if_needed(&target_path, &template.contents)?;
         installed_paths.push(relative.clone());
         action.installed.push(DeployedFile {
-            source: template
-                .source
-                .strip_prefix(skeleton)
-                .unwrap_or(&template.source)
-                .to_string_lossy()
-                .into_owned(),
+            source: rune::manifest::slash_lossy(
+                template
+                    .source
+                    .strip_prefix(skeleton)
+                    .unwrap_or(&template.source),
+            ),
             target: target_display,
             provider: template.layer,
         });
@@ -1710,7 +1711,7 @@ fn is_os_junk(filename: &str) -> bool {
 
 fn resolve_module_name(module_root: &Path) -> String {
     module_root
-        .canonicalize()
+        .canonical()
         .unwrap_or_else(|_| module_root.to_path_buf())
         .file_name()
         .unwrap_or_default()

@@ -21,7 +21,7 @@ impl Scene {
         let temp = tempfile::tempdir().unwrap();
         // The real path, so the paths the test writes and the paths the
         // policy resolves read alike.
-        let root = std::fs::canonicalize(temp.path()).unwrap();
+        let root = rune::folders::canonicalize(temp.path()).unwrap();
         let scene = Self { _root: temp, root };
         for dir in ["home/.config/rune", "home/work", "home/other", "bin"] {
             std::fs::create_dir_all(scene.path(dir)).unwrap();

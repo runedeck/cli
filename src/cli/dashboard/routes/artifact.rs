@@ -361,7 +361,7 @@ fn read_deployed_file(
     provider_dir: &str,
     path: &str,
 ) -> Option<(String, String)> {
-    let home = dirs::home_dir();
+    let home = rune::folders::home_dir();
     let mut bases: Vec<PathBuf> = Vec::new();
     if let Some(ref home) = home {
         bases.push(home.clone());
@@ -540,11 +540,7 @@ fn resolve_effective_content(
     use rune::assemble::variants;
     match variant_path {
         Some(path) => {
-            let label = path
-                .strip_prefix(repo)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let label = rune::manifest::slash_lossy(path.strip_prefix(repo).unwrap_or(path));
             let variant_content = match std::fs::read_to_string(path) {
                 Ok(content) => content,
                 Err(error) => {

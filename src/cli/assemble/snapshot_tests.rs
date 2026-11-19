@@ -1,5 +1,7 @@
 use super::*;
+use rune::folders::Canonical as _;
 use rune::manifest::source_snapshot::inspect;
+use std::fs;
 
 fn module(root: &Path) {
     fs::create_dir_all(root.join("skills/Alpha")).unwrap();
@@ -113,7 +115,7 @@ fn source_inputs_require_existing_git_cache_without_materializing_it() {
     assert!(
         observed
             .iter()
-            .any(|input| input.path == cached.canonicalize().unwrap().join("skills"))
+            .any(|input| input.path == cached.canonical().unwrap().join("skills"))
     );
 }
 

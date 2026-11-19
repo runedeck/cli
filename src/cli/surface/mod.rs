@@ -1870,7 +1870,7 @@ pub(crate) fn grok_model_env_key(source: &Path, model: &str) -> GrokKeyChoice {
 
 /// The owner's grok configuration file.
 pub(crate) fn grok_config_source() -> Result<PathBuf, SurfaceFailure> {
-    dirs::home_dir()
+    rune::folders::home_dir()
         .map(|home| home.join(".grok/config.toml"))
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))
 }
@@ -1894,7 +1894,7 @@ pub(crate) fn prepare_clean_state(
     model: Option<&str>,
     env: &[(OsString, OsString)],
 ) -> Result<(), SurfaceFailure> {
-    let home = dirs::home_dir()
+    let home = rune::folders::home_dir()
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))?;
     match surface {
         Surface::Cursor => cursor::prepare_clean_state(root, cursor::has_api_key(env)),
@@ -2024,7 +2024,7 @@ fn process_request(
                 // reads first. The shim, and its sandbox, stay in the loop.
                 if std::env::var_os("HARNESS_REAL_BIN_DIR").is_none()
                     && let Some(real_bin) =
-                        dirs::home_dir().and_then(|home| grok_install_dir(&home))
+                        rune::folders::home_dir().and_then(|home| grok_install_dir(&home))
                 {
                     request
                         .env

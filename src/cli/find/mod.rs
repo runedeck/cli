@@ -76,7 +76,7 @@ fn discover_modules(root: &Path, watched_locations: &[PathBuf]) -> Vec<PathBuf> 
 }
 
 fn push_module(path: &Path, modules: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
-    let Ok(canonical) = fs::canonicalize(path) else {
+    let Ok(canonical) = rune::folders::canonicalize(path) else {
         return;
     };
     if !canonical.join("module.yaml").is_file() || !seen.insert(canonical.clone()) {

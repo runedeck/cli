@@ -64,7 +64,7 @@ fn cache_root() -> Result<PathBuf, Error> {
     if let Some(override_dir) = std::env::var_os("RUNE_GIT_CACHE_DIR") {
         return Ok(PathBuf::from(override_dir));
     }
-    let base = dirs::cache_dir().ok_or_else(|| {
+    let base = rune::folders::cache_dir().ok_or_else(|| {
         Error::new(
             ErrorKind::Io,
             "cannot resolve user cache directory (set XDG_CACHE_HOME or HOME)".to_string(),

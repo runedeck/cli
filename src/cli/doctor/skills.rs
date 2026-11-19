@@ -1,4 +1,5 @@
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::skill_readiness::{self, NativeCatalog, NativeEvidence, SkillReadiness};
 use std::collections::BTreeMap;
 use std::fs;
@@ -22,7 +23,7 @@ pub(super) fn inspect(
     let target = std::path::absolute(target).map_err(|error| Error::io(error.to_string()))?;
     // Match the native catalog's physical CWD without inventing another scope
     // for platform aliases such as /var and /private/var on macOS.
-    let target = target.canonicalize().unwrap_or(target);
+    let target = target.canonical().unwrap_or(target);
     let mut roots = Vec::new();
     let mut configuration = BTreeMap::new();
     let mut skill_target = None;
@@ -147,7 +148,7 @@ fn include_catalog_roots(
     if catalog.version != "rune-native-skill-catalog/v1"
         || catalog.cwd
             != target
-                .canonicalize()
+                .canonical()
                 .map_err(|error| Error::io(error.to_string()))?
                 .display()
                 .to_string()

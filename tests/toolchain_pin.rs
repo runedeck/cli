@@ -38,6 +38,7 @@ fn workflow(steps: &str) -> String {
 const PINNED_STEP: &str = "            - uses: dtolnay/rust-toolchain@0000000000000000000000000000000000000000 # stable\n              with:\n                  toolchain: 1.100.0\n                  components: clippy\n";
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn repository_workflows_pin_rust_in_every_cargo_job() {
     let workflows = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
     let output = check(&workflows);
@@ -54,6 +55,7 @@ fn repository_workflows_pin_rust_in_every_cargo_job() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn pinned_job_passes() {
     let (passed, report) = check_one(&workflow(&format!(
         "{PINNED_STEP}            - name: Test\n              run: cargo test --workspace\n"
@@ -62,6 +64,7 @@ fn pinned_job_passes() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn job_without_cargo_needs_no_pin() {
     let (passed, report) = check_one(&workflow(
         "            # cargo test would need Rust, and this job runs none.\n            - name: Lint\n              run: actionlint\n",
@@ -70,6 +73,7 @@ fn job_without_cargo_needs_no_pin() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn toolchain_step_without_a_version_fails() {
     let (passed, report) = check_one(&workflow(
         "            - uses: dtolnay/rust-toolchain@0000000000000000000000000000000000000000 # stable\n              with:\n                  components: clippy\n            - name: Test\n              run: cargo test --workspace\n",
@@ -82,6 +86,7 @@ fn toolchain_step_without_a_version_fails() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn stale_version_fails_and_is_named() {
     let (passed, report) = check_one(&workflow(
         "            - uses: dtolnay/rust-toolchain@0000000000000000000000000000000000000000 # stable\n              with:\n                  toolchain: 1.98.1\n            - name: Build\n              run: cargo build --release --locked\n",
@@ -94,6 +99,7 @@ fn stale_version_fails_and_is_named() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn cargo_before_the_pin_fails() {
     let (passed, report) = check_one(&workflow(&format!(
         "            - name: Build\n              run: |\n                  set -euo pipefail\n                  cargo build --release\n{PINNED_STEP}"
@@ -106,6 +112,7 @@ fn cargo_before_the_pin_fails() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn prek_hooks_without_the_pin_fail() {
     for run in ["prek run --all-files", "make validate"] {
         let (passed, report) = check_one(&workflow(&format!(
@@ -117,6 +124,7 @@ fn prek_hooks_without_the_pin_fail() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs scripts/check-toolchain-pin with python3")]
 fn directory_without_workflows_is_an_error() {
     let directory = tempfile::tempdir().expect("temporary workflow directory");
     let output = check(directory.path());

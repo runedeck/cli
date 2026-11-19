@@ -1,4 +1,5 @@
 mod support;
+use rune::folders::Canonical as _;
 use rune::manifest::{self, bundle::inspect_bundle};
 use rune::skill_readiness::{self, CatalogEntry, NativeEvidence, ObservedAccess, SkillReadiness};
 use std::collections::BTreeMap;
@@ -23,25 +24,34 @@ impl Fixture {
             b"name: identity-fixture\nversion: 0.1.0\ndescription: fixture\nevents: []\n",
         );
         write(&fixture.source.path().join("defaults.yaml"), b"");
-        let skill = fixture.source.path().join("skills/IdentityCanary");
+        let skill = rune::folders::join(fixture.source.path(), "skills/IdentityCanary");
         write(&skill.join("SKILL.md"), BASE.as_bytes());
-        write(&skill.join("codex/SKILL.md"), VARIANT.as_bytes());
+        write(
+            &rune::folders::join(&skill, "codex/SKILL.md"),
+            VARIANT.as_bytes(),
+        );
         write(
             &skill.join("Workflow.md"),
             b"Read [detail](references/detail.md).\n",
         );
         write(
-            &skill.join("references/detail.md"),
+            &rune::folders::join(&skill, "references/detail.md"),
             b"RUNE_IDENTITY_CANARY_7b91\n",
         );
         write(
-            &skill.join("scripts/read.py"),
+            &rune::folders::join(&skill, "scripts/read.py"),
             b"from helper import value\nprint(value)\n",
         );
-        write(&skill.join("scripts/helper.py"), b"value = 'canary'\n");
-        write(&skill.join("assets/data.bin"), &[0, 255, 128, 1]);
         write(
-            &skill.join("agents/openai.yaml"),
+            &rune::folders::join(&skill, "scripts/helper.py"),
+            b"value = 'canary'\n",
+        );
+        write(
+            &rune::folders::join(&skill, "assets/data.bin"),
+            &[0, 255, 128, 1],
+        );
+        write(
+            &rune::folders::join(&skill, "agents/openai.yaml"),
             b"interface:\n  short_description: Canary\n",
         );
         fixture
@@ -64,14 +74,16 @@ impl Fixture {
             .assert()
             .success();
     }
+    // Joined part by part: a report names these paths as text, and a test
+    // compares that text.
     fn skill(&self) -> PathBuf {
-        self.target.path().join(".agents/skills/IdentityCanary")
+        rune::folders::join(self.target.path(), ".agents/skills/IdentityCanary")
     }
     fn report(&self) -> SkillReadiness {
         skill_readiness::inspect(
             self.target.path(),
             &[(
-                self.target.path().join(".agents/skills"),
+                rune::folders::join(self.target.path(), ".agents/skills"),
                 "repository".into(),
             )],
             manifest::content_sha256("fixture configuration"),
@@ -91,9 +103,10 @@ fn assert_duplicate_paths(report: &SkillReadiness, name: &str, paths: &[PathBuf]
         .collect();
     assert_eq!(duplicates.len(), 1, "{report:#?}");
     assert_eq!(duplicates[0].identity.as_deref(), Some(name));
+    // A report names a path with the platform's separator throughout.
     let mut expected: Vec<_> = paths
         .iter()
-        .map(|path| path.display().to_string())
+        .map(|path| path.components().collect::<PathBuf>().display().to_string())
         .collect();
     expected.sort();
     assert_eq!(duplicates[0].paths, expected, "{report:#?}");
@@ -212,8 +225,14 @@ fn portable_metadata_survives_codex_assembly() {
 #[test]
 fn equal_duplicate_names_are_ambiguous() {
     let temp = tempfile::tempdir().unwrap();
-    write(&temp.path().join("one/Alpha/SKILL.md"), BASE.as_bytes());
-    write(&temp.path().join("two/Alpha/SKILL.md"), BASE.as_bytes());
+    write(
+        &rune::folders::join(temp.path(), "one/Alpha/SKILL.md"),
+        BASE.as_bytes(),
+    );
+    write(
+        &rune::folders::join(temp.path(), "two/Alpha/SKILL.md"),
+        BASE.as_bytes(),
+    );
     let mut roots = vec![
         (temp.path().join("one"), "user".into()),
         (temp.path().join("two"), "repository".into()),
@@ -226,8 +245,8 @@ fn equal_duplicate_names_are_ambiguous() {
         &first,
         "IdentityCanary",
         &[
-            temp.path().join("one/Alpha/SKILL.md"),
-            temp.path().join("two/Alpha/SKILL.md"),
+            rune::folders::join(temp.path(), "one/Alpha/SKILL.md"),
+            rune::folders::join(temp.path(), "two/Alpha/SKILL.md"),
         ],
     );
 }
@@ -330,11 +349,11 @@ fn retained_legacy_copy_blocks_unique_readiness_until_migration_completes() {
         b"providers:\n  codex:\n    target: .codex\n",
     );
     fixture.install();
-    let legacy = fixture.target.path().join(".codex/skills/IdentityCanary");
-    let legacy_manifest = fixture.target.path().join(".codex/.manifest");
+    let legacy = rune::folders::join(fixture.target.path(), ".codex/skills/IdentityCanary");
+    let legacy_manifest = rune::folders::join(fixture.target.path(), ".codex/.manifest");
     let preserved = [
         legacy.join("SKILL.md"),
-        legacy.join(".provenance/SKILL.md.yaml"),
+        rune::folders::join(&legacy, ".provenance/SKILL.md.yaml"),
         legacy_manifest.clone(),
     ]
     .map(|path| {
@@ -343,10 +362,13 @@ fn retained_legacy_copy_blocks_unique_readiness_until_migration_completes() {
     });
     let roots = [
         (
-            fixture.target.path().join(".agents/skills"),
+            rune::folders::join(fixture.target.path(), ".agents/skills"),
             "repository".into(),
         ),
-        (fixture.target.path().join(".codex/skills"), "legacy".into()),
+        (
+            rune::folders::join(fixture.target.path(), ".codex/skills"),
+            "legacy".into(),
+        ),
     ];
     let inspect =
         || skill_readiness::inspect(fixture.target.path(), &roots, "migration fixture".into());
@@ -416,13 +438,13 @@ fn native_catalog_and_cwd_alias_share_one_inventory_path() {
     let alias_root = tempfile::tempdir().unwrap();
     let alias = alias_root.path().join("cwd-alias");
     symlink(fixture.target.path(), &alias).unwrap();
-    let physical = fixture.target.path().canonicalize().unwrap();
+    let physical = fixture.target.path().canonical().unwrap();
     let catalog = alias_root.path().join("catalog.json");
     write(&catalog, serde_json::to_string(&serde_json::json!({
         "version": "rune-native-skill-catalog/v1",
         "cwd": physical,
         "harness_version": "fixture",
-        "catalog": [{"name": "IdentityCanary", "path": fixture.skill().join("SKILL.md").canonicalize().unwrap(), "enabled": true}],
+        "catalog": [{"name": "IdentityCanary", "path": fixture.skill().join("SKILL.md").canonical().unwrap(), "enabled": true}],
         "errors": [],
         "raw_transcript_sha256": "fixture"
     })).unwrap().as_bytes());
@@ -459,8 +481,14 @@ fn native_catalog_and_cwd_alias_share_one_inventory_path() {
 #[test]
 fn declared_name_controls_duplicate_detection() {
     let temp = tempfile::tempdir().unwrap();
-    write(&temp.path().join("Alpha/SKILL.md"), BASE.as_bytes());
-    write(&temp.path().join("OldAlpha/SKILL.md"), BASE.as_bytes());
+    write(
+        &rune::folders::join(temp.path(), "Alpha/SKILL.md"),
+        BASE.as_bytes(),
+    );
+    write(
+        &rune::folders::join(temp.path(), "OldAlpha/SKILL.md"),
+        BASE.as_bytes(),
+    );
     let report = skill_readiness::inspect(
         temp.path(),
         &[(temp.path().to_path_buf(), "test".into())],
@@ -470,8 +498,8 @@ fn declared_name_controls_duplicate_detection() {
         &report,
         "IdentityCanary",
         &[
-            temp.path().join("Alpha/SKILL.md"),
-            temp.path().join("OldAlpha/SKILL.md"),
+            rune::folders::join(temp.path(), "Alpha/SKILL.md"),
+            rune::folders::join(temp.path(), "OldAlpha/SKILL.md"),
         ],
     );
 }
@@ -488,7 +516,7 @@ fn incomplete_scope_cannot_pass() {
         fixture.target.path(),
         &[
             (
-                fixture.target.path().join(".agents/skills"),
+                rune::folders::join(fixture.target.path(), ".agents/skills"),
                 "repository".into(),
             ),
             (unavailable.clone(), "test".into()),
@@ -517,14 +545,14 @@ fn incomplete_scope_cannot_pass() {
 fn missing_whole_managed_bundle_cannot_hide_behind_a_valid_skill() {
     let fixture = Fixture::new();
     write(
-        &fixture.source.path().join("skills/Other/SKILL.md"),
+        &rune::folders::join(fixture.source.path(), "skills/Other/SKILL.md"),
         b"---\nname: Other\ndescription: Other skill\n---\nHarmless.\n",
     );
     fixture.install();
     let complete = fixture.report();
     assert!(complete.static_valid, "{complete:#?}");
     assert_eq!(complete.skills.len(), 2);
-    let missing = fixture.target.path().join(".agents/skills/Other/SKILL.md");
+    let missing = rune::folders::join(fixture.target.path(), ".agents/skills/Other/SKILL.md");
     fs::remove_dir_all(missing.parent().unwrap()).unwrap();
     let report = fixture.report();
     assert!(!report.static_valid);
@@ -549,14 +577,14 @@ fn bundle_digest_covers_companions_and_entry_types() {
     fixture.install();
     let initial = inspect_bundle(&fixture.skill()).digest.unwrap();
     write(
-        &fixture.skill().join("scripts/helper.py"),
+        &rune::folders::join(&fixture.skill(), "scripts/helper.py"),
         b"value = 'changed'\n",
     );
     let changed = inspect_bundle(&fixture.skill()).digest.unwrap();
     assert_ne!(initial, changed);
     assert!(!fixture.report().static_valid);
     write(
-        &fixture.skill().join(".provenance/ignored.yaml"),
+        &rune::folders::join(&fixture.skill(), ".provenance/ignored.yaml"),
         b"timestamp: changes\n",
     );
     assert_eq!(changed, inspect_bundle(&fixture.skill()).digest.unwrap());
@@ -566,7 +594,10 @@ fn bundle_digest_covers_companions_and_entry_types() {
 fn modified_doctor_finding_overrides_zero_exit() {
     let fixture = Fixture::new();
     fixture.install();
-    write(&fixture.skill().join("scripts/helper.py"), b"changed\n");
+    write(
+        &rune::folders::join(&fixture.skill(), "scripts/helper.py"),
+        b"changed\n",
+    );
     let output = support::rune()
         .current_dir(fixture.source.path())
         .args([
@@ -743,7 +774,7 @@ fn current_source_changes_invalidate_deployed_selection() {
     let snapshot = fixture
         .target
         .path()
-        .canonicalize()
+        .canonical()
         .unwrap()
         .join(".agents")
         .join(manifest::source_snapshot::SOURCE_SNAPSHOT_PATH);
@@ -761,7 +792,7 @@ fn current_source_changes_invalidate_deployed_selection() {
     fixture.install();
     assert_eq!(check()["source_verification"], "verified");
     write(
-        &fixture.source.path().join("skills/NewSelection/SKILL.md"),
+        &rune::folders::join(fixture.source.path(), "skills/NewSelection/SKILL.md"),
         b"---\nname: NewSelection\ndescription: Newly selected skill\n---\nHarmless.\n",
     );
     assert_stale_source_path(&check(), &snapshot);
@@ -777,7 +808,7 @@ fn case_aliases_and_symlinks_are_accounted_for() {
     fixture.install();
     let root = fixture.skill();
     let initial = inspect_bundle(&root).digest.unwrap();
-    let script = root.join("scripts/read.py");
+    let script = rune::folders::join(&root, "scripts/read.py");
     let mut permissions = fs::metadata(&script).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&script, permissions).unwrap();
@@ -902,9 +933,9 @@ fn doctor_is_read_only_and_repair_restores_after_a_real_deployment() {
     assert!(snapshot.is_file(), "install writes the source snapshot");
 
     // Break the deployment: delete a managed file and add an orphan.
-    let removed = fixture.skill().join("scripts/helper.py");
+    let removed = rune::folders::join(&fixture.skill(), "scripts/helper.py");
     fs::remove_file(&removed).unwrap();
-    let orphan = fixture.target.path().join(".agents/rules/Orphan.md");
+    let orphan = rune::folders::join(fixture.target.path(), ".agents/rules/Orphan.md");
     write(&orphan, b"orphan\n");
     let before = tree_bytes(fixture.target.path());
 
@@ -993,7 +1024,7 @@ fn doctor_is_read_only_and_repair_restores_after_a_real_deployment() {
         .stdout(predicates::str::contains("quarantined"));
     assert!(removed.is_file());
     assert!(!orphan.exists());
-    let trash = fixture.target.path().join(".agents/.trash");
+    let trash = rune::folders::join(fixture.target.path(), ".agents/.trash");
     assert!(trash.is_dir(), "orphan is quarantined, never deleted");
 
     let (ok, report) = doctor_json(&fixture, &["--verify"]);
@@ -1035,7 +1066,7 @@ fn adopt_doctor_and_provenance_accept_a_real_deployment_snapshot() {
     let fixture = Fixture::new();
     fixture.install();
     let root = fixture.target.path();
-    let snapshot = root.join(".agents/.provenance/source-snapshot.json");
+    let snapshot = rune::folders::join(root, ".agents/.provenance/source-snapshot.json");
     assert!(snapshot.is_file(), "install writes the source snapshot");
 
     // The deployed-file scan resolves sidecars from deployed files and never

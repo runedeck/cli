@@ -182,6 +182,10 @@ fn named_generations(scene: &Scene) -> Vec<PathBuf> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn an_unreadable_codex_table_stops_the_install_before_anything_is_written() {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
@@ -273,6 +277,10 @@ fn an_install_from_a_second_copy_of_rune_keeps_one_dispatcher_per_event() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn emptying_the_handlers_takes_rune_s_entries_back_and_keeps_the_owner_s() {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
@@ -551,6 +559,10 @@ fn rune_install_in_a_proof_scene_with_the_runner_s_home_reports_the_hooks_skippe
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_stale_or_bare_proof_marker_skips_nothing() {
     // The variable of the old marker, a marker file that is gone, and a
     // marker whose runner has exited are no proof scene: install runs.
@@ -656,6 +668,10 @@ fn a_proof_scene_with_the_runner_s_home_installs_no_hook() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_relative_state_directory_registers_an_absolute_plan_path() {
     let scene = Scene::new();
     std::fs::create_dir_all(scene.home().join(".claude")).unwrap();
@@ -955,6 +971,10 @@ fn cursor_payload(event: &str, own: Value) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_claude_registration_steps_aside_when_cursor_runs_it() {
     // Cursor loads `~/.claude/settings.json` beside its own table and
     // runs every matching entry from both with its own payload, whose
@@ -1083,6 +1103,10 @@ fn a_mismatched_event_that_is_nobody_s_name_for_it_still_fails() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn the_registration_finds_the_plan_under_another_state_directory() {
     let scene = Scene::new();
     denying_guard(&scene);
@@ -1380,6 +1404,10 @@ fn an_explicit_provider_never_switches_a_handler() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_harness_without_its_folder_is_skipped_and_returns_with_it() {
     // `rune install` and a bare `rune hook install` attempt every
     // registered harness. One whose folder does not exist is skipped and
@@ -1444,6 +1472,10 @@ fn a_harness_without_its_folder_is_skipped_and_returns_with_it() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn an_unselected_harness_s_table_is_neither_read_nor_locked_nor_created() {
     // An install into Cursor alone once read every registered table and
     // locked every table directory, so a garbled Claude `settings.json`
@@ -1494,6 +1526,10 @@ fn an_unselected_harness_s_table_is_neither_read_nor_locked_nor_created() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_switch_rewrites_the_harness_table_at_once() {
     // `rune hook off <id> --harness cursor` leaves the handler out of
     // Cursor's plan and installs that plan into Cursor's table in the same
@@ -1671,6 +1707,10 @@ fn a_codex_switch_holds_where_codex_keeps_the_trusted_entry() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_switch_waits_for_the_lock_before_it_reads_the_state() {
     // `rune hook off A` once read the switches, then took the lock to
     // write them, so two switches that read before either wrote kept one
@@ -1699,7 +1739,7 @@ fn a_switch_waits_for_the_lock_before_it_reads_the_state() {
     assert!(
         !so_far.contains(&format!(
             "held {}\n",
-            std::fs::canonicalize(&hooks).unwrap().display()
+            rune::folders::canonicalize(&hooks).unwrap().display()
         )),
         "the switch took the lock the test holds: {so_far}"
     );
@@ -1723,6 +1763,10 @@ fn a_switch_waits_for_the_lock_before_it_reads_the_state() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_switch_the_install_refuses_leaves_the_state_as_it_was() {
     // `rune hook off` wrote the switches, then ran the install, with no
     // way back: an install the table refused left the file saying the
@@ -1858,7 +1902,7 @@ fn rune_in(scene: &Scene, args: &[&str], trace: &Path) -> std::process::Child {
 /// holds and nothing more. A fixed sleep and a child still running proved
 /// neither (review, 2026-11-02). Returns the trace so far.
 fn waits_for(child: &mut std::process::Child, trace: &Path, dir: &Path) -> String {
-    let dir = std::fs::canonicalize(dir).unwrap();
+    let dir = rune::folders::canonicalize(dir).unwrap();
     let line = format!("wait {}\n", dir.display());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
@@ -1914,6 +1958,10 @@ fn planned_handlers(entry: &str, harness: &str, native: &str) -> Vec<String> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_switch_takes_the_install_s_whole_lock_set_in_the_install_s_order() {
     // `rune hook off` locked the state directory alone, then its install
     // asked for the tables; a plain install took the tables first and the
@@ -1961,6 +2009,10 @@ fn a_switch_takes_the_install_s_whole_lock_set_in_the_install_s_order() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn an_install_reads_the_switches_under_its_lock() {
     // `rune hook install` compiled its plan, then took the lock. A switch
     // that landed in between was undone when the install went on to
@@ -2268,6 +2320,10 @@ fn a_firing_records_what_a_passive_event_s_merge_discarded() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_switches_file_that_does_not_read_follows_the_registration_s_policy() {
     // A firing ran its generation as installed when `switches.json` was
     // there and did not parse, so a handler the owner turned off fired
@@ -2395,6 +2451,10 @@ fn a_refused_switch_puts_the_switches_file_back_as_it_was() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_firing_reads_the_switches_beside_its_plan_whatever_the_state_directory_says() {
     // A registration names its plan by path; a firing looked the
     // switches up beside the plan only when the plan was a generation,

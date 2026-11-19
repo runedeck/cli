@@ -1,3 +1,4 @@
+use rune::folders::Canonical as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -544,14 +545,15 @@ fn manifest_root() -> Option<PathBuf> {
 }
 
 fn display_install_target(path: &Path) -> String {
-    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if let Some(home) = dirs::home_dir() {
-        let canonical_home = home.canonicalize().unwrap_or(home);
+    let canonical_path = path.canonical().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(home) = rune::folders::home_dir() {
+        let canonical_home = home.canonical().unwrap_or(home);
         if let Ok(rest) = canonical_path.strip_prefix(canonical_home) {
             return if rest.as_os_str().is_empty() {
                 "~".to_string()
             } else {
-                format!("~/{}", rest.display())
+                // The `~/` form is written with `/` on every platform.
+                format!("~/{}", rune::manifest::slash_lossy(rest))
             };
         }
     }

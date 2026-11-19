@@ -46,7 +46,7 @@ pub fn realpath_nearest(abs: &Path) -> PathBuf {
     let mut tail: Vec<OsString> = Vec::new();
     let mut head = abs.to_path_buf();
     loop {
-        if let Ok(real) = std::fs::canonicalize(&head) {
+        if let Ok(real) = crate::folders::canonicalize(&head) {
             let mut out = real;
             for part in tail.iter().rev() {
                 out.push(part);

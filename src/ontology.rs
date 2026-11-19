@@ -511,7 +511,7 @@ impl ResolvedConfig {
     pub fn env_file(&self) -> Option<PathBuf> {
         match &self.env {
             Some(value) => Some(expand_tilde(&value.value)),
-            None => dirs::home_dir().map(|home| home.join(".env")),
+            None => crate::folders::home_dir().map(|home| home.join(".env")),
         }
     }
 
@@ -725,8 +725,8 @@ pub fn load() -> Result<ResolvedConfig, Error> {
 }
 
 pub fn config_dir() -> Result<PathBuf, Error> {
-    dirs::home_dir()
-        .map(|home| home.join(".config/rune"))
+    crate::folders::home_dir()
+        .map(|home| crate::folders::join(&home, ".config/rune"))
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
 }
 
@@ -784,10 +784,11 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
 
 pub fn expand_tilde(value: &str) -> PathBuf {
     if value == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
+        return crate::folders::home_dir().unwrap_or_else(|| PathBuf::from(value));
     }
     if let Some(rest) = value.strip_prefix("~/") {
-        return dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest));
+        return crate::folders::home_dir()
+            .map_or_else(|| PathBuf::from(value), |home| home.join(rest));
     }
     PathBuf::from(value)
 }

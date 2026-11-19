@@ -5,7 +5,6 @@
 
 use rune::error::{Error, ErrorKind};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
 
 pub(crate) const OPEN_PREFIX: &str = "open-seal: ";
 pub(crate) const MERGE_PREFIX: &str = "merge-seal: ";
@@ -94,15 +93,27 @@ fn is_hex(value: &str, length: usize) -> bool {
 /// request to carry it.
 pub(crate) fn nonce() -> Result<String, Error> {
     let mut bytes = [0u8; NONCE_BYTES];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut source| source.read_exact(&mut bytes))
-        .map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("cannot read random bytes for the seal nonce: {error}"),
-            )
-        })?;
+    random_bytes(&mut bytes).map_err(|error| {
+        Error::new(
+            ErrorKind::Io,
+            format!("cannot read random bytes for the seal nonce: {error}"),
+        )
+    })?;
     Ok(hex(&bytes))
+}
+
+/// Unix reads the kernel's random device.
+#[cfg(not(windows))]
+fn random_bytes(bytes: &mut [u8]) -> std::io::Result<()> {
+    use std::io::Read as _;
+    std::fs::File::open("/dev/urandom").and_then(|mut source| source.read_exact(bytes))
+}
+
+/// Windows has no random device to open. The system's generator answers
+/// through `getrandom`.
+#[cfg(windows)]
+fn random_bytes(bytes: &mut [u8]) -> std::io::Result<()> {
+    getrandom::fill(bytes).map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {

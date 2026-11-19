@@ -25,17 +25,22 @@ impl Exclude {
     /// Expand `~` in each glob against `home`, drop a trailing slash, and
     /// resolve the folder before the first wildcard through its symlinks,
     /// so a glob written through a linked path matches the real one.
+    ///
+    /// A glob and the folder it is matched against are compared as text
+    /// with `/` between the parts. On Windows a glob written with `\` and
+    /// a working folder such as `C:\Users\owner\work` are both brought to
+    /// that form first.
     #[must_use]
     pub fn resolve(paths: &[String], sessions: &[String], home: &Path) -> Self {
         let paths = paths
             .iter()
             .map(|glob| {
                 let expanded = if glob == "~" {
-                    home.to_string_lossy().into_owned()
+                    slash_form(home)
                 } else if let Some(rest) = glob.strip_prefix("~/") {
-                    home.join(rest).to_string_lossy().into_owned()
+                    slash_form(&home.join(rest))
                 } else {
-                    glob.clone()
+                    slash_form(Path::new(glob))
                 };
                 canonical_glob(expanded.trim_end_matches('/'))
             })
@@ -63,10 +68,10 @@ impl Exclude {
     /// also matches the folder itself.
     #[must_use]
     pub fn folder(&self, cwd: &Path) -> bool {
-        let given = cwd.to_string_lossy().trim_end_matches('/').to_string();
-        let canonical = std::fs::canonicalize(cwd)
+        let given = slash_form(cwd).trim_end_matches('/').to_string();
+        let canonical = crate::folders::canonicalize(cwd)
             .ok()
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| slash_form(&path))
             .filter(|path| *path != given);
         self.paths.iter().any(|glob| {
             glob_matches(glob, &given)
@@ -103,10 +108,15 @@ fn canonical_glob(glob: &str) -> String {
     };
     let (folder, rest) = glob.split_at(slash.max(1));
     let folder = if slash == 0 { "/" } else { folder };
-    match std::fs::canonicalize(folder) {
-        Ok(path) => format!("{}{rest}", path.to_string_lossy().trim_end_matches('/')),
+    match crate::folders::canonicalize(folder) {
+        Ok(path) => format!("{}{rest}", slash_form(&path).trim_end_matches('/')),
         Err(_) => glob.to_string(),
     }
+}
+
+/// A path as the globs compare it: text with `/` between its parts.
+fn slash_form(path: &Path) -> String {
+    crate::manifest::slash_lossy(path)
 }
 
 /// The working folder a session file records: the first `cwd` member in

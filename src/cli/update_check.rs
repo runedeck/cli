@@ -147,7 +147,7 @@ fn detect_manager(binary: &std::path::Path) -> Manager {
     if text.contains("/Cellar/") || text.contains("/homebrew/") || text.contains("/linuxbrew/") {
         return Manager::Homebrew;
     }
-    if let Some(home) = dirs::home_dir()
+    if let Some(home) = rune::folders::home_dir()
         && binary.starts_with(home.join(".local/bin"))
     {
         return Manager::Direct;

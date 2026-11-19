@@ -76,6 +76,9 @@ fn explain_report_has_the_required_json_fields() {
 fn each_non_current_state_has_a_fix_or_review_command() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join(".agents");
+    // The command quotes the target as a shell needs it: a Windows path
+    // holds `\` and `:`, so it goes in quotes there.
+    let quoted_target = crate::cli::shell_quote(&target.to_string_lossy());
     for (state, recommended_action, expected) in [
         (
             DeploymentState::Disabled,
@@ -95,12 +98,12 @@ fn each_non_current_state_has_a_fix_or_review_command() {
         (
             DeploymentState::NeedsRepair,
             RecommendedAction::Repair,
-            format!("rune repair --target {}", target.display()),
+            format!("rune repair --target {quoted_target}"),
         ),
         (
             DeploymentState::Modified,
             RecommendedAction::Review,
-            format!("rune doctor --target {}", target.display()),
+            format!("rune doctor --target {quoted_target}"),
         ),
     ] {
         let detection = ProviderDetection {

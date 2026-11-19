@@ -5,6 +5,7 @@
 
 mod support;
 
+use rune::folders::Canonical as _;
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -419,7 +420,7 @@ fn the_switch_round_trips_and_reads_from_a_subdirectory() {
     assert_eq!(out["turn_wrap"], "on");
     assert_eq!(
         out["root"].as_str().map(PathBuf::from),
-        Some(scene.repo().canonicalize().unwrap())
+        Some(scene.repo().canonical().unwrap())
     );
     scene
         .rune()
@@ -642,6 +643,10 @@ fn a_session_that_wrote_a_file_from_another_directory_touched_the_workspace() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_session_whose_shell_command_named_the_workspace_touched_it() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -846,6 +851,10 @@ fn a_turn_after_a_failed_stop_handler_waits_for_the_next_stop() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_first_touch_keeps_its_key_when_the_snapshot_runs_past_the_timeout() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -959,7 +968,7 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
         .success()
         .stdout(format!(
             "turn wrap reset in {}: forgot {listed}\n",
-            scene.repo().canonicalize().unwrap().display()
+            scene.repo().canonical().unwrap().display()
         ));
     let stop = scene.turn("s1", "c.txt", "three\n");
     assert!(
@@ -973,6 +982,10 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
     let Some(scene) = Scene::new() else { return };
     scene.config(PATIENT_WRAPPER);
@@ -1067,16 +1080,16 @@ fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
     scene.write_plan();
     scene.switch_on();
-    let lock = scene
-        .repo()
-        .canonicalize()
-        .unwrap()
-        .join(".jj/turn-wrap.lock");
+    let lock = scene.repo().canonical().unwrap().join(".jj/turn-wrap.lock");
     let held = std::fs::File::create(&lock).unwrap();
     held.try_lock().unwrap();
     let stop = scene.turn("s1", "a.txt", "one\n");
@@ -1119,7 +1132,7 @@ fn a_malformed_slot_wraps_nothing_until_the_owner_resets() {
     assert!(
         message.starts_with(&format!(
             "turn-wrap: nothing wrapped: {} is not a turn-wrap slot: ",
-            scene.slot().canonicalize().unwrap().display()
+            scene.slot().canonical().unwrap().display()
         )),
         "{message}"
     );

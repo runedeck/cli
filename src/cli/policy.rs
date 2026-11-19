@@ -100,7 +100,7 @@ scopes:
 
     fn scene() -> (tempfile::TempDir, PathBuf, Reader) {
         let temp = tempfile::tempdir().unwrap();
-        let dir = std::fs::canonicalize(temp.path()).unwrap();
+        let dir = rune::folders::canonicalize(temp.path()).unwrap();
         let home = dir.join("home");
         std::fs::create_dir_all(home.join("Atlas/notes")).unwrap();
         std::fs::create_dir_all(home.join("Agents/deck")).unwrap();

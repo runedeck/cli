@@ -114,11 +114,9 @@ pub(crate) fn temporary_sibling(path: &Path) -> PathBuf {
 /// created is the transaction layer's ancestor inspection; the two forms
 /// are deliberately separate and must not be collapsed.
 pub fn confine_existing(base: &Path, candidate: &Path) -> Result<PathBuf, String> {
-    let resolved_base = base
-        .canonicalize()
+    let resolved_base = canonicalize(base)
         .map_err(|error| format!("cannot resolve {}: {error}", base.display()))?;
-    let resolved = candidate
-        .canonicalize()
+    let resolved = canonicalize(candidate)
         .map_err(|error| format!("cannot resolve {}: {error}", candidate.display()))?;
     if resolved.starts_with(&resolved_base) {
         Ok(resolved)
@@ -129,6 +127,87 @@ pub fn confine_existing(base: &Path, candidate: &Path) -> Result<PathBuf, String
             base.display()
         ))
     }
+}
+
+/// `fs::canonicalize`, in the form a person writes a path.
+///
+/// On Windows `fs::canonicalize` answers in the verbatim form,
+/// `\\?\C:\repo`. In that form `/` is not a separator, so
+/// `root.join("docs/specs")` names no folder, and the path does not compare
+/// equal to the same folder written `C:\repo`. This answers `C:\repo`, and
+/// `\\server\share` for a network path. A path that only the verbatim form
+/// can name comes back as it is: one of 260 characters or more, or one
+/// with a part that is a device name or ends in a dot or a space.
+///
+/// On every other platform this is `fs::canonicalize`.
+pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    fs::canonicalize(path).map(plain)
+}
+
+/// [`canonicalize`] as a method, for a path at the end of a chain.
+pub trait Canonical {
+    /// See [`canonicalize`].
+    fn canonical(&self) -> std::io::Result<PathBuf>;
+}
+
+impl Canonical for Path {
+    fn canonical(&self) -> std::io::Result<PathBuf> {
+        canonicalize(self)
+    }
+}
+
+#[cfg(not(windows))]
+fn plain(path: PathBuf) -> PathBuf {
+    path
+}
+
+#[cfg(windows)]
+fn plain(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(without_verbatim_prefix) {
+        Some(text) => PathBuf::from(text),
+        None => path,
+    }
+}
+
+/// A verbatim path without its prefix, when the shorter text names the
+/// same file: `\\?\C:\repo` is `C:\repo`, and `\\?\UNC\server\share` is
+/// `\\server\share`.
+#[cfg(any(windows, test))]
+fn without_verbatim_prefix(text: &str) -> Option<String> {
+    let plain = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        let rest = text.strip_prefix(r"\\?\")?;
+        let mut characters = rest.chars();
+        let drive = characters.next()?;
+        if !drive.is_ascii_alphabetic() || characters.next() != Some(':') {
+            return None;
+        }
+        rest.to_owned()
+    };
+    (plain.len() < 260 && plain.split('\\').all(part_reads_as_written)).then_some(plain)
+}
+
+/// Whether Windows reads this part of a plain path as the name written.
+/// It drops a trailing dot or space, and it reads a device name such as
+/// `NUL`, with or without an extension, as the device.
+#[cfg(any(windows, test))]
+fn part_reads_as_written(part: &str) -> bool {
+    if part.ends_with('.') || part.ends_with(' ') {
+        return false;
+    }
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end()
+        .to_ascii_uppercase();
+    let numbered = |device: &str| {
+        stem.strip_prefix(device).is_some_and(|number| {
+            matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+    };
+    !(matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered("COM") || numbered("LPT"))
 }
 
 /// Split `---`-fenced YAML frontmatter from a markdown body. Returns `None`
@@ -156,4 +235,33 @@ pub fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
     let body = after_closing.strip_prefix('\n').unwrap_or(after_closing);
 
     Some((yaml_text, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_verbatim_prefix;
+
+    #[test]
+    fn a_verbatim_drive_or_network_path_loses_its_prefix() {
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\C:\repo\docs").as_deref(),
+            Some(r"C:\repo\docs")
+        );
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\UNC\server\share\repo").as_deref(),
+            Some(r"\\server\share\repo")
+        );
+    }
+
+    #[test]
+    fn a_path_only_the_verbatim_form_names_keeps_its_prefix() {
+        for path in [
+            r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\repo",
+            r"\\?\C:\repo\NUL",
+            r"\\?\C:\repo\name.",
+            r"C:\repo",
+        ] {
+            assert_eq!(without_verbatim_prefix(path), None, "{path}");
+        }
+    }
 }

@@ -73,7 +73,7 @@ pub fn execute(action: &ProofAction) -> Result<i32, Error> {
 /// The repository root as an absolute canonical path, so scenes that
 /// change directory and `RUNE_PROOF_ROOT` both resolve.
 fn canonical(source: &str) -> Result<PathBuf, Error> {
-    fs::canonicalize(source).map_err(|error| Error::io(format!("{source}: {error}")))
+    rune::folders::canonicalize(source).map_err(|error| Error::io(format!("{source}: {error}")))
 }
 
 /// The proof whose frontmatter names `change`.
@@ -584,7 +584,8 @@ fn jj_owns(root: &Path) -> bool {
     let Some(git_root) = vcs(root, "git", &["rev-parse", "--show-toplevel"]) else {
         return true;
     };
-    let canonical = |path: &str| fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let canonical =
+        |path: &str| rune::folders::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     canonical(&jj_root).starts_with(canonical(&git_root))
 }
 

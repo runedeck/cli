@@ -106,10 +106,16 @@ ansi-to-tui = { version = "8.0.1", optional = true }
 unicode-width = { version = "0.2", optional = true }
 edtui = { version = "0.11", default-features = false, optional = true }
 
-# Only nix is Unix-only. This table stays after every other dependency:
-# a dependency written below a target table header belongs to that target.
+# Only nix is Unix-only. The target tables stay after every other
+# dependency: a dependency written below a target table header belongs to
+# that target.
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
+
+# The seal nonce is 32 random bytes. Unix reads them from /dev/urandom, and
+# Windows has no such file. getrandom is already in the dependency tree.
+[target.'cfg(windows)'.dependencies]
+getrandom = "0.3"
 
 [build-dependencies]
 sha2 = "0.10"

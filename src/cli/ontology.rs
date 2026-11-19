@@ -437,10 +437,12 @@ mod tests {
 
     #[test]
     fn config_read_error_has_no_repair_command() {
+        // A folder where the file belongs cannot be read as text on any
+        // platform. A path under a regular file would not do: Windows
+        // reports it as not found, which is an absent config and no error.
         let directory = tempfile::tempdir().expect("tempdir");
-        let parent_file = directory.path().join("not-a-directory");
-        std::fs::write(&parent_file, "fixture").expect("parent fixture");
-        let path = parent_file.join("config.yaml");
+        let path = directory.path().join("config.yaml");
+        std::fs::create_dir(&path).expect("a folder at the config path");
 
         let error = read_config_document(&path).expect_err("read must fail");
 

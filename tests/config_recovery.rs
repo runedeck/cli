@@ -1,5 +1,6 @@
 mod support;
 use assert_cmd::Command;
+use rune::folders::Canonical as _;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -10,8 +11,10 @@ fn rune() -> Command {
     support::rune()
 }
 
+/// Joined part by part: a test compares this path as text with the one
+/// rune prints, and on Windows a `/` inside a part would stay in the text.
 fn user_config_path(home: &Path) -> PathBuf {
-    home.join(".config/rune/config.yaml")
+    home.join(".config").join("rune").join("config.yaml")
 }
 
 fn write_config(path: &Path, content: &str) {
@@ -32,7 +35,7 @@ fn directory_entries(path: &Path) -> Vec<OsString> {
 fn assert_reported_path(reported: &str, expected: &Path) {
     let direct_match = reported == expected.to_string_lossy().as_ref();
     let canonical_match = expected
-        .canonicalize()
+        .canonical()
         .is_ok_and(|path| reported == path.to_string_lossy().as_ref());
     assert!(
         direct_match || canonical_match,

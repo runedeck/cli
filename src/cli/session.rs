@@ -227,7 +227,7 @@ fn fatal(error: &Error, json: bool) -> i32 {
 /// directory; the stores by the harness variables; the excluded sessions;
 /// and the tools the readable copy and the backup need.
 pub(crate) fn config() -> Result<Config, Error> {
-    let home = dirs::home_dir()
+    let home = rune::folders::home_dir()
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))?;
     let user = ontology::load()?;
     let data_dir = std::env::var_os("DATA_DIR")

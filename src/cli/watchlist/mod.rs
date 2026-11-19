@@ -45,7 +45,7 @@ struct WatchlistConfig {
 }
 
 fn config_path() -> Result<PathBuf, String> {
-    dirs::home_dir()
+    rune::folders::home_dir()
         .map(|home| home.join(".config/rune/watchlist.yaml"))
         .ok_or_else(|| "cannot resolve home directory".to_string())
 }
@@ -235,7 +235,7 @@ fn print_locations(locations: &[WatchEntry], json: bool) {
 /// Expands a leading `~/` and returns the resolved path.
 fn resolve(location: &str) -> Option<PathBuf> {
     if let Some(rest) = location.strip_prefix("~/") {
-        return dirs::home_dir().map(|home| home.join(rest));
+        return rune::folders::home_dir().map(|home| home.join(rest));
     }
     Some(PathBuf::from(location))
 }

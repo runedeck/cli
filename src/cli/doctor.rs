@@ -651,7 +651,8 @@ fn collect_managed_files_recursive(
                     format!("cannot relativize {}: {error}", entry_path.display()),
                 )
             })?;
-            files.push(relative.to_string_lossy().into_owned());
+            // A manifest key has `/` between its parts on every platform.
+            files.push(rune::manifest::slash_lossy(relative));
         }
     }
     Ok(())
@@ -784,6 +785,7 @@ const DOT_MARK: &str = "●";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rune::folders::Canonical as _;
     use std::fs;
     use tempfile::TempDir;
 
@@ -982,8 +984,8 @@ mod tests {
 
         let expected = format!(
             "rune install --source {} --target {}",
-            crate::cli::shell_quote(&source.canonicalize().unwrap().to_string_lossy()),
-            crate::cli::shell_quote(&target.canonicalize().unwrap().to_string_lossy())
+            crate::cli::shell_quote(&source.canonical().unwrap().to_string_lossy()),
+            crate::cli::shell_quote(&target.canonical().unwrap().to_string_lossy())
         );
         assert_eq!(error.code(), MANIFEST_MISSING_CODE);
         assert_eq!(error.fix_command(), Some(expected.as_str()));
@@ -1005,8 +1007,8 @@ mod tests {
 
         let expected = format!(
             "rune install --source {} --target {} --provider codex",
-            crate::cli::shell_quote(&source.canonicalize().unwrap().to_string_lossy()),
-            crate::cli::shell_quote(&target_base.canonicalize().unwrap().to_string_lossy())
+            crate::cli::shell_quote(&source.canonical().unwrap().to_string_lossy()),
+            crate::cli::shell_quote(&target_base.canonical().unwrap().to_string_lossy())
         );
         assert_eq!(error.code(), MANIFEST_MISSING_CODE);
         assert_eq!(error.fix_command(), Some(expected.as_str()));

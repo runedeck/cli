@@ -131,7 +131,7 @@ fn target_history_deduplicates_and_caps_at_ten() {
     assert_eq!(
         history[0].as_str(),
         Some(
-            std::fs::canonicalize(targets.path().join("quest-5"))
+            rune::folders::canonicalize(targets.path().join("quest-5"))
                 .unwrap()
                 .to_str()
                 .unwrap()

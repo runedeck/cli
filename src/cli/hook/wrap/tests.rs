@@ -401,7 +401,7 @@ fn a_tool_event_registers_the_session_in_the_workspace_its_file_is_in() {
     );
     assert_eq!(
         armed_roots(&payload, None),
-        [root.path().canonicalize().unwrap()].into_iter().collect()
+        [root.path().canonical().unwrap()].into_iter().collect()
     );
     let unrelated = write_payload(elsewhere.path(), &elsewhere.path().join("x"));
     assert!(armed_roots(&unrelated, None).is_empty());
@@ -441,11 +441,15 @@ fn a_session_is_alone_with_its_own_key_or_an_empty_set_and_never_as_unknown() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_shell_command_registers_the_session_in_every_workspace_it_names() {
     let root = armed_root();
     let elsewhere = tempfile::tempdir().unwrap();
     let here = root.path().display().to_string();
-    let only_root: BTreeSet<PathBuf> = [root.path().canonicalize().unwrap()].into_iter().collect();
+    let only_root: BTreeSet<PathBuf> = [root.path().canonical().unwrap()].into_iter().collect();
     // A `cd` into the workspace, then an edit by a relative path. No
     // snapshot runs on `tool.after`, so no jj.
     let payload = bash_payload(
@@ -496,6 +500,10 @@ fn a_shell_command_registers_the_session_in_every_workspace_it_names() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn the_paths_a_command_names_come_from_its_words_without_a_shell() {
     let home = Path::new("/home/owner");
     let base = Path::new("/work");
@@ -553,7 +561,7 @@ fn the_workspace_root_is_the_nearest_ancestor_with_a_jj_directory() {
     std::fs::create_dir_all(root.join("src/deep")).unwrap();
     assert_eq!(
         workspace_root(&root.join("src/deep")),
-        Some(root.canonicalize().unwrap())
+        Some(root.canonical().unwrap())
     );
     assert_eq!(workspace_root(dir.path()), None);
 }
@@ -561,7 +569,7 @@ fn the_workspace_root_is_the_nearest_ancestor_with_a_jj_directory() {
 #[test]
 fn the_wrapper_is_armed_by_the_payload_directory_or_the_project_directory() {
     let root = armed_root();
-    let canonical = root.path().canonicalize().unwrap();
+    let canonical = root.path().canonical().unwrap();
     assert_eq!(
         armed_in(&payload("turn.finish", Some(root.path())), None),
         Some(canonical.clone())

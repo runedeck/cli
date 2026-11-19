@@ -1022,7 +1022,7 @@ fn read_optional_text_file(path: Option<&Path>, label: &str) -> Result<String, S
 }
 
 fn resolve_repository(path: &Path) -> Result<PathBuf, String> {
-    let repository = std::fs::canonicalize(path)
+    let repository = rune::folders::canonicalize(path)
         .map_err(|error| format!("cannot resolve repository {}: {error}", path.display()))?;
     if !repository.is_dir() {
         return Err(format!(

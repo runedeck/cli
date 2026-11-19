@@ -72,6 +72,7 @@ mod update_check;
 
 use clap::{Parser, Subcommand};
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::result::ActionResult;
 use std::path::PathBuf as QueuePathBuf;
 use std::{ffi::OsString, fmt::Write as _};
@@ -86,6 +87,9 @@ const BUILD_VERSION: &str = concat!(
 
 #[derive(Parser)]
 #[command(name = "rune", about = "Rune Deck toolkit", version = BUILD_VERSION)]
+// Windows starts the program as `rune.exe`, and the usage line would say
+// so. The command is `rune` in every shell there, as it is in the docs.
+#[cfg_attr(windows, command(bin_name = "rune"))]
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -3376,7 +3380,7 @@ pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
 }
 
 pub(crate) fn resolved_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.canonicalize()
+    path.canonical()
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf())
 }

@@ -1362,15 +1362,18 @@ fn clean_opencode_redirects_xdg_state() {
     };
     let request = process_request(&invocation, Vec::new(), None);
 
+    // Each folder is the root joined with a name, so it carries the
+    // platform's separator.
+    let clean = PathBuf::from("/clean");
     for (key, value) in [
-        ("XDG_CONFIG_HOME", "/clean/config"),
-        ("XDG_DATA_HOME", "/clean/data"),
-        ("XDG_STATE_HOME", "/clean/state"),
+        ("XDG_CONFIG_HOME", clean.join("config")),
+        ("XDG_DATA_HOME", clean.join("data")),
+        ("XDG_STATE_HOME", clean.join("state")),
     ] {
         assert!(
             request
                 .env
-                .contains(&(OsString::from(key), OsString::from(value)))
+                .contains(&(OsString::from(key), value.into_os_string()))
         );
     }
 }
@@ -2510,6 +2513,13 @@ fn claude_api_error_lines_are_harness_errors() {
 
 #[test]
 fn planned_request_uses_the_spawn_builders_with_placeholders() {
+    // A file in the scratch placeholder, with the platform's separator.
+    let scratch = |name: &str| {
+        PathBuf::from("<scratch>")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    };
     let mut claude = invocation(Surface::Claude, &["--verbose"]);
     claude.system_prompt = "Use the rule.".to_string();
     let planned = planned_request(&claude).expect("claude plan");
@@ -2531,7 +2541,7 @@ fn planned_request_uses_the_spawn_builders_with_placeholders() {
     assert!(
         strings(&grok.args)
             .windows(2)
-            .any(|pair| pair == ["--prompt-file", "<scratch>/prompt.txt"]),
+            .any(|pair| pair == ["--prompt-file", scratch("prompt.txt").as_str()]),
         "{:?}",
         grok.args
     );
@@ -2551,7 +2561,7 @@ fn planned_request_uses_the_spawn_builders_with_placeholders() {
     assert!(
         agy_args
             .windows(2)
-            .any(|pair| pair == ["--log-file", "<scratch>/agy.log"]),
+            .any(|pair| pair == ["--log-file", scratch("agy.log").as_str()]),
         "{agy_args:?}"
     );
 
@@ -2559,7 +2569,7 @@ fn planned_request_uses_the_spawn_builders_with_placeholders() {
     assert!(
         strings(&codex.args)
             .windows(2)
-            .any(|pair| pair == ["-o", "<scratch>/last-message.txt"]),
+            .any(|pair| pair == ["-o", scratch("last-message.txt").as_str()]),
         "{:?}",
         codex.args
     );
@@ -3714,8 +3724,8 @@ fn cursor_relative_config_directory_resolves_against_the_repository() {
         let name = env[env.len() - 1].0.to_string_lossy().into_owned();
         let directory = match name.as_str() {
             "CURSOR_CONFIG_DIR" => repository.join("settings"),
-            "XDG_CONFIG_HOME" => repository.join("xdg/cursor"),
-            _ => repository.join("home/.cursor"),
+            "XDG_CONFIG_HOME" => repository.join("xdg").join("cursor"),
+            _ => repository.join("home").join(".cursor"),
         };
         std::fs::create_dir_all(&directory).expect("config directory");
         std::fs::write(
@@ -3769,11 +3779,17 @@ fn clean_cursor_run_moves_home_and_the_config_directory() {
     invocation.env = vec![(OsString::from("CURSOR_API_KEY"), OsString::from("key-1"))];
     let request = process_request(&invocation, cursor::args(&invocation), None);
 
-    for (key, value) in [("HOME", "/clean"), ("CURSOR_CONFIG_DIR", "/clean/.cursor")] {
+    // The config directory is the root joined with a name, so it carries
+    // the platform's separator.
+    let clean = PathBuf::from("/clean");
+    for (key, value) in [
+        ("HOME", clean.clone()),
+        ("CURSOR_CONFIG_DIR", clean.join(".cursor")),
+    ] {
         assert!(
             request
                 .env
-                .contains(&(OsString::from(key), OsString::from(value))),
+                .contains(&(OsString::from(key), value.into_os_string())),
             "{key}: {:?}",
             request.env
         );

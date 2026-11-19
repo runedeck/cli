@@ -1,6 +1,7 @@
 //! Broken internal links and orphan pages across a repo's `docs/` tree.
 //! Pure analysis: the caller renders the report.
 
+use crate::support::Canonical as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -66,7 +67,7 @@ fn link_report(root: &Path, docs_root: &Path, pages: &[PathBuf]) -> DocsReport {
                 LinkTarget::Relative(relative) => {
                     let resolved = page_dir.join(decode_spaces(relative));
                     if resolved.exists() {
-                        if let Ok(canonical) = resolved.canonicalize() {
+                        if let Ok(canonical) = resolved.canonical() {
                             linked.insert(canonical);
                         }
                     } else {
@@ -78,7 +79,7 @@ fn link_report(root: &Path, docs_root: &Path, pages: &[PathBuf]) -> DocsReport {
                 }
                 LinkTarget::Wikilink(name) => match basenames.get(name.as_str()) {
                     Some(found) => {
-                        if let Ok(canonical) = found.canonicalize() {
+                        if let Ok(canonical) = found.canonical() {
                             linked.insert(canonical);
                         }
                     }
@@ -92,7 +93,7 @@ fn link_report(root: &Path, docs_root: &Path, pages: &[PathBuf]) -> DocsReport {
     }
 
     for page in pages {
-        let Ok(canonical) = page.canonicalize() else {
+        let Ok(canonical) = page.canonical() else {
             continue;
         };
         let is_entry = page

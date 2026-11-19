@@ -297,7 +297,7 @@ impl Lock {
         for dir in given {
             let dir = std::path::absolute(dir).map_err(|e| io(dir, &e))?;
             fs::create_dir_all(&dir).map_err(|e| io(&dir, &e))?;
-            dirs.push(fs::canonicalize(&dir).map_err(|e| io(&dir, &e))?);
+            dirs.push(rune::folders::canonicalize(&dir).map_err(|e| io(&dir, &e))?);
         }
         dirs.sort();
         dirs.dedup();

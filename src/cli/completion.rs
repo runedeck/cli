@@ -207,7 +207,7 @@ pub fn install(shell: Option<Shell>, json: bool) -> Result<i32, Error> {
 }
 
 fn home() -> Result<PathBuf, Error> {
-    dirs::home_dir().ok_or_else(|| {
+    rune::folders::home_dir().ok_or_else(|| {
         Error::new(ErrorKind::Config, "cannot resolve home directory")
             .with_code("completion.home_unavailable")
             .with_fix_command("printenv HOME")
@@ -226,18 +226,27 @@ fn install_path(shell: Shell) -> Result<PathBuf, Error> {
                 brew_prefix().map(|prefix| prefix.join("share/zsh/site-functions"));
             match site_functions {
                 Some(directory) if directory.is_dir() => Ok(directory.join("_rune")),
-                _ => Ok(home.join(".zfunc/_rune")),
+                _ => Ok(rune::folders::join(&home, ".zfunc/_rune")),
             }
         }
-        Shell::Bash => Ok(home.join(".local/share/bash-completion/completions/rune")),
-        Shell::Fish => Ok(home.join(".config/fish/completions/rune.fish")),
+        Shell::Bash => Ok(rune::folders::join(
+            &home,
+            ".local/share/bash-completion/completions/rune",
+        )),
+        Shell::Fish => Ok(rune::folders::join(
+            &home,
+            ".config/fish/completions/rune.fish",
+        )),
         Shell::Nushell => {
-            let data_dir = dirs::data_dir().ok_or_else(|| {
+            let data_dir = rune::folders::data_dir().ok_or_else(|| {
                 Error::new(ErrorKind::Config, "cannot resolve the user data directory")
                     .with_code("completion.data_directory_unavailable")
                     .with_fix_command("printenv HOME")
             })?;
-            Ok(data_dir.join("nushell/vendor/autoload/rune.nu"))
+            Ok(rune::folders::join(
+                &data_dir,
+                "nushell/vendor/autoload/rune.nu",
+            ))
         }
         Shell::Powershell | Shell::Elvish => Err(Error::new(
             ErrorKind::Config,

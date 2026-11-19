@@ -375,7 +375,7 @@ fn config_dir(invocation: &SurfaceInvocation) -> Option<PathBuf> {
     } else {
         lookup("HOME")
             .map(PathBuf::from)
-            .or_else(dirs::home_dir)?
+            .or_else(rune::folders::home_dir)?
             .join(".cursor")
     };
     Some(invocation.repository.join(directory))

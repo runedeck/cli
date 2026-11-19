@@ -62,10 +62,7 @@ pub fn provenance_path(manifest_key: &str) -> String {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
     let provenance_dir = parent.join(PROVENANCE_DIRECTORY);
-    provenance_dir
-        .join(format!("{file_name}.{SIDECAR_EXTENSION}"))
-        .to_string_lossy()
-        .to_string()
+    slash_lossy(&provenance_dir.join(format!("{file_name}.{SIDECAR_EXTENSION}")))
 }
 
 /// The stem-named sidecar location written by earlier versions
@@ -77,10 +74,7 @@ pub fn legacy_provenance_path(manifest_key: &str) -> String {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
 
     let provenance_dir = parent.join(PROVENANCE_DIRECTORY);
-    provenance_dir
-        .join(format!("{stem}.{SIDECAR_EXTENSION}"))
-        .to_string_lossy()
-        .to_string()
+    slash_lossy(&provenance_dir.join(format!("{stem}.{SIDECAR_EXTENSION}")))
 }
 
 /// Sidecar path beside a file on disk, full-filename encoded.
@@ -111,6 +105,40 @@ pub fn existing_sidecar_for(file_path: &std::path::Path) -> Option<std::path::Pa
 /// Authored companions such as `data` and `data.yaml` never share a metadata path.
 pub fn sidecar_path(content_path: &std::path::Path) -> std::path::PathBuf {
     sidecar_for(content_path)
+}
+
+/// A path as text with `/` between its parts on every platform, so a
+/// record and its digest are the same wherever they are made.
+///
+/// Windows writes `\` between the parts, and no file name can hold one
+/// there, so each `\` is a separator and becomes `/`. On Unix a `\` is a
+/// character of a name. It stays, and the caller refuses the path as
+/// ambiguous: a record with it could not be told from a Windows path.
+/// A path that is not valid UTF-8 has no text.
+#[must_use]
+pub fn slash_text(path: &std::path::Path) -> Option<String> {
+    let text = path.to_str()?;
+    if cfg!(windows) {
+        Some(text.replace('\\', "/"))
+    } else {
+        Some(text.to_owned())
+    }
+}
+
+/// [`slash_text`] for a path that is a key or is shown, where a name that
+/// is not valid UTF-8 is written with replacement characters instead of
+/// refused. A relative path under a module, a build, or a target is such a
+/// path: `rules/nested/Style.md` on every platform.
+#[must_use]
+pub fn slash_lossy(path: &std::path::Path) -> String {
+    slash_text(path).unwrap_or_else(|| {
+        let text = path.to_string_lossy();
+        if cfg!(windows) {
+            text.replace('\\', "/")
+        } else {
+            text.into_owned()
+        }
+    })
 }
 
 pub fn content_sha256(content: &str) -> String {

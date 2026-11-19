@@ -8,6 +8,7 @@
 use super::prose::prose_lines;
 use super::terms::{Term, Terms, kebab};
 use super::{Error, ErrorKind};
+use crate::support::Canonical as _;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -353,7 +354,7 @@ pub(super) fn canonical(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut ancestor = path.as_path();
     loop {
-        if let Ok(real) = ancestor.canonicalize() {
+        if let Ok(real) = ancestor.canonical() {
             let mut result = real;
             for component in rest.iter().rev() {
                 result.push(component);

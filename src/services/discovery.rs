@@ -18,13 +18,13 @@ pub(super) fn discover_targets(
     watched_locations: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut targets = Vec::new();
-    let home = dirs::home_dir();
+    let home = crate::folders::home_dir();
     if let Some(ref home_path) = home
         && has_provider_manifests(home_path, providers)
     {
         targets.push(home_path.clone());
     }
-    let root_abs = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root_abs = crate::folders::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let is_home = home
         .as_ref()
         .is_some_and(|home_path| root_abs == *home_path);
@@ -32,7 +32,7 @@ pub(super) fn discover_targets(
         targets.push(root_abs.clone());
     }
     for location in watched_locations {
-        let canonical = fs::canonicalize(location).unwrap_or_else(|_| location.clone());
+        let canonical = crate::folders::canonicalize(location).unwrap_or_else(|_| location.clone());
         if canonical != root_abs
             && !targets.contains(&canonical)
             && has_provider_manifests(&canonical, providers)
@@ -55,14 +55,14 @@ pub fn discover_local_repos(
     watched_locations: &[PathBuf],
 ) -> HashMap<String, PathBuf> {
     let mut repos = HashMap::new();
-    let canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical = crate::folders::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
 
     let mut search_dirs: Vec<PathBuf> = Vec::new();
     if let Some(parent) = canonical.parent() {
         search_dirs.push(parent.to_path_buf());
     }
     for location in watched_locations {
-        let loc = fs::canonicalize(location).unwrap_or_else(|_| location.clone());
+        let loc = crate::folders::canonicalize(location).unwrap_or_else(|_| location.clone());
         register_repo(&loc, &mut repos);
         if let Some(parent) = loc.parent() {
             search_dirs.push(parent.to_path_buf());
@@ -192,11 +192,8 @@ fn scan_hook_kind(root: &Path) -> Vec<ArtifactView> {
             if !file_type.is_file() {
                 continue;
             }
-            let relative_path = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let relative_path =
+                crate::manifest::slash_lossy(path.strip_prefix(root).unwrap_or(&path));
             let Some(name) = relative_path
                 .strip_prefix("hooks/")
                 .map(Path::new)

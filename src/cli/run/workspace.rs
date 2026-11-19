@@ -338,7 +338,7 @@ fn repository_store(vcs: &Vcs) -> PathBuf {
             _ => marker,
         }
     };
-    std::fs::canonicalize(&store).unwrap_or(store)
+    rune::folders::canonicalize(&store).unwrap_or(store)
 }
 
 /// The folder under the state directory that holds every workspace of one
@@ -782,7 +782,7 @@ fn find_marked(root: &Path, description: &str, start_operation: &str) -> Result<
 /// exist yet is judged by where it would be created.
 fn resolved_location(path: &Path) -> PathBuf {
     for ancestor in path.ancestors() {
-        if let Ok(canonical) = std::fs::canonicalize(ancestor) {
+        if let Ok(canonical) = rune::folders::canonicalize(ancestor) {
             let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
             return canonical.join(rest);
         }
@@ -796,7 +796,7 @@ fn resolved_location(path: &Path) -> PathBuf {
 /// harness would work inside the checkout it must not touch.
 fn refuse_inside_checkout(path: &Path, root: &Path) -> Result<(), String> {
     let location = resolved_location(path);
-    let checkout = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let checkout = rune::folders::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if location.starts_with(&checkout) {
         return Err(format!(
             "the workspace folder {} would lie inside the checkout {}; set RUNE_STATE_DIR or XDG_STATE_HOME to a folder outside the repository, or use --mode read-only",
@@ -814,7 +814,8 @@ fn subfolder_of(repository: &Path, root: &Path) -> PathBuf {
     if let Ok(rest) = repository.strip_prefix(root) {
         return rest.to_path_buf();
     }
-    let canonical = std::fs::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
+    let canonical =
+        rune::folders::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
     canonical
         .strip_prefix(root)
         .map_or_default(Path::to_path_buf)
@@ -1877,7 +1878,7 @@ mod tests {
         assert_eq!(main_store, secondary_store);
         assert_eq!(
             main_store,
-            std::fs::canonicalize(main.join(".jj/repo")).expect("canonical")
+            rune::folders::canonicalize(main.join(".jj/repo")).expect("canonical")
         );
         assert_eq!(repository_id(&main_store), repository_id(&secondary_store));
         assert!(repository_id(&main_store).starts_with("main-"));
@@ -1903,14 +1904,14 @@ mod tests {
         assert_eq!(before, after);
         assert_eq!(
             before,
-            std::fs::canonicalize(repo.join(".git")).expect("canonical")
+            rune::folders::canonicalize(repo.join(".git")).expect("canonical")
         );
     }
 
     #[test]
     fn detect_asks_jj_for_the_root_above_a_subfolder_and_sees_colocation() {
         let root = tempfile::tempdir().expect("root");
-        let repo = std::fs::canonicalize(root.path()).expect("canonical root");
+        let repo = rune::folders::canonicalize(root.path()).expect("canonical root");
         let status = Command::new("jj")
             .args(["--config", "git.colocate=false", "git", "init"])
             .arg(&repo)
@@ -1955,7 +1956,7 @@ mod tests {
     #[test]
     fn the_initial_working_copy_of_the_added_workspace_is_the_runs_own() {
         let root = tempfile::tempdir().expect("root");
-        let base = std::fs::canonicalize(root.path()).expect("canonical root");
+        let base = rune::folders::canonicalize(root.path()).expect("canonical root");
         let repo = base.join("repo");
         let run_path = base.join("run");
         test_jj(

@@ -1207,7 +1207,7 @@ fn dcg(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 fn git_ai(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     let preset = payload.harness.as_str();
     let stdin = serde_json::to_vec(&payload.raw).map_err(|e| e.to_string())?;
-    let program = dirs::home_dir()
+    let program = rune::folders::home_dir()
         .map(|h| h.join(".git-ai/bin/git-ai"))
         .filter(|p| p.is_file())
         .map_or_else(|| "git-ai".to_string(), |p| p.display().to_string());
@@ -1430,7 +1430,7 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(script) = dirs::home_dir().and_then(|home| checkpoint_script(&home)) else {
+    let Some(script) = rune::folders::home_dir().and_then(|home| checkpoint_script(&home)) else {
         return Ok(HandlerResult::default());
     };
     let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
@@ -1523,7 +1523,7 @@ fn tmux_status(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(program) = dirs::home_dir()
+    let Some(program) = rune::folders::home_dir()
         .map(|h| h.join(".local/bin/claude-tmux-status"))
         .filter(|p| p.is_file())
     else {
@@ -2094,6 +2094,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn an_immutable_working_copy_commit_keeps_its_author() {
         let home = config_home();
         let dir = jj_checkout();
@@ -2117,6 +2121,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn an_unlisted_models_commit_fails_the_authorship_check() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2207,6 +2212,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_dormant_worktree_config_keeps_the_extension_off() {
         let home = config_home();
         let a = jj_checkout();
@@ -2395,6 +2404,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_unlisted_identity_is_refused_by_the_push_gate() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2442,6 +2452,7 @@ mod tests {
     /// spelled as the helper spells it. A model under no rule gets the
     /// unlisted one, and the note names the policy file and the rule.
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_repository_policy_admits_the_models_the_gate_admits() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");

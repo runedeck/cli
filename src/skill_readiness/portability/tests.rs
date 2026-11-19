@@ -128,9 +128,12 @@ fn rendered_companions_are_scanned_but_provenance_and_binary_assets_are_not() {
     assert!(
         findings
             .iter()
-            .any(|finding| finding.path.ends_with("references/guide.MD")
-                && finding.line == Some(2)
-                && finding.token.as_deref() == Some("AskUserQuestion"))
+            // By path part: the separator differs by platform.
+            .any(
+                |finding| Path::new(&finding.path).ends_with("references/guide.MD")
+                    && finding.line == Some(2)
+                    && finding.token.as_deref() == Some("AskUserQuestion")
+            )
     );
     assert!(
         !findings
