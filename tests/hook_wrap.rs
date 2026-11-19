@@ -18,7 +18,12 @@ use serde_json::Value;
 /// The wrapper alone, on every event that shows a session in a workspace.
 const WRAPPER: &str = "hooks:\n  handlers:\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n";
 
-/// The wrapper with room to be held mid-commit.
+/// The wrapper with room to be held mid-commit, and with room for a slow
+/// machine. A wrap is a snapshot and a commit, a handful of jj processes.
+/// Under the default deadline of 1200 ms a loaded machine, or one with the
+/// temp folder on a hard disk, reads `turn-wrap failed: timed out` where a
+/// test expects the wrap. A test about what the wrapper does uses this
+/// one. A test about the deadline keeps `WRAPPER`.
 const PATIENT_WRAPPER: &str = "hooks:\n  events:\n    turn.finish: {budget_ms: 20000}\n  handlers:\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      timeout_ms: 15000\n";
 
 const CLAUDE_PROMPT: [&str; 4] = ["--harness", "claude", "--native-event", "UserPromptSubmit"];
@@ -535,7 +540,7 @@ fn a_turn_is_not_wrapped_while_the_switch_is_off() {
 #[test]
 fn a_turn_of_one_session_is_wrapped_as_one_described_change() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     let prompt = scene.prompt("s1");
@@ -577,7 +582,7 @@ fn a_turn_of_one_session_is_wrapped_as_one_described_change() {
 #[test]
 fn a_turn_on_a_described_working_copy_keeps_the_owners_change() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     scene.edit("owner.txt", "the owner's edit\n");
@@ -819,7 +824,7 @@ fn a_turn_after_a_failed_stop_handler_waits_for_the_next_stop() {
         ),
     );
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: tests\n      exec: [sh, {gate}]\n      events: [turn.finish]\n      order: 20\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      order: 10\n"
+        "hooks:\n  events:\n    turn.finish: {{budget_ms: 20000}}\n  handlers:\n    - id: tests\n      exec: [sh, {gate}]\n      events: [turn.finish]\n      order: 20\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      order: 10\n      timeout_ms: 15000\n"
     ));
     scene.write_plan();
     scene.switch_on();
@@ -914,7 +919,7 @@ fn a_first_touch_keeps_its_key_when_the_snapshot_runs_past_the_timeout() {
 #[test]
 fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     scene.prompt("s1");
@@ -1122,7 +1127,7 @@ fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
 #[test]
 fn a_malformed_slot_wraps_nothing_until_the_owner_resets() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     std::fs::write(scene.slot(), "{not json").unwrap();
@@ -1176,7 +1181,7 @@ fn a_continued_turn_is_wrapped_only_when_it_finally_stops() {
         ),
     );
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: steer\n      exec: [sh, {steer}]\n      events: [turn.finish]\n      order: 200\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, turn.finish]\n      order: 10\n"
+        "hooks:\n  events:\n    turn.finish: {{budget_ms: 20000}}\n  handlers:\n    - id: steer\n      exec: [sh, {steer}]\n      events: [turn.finish]\n      order: 200\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, turn.finish]\n      order: 10\n      timeout_ms: 15000\n"
     ));
     scene.write_plan();
     scene.switch_on();
