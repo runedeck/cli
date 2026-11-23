@@ -180,31 +180,6 @@ fn init_creates_all_files() {
     assert!(temp_directory.path().join(".githooks/pre-commit").is_file());
     assert!(temp_directory.path().join(".githooks/pre-push").is_file());
     assert!(temp_directory.path().join(".githooks/jj-push").is_file());
-    assert!(
-        temp_directory
-            .path()
-            .join(".githooks/pre-push.pre-entire")
-            .is_file()
-    );
-    assert!(temp_directory.path().join(".githooks/commit-msg").is_file());
-    assert!(
-        temp_directory
-            .path()
-            .join(".githooks/post-commit")
-            .is_file()
-    );
-    assert!(
-        temp_directory
-            .path()
-            .join(".githooks/post-rewrite")
-            .is_file()
-    );
-    assert!(
-        temp_directory
-            .path()
-            .join(".githooks/prepare-commit-msg")
-            .is_file()
-    );
     assert!(temp_directory.path().join("agents/.mdschema").is_file());
     assert!(temp_directory.path().join("rules/.mdschema").is_file());
     assert!(temp_directory.path().join("skills/.mdschema").is_file());
@@ -362,32 +337,46 @@ fn init_uses_already_exists_skip_reason() {
 }
 
 #[test]
-fn init_pre_push_is_entire_wrapper_chaining_to_gate() {
+fn init_pre_push_is_validation_check() {
     let temp_directory = TempDir::new().unwrap();
     execute(&temp_directory.path().to_string_lossy()).unwrap();
 
-    let wrapper =
+    let pre_push_check =
         std::fs::read_to_string(temp_directory.path().join(".githooks/pre-push")).unwrap();
     assert!(
-        wrapper.contains("Entire CLI hooks"),
-        "scaffolded pre-push should be the Entire wrapper"
-    );
-    assert!(
-        wrapper.contains("pre-push.pre-entire"),
-        "wrapper should chain to the pre-push validation check"
-    );
-
-    let pre_push_check =
-        std::fs::read_to_string(temp_directory.path().join(".githooks/pre-push.pre-entire"))
-            .unwrap();
-    assert!(
         pre_push_check.contains("validate.sh"),
-        "pre-push.pre-entire should run the Rune pre-push validation check"
+        "scaffolded pre-push should run the Rune pre-push validation check"
     );
     assert!(
         !pre_push_check.contains("${VALIDATE_SH_SHA}"),
         "pre-push validation check SHA placeholder must be substituted at init time"
     );
+}
+
+#[test]
+fn init_ships_no_entire_hooks() {
+    let temp_directory = TempDir::new().unwrap();
+    execute(&temp_directory.path().to_string_lossy()).unwrap();
+
+    for removed in [
+        "pre-push.pre-entire",
+        "commit-msg",
+        "post-commit",
+        "post-rewrite",
+        "prepare-commit-msg",
+    ] {
+        let path = temp_directory.path().join(".githooks").join(removed);
+        assert!(!path.exists(), "init must not scaffold .githooks/{removed}");
+    }
+
+    for hook in ["pre-commit", "pre-push", "jj-push"] {
+        let content =
+            std::fs::read_to_string(temp_directory.path().join(".githooks").join(hook)).unwrap();
+        assert!(
+            !content.contains("Entire CLI hooks"),
+            ".githooks/{hook} must not be an Entire wrapper"
+        );
+    }
 }
 
 #[test]
