@@ -392,6 +392,9 @@ fn bare_name_resolves_under_rune_quests_and_quest_flag_binds_it() {
     let destination = quests.path().join("demo");
     assert!(destination.join("Makefile").is_file());
     let state = fs::read_to_string(home.path().join(".config/rune/state.yaml")).unwrap();
+    // The state names the destination in its canonical form, and the temp
+    // folder can be written another way, as a short name on Windows.
+    let destination = rune::folders::canonicalize(&destination).unwrap();
     assert!(state.contains(&destination.to_string_lossy().to_string()));
 }
 

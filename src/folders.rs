@@ -23,14 +23,18 @@ use std::path::{Path, PathBuf};
 /// `\\?\C:\repo`. In that form `/` is not a separator, so
 /// `root.join("rules/Style.md")` names no file, and the path does not
 /// compare equal to the same folder written `C:\repo`. This answers
-/// `C:\repo`, and `\\server\share` for a network path. A path that only
-/// the verbatim form can name comes back as it is: one of 260 characters
-/// or more, or one with a part that is a device name or ends in a dot or
-/// a space.
+/// `C:\repo`, and `\\server\share` for a network path.
+///
+/// Every path on a drive or a share comes back in that one form, however
+/// long it is, so a folder and a file inside it always compare as prefix
+/// and rest. The standard library puts the prefix back for a call that
+/// needs it. A path that Windows reads as another file without the prefix
+/// is an error: one with a part that is a device name such as `NUL`, or
+/// that ends in a dot or a space. rune has no single way to write it.
 ///
 /// On every other platform this is `fs::canonicalize`.
 pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
-    std::fs::canonicalize(path).map(plain)
+    canonical_form(path.as_ref())
 }
 
 /// [`canonicalize`] as a method, for a path at the end of a chain.
@@ -60,57 +64,88 @@ pub fn join(base: &Path, relative: &str) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn plain(path: PathBuf) -> PathBuf {
-    path
+fn canonical_form(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path)
 }
 
+/// The text is the path's own UTF-16, not a `str`: a file name on Windows
+/// need not be valid Unicode, and such a path gets the same form as any
+/// other.
 #[cfg(windows)]
-fn plain(path: PathBuf) -> PathBuf {
-    match path.to_str().and_then(without_verbatim_prefix) {
-        Some(text) => PathBuf::from(text),
-        None => path,
-    }
-}
+fn canonical_form(path: &Path) -> std::io::Result<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 
-/// A verbatim path without its prefix, when the shorter text names the
-/// same file: `\\?\C:\repo` is `C:\repo`, and `\\?\UNC\server\share` is
-/// `\\server\share`.
-#[cfg(any(windows, test))]
-fn without_verbatim_prefix(text: &str) -> Option<String> {
-    let plain = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{rest}")
-    } else {
-        let rest = text.strip_prefix(r"\\?\")?;
-        let mut characters = rest.chars();
-        let drive = characters.next()?;
-        if !drive.is_ascii_alphabetic() || characters.next() != Some(':') {
-            return None;
-        }
-        rest.to_owned()
+    let verbatim = std::fs::canonicalize(path)?;
+    let text: Vec<u16> = verbatim.as_os_str().encode_wide().collect();
+    let Some(plain) = without_verbatim_prefix(&text) else {
+        return Ok(verbatim);
     };
-    (plain.len() < 260 && plain.split('\\').all(part_reads_as_written)).then_some(plain)
+    let plain = PathBuf::from(std::ffi::OsString::from_wide(&plain));
+    // The names Windows reads as devices differ between its versions, so a
+    // part that looks like one is put to Windows itself.
+    let separator = u16::from(b'\\');
+    if text.split(|unit| *unit == separator).all(part_looks_plain)
+        || std::fs::canonicalize(&plain).is_ok_and(|read| read == verbatim)
+    {
+        return Ok(plain);
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "{} has a part that Windows reads as a device, or without its last dot or space",
+            verbatim.display()
+        ),
+    ))
 }
 
-/// Whether Windows reads this part of a plain path as the name written.
-/// It drops a trailing dot or space, and it reads a device name such as
-/// `NUL`, with or without an extension, as the device.
+/// A verbatim path without its prefix, when it is on a drive or a share:
+/// `\\?\C:\repo` is `C:\repo`, and `\\?\UNC\server\share` is
+/// `\\server\share`. Any other verbatim path, such as a volume named by
+/// its id, has no shorter form, and neither has a path under it.
 #[cfg(any(windows, test))]
-fn part_reads_as_written(part: &str) -> bool {
-    if part.ends_with('.') || part.ends_with(' ') {
+fn without_verbatim_prefix(text: &[u16]) -> Option<Vec<u16>> {
+    let utf16 = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+    if let Some(rest) = text.strip_prefix(utf16(r"\\?\UNC\").as_slice()) {
+        let mut share = utf16(r"\\");
+        share.extend_from_slice(rest);
+        return Some(share);
+    }
+    let rest = text.strip_prefix(utf16(r"\\?\").as_slice())?;
+    let drive = char::from_u32(u32::from(*rest.first()?))?;
+    (drive.is_ascii_alphabetic() && rest.get(1) == Some(&u16::from(b':'))).then(|| rest.to_vec())
+}
+
+/// Whether this part of a path is sure to read the same without the
+/// verbatim prefix. Windows drops a trailing dot or space, and it can read
+/// a device name such as `NUL`, with or without an extension, as the
+/// device.
+#[cfg(any(windows, test))]
+fn part_looks_plain(part: &[u16]) -> bool {
+    let (dot, space) = (u16::from(b'.'), u16::from(b' '));
+    if part
+        .last()
+        .is_some_and(|last| *last == dot || *last == space)
+    {
         return false;
     }
-    let stem = part
-        .split('.')
-        .next()
-        .unwrap_or(part)
-        .trim_end()
+    let stem = part.split(|unit| *unit == dot).next().unwrap_or(part);
+    let stem = String::from_utf16_lossy(stem)
+        .trim_end_matches(' ')
         .to_ascii_uppercase();
     let numbered = |device: &str| {
         stem.strip_prefix(device).is_some_and(|number| {
-            matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            let mut digits = number.chars();
+            matches!(
+                (digits.next(), digits.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
         })
     };
-    !(matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered("COM") || numbered("LPT"))
+    !(matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT"))
 }
 
 /// The user's home folder.
@@ -164,40 +199,102 @@ fn absolute_home(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Canonical as _, absolute_home, canonicalize, without_verbatim_prefix};
+    use super::{
+        Canonical as _, absolute_home, canonicalize, part_looks_plain, without_verbatim_prefix,
+    };
     use std::ffi::OsString;
+
+    fn utf16(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    fn plain(verbatim: &str) -> Option<String> {
+        without_verbatim_prefix(&utf16(verbatim)).map(|plain| String::from_utf16(&plain).unwrap())
+    }
 
     #[test]
     fn a_verbatim_drive_or_network_path_loses_its_prefix() {
         assert_eq!(
-            without_verbatim_prefix(r"\\?\C:\repo\rules").as_deref(),
+            plain(r"\\?\C:\repo\rules").as_deref(),
             Some(r"C:\repo\rules")
         );
         assert_eq!(
-            without_verbatim_prefix(r"\\?\UNC\server\share\repo").as_deref(),
+            plain(r"\\?\UNC\server\share\repo").as_deref(),
             Some(r"\\server\share\repo")
         );
     }
 
     #[test]
-    fn a_path_only_the_verbatim_form_names_keeps_its_prefix() {
-        let long = format!(r"\\?\C:\{}", "a".repeat(260));
+    fn a_long_path_loses_its_prefix_as_a_short_one_does() {
+        let long = format!(r"C:\repo\{}", "a".repeat(300));
+        assert_eq!(plain(&format!(r"\\?\{long}")), Some(long));
+    }
+
+    #[test]
+    fn a_path_that_is_not_on_a_drive_or_a_share_keeps_its_prefix() {
         for path in [
             r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\repo",
-            r"\\?\C:\repo\NUL",
-            r"\\?\C:\repo\com1.txt",
-            r"\\?\C:\repo\name.",
-            r"\\?\C:\repo\name \file",
-            long.as_str(),
+            r"\\?\repo",
+            r"\\?\",
+            r"C:\repo",
+            "/home/user",
         ] {
-            assert_eq!(without_verbatim_prefix(path), None, "{path}");
+            assert_eq!(plain(path), None, "{path}");
         }
     }
 
     #[test]
-    fn a_path_without_the_prefix_is_not_a_verbatim_path() {
-        assert_eq!(without_verbatim_prefix(r"C:\repo"), None);
-        assert_eq!(without_verbatim_prefix("/home/user"), None);
+    fn a_device_name_or_a_trailing_dot_or_space_does_not_look_plain() {
+        for part in [
+            "NUL",
+            "nul.txt",
+            "com1.txt",
+            "COM0",
+            "lpt\u{b9}",
+            "aux ",
+            "name.",
+            "name ",
+            "CONOUT$",
+        ] {
+            assert!(!part_looks_plain(&utf16(part)), "{part}");
+        }
+        for part in [
+            "",
+            "C:",
+            "repo",
+            "null",
+            "console.md",
+            "com10",
+            "COM",
+            ".git",
+            "a.b",
+        ] {
+            assert!(part_looks_plain(&utf16(part)), "{part}");
+        }
+    }
+
+    #[test]
+    fn a_folder_and_a_long_path_inside_it_share_one_form() {
+        let folder = tempfile::tempdir().unwrap();
+        let base = canonicalize(folder.path()).unwrap();
+        let mut deep = base.clone();
+        deep.extend(std::iter::repeat_n("a".repeat(50), 6));
+        std::fs::create_dir_all(&deep).unwrap();
+        assert!(deep.as_os_str().len() > 300);
+        assert!(canonicalize(&deep).unwrap().starts_with(&base));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_path_only_the_verbatim_form_names_is_an_error() {
+        let folder = tempfile::tempdir().unwrap();
+        // Only the verbatim form can make a name that ends in a dot.
+        let file = std::fs::canonicalize(folder.path()).unwrap().join("name.");
+        std::fs::write(&file, "").unwrap();
+        let error = canonicalize(&file).unwrap_err();
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("name."), "{error}");
     }
 
     #[test]

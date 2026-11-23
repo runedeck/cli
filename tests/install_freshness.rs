@@ -122,8 +122,12 @@ fn stale_git_source_refuses_install_without_allow_stale() {
         .lines()
         .find(|line| line.starts_with("fix: "))
         .expect("the error must include one fix line");
-    assert!(fix_line.contains(&module.path().display().to_string()));
-    assert!(fix_line.contains(&target.path().display().to_string()));
+    // The fix line names both folders in their canonical form, and the temp
+    // folder can be written another way, as a short name on Windows.
+    let module_folder = rune::folders::canonicalize(module.path()).unwrap();
+    let target_folder = rune::folders::canonicalize(target.path()).unwrap();
+    assert!(fix_line.contains(&module_folder.display().to_string()));
+    assert!(fix_line.contains(&target_folder.display().to_string()));
     assert!(fix_line.ends_with("--allow-stale"));
     assert!(!fix_line.contains('<'));
     assert!(!fix_line.contains('>'));

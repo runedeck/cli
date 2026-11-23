@@ -123,7 +123,11 @@ fn execute_unknown_provider_lists_available_choices() {
     let fix_command = error
         .fix_command()
         .expect("unknown provider must include a provider-list command");
-    assert!(fix_command.contains(&module_directory.path().display().to_string()));
+    // The command names the folder in its canonical form. The temp folder
+    // can be written another way: Windows gives a GitHub runner a short
+    // name for it, `C:\Users\RUNNER~1\AppData\Local\Temp`.
+    let module_folder = rune::folders::canonicalize(module_directory.path()).unwrap();
+    assert!(fix_command.contains(&module_folder.display().to_string()));
     assert!(fix_command.ends_with("rune provider"));
     assert!(!fix_command.contains('<'));
     assert!(!fix_command.contains('>'));
@@ -273,8 +277,12 @@ fn install_command_preserves_options_and_resolves_paths() {
         false,
     );
 
-    assert!(command.contains(&source.path().to_string_lossy().to_string()));
-    assert!(command.contains(&target.path().to_string_lossy().to_string()));
+    // The command names both folders in their canonical form, and the temp
+    // folder can be written another way, as a short name on Windows.
+    let source_folder = rune::folders::canonicalize(source.path()).unwrap();
+    let target_folder = rune::folders::canonicalize(target.path()).unwrap();
+    assert!(command.contains(&source_folder.to_string_lossy().to_string()));
+    assert!(command.contains(&target_folder.to_string_lossy().to_string()));
     assert!(command.contains("--provider codex"));
     assert!(command.contains("--force"));
     assert!(command.contains("--no-prune"));

@@ -14,6 +14,6 @@ pub(crate) fn dir() -> Result<PathBuf, Error> {
         return Ok(PathBuf::from(dir).join("rune"));
     }
     rune::folders::home_dir()
-        .map(|home| home.join(".local/state/rune"))
+        .map(|home| rune::folders::join(&home, ".local/state/rune"))
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
 }

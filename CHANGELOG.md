@@ -15,10 +15,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
-## [0.7.1] - 2026-11-17
+## [0.7.1] - 2026-11-19
 
 ### Fixed
 
+- Make `rune install`, `deploy`, `drift`, `prune`, `doctor`, `validate`, and `spec` work on Windows. Hooks, `rune exec` of a shell script, and `rune sign queue` still need a Unix shell.
+- Write manifest keys with `/` on Windows. `rune install` refused every skill there, and `rune doctor` reported every deployed file as an orphan.
+- Follow `HOME` on Windows, as git does there. `rune.exe` read only the profile folder of the account, so nothing could point it at another home.
+- Print a path on Windows without the `\\?\` prefix and with one kind of separator, and name `rune`, not `rune.exe`, in the usage line.
+- Treat a file more than 260 characters deep as inside its folder on Windows. rune wrote the two paths in different forms, and a check that a path stays inside a folder gave the wrong answer.
+- Refuse a path on Windows that only the `\\?\` form can name: one with a part that is a device name such as `NUL`, or that ends in a dot or a space.
+- Match a session exclusion against the working folder on Windows. An excluded session was captured.
+- Keep a project-scope target under the home folder on Windows. Its key held `\` and the drive colon.
+- Draw the seal nonce of `rune sign` from the system on Windows, which has no `/dev/urandom`.
+- Give `rune.exe` the stack size of the Linux and macOS builds. A debug build overflowed its stack.
+- Show an artifact outside the module root with its whole path in `rune adopt`. It printed `C:/\/module` on Windows and `//tmp/module` elsewhere.
 - Build for Windows again. The 0.7.0 release build for `x86_64-pc-windows-msvc` did not compile.
 - Read a file's identity on Windows from an open handle, as the volume serial number and the file index, so the spec transaction can tell a replaced file from the one it hashed.
 - Skip the directory flush on Windows, where a directory does not open as a file. Spec transactions no longer fail there when they sync a directory.

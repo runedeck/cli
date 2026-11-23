@@ -1923,11 +1923,12 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     crate::cli::config::write_atomic(path, content).map_err(|error| error.to_string())
 }
 
+/// `path` under `root`, written with `/`. A path that is not under `root`
+/// is shown whole, as the platform writes it: its parts joined with `/`
+/// gave `//tmp/module` on Unix and `C:/\/module` on Windows.
 fn display_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join("/")
+    match path.strip_prefix(root) {
+        Ok(relative) => manifest::slash_lossy(relative),
+        Err(_) => path.display().to_string(),
+    }
 }

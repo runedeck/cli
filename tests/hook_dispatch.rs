@@ -2161,7 +2161,10 @@ fn a_firing_records_the_context_cursor_s_stop_has_no_field_for() {
     );
     let quiet = scene.handler("quiet", "cat > /dev/null; printf '{}'");
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: jev\n      exec: [sh, {jev}]\n      events: [tool.after, turn.finish]\n    - id: quiet\n      exec: [sh, {quiet}]\n      events: [turn.finish]\n"
+        // 20 seconds for each handler and 30 for each event. The test is
+        // about the record, not the deadline, and a machine that starts
+        // `sh` slowly reads the default 500 ms as a timeout.
+        "hooks:\n  events:\n    tool.after: {{budget_ms: 30000}}\n    turn.finish: {{budget_ms: 30000}}\n  handlers:\n    - id: jev\n      exec: [sh, {jev}]\n      events: [tool.after, turn.finish]\n      timeout_ms: 20000\n    - id: quiet\n      exec: [sh, {quiet}]\n      events: [turn.finish]\n      timeout_ms: 20000\n"
     ));
     scene.write_plan();
     let records = |scene: &Scene| -> Vec<Value> {
@@ -2273,7 +2276,10 @@ fn a_firing_records_what_a_passive_event_s_merge_discarded() {
     );
     let quiet = scene.handler("quiet", "cat > /dev/null; printf '{}'");
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: guard\n      exec: [sh, {guard}]\n      events: [session.end]\n    - id: rewrite\n      exec: [sh, {rewrite}]\n      events: [session.end]\n      rewrites: true\n    - id: quiet\n      exec: [sh, {quiet}]\n      events: [session.end]\n"
+        // 20 seconds for each handler and 30 for the event. The test is
+        // about the record, not the deadline, and a machine that starts
+        // `sh` slowly reads the default 500 ms as a timeout.
+        "hooks:\n  events:\n    session.end: {{budget_ms: 30000}}\n  handlers:\n    - id: guard\n      exec: [sh, {guard}]\n      events: [session.end]\n      timeout_ms: 20000\n    - id: rewrite\n      exec: [sh, {rewrite}]\n      events: [session.end]\n      rewrites: true\n      timeout_ms: 20000\n    - id: quiet\n      exec: [sh, {quiet}]\n      events: [session.end]\n      timeout_ms: 20000\n"
     ));
     scene.write_plan();
     let end = serde_json::json!({
