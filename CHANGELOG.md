@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Make `rune install`, `deploy`, `drift`, `prune`, `doctor`, `validate`, and `spec` work on Windows. Hooks, `rune exec` of a shell script, and `rune sign queue` still need a Unix shell.
 - Write manifest keys with `/` on Windows. `rune install` refused every skill there, and `rune doctor` reported every deployed file as an orphan.
+- Read a manifest key and its provenance path that hold `\` on Windows as their `/` form, so a manifest a Windows build wrote that way still names the files it deployed.
+- Record the module as the provenance source of a single-module source in `.rune`. The source was empty, and every install from one warned that the source snapshot remains unverified.
 - Follow `HOME` on Windows, as git does there. `rune.exe` read only the profile folder of the account, so nothing could point it at another home.
 - Print a path on Windows without the `\\?\` prefix and with one kind of separator, and name `rune`, not `rune.exe`, in the usage line.
 - Treat a file more than 260 characters deep as inside its folder on Windows. rune wrote the two paths in different forms, and a check that a path stays inside a folder gave the wrong answer.
