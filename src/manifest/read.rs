@@ -1,5 +1,6 @@
 use super::ManifestEntry;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Deserialize a nested YAML manifest tree into a flat `HashMap`.
 ///
@@ -36,9 +37,13 @@ fn flatten_tree(
         let Some(key_string) = key.as_str() else {
             continue;
         };
+        // A manifest written on Windows with `\` between the parts of a key
+        // names the same file as the `/` form. Elsewhere `\` is a character
+        // of a name and stays.
+        let key_string = super::slash_lossy(Path::new(key_string));
 
         let full_path = if prefix.is_empty() {
-            key_string.to_string()
+            key_string
         } else {
             format!("{prefix}/{key_string}")
         };
@@ -49,7 +54,9 @@ fn flatten_tree(
 
         if child_map.contains_key("fingerprint") {
             let fingerprint = super::extract::string_field(value, "fingerprint", &full_path)?;
-            let provenance = super::extract::string_field(value, "provenance", &full_path).ok();
+            let provenance = super::extract::string_field(value, "provenance", &full_path)
+                .ok()
+                .map(|path| super::slash_lossy(Path::new(&path)));
 
             entries.insert(
                 full_path,

@@ -158,6 +158,36 @@ fn read_parses_all_entries() {
     assert!(entries.contains_key("rules/CodeStyle.md"));
 }
 
+const MANIFEST_WITH_BACKSLASHES: &str = "skills:\n    Explain\\SKILL.md:\n        fingerprint: abc\n        provenance: skills/Explain\\.provenance\\SKILL.md.yaml\n";
+
+#[cfg(windows)]
+#[test]
+fn read_takes_a_backslash_in_a_key_as_a_separator_on_windows() {
+    let entries = read(MANIFEST_WITH_BACKSLASHES).unwrap();
+
+    let entry = entries
+        .get("skills/Explain/SKILL.md")
+        .expect("the key reads with slashes");
+    assert_eq!(
+        entry.provenance.as_deref(),
+        Some("skills/Explain/.provenance/SKILL.md.yaml")
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn read_keeps_a_backslash_in_a_key_where_it_is_a_name_character() {
+    let entries = read(MANIFEST_WITH_BACKSLASHES).unwrap();
+
+    let entry = entries
+        .get("skills/Explain\\SKILL.md")
+        .expect("the key keeps its backslash");
+    assert_eq!(
+        entry.provenance.as_deref(),
+        Some("skills/Explain\\.provenance\\SKILL.md.yaml")
+    );
+}
+
 #[test]
 fn read_ignores_entries_without_fingerprint() {
     let entries = read(MANIFEST_INVALID).unwrap();
