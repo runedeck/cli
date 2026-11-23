@@ -652,6 +652,40 @@ fn single_module_source_still_resolves_bare_name() {
 }
 
 #[test]
+fn single_module_source_names_the_module_as_provenance_source() {
+    let producer = tempfile::tempdir().unwrap();
+    let consumer = tempfile::tempdir().unwrap();
+    scaffold_producer(producer.path(), "producer");
+    write_skill(producer.path(), "Sourced");
+    write_dotrune(
+        consumer.path(),
+        &format!(
+            "version: 1\nsources:\n  producer:\n    local: {}\nrunes:\n  producer:\n    skills: [Sourced]\n",
+            producer.path().display()
+        ),
+    );
+
+    let output = install(consumer.path()).success().get_output().clone();
+
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!printed.contains("remains unverified"), "{printed}");
+    let statement = fs::read_to_string(
+        consumer
+            .path()
+            .join(".claude/skills/Sourced/.provenance/SKILL.md.yaml"),
+    )
+    .unwrap();
+    assert!(
+        statement.contains("https://github.com/example/producer"),
+        "{statement}"
+    );
+}
+
+#[test]
 fn dotrune_manifest_inside_a_rune_directory_installs_too() {
     let producer = tempfile::tempdir().unwrap();
     let consumer = tempfile::tempdir().unwrap();

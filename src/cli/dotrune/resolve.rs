@@ -49,12 +49,17 @@ pub fn resolve_sources(
                         ),
                     ));
                 }
-                filter_to_requested(
-                    sources::collect(module_root, valid_qualifiers)?,
-                    rune_list,
-                    source_label,
-                    module_root,
-                )?
+                // The module names its own source, as a deck entry does
+                // below. Without it provenance falls back to the consumer's
+                // root, which has no module.yaml, and records an empty source.
+                let source_uri = crate::cli::config::load_source_uri(module_root);
+                let mut files = sources::collect(module_root, valid_qualifiers)?;
+                if !source_uri.is_empty() {
+                    for file in &mut files {
+                        file.source_uri = Some(source_uri.clone());
+                    }
+                }
+                filter_to_requested(files, rune_list, source_label, module_root)?
             }
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();
