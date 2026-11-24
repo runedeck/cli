@@ -150,6 +150,22 @@ def main(arguments):
     if old == head:
         print(f"{bookmark} already matches {options.remote}.", flush=True)
         return
+    # jj git push moves a bookmark sideways when the lease holds (its
+    # --force-with-lease semantics), so two heads built on the same base can
+    # replace each other on the remote and the first landing is lost. A push
+    # here must be a fast-forward: the last fetched target is an ancestor of
+    # the head, or the head is rebased first.
+    if old:
+        ancestry = subprocess.run(
+            ["git", f"--git-dir={git_directory}", "merge-base", "--is-ancestor", old, head],
+            check=False,
+        )
+        if ancestry.returncode != 0:
+            raise ValueError(
+                f"{bookmark}@{options.remote} ({old[:12]}) is not an ancestor of "
+                f"{head[:12]}. Rebase onto it before pushing; a sideways move "
+                "would drop what landed there."
+            )
 
     remote_url = run(
         "git", f"--git-dir={git_directory}", "remote", "get-url", options.remote

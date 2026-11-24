@@ -42,11 +42,7 @@ pub fn flat_directory(
 
     for path in files {
         let content = read_file(&path)?;
-        let relative = path
-            .strip_prefix(module_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative = rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(&path));
 
         let checkpoint = report.checkpoint();
         collect_diagnostics(&content, &relative, schema_content.as_ref(), None, report);
@@ -84,11 +80,7 @@ pub fn flat_directory_with_json_schema(
         }
 
         let content = read_file(&path)?;
-        let relative = path
-            .strip_prefix(module_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        let relative = rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(&path));
 
         let checkpoint = report.checkpoint();
         collect_diagnostics(
@@ -192,11 +184,8 @@ pub fn skill_directory(
     // alignment contract as the entrypoint's.
     for companion in markdown_files(dir)? {
         let content = read_file(&companion)?;
-        let display_path = companion
-            .strip_prefix(module_root)
-            .unwrap_or(&companion)
-            .to_string_lossy()
-            .to_string();
+        let display_path =
+            rune::manifest::slash_lossy(companion.strip_prefix(module_root).unwrap_or(&companion));
         let checkpoint = report.checkpoint();
         check_no_tables(&content, &display_path, report);
         report.record_since(display_path, checkpoint);
@@ -206,10 +195,7 @@ pub fn skill_directory(
 }
 
 fn relative_display_path(path: &Path, module_root: &Path) -> String {
-    path.strip_prefix(module_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    rune::manifest::slash_lossy(path.strip_prefix(module_root).unwrap_or(path))
 }
 
 fn skill_variant_files(

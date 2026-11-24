@@ -151,7 +151,7 @@ pub fn execute(
 /// that contains `module.yaml`, marking a Rune source repository. The start
 /// is canonicalized first so a relative target still walks to an absolute root.
 fn find_module_root(start: &Path) -> Option<std::path::PathBuf> {
-    let absolute = fs::canonicalize(start).ok()?;
+    let absolute = rune::folders::canonicalize(start).ok()?;
     let mut current = if absolute.is_file() {
         absolute.parent()?.to_path_buf()
     } else {

@@ -80,10 +80,18 @@ pub fn execute(
     // report joins this result, so `--json` prints one document. A hook
     // install that fails is an error of the install: the guards the
     // config asks for are not in place.
+    // Every registered harness is attempted; one whose folder does not
+    // exist is skipped and reported, its table neither read nor created.
     if fire_events && !dry_run {
-        match crate::cli::hook::install_report(false, false) {
-            Ok(Some(report)) => result.hooks = Some(report.summary()),
-            Ok(None) => {}
+        match crate::cli::hook::install_report(
+            false,
+            false,
+            &rune::hooks::Harness::REGISTERED,
+            false,
+        ) {
+            // Nothing to do and nothing skipped: no hook report at all.
+            Ok(report) if report.nothing && report.skipped.is_empty() => {}
+            Ok(report) => result.hooks = Some(report.summary()),
             // A proof scene with the runner's HOME installs its deck and no
             // hook, and the result says so. The check comes before the
             // config is read, so every machine prints the same line.

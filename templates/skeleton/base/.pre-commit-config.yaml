@@ -148,6 +148,17 @@ repos:
             pass_filenames: false
             files: ^(docs/|CHANGELOG\.md$)
 
+          # The secret declarations parse and every secret has a description.
+          # The check reads no secret value. secretspec comes from Homebrew,
+          # not from tool-versions, so this hook skips when the binary is
+          # absent, even under REQUIRE_GATES, like the rune hooks above.
+          - id: secretspec-manifest
+            name: secretspec manifest
+            entry: sh -c 'if command -v secretspec >/dev/null 2>&1; then secretspec schema --file secretspec.toml >/dev/null; fi'
+            language: system
+            pass_filenames: false
+            files: ^secretspec\.toml$
+
           - id: cargo-test
             name: cargo test
             entry: cargo test --all-features

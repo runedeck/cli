@@ -26,7 +26,7 @@ mod workspace;
 /// 126 is a harness binary found but not runnable, 127 one not found, and
 /// 128 plus the signal number a signal that ended the harness or the
 /// runner.
-const EXIT_TIMEOUT: i32 = 124;
+pub(crate) const EXIT_TIMEOUT: i32 = 124;
 pub(crate) const EXIT_RUNNER_ERROR: i32 = 125;
 const EXIT_CANNOT_RUN: i32 = 126;
 const EXIT_NOT_FOUND: i32 = 127;
@@ -243,6 +243,12 @@ fn with_exit_code(mut json: Value, exit_code: i32) -> Value {
 
 #[allow(clippy::too_many_lines)]
 fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> {
+    // A judging model has no harness to run: `rune ask` asks it. The
+    // refusal comes before any prompt is read.
+    let (tool_name, _) = launch::split_invocation(&options.tool);
+    if let Some(message) = crate::cli::ask::not_a_harness(tool_name) {
+        return Err(message.into());
+    }
     if options.plan == RunPlan::Check {
         return execute_check(options);
     }
@@ -425,8 +431,7 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
         });
     let workspace_lines = finished
         .as_ref()
-        .map(|(workspace, outcome)| workspace_lines(workspace, outcome))
-        .unwrap_or_default();
+        .map_or_default(|(workspace, outcome)| workspace_lines(workspace, outcome));
     let mut outcome = match result {
         Err(message) => {
             configuration_with_workspace(options, message, workspace_json, &workspace_lines)
@@ -531,6 +536,18 @@ fn execute_inner(options: &RunOptions) -> Result<Outcome, launch::ResolveError> 
             object.insert("stopped_by_signal".to_string(), json!(signal));
         }
         eprintln!("stopped by signal {signal} after the run; the workspace was finished first");
+    }
+    // The session the harness wrote goes to the data folder: the files of
+    // its store that changed since the start. A clean run is not captured:
+    // its session goes with the temporary home. A failed capture is one
+    // warning and a debt record, never the exit status.
+    if !options.clean {
+        crate::cli::session::capture_after_run(
+            crate::cli::session::harness_of(invocation.surface),
+            &invocation.repository,
+            started_at,
+            outcome.exit_code,
+        );
     }
     Ok(outcome)
 }
@@ -1005,7 +1022,7 @@ fn read_optional_text_file(path: Option<&Path>, label: &str) -> Result<String, S
 }
 
 fn resolve_repository(path: &Path) -> Result<PathBuf, String> {
-    let repository = std::fs::canonicalize(path)
+    let repository = rune::folders::canonicalize(path)
         .map_err(|error| format!("cannot resolve repository {}: {error}", path.display()))?;
     if !repository.is_dir() {
         return Err(format!(

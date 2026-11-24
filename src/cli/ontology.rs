@@ -19,7 +19,7 @@ pub fn show(json: bool, no_color: bool) -> Result<i32, Error> {
     let sheet = crate::cli::style::Sheet::detect(no_color);
     println!("{}", sheet.heading("Config"));
     println!(
-        "   {:<12} {:<8} value",
+        "   {:<15} {:<8} value",
         sheet.dim("key"),
         sheet.dim("source")
     );
@@ -31,7 +31,7 @@ pub fn show(json: bool, no_color: bool) -> Result<i32, Error> {
             _ => sheet.dim(&format!("{source:<8}")),
         };
         let value = field.value.unwrap_or_default();
-        println!("   {:<12} {badge} {value}", field.key);
+        println!("   {:<15} {badge} {value}", field.key);
     }
     Ok(0)
 }
@@ -64,7 +64,7 @@ pub fn set(key: &str, value: &str, json: bool) -> Result<i32, Error> {
     Ok(0)
 }
 
-const SCALAR_KEYS: [&str; 3] = ["deck", "env", "secrets"];
+const SCALAR_KEYS: [&str; 4] = ["deck", "env", "secrets", "secrets_profile"];
 
 fn unsupported_key(key: &str) -> String {
     format!(
@@ -437,10 +437,12 @@ mod tests {
 
     #[test]
     fn config_read_error_has_no_repair_command() {
+        // A folder where the file belongs cannot be read as text on any
+        // platform. A path under a regular file would not do: Windows
+        // reports it as not found, which is an absent config and no error.
         let directory = tempfile::tempdir().expect("tempdir");
-        let parent_file = directory.path().join("not-a-directory");
-        std::fs::write(&parent_file, "fixture").expect("parent fixture");
-        let path = parent_file.join("config.yaml");
+        let path = directory.path().join("config.yaml");
+        std::fs::create_dir(&path).expect("a folder at the config path");
 
         let error = read_config_document(&path).expect_err("read must fail");
 

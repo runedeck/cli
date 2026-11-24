@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+[0.7.1]: https://github.com/runedeck/rune/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/runedeck/rune/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/runedeck/rune/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/runedeck/rune/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/runedeck/rune/compare/v0.3.2...v0.4.0
@@ -13,15 +15,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
-## [Unreleased]
+## [0.7.1] - 2026-11-19
+
+### Fixed
+
+- Make `rune install`, `deploy`, `drift`, `prune`, `doctor`, `validate`, and `spec` work on Windows. Hooks, `rune exec` of a shell script, and `rune sign queue` still need a Unix shell.
+- Write manifest keys with `/` on Windows. `rune install` refused every skill there, and `rune doctor` reported every deployed file as an orphan.
+- Read a manifest key and its provenance path that hold `\` on Windows as their `/` form, so a manifest a Windows build wrote that way still names the files it deployed.
+- Record the module as the provenance source of a single-module source in `.rune`. The source was empty, and every install from one warned that the source snapshot remains unverified.
+- Follow `HOME` on Windows, as git does there. `rune.exe` read only the profile folder of the account, so nothing could point it at another home.
+- Print a path on Windows without the `\\?\` prefix and with one kind of separator, and name `rune`, not `rune.exe`, in the usage line.
+- Treat a file more than 260 characters deep as inside its folder on Windows. rune wrote the two paths in different forms, and a check that a path stays inside a folder gave the wrong answer.
+- Refuse a path on Windows that only the `\\?\` form can name: one with a part that is a device name such as `NUL`, or that ends in a dot or a space.
+- Match a session exclusion against the working folder on Windows. An excluded session was captured.
+- Keep a project-scope target under the home folder on Windows. Its key held `\` and the drive colon.
+- Draw the seal nonce of `rune sign` from the system on Windows, which has no `/dev/urandom`.
+- Give `rune.exe` the stack size of the Linux and macOS builds. A debug build overflowed its stack.
+- Show an artifact outside the module root with its whole path in `rune adopt`. It printed `C:/\/module` on Windows and `//tmp/module` elsewhere.
+- Build for Windows again. The 0.7.0 release build for `x86_64-pc-windows-msvc` did not compile.
+- Read a file's identity on Windows from an open handle, as the volume serial number and the file index, so the spec transaction can tell a replaced file from the one it hashed.
+- Skip the directory flush on Windows, where a directory does not open as a file. Spec transactions no longer fail there when they sync a directory.
+- Compile `gix`, `jsonschema`, and the dashboard and terminal UI dependencies on every platform. They sat in the Unix-only dependency table with `nix`.
+
+## [0.7.0] - 2026-11-16
 
 ### Added
 
+- Add `rune ask <QUESTIONS> [TEXT]`, which asks a judging model a question set about one text and prints the typed answers. The `ask:` section names its routes.
+- Refuse `rune run jev` and `rune launch jev` with a pointer to `rune ask`, because a judging model is a different kind of tool from a harness.
 - Read an unset `from_env` key through secretspec from the manifest `secrets` or `RUNE_SECRETS` names, or from `~/.config/rune/secretspec.toml` when no env file is named.
+- Pass `--profile <name>` to secretspec when the config key `secrets_profile` or `RUNE_SECRETS_PROFILE` names a profile. Without a name, secretspec uses its own default profile.
+- Register Cursor as a hook harness beside Claude and Codex: `rune hook install` writes rune's entries into `~/.cursor/hooks.json` after every entry that is not rune's.
+- Name one harness or a list with `--harness` in `rune hook install` and `rune hook remove`, and turn one handler off or on per harness with `rune hook off` and `rune hook on`.
+- Add `policy: <name>` to a hook handler. The dispatcher asks the agent policy before it starts the handler, skips a refused one without a failure, and records `skipped by policy: <name> (<layer>)`.
+- Add `rune policy check [--path <DIR>] [--session <ID>] <NAME>...`, which prints `allowed` or `refused` with the deciding layer for each name and exits 1 when any name is refused.
+- Read a repository's `.rune/policy.yaml`, which may only revoke, narrow, or disable names, and a session switch file under the state directory, which turns names off for one session.
+- Show each handler's policy name in its own column of `rune hook list` when any handler names one.
+- Add `rune session capture`, `rune session sweep`, and `rune session debt`: the session files of Claude Code, Codex, Grok, and Antigravity copied into the data folder, kind first and harness second.
+- Keep a replaced session copy as a version only when the new file does not start with the old copy's bytes, and take one `sqlite3` backup per database per day instead of a copy per sweep.
+- Record capture debt only for a session file that exists and failed to copy, close it on a later success or a complete copy into `capture-debt/closed/`, and report the open count in `rune doctor`.
+- Skip a session whose working folder matches `capture.exclude.paths` or whose id is in `capture.exclude.sessions`, without debt.
+- Start `rune session capture` detached from the `session-capture` hook handler, and capture after `rune run` and `rune launch` exit without changing their exit status. A clean run is not captured.
+- Add `rune interface list` and `rune interface status t3code`, which read T3 Code's settings file and print its provider instances beside the models the launch profiles would own.
+- Add `rune interface enable t3code --dry-run`: the profiles, the provider instance of each, the keys rune would own, and what T3 Code cannot represent. This release writes nothing.
 
 ### Changed
 
 - Skip the env file when a secrets manifest applies. A failed read names the key and the manifest, and never repeats secretspec's report, which can quote a value.
+- Embed the skeleton at commit `d7c9bdf`, so `rune init` records that commit in `answers.yaml`. Skeleton commits after it are not in this release. A sync brings them.
+- Spell the id segment `gpt` as `GPT` in the identity the hook writes for a model the roster does not list, as the skeleton's `author-identity.py` does. A listed identity keeps its spelling.
+
+### Removed
+
+- Stop capturing `OpenCode` and Gemini sessions, and stop calling SpecStory for Codex.
+
+### Fixed
+
+- Step aside when Cursor runs a Claude hook entry: answer `{}` with exit 0, run no handler, and log `borrowed by cursor`. Every Cursor tool call was denied under `--on-failure deny`.
+- Abandon the run workspace's initial working copy under jj 0.47, which names the caller's workspace on its creation. The run kept it and reported `outside_changes`.
+- Resolve the `KEYS` fingerprint pins through `scripts/trusted-keys` in `scripts/verify-release-tag`. The verify job of the release workflow ended with no message.
+- Record a queued Codex message as `read` when the `postbox` hook sees its session's turn start with it, and list a message posted by name under the thread id Codex printed.
+- Warn before `rune queue post` looks a Codex session up by name, and add a `hint` with the UUID when Codex refuses the name and names the session it matched.
+- Keep the signing queue's own copy of each receipt under `sign-queue/receipts/`, so a request signs after its receipt file is gone. A receipt that changed is still refused.
+- Take the release notes from the changelog section of the tag when no pull request merged since the last release. The notes said `No user-facing changes` for a release pushed straight to `main`.
+- Keep a compressed Codex session of an excluded folder, and the daily backup of an excluded Antigravity database, out of the data folder. The sweep copied both.
+- Reject a profile whose base URL has a query string or a fragment in `rune interface`. The dry run and its JSON printed the URL whole, with a key in it.
+- Compare the environment of an existing instance with the profile in `rune interface`. An instance on another route read as `installed`. It now reads as `conflict` or `route unknown`.
+- Reject profiles that would get the same instance id with different environments in `rune interface`, such as `a.b` and `a-b`. The dry run planned one settings key for both.
 
 ## [0.6.0] - 2026-10-26
 

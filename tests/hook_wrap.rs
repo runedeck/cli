@@ -5,6 +5,7 @@
 
 mod support;
 
+use rune::folders::Canonical as _;
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -17,7 +18,12 @@ use serde_json::Value;
 /// The wrapper alone, on every event that shows a session in a workspace.
 const WRAPPER: &str = "hooks:\n  handlers:\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n";
 
-/// The wrapper with room to be held mid-commit.
+/// The wrapper with room to be held mid-commit, and with room for a slow
+/// machine. A wrap is a snapshot and a commit, a handful of jj processes.
+/// Under the default deadline of 1200 ms a loaded machine, or one with the
+/// temp folder on a hard disk, reads `turn-wrap failed: timed out` where a
+/// test expects the wrap. A test about what the wrapper does uses this
+/// one. A test about the deadline keeps `WRAPPER`.
 const PATIENT_WRAPPER: &str = "hooks:\n  events:\n    turn.finish: {budget_ms: 20000}\n  handlers:\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      timeout_ms: 15000\n";
 
 const CLAUDE_PROMPT: [&str; 4] = ["--harness", "claude", "--native-event", "UserPromptSubmit"];
@@ -419,7 +425,7 @@ fn the_switch_round_trips_and_reads_from_a_subdirectory() {
     assert_eq!(out["turn_wrap"], "on");
     assert_eq!(
         out["root"].as_str().map(PathBuf::from),
-        Some(scene.repo().canonicalize().unwrap())
+        Some(scene.repo().canonical().unwrap())
     );
     scene
         .rune()
@@ -534,7 +540,7 @@ fn a_turn_is_not_wrapped_while_the_switch_is_off() {
 #[test]
 fn a_turn_of_one_session_is_wrapped_as_one_described_change() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     let prompt = scene.prompt("s1");
@@ -576,7 +582,7 @@ fn a_turn_of_one_session_is_wrapped_as_one_described_change() {
 #[test]
 fn a_turn_on_a_described_working_copy_keeps_the_owners_change() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     scene.edit("owner.txt", "the owner's edit\n");
@@ -642,6 +648,10 @@ fn a_session_that_wrote_a_file_from_another_directory_touched_the_workspace() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_session_whose_shell_command_named_the_workspace_touched_it() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -814,7 +824,7 @@ fn a_turn_after_a_failed_stop_handler_waits_for_the_next_stop() {
         ),
     );
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: tests\n      exec: [sh, {gate}]\n      events: [turn.finish]\n      order: 20\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      order: 10\n"
+        "hooks:\n  events:\n    turn.finish: {{budget_ms: 20000}}\n  handlers:\n    - id: tests\n      exec: [sh, {gate}]\n      events: [turn.finish]\n      order: 20\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, tool.before, tool.after, turn.finish]\n      order: 10\n      timeout_ms: 15000\n"
     ));
     scene.write_plan();
     scene.switch_on();
@@ -846,6 +856,10 @@ fn a_turn_after_a_failed_stop_handler_waits_for_the_next_stop() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_first_touch_keeps_its_key_when_the_snapshot_runs_past_the_timeout() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
@@ -905,7 +919,7 @@ fn a_first_touch_keeps_its_key_when_the_snapshot_runs_past_the_timeout() {
 #[test]
 fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     scene.prompt("s1");
@@ -959,7 +973,7 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
         .success()
         .stdout(format!(
             "turn wrap reset in {}: forgot {listed}\n",
-            scene.repo().canonicalize().unwrap().display()
+            scene.repo().canonical().unwrap().display()
         ));
     let stop = scene.turn("s1", "c.txt", "three\n");
     assert!(
@@ -973,6 +987,10 @@ fn a_workspace_two_sessions_touched_is_wrapped_by_neither_until_the_owner_resets
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
     let Some(scene) = Scene::new() else { return };
     scene.config(PATIENT_WRAPPER);
@@ -1067,16 +1085,16 @@ fn a_prompt_during_another_sessions_wrap_leaves_a_touch_the_wrap_cannot_miss() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
     let Some(scene) = Scene::new() else { return };
     scene.config(WRAPPER);
     scene.write_plan();
     scene.switch_on();
-    let lock = scene
-        .repo()
-        .canonicalize()
-        .unwrap()
-        .join(".jj/turn-wrap.lock");
+    let lock = scene.repo().canonical().unwrap().join(".jj/turn-wrap.lock");
     let held = std::fs::File::create(&lock).unwrap();
     held.try_lock().unwrap();
     let stop = scene.turn("s1", "a.txt", "one\n");
@@ -1109,7 +1127,7 @@ fn a_locked_slot_wraps_nothing_and_a_prompt_leaves_its_touch() {
 #[test]
 fn a_malformed_slot_wraps_nothing_until_the_owner_resets() {
     let Some(scene) = Scene::new() else { return };
-    scene.config(WRAPPER);
+    scene.config(PATIENT_WRAPPER);
     scene.write_plan();
     scene.switch_on();
     std::fs::write(scene.slot(), "{not json").unwrap();
@@ -1119,7 +1137,7 @@ fn a_malformed_slot_wraps_nothing_until_the_owner_resets() {
     assert!(
         message.starts_with(&format!(
             "turn-wrap: nothing wrapped: {} is not a turn-wrap slot: ",
-            scene.slot().canonicalize().unwrap().display()
+            scene.slot().canonical().unwrap().display()
         )),
         "{message}"
     );
@@ -1163,7 +1181,7 @@ fn a_continued_turn_is_wrapped_only_when_it_finally_stops() {
         ),
     );
     scene.config(&format!(
-        "hooks:\n  handlers:\n    - id: steer\n      exec: [sh, {steer}]\n      events: [turn.finish]\n      order: 200\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, turn.finish]\n      order: 10\n"
+        "hooks:\n  events:\n    turn.finish: {{budget_ms: 20000}}\n  handlers:\n    - id: steer\n      exec: [sh, {steer}]\n      events: [turn.finish]\n      order: 200\n    - id: turn-wrap\n      exec: [rune-hook-turn-wrap]\n      events: [prompt.before, turn.finish]\n      order: 10\n      timeout_ms: 15000\n"
     ));
     scene.write_plan();
     scene.switch_on();

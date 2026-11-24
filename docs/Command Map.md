@@ -7,8 +7,9 @@ How the overlapping command families relate, so the right tool is obvious.
 - `launch` opens an interactive coding-tool session. It inherits terminal input and output, forwards native arguments, and permits terminal wrappers such as tmux.
 - `run` executes a coding tool noninteractively. It reuses launch profiles and middleware, applies an explicit access mode, captures the final answer, and supervises the child process group. No timeout is applied unless requested.
 - `exec` runs a script bundled with a skill through the runtime contract declared by that skill.
+- `ask` sends a judging model a question set about one text and prints typed answers. A judging model is not a harness: it runs no process and keeps no conversation, so `run` and `launch` refuse it by name.
 
-Use `launch` when a person will interact with the provider, `run` when automation needs a provider answer, and `exec` when the executable belongs to a skill.
+Use `launch` when a person will interact with the provider, `run` when automation needs a provider answer, `ask` when a step needs typed answers about a text, and `exec` when the executable belongs to a skill.
 
 ## Deploying content
 
@@ -50,6 +51,25 @@ quarantines deployment orphans. `--dry-run` prints the plan. A reviewed
 subject whose bytes changed is not a repair. `adopt reseal --artifact <path>`
 endorses the edit instead. `move <from> <to>` relocates one reviewed
 artifact with its sidecars and records `transferredFrom: <artifact>@<commit>`.
+
+## Keeping sessions
+
+- `session capture`: one harness session into the data folder, scoped by
+  id when the caller knows it. The `session-capture` hook handler starts it
+  detached, and `run` and `launch` call it after the harness exits.
+- `session sweep`: every source, the plans, the daily database backup, and
+  the debt reconciliation. launchd runs it every hour.
+- `session debt`: the records of session files whose copy failed, open
+  first. `doctor` prints their count.
+
+## Reaching interfaces
+
+- `interface list`: the programs that start harness sessions, and whether
+  each is on this machine. T3 Code is the first.
+- `interface status t3code`: the provider instances in T3 Code's settings
+  file, and the models that the launch profiles would own.
+- `interface enable t3code --dry-run`: the plan of an installation. This
+  release writes nothing, and `enable` without `--dry-run` refuses.
 
 ## Bringing content in
 

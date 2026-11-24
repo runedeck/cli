@@ -1559,17 +1559,12 @@ impl App {
         let body_height = inner.height.saturating_sub(1);
         self.update_deck_viewport(2, self.deck_artifact_selected, rune_count, body_height);
         let offset = self.deck_offsets[2];
-        let target_names = self
-            .view
-            .deck
-            .as_ref()
-            .map(|deck| {
-                deck.targets
-                    .iter()
-                    .map(|target| target.name.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let target_names = self.view.deck.as_ref().map_or_default(|deck| {
+            deck.targets
+                .iter()
+                .map(|target| target.name.clone())
+                .collect::<Vec<_>>()
+        });
         let mut lines = vec![Line::from(Span::styled(
             artifact_table_header(&target_names),
             Style::default()
@@ -2206,8 +2201,7 @@ impl App {
                     .modules
                     .iter()
                     .find(|module| module.name == module_name)
-                    .map(|module| module.source_uri.clone())
-                    .unwrap_or_default();
+                    .map_or_default(|module| module.source_uri.clone());
                 commit_links(&lines, &web)
             } else {
                 Vec::new()
@@ -2274,8 +2268,7 @@ impl App {
             .find(|module| module.name == adr.repo);
         let git_log = module
             .and_then(|module| module.local_path.as_ref())
-            .map(|repo| services::git_log_in_repo(repo, &adr.relative_path))
-            .unwrap_or_default();
+            .map_or_default(|repo| services::git_log_in_repo(repo, &adr.relative_path));
         ArtifactView {
             name: format!("{} {}", adr.id, adr.title),
             kind: "adr".to_string(),
@@ -2306,8 +2299,7 @@ impl App {
             .find(|module| module.name == module_name);
         let git_log = module
             .and_then(|module| module.local_path.as_ref())
-            .map(|repo| services::git_log_in_repo(repo, &companion.relative_path))
-            .unwrap_or_default();
+            .map_or_default(|repo| services::git_log_in_repo(repo, &companion.relative_path));
         ArtifactView {
             name: format!("{parent}/{}", companion.name),
             kind: "companion".to_string(),
@@ -3580,7 +3572,7 @@ impl App {
             format!("module {module_name}")
         };
         let mut options: Vec<(String, PathBuf)> = Vec::new();
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = rune::folders::home_dir() {
             options.push(("user scope (~)".to_string(), home));
         }
         options.push((
@@ -3678,7 +3670,7 @@ impl App {
                 let raw = input.trim().to_string();
                 picker.input = None;
                 let expanded = expand_home(&raw);
-                let Ok(path) = std::fs::canonicalize(&expanded) else {
+                let Ok(path) = rune::folders::canonicalize(&expanded) else {
                     self.toast = Some(format!("not a directory: {raw}"));
                     return;
                 };
@@ -3976,7 +3968,7 @@ impl App {
             self.toast = Some("validation problem not found".to_string());
             return;
         };
-        let root = match std::fs::canonicalize(&self.root) {
+        let root = match rune::folders::canonicalize(&self.root) {
             Ok(root) if !is_git_cache_source(&root) => root,
             _ => {
                 self.toast = Some("read-only source".to_string());
@@ -3993,7 +3985,7 @@ impl App {
         } else {
             root.join("runes").join(&violation.artifact)
         };
-        let Ok(candidate) = std::fs::canonicalize(candidate) else {
+        let Ok(candidate) = rune::folders::canonicalize(candidate) else {
             self.toast = Some(format!("source file not found: {}", violation.artifact));
             return;
         };
@@ -4033,7 +4025,7 @@ impl App {
             .local_path
             .as_ref()
             .ok_or_else(|| "read-only source".to_string())?;
-        let root = std::fs::canonicalize(root).map_err(|_| "read-only source".to_string())?;
+        let root = rune::folders::canonicalize(root).map_err(|_| "read-only source".to_string())?;
         if is_git_cache_source(&root)
             || std::fs::metadata(&root).map_or(true, |metadata| metadata.permissions().readonly())
         {
@@ -4044,7 +4036,7 @@ impl App {
         } else {
             artifact.source_path.as_str()
         };
-        let source = std::fs::canonicalize(root.join(relative))
+        let source = rune::folders::canonicalize(root.join(relative))
             .map_err(|_| "read-only source".to_string())?;
         if !source.starts_with(&root) {
             return Err("read-only source".to_string());
@@ -5185,8 +5177,7 @@ impl App {
     pub fn code_source_for_test(&self) -> String {
         self.code_cache
             .as_ref()
-            .map(|cache| cache.raw_source.clone())
-            .unwrap_or_default()
+            .map_or_default(|cache| cache.raw_source.clone())
     }
 
     fn build_list_rows(&self) -> Vec<ListRow> {
@@ -5647,7 +5638,7 @@ impl App {
             .modules
             .iter()
             .find(|module| module.name == deck_entry)
-            .map(|module| {
+            .map_or_default(|module| {
                 rune::view::KIND_ORDER
                     .iter()
                     .filter_map(|kind| {
@@ -5660,7 +5651,6 @@ impl App {
                     })
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     fn selected_deck_artifacts(&self) -> Vec<(&str, &ArtifactView)> {
@@ -5675,7 +5665,7 @@ impl App {
             .modules
             .iter()
             .find(|module| module.name == deck_entry)
-            .map(|module| {
+            .map_or_default(|module| {
                 module
                     .artifacts
                     .iter()
@@ -5683,7 +5673,6 @@ impl App {
                     .map(|artifact| (module.name.as_str(), artifact))
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     fn all_deck_rune_ids(&self) -> Vec<String> {
@@ -6371,17 +6360,15 @@ pub fn load_provider_targets(root: &Path) -> Vec<(String, String)> {
 /// Provider deployment states for the status bar, in provider order.
 /// Detection is bounded filesystem evidence, so it runs once at load.
 fn detect_provider_states(root: &Path) -> Vec<(String, DeploymentState)> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = rune::folders::home_dir() else {
         return Vec::new();
     };
-    config::detect_registered_providers(root, &home)
-        .map(|detections| {
-            detections
-                .into_iter()
-                .map(|detection| (detection.provider, detection.deployment_state))
-                .collect()
-        })
-        .unwrap_or_default()
+    config::detect_registered_providers(root, &home).map_or_default(|detections| {
+        detections
+            .into_iter()
+            .map(|detection| (detection.provider, detection.deployment_state))
+            .collect()
+    })
 }
 
 /// Glyph and tone for one provider state; disabled providers stay hidden.
@@ -6876,12 +6863,12 @@ fn artifact_only_prefix(kind: &str, relative_path: &str) -> String {
 /// Expands a leading `~` to the home directory.
 fn expand_home(raw: &str) -> PathBuf {
     if raw == "~"
-        && let Some(home) = dirs::home_dir()
+        && let Some(home) = rune::folders::home_dir()
     {
         return home;
     }
     if let Some(rest) = raw.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir()
+        && let Some(home) = rune::folders::home_dir()
     {
         return home.join(rest);
     }
@@ -6908,8 +6895,8 @@ fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, Str
     };
     if let Some(repo) = module.local_path.as_ref()
         && let (Ok(repo), Ok(candidate)) = (
-            std::fs::canonicalize(repo),
-            std::fs::canonicalize(repo.join(relative)),
+            rune::folders::canonicalize(repo),
+            rune::folders::canonicalize(repo.join(relative)),
         )
         && candidate.starts_with(&repo)
         && let Ok(source) = std::fs::read_to_string(&candidate)
@@ -6922,9 +6909,9 @@ fn artifact_source(module: &ModuleView, artifact: &ArtifactView) -> (String, Str
 fn is_git_cache_source(path: &Path) -> bool {
     let configured = std::env::var_os("RUNE_GIT_CACHE_DIR")
         .map(PathBuf::from)
-        .or_else(|| dirs::cache_dir().map(|cache| cache.join("rune/git")));
+        .or_else(|| rune::folders::cache_dir().map(|cache| cache.join("rune/git")));
     configured.is_some_and(|cache| {
-        let cache = std::fs::canonicalize(&cache).unwrap_or(cache);
+        let cache = rune::folders::canonicalize(&cache).unwrap_or(cache);
         path.starts_with(cache)
     })
 }

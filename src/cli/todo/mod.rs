@@ -9,6 +9,7 @@ mod parse;
 pub use parse::{TodoItem, parse_line, render_line};
 
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use std::path::Path;
 
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -84,10 +85,10 @@ fn aggregate(root: &Path, json: bool) -> Result<i32, Error> {
         // Use-time guard, independent of parse-time validation: the resolved
         // member stays inside the workspace container (the root's parent).
         let container = root
-            .canonicalize()
+            .canonical()
             .ok()
             .and_then(|canonical| canonical.parent().map(std::path::Path::to_path_buf));
-        if let (Some(container), Ok(canonical_member)) = (&container, member_root.canonicalize())
+        if let (Some(container), Ok(canonical_member)) = (&container, member_root.canonical())
             && !canonical_member.starts_with(container)
         {
             return Err(Error::new(

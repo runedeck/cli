@@ -377,10 +377,23 @@ fn title(segment: &str) -> String {
         .collect()
 }
 
+/// The segments the helper spells as acronyms, its `ACRONYMS` table.
+const ACRONYMS: &[(&str, &str)] = &[("gpt", "GPT")];
+
+/// The segment as the helper spells it: an acronym from its table, else
+/// title case.
+fn spelled(segment: &str) -> String {
+    ACRONYMS
+        .iter()
+        .find(|(word, _)| segment.eq_ignore_ascii_case(word))
+        .map_or_else(|| title(segment), |(_, acronym)| (*acronym).to_string())
+}
+
 /// The display name the helper mints: `claude-fable-5-1` under claude is
-/// `Claude Fable 5.1`, `gpt-6-astra` under codex is `Codex Gpt 6 Astra`.
-/// Segments title-case, a run of numeric segments joins with dots, and
-/// the harness leads unless the first segment names it.
+/// `Claude Fable 5.1`, `gpt-6-astra` under codex is `Codex GPT 6 Astra`.
+/// Segments title-case except the helper's acronyms, a run of numeric
+/// segments joins with dots, and the harness leads unless the first
+/// segment names it.
 pub(crate) fn display_name(model: &str, harness: &str) -> String {
     let digits = |word: &str| !word.is_empty() && word.chars().all(|c| c.is_ascii_digit());
     let mut words: Vec<String> = Vec::new();
@@ -390,7 +403,7 @@ pub(crate) fn display_name(model: &str, harness: &str) -> String {
                 last.push('.');
                 last.push_str(segment);
             }
-            _ => words.push(title(segment)),
+            _ => words.push(spelled(segment)),
         }
     }
     if words
@@ -1111,22 +1124,29 @@ fn run_tool(
     ))
 }
 
-/// The command line of a shell tool call, under every name the harnesses
-/// give their shell tool: `Bash` (Claude, Grok, and Codex hooks),
-/// `run_shell_command` (Gemini), `run_command` (Antigravity), and Codex's
-/// own `shell` (an argument list), `shell_command`, and `exec_command`
-/// (whose command is `cmd`). Any other tool has none.
-pub(crate) fn shell_command(tool: &super::payload::ToolPayload) -> Option<String> {
-    if !matches!(
-        tool.name.as_str(),
+/// Whether a tool name is a harness's shell tool: `Bash` (Claude, Grok,
+/// and Codex hooks), `Shell` (Cursor's `preToolUse`, hooks reference read
+/// 2026-11-02), `run_shell_command` (Gemini), `run_command`
+/// (Antigravity), and Codex's own `shell` (an argument list),
+/// `shell_command`, and `exec_command` (whose command is `cmd`).
+pub(crate) fn is_shell_tool(name: &str) -> bool {
+    matches!(
+        name,
         "Bash"
             | "bash"
+            | "Shell"
             | "shell"
             | "shell_command"
             | "exec_command"
             | "run_shell_command"
             | "run_command"
-    ) {
+    )
+}
+
+/// The command line of a shell tool call, under every name
+/// `is_shell_tool` knows. Any other tool has none.
+pub(crate) fn shell_command(tool: &super::payload::ToolPayload) -> Option<String> {
+    if !is_shell_tool(&tool.name) {
         return None;
     }
     ["command", "cmd"]
@@ -1187,7 +1207,7 @@ fn dcg(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 fn git_ai(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     let preset = payload.harness.as_str();
     let stdin = serde_json::to_vec(&payload.raw).map_err(|e| e.to_string())?;
-    let program = dirs::home_dir()
+    let program = rune::folders::home_dir()
         .map(|h| h.join(".git-ai/bin/git-ai"))
         .filter(|p| p.is_file())
         .map_or_else(|| "git-ai".to_string(), |p| p.display().to_string());
@@ -1211,7 +1231,7 @@ fn rtk(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     };
     if !matches!(
         tool.name.as_str(),
-        "Bash" | "shell" | "run_shell_command" | "bash"
+        "Bash" | "Shell" | "shell" | "run_shell_command" | "bash"
     ) {
         return Ok(HandlerResult::default());
     }
@@ -1357,22 +1377,17 @@ fn lint_metrics(blocking: &str, advice: &str) -> Value {
     found.metrics()
 }
 
-/// The session's capture, detached: the launcher never waits on it.
+/// The session's capture, detached: this binary as `rune session capture`
+/// in its own process group, so the dispatcher answers without waiting.
+/// A harness Rune does not capture gets nothing started.
 fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
-    let program = dirs::home_dir()
-        .map(|h| h.join(".local/bin/session-sync"))
-        .filter(|p| p.is_file())
-        .map_or_else(|| "session-sync".to_string(), |p| p.display().to_string());
-    let mut args: Vec<OsString> = vec![
-        "--provider".into(),
-        payload.harness.as_str().into(),
-        "--source".into(),
-        "hook".into(),
-    ];
-    if let Some(session) = &payload.session_id {
-        args.push("--session".into());
-        args.push(session.into());
-    }
+    let Some(args) = crate::cli::session::hook_arguments(
+        payload.harness.as_str(),
+        payload.session_id.as_deref(),
+    ) else {
+        return Ok(HandlerResult::default());
+    };
+    let program = std::env::current_exe().map_or_else(|_| OsString::from("rune"), OsString::from);
     let mut command = Command::new(&program);
     command
         .args(&args)
@@ -1389,7 +1404,7 @@ fn session_capture(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     }
     command
         .spawn()
-        .map_err(|e| format!("cannot start {program}: {e}"))?;
+        .map_err(|e| format!("cannot start {}: {e}", program.to_string_lossy()))?;
     Ok(HandlerResult::default())
 }
 
@@ -1415,7 +1430,7 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(script) = dirs::home_dir().and_then(|home| checkpoint_script(&home)) else {
+    let Some(script) = rune::folders::home_dir().and_then(|home| checkpoint_script(&home)) else {
         return Ok(HandlerResult::default());
     };
     let stdin = serde_json::to_vec(&claude_shaped(payload)).map_err(|e| e.to_string())?;
@@ -1432,7 +1447,9 @@ fn turn_checkpoint(payload: &HandlerPayload) -> Result<HandlerResult, String> {
 /// context on an event that takes context, or at a turn's end as the reason
 /// to keep working, so the session reads them at its next turn. A harness
 /// that can express neither on the event reads nothing, so no message is
-/// marked read and lost.
+/// marked read and lost. A prompt that is a message the harness's own
+/// queue holds for this session marks that message read: the queue started
+/// the turn with it.
 fn postbox(payload: &HandlerPayload) -> Result<HandlerResult, String> {
     postbox_at(payload, &crate::cli::queue::ledger::path()?)
 }
@@ -1447,12 +1464,33 @@ pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<Hand
     else {
         return Ok(HandlerResult::default());
     };
-    let capability = match payload.event.as_str() {
-        "session.start" | "prompt.before" | "tool.after" => Capability::Context,
-        "turn.finish" => Capability::TurnContinue,
-        _ => return Ok(HandlerResult::default()),
+    if payload.event == "prompt.before"
+        && let Some(prompt) = payload.prompt.as_deref()
+    {
+        ledger::take_prompted(ledger, session, prompt, &ledger::now())?;
+    }
+    let canonical = rune::hooks::Canonical::parse(&payload.event);
+    // A native extension, `None`, delivers context where the harness
+    // takes it on that event by name: Cursor's `postToolUseFailure`.
+    let capability = match canonical {
+        Some(
+            rune::hooks::Canonical::SessionStart
+            | rune::hooks::Canonical::PromptBefore
+            | rune::hooks::Canonical::ToolAfter,
+        )
+        | None => Capability::Context,
+        Some(rune::hooks::Canonical::TurnFinish) => Capability::TurnContinue,
+        Some(_) => return Ok(HandlerResult::default()),
     };
-    if !capability.supported(payload.harness) {
+    // The field must exist on this event, not only somewhere on the
+    // harness: Cursor takes context on `sessionStart` and `postToolUse`
+    // and drops it on `beforeSubmitPrompt`, where a message taken here
+    // would be marked read and lost.
+    let expressed = match canonical {
+        Some(event) => capability.supported_on(payload.harness, event),
+        None => capability.supported_on_native(payload.harness, &payload.native_event),
+    };
+    if !expressed {
         return Ok(HandlerResult::default());
     }
     let messages = ledger::take_posted(ledger, &[session.to_string()], &ledger::now())?;
@@ -1460,7 +1498,7 @@ pub(crate) fn postbox_at(payload: &HandlerPayload, ledger: &Path) -> Result<Hand
         return Ok(HandlerResult::default());
     }
     let text = format!(
-        "Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender with `rune queue post`.\n\n{}",
+        "Messages from other sessions arrived through the rune postbox. Read them, act on them where they ask for something, and answer a sender named `harness:id` with `rune queue post <harness> --session <id>`.\n\n{}",
         inbox::format_messages(&messages)
     );
     Ok(if capability == Capability::TurnContinue {
@@ -1485,7 +1523,7 @@ fn tmux_status(payload: &HandlerPayload) -> Result<HandlerResult, String> {
         "session.end" => "clear",
         _ => return Ok(HandlerResult::default()),
     };
-    let Some(program) = dirs::home_dir()
+    let Some(program) = rune::folders::home_dir()
         .map(|h| h.join(".local/bin/claude-tmux-status"))
         .filter(|p| p.is_file())
     else {
@@ -1558,6 +1596,25 @@ mod tests {
     use super::*;
     use rune::hooks::Harness;
 
+    #[test]
+    fn dcg_reads_cursor_s_shell_tool_as_bash() {
+        let raw = json!({
+            "hook_event_name": "preToolUse", "conversation_id": "c1", "cwd": "/r",
+            "tool_name": "Shell", "tool_use_id": "t1", "tool_input": {"command": "make clean"}
+        });
+        let payload = super::super::payload::decode(Harness::Cursor, "preToolUse", raw);
+        let shaped = dcg_payload(&payload).expect("Cursor's Shell is a shell tool");
+        assert_eq!(shaped["tool_name"], "Bash");
+        assert_eq!(shaped["tool_input"]["command"], "make clean");
+        assert_eq!(shaped["hook_event_name"], "preToolUse");
+        let read = json!({
+            "hook_event_name": "preToolUse", "conversation_id": "c1", "cwd": "/r",
+            "tool_name": "Read", "tool_input": {"path": "/etc/hosts"}
+        });
+        let payload = super::super::payload::decode(Harness::Cursor, "preToolUse", read);
+        assert_eq!(dcg_payload(&payload), None, "Read is no shell tool");
+    }
+
     fn payload(
         harness: Harness,
         event: &str,
@@ -1610,7 +1667,7 @@ mod tests {
         assert_eq!(opus.name, "Claude Opus 5.5 (claude-opus-5-5)");
         assert_eq!(opus.email, "claude-opus-5-5@claude.noreply.nexus.local");
         let sol = resolve_identity(&policy, "claude", "gpt-5.6-sol").unwrap();
-        assert_eq!(sol.name, "Claude Gpt 5.6 Sol (gpt-5.6-sol)");
+        assert_eq!(sol.name, "Claude GPT 5.6 Sol (gpt-5.6-sol)");
         // The legacy alias resolves to the model it means.
         let legacy = resolve_identity(&policy, "claude", "claude-opus-51m").unwrap();
         assert_eq!(legacy.email, "claude-opus-5@claude.noreply.nexus.local");
@@ -1627,10 +1684,10 @@ mod tests {
             display_name("claude-fable-5-1", "claude"),
             "Claude Fable 5.1"
         );
-        assert_eq!(display_name("gpt-6-astra", "codex"), "Codex Gpt 6 Astra");
+        assert_eq!(display_name("gpt-6-astra", "codex"), "Codex GPT 6 Astra");
         assert_eq!(display_name("kimi-k3", "kimi"), "Kimi K3");
         assert_eq!(display_name("grok-4.6", "grok"), "Grok 4.6");
-        assert_eq!(display_name("gpt-4o-mini", "codex"), "Codex Gpt 4O Mini");
+        assert_eq!(display_name("gpt-4o-mini", "codex"), "Codex GPT 4O Mini");
         assert_eq!(
             display_name("gemini-3-pro", "open-code"),
             "Open-Code Gemini 3 Pro"
@@ -2037,6 +2094,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn an_immutable_working_copy_commit_keeps_its_author() {
         let home = config_home();
         let dir = jj_checkout();
@@ -2060,6 +2121,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn an_unlisted_models_commit_fails_the_authorship_check() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2150,6 +2212,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_dormant_worktree_config_keeps_the_extension_off() {
         let home = config_home();
         let a = jj_checkout();
@@ -2338,6 +2404,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_unlisted_identity_is_refused_by_the_push_gate() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");
@@ -2385,6 +2452,7 @@ mod tests {
     /// spelled as the helper spells it. A model under no rule gets the
     /// unlisted one, and the note names the policy file and the rule.
     #[test]
+    #[cfg_attr(windows, ignore = "runs the authorship check, a python3 script")]
     fn the_repository_policy_admits_the_models_the_gate_admits() {
         if run_tool("python3", &["--version"], &[], None).is_err() {
             eprintln!("skipped: python3 is not installed");

@@ -81,9 +81,7 @@ fn adr_state(sidecar: Option<&str>, current: &str) -> (String, String) {
     let Some(content) = sidecar else {
         return ("authored".to_string(), String::new());
     };
-    let source = parse_adoption(content)
-        .map(|adoption| adoption.source_label)
-        .unwrap_or_default();
+    let source = parse_adoption(content).map_or_default(|adoption| adoption.source_label);
     let modified =
         recorded_subject_sha(content).is_some_and(|sha| manifest::content_sha256(current) != sha);
     let state = if modified { "modified" } else { "copied" };

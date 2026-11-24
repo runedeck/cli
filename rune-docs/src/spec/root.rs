@@ -1,4 +1,5 @@
 use crate::error::{Error, ErrorKind};
+use crate::support::Canonical as _;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -92,7 +93,7 @@ pub(super) fn resolve_with_config(
     configured: Option<&str>,
 ) -> Result<SpecRoot, Error> {
     let repository = root
-        .canonicalize()
+        .canonical()
         .map_err(|error| root_error("resolve repository", root, error))?;
     let relative = match configured {
         Some(configured) => shared::validate_configured_root(configured),

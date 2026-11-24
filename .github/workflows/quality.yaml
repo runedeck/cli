@@ -65,6 +65,14 @@ jobs:
                       exit 1
                   fi
 
+            # The cargo hooks run on the pinned Rust, not on the runner's
+            # stable: a new clippy lint must arrive as a reviewed version
+            # change. scripts/check-toolchain-pin holds the version.
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
+                  components: rustfmt, clippy
+
             # Local hooks, generated CI, and template updates all consume the
             # same reviewed tool versions and archive digests.
             - name: Install tools

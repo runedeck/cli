@@ -465,8 +465,7 @@ pub fn index(root: &Path) -> Result<(usize, PathBuf), Error> {
 
 fn urlencoded_basename(path: &Path) -> String {
     path.file_name()
-        .map(|name| name.to_string_lossy().replace(' ', "%20"))
-        .unwrap_or_default()
+        .map_or_default(|name| name.to_string_lossy().replace(' ', "%20"))
 }
 
 #[cfg(test)]

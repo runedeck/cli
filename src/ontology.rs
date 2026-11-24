@@ -20,9 +20,16 @@ pub struct Config {
     /// file is named. An empty value turns the manifest off. With a
     /// manifest, the env file is not read.
     pub secrets: Option<String>,
+    /// Secretspec profile that each manifest read names. Without a value,
+    /// or with an empty one, rune names no profile and secretspec uses its
+    /// own default.
+    pub secrets_profile: Option<String>,
     pub ontology: Ontology,
     pub extensions: Vec<String>,
     pub launch: Launch,
+    /// The judging model `rune ask` asks, the folders its question sets
+    /// live in, and the routes it can take.
+    pub ask: Ask,
     /// Harness hook handlers, declared once against canonical events.
     pub hooks: crate::hooks::Hooks,
     pub watch: Watch,
@@ -32,6 +39,63 @@ pub struct Config {
     pub bench: Vec<String>,
     pub setup: Option<SetupRecord>,
     pub theme: Option<ThemeConfig>,
+    /// Session capture: the data folder, the optional sources, and the
+    /// sessions classified as work.
+    pub capture: Capture,
+}
+
+/// Session capture settings for `rune session capture` and `rune session sweep`.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct Capture {
+    /// The owner's data folder. `DATA_DIR` overrides it. Defaults to `~/Data`.
+    pub data_dir: Option<String>,
+    pub sources: CaptureSources,
+    pub exclude: CaptureExclude,
+}
+
+/// The optional sources the owner enables by name: multica-codex,
+/// multica-tasks, pi, cursor.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptureSources {
+    pub optional: Vec<String>,
+}
+
+/// The sessions capture never copies: working-folder globs (`*` stays in
+/// one segment, `**` crosses segments, `~` is the home) and session ids.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptureExclude {
+    pub paths: Vec<String>,
+    pub sessions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -157,6 +221,64 @@ pub struct LaunchTool {
     pub binary: Option<String>,
     #[serde(alias = "base-url-env")]
     pub base_url_env: Option<String>,
+}
+
+/// The route `rune ask` takes when the configuration names none.
+pub const DEFAULT_ASK_MODEL: &str = "jev";
+/// The folder a question-set name is looked up in when the configuration
+/// names none: the Jev client's own question sets.
+pub const DEFAULT_ASK_QUESTIONS: &str = "~/Developer/runedeck/jev/questions";
+
+/// `rune ask`: the judging model, where its question sets live, and the
+/// routes it may take. The built-in route `jev` reaches the hosted System One
+/// endpoint; a route of the same name here overrides it field by field,
+/// and a route of another name is a second endpoint that speaks the same
+/// protocol, such as a local open model.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Ask {
+    /// The route `rune ask` asks when `--model` names none.
+    pub model: String,
+    /// The folders a question-set name is looked up in, in order. A tilde
+    /// names the home folder.
+    pub questions: Vec<String>,
+    /// Routes by name. `--model <NAME>` and `ask.model` select one.
+    pub routes: HashMap<String, AskRoute>,
+}
+
+impl Default for Ask {
+    fn default() -> Self {
+        Self {
+            model: DEFAULT_ASK_MODEL.to_string(),
+            questions: vec![DEFAULT_ASK_QUESTIONS.to_string()],
+            routes: HashMap::new(),
+        }
+    }
+}
+
+/// One route a judging request can take. Every field is optional so a
+/// route can override one part of the built-in `jev` route and keep the
+/// rest.
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Default,
+    PartialEq,
+    Eq
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct AskRoute {
+    /// The model id the request names. Defaults to the route's name.
+    pub id: Option<String>,
+    /// The base URL the request goes to; `/v1/systemone` is added.
+    pub base_url: Option<String>,
+    /// The environment variable that holds the route's key. The value is
+    /// read at call time from the environment or the env file, never from
+    /// this file. A route without one sends no authorization header.
+    pub key_env: Option<String>,
 }
 
 #[derive(
@@ -364,17 +486,22 @@ pub struct ResolvedConfig {
     pub deck: Option<ResolvedValue>,
     pub env: Option<ResolvedValue>,
     pub secrets: Option<ResolvedValue>,
+    pub secrets_profile: Option<ResolvedValue>,
     pub ontology: ResolvedOntology,
     pub extensions: Vec<PathBuf>,
     pub setup: Option<SetupRecord>,
     #[serde(skip)]
     pub launch: Launch,
     #[serde(skip)]
+    pub ask: Ask,
+    #[serde(skip)]
     pub hooks: crate::hooks::Hooks,
     #[serde(skip)]
     pub bench: Vec<String>,
     #[serde(skip)]
     pub theme: Option<ThemeConfig>,
+    #[serde(skip)]
+    pub capture: Capture,
 }
 
 impl ResolvedConfig {
@@ -384,7 +511,7 @@ impl ResolvedConfig {
     pub fn env_file(&self) -> Option<PathBuf> {
         match &self.env {
             Some(value) => Some(expand_tilde(&value.value)),
-            None => dirs::home_dir().map(|home| home.join(".env")),
+            None => crate::folders::home_dir().map(|home| home.join(".env")),
         }
     }
 
@@ -410,6 +537,16 @@ impl ResolvedConfig {
                 .map(|dir| dir.join(SECRETS_MANIFEST))
                 .filter(|path| path.is_file()),
         }
+    }
+
+    /// The secretspec profile a manifest read names. An empty value means
+    /// no profile, so secretspec uses its own default.
+    #[must_use]
+    pub fn secrets_profile(&self) -> Option<&str> {
+        self.secrets_profile
+            .as_ref()
+            .map(|value| value.value.as_str())
+            .filter(|profile| !profile.is_empty())
     }
 }
 
@@ -588,8 +725,8 @@ pub fn load() -> Result<ResolvedConfig, Error> {
 }
 
 pub fn config_dir() -> Result<PathBuf, Error> {
-    dirs::home_dir()
-        .map(|home| home.join(".config/rune"))
+    crate::folders::home_dir()
+        .map(|home| crate::folders::join(&home, ".config/rune"))
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
 }
 
@@ -627,6 +764,15 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
         source: config.secrets.as_ref().map(|value| value.source),
     });
     fields.push(ResolvedField {
+        key: "secrets_profile",
+        env: "RUNE_SECRETS_PROFILE",
+        value: config
+            .secrets_profile
+            .as_ref()
+            .map(|value| value.value.clone()),
+        source: config.secrets_profile.as_ref().map(|value| value.source),
+    });
+    fields.push(ResolvedField {
         key: "bench",
         env: "",
         value: (!config.bench.is_empty()).then(|| config.bench.join(", ")),
@@ -638,10 +784,11 @@ pub fn fields(config: &ResolvedConfig) -> Vec<ResolvedField> {
 
 pub fn expand_tilde(value: &str) -> PathBuf {
     if value == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(value));
+        return crate::folders::home_dir().unwrap_or_else(|| PathBuf::from(value));
     }
     if let Some(rest) = value.strip_prefix("~/") {
-        return dirs::home_dir().map_or_else(|| PathBuf::from(value), |home| home.join(rest));
+        return crate::folders::home_dir()
+            .map_or_else(|| PathBuf::from(value), |home| home.join(rest));
     }
     PathBuf::from(value)
 }
@@ -782,6 +929,17 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
                 source: Source::Config,
             })
         });
+    let secrets_profile = env("RUNE_SECRETS_PROFILE")
+        .map(|value| ResolvedValue {
+            value,
+            source: Source::Env,
+        })
+        .or_else(|| {
+            config.secrets_profile.as_ref().map(|value| ResolvedValue {
+                value: value.clone(),
+                source: Source::Config,
+            })
+        });
     let ontology = ResolvedOntology {
         targets: resolve_key(Key::Targets, &config.ontology, env),
         skeleton: resolve_key(Key::Skeleton, &config.ontology, env),
@@ -805,13 +963,16 @@ fn resolve_config(config: &Config, env: &dyn Fn(&str) -> Option<String>) -> Reso
         deck,
         env: env_file,
         secrets,
+        secrets_profile,
         ontology,
         extensions,
         setup: config.setup.clone(),
         launch: resolve_launch(&config.launch),
+        ask: config.ask.clone(),
         hooks: config.hooks.clone(),
         bench: config.bench.clone(),
         theme: config.theme.clone(),
+        capture: config.capture.clone(),
     }
 }
 

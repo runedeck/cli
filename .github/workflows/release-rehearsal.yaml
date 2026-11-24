@@ -1,0 +1,72 @@
+name: Release rehearsal
+
+# release.yaml runs only on a signed tag, so a release build that breaks is
+# found after the tag exists. This workflow builds the same three targets
+# with the same commands when a pull request changes what that build reads.
+# It publishes nothing: no artifact, no attestation, no release.
+# tests/release_rehearsal.rs fails when the matrix or a build step differs
+# from release.yaml.
+on:
+    pull_request:
+        branches: [main]
+        paths:
+            - Cargo.toml
+            - Cargo.lock
+            - .github/workflows/release.yaml
+            - .github/workflows/release-rehearsal.yaml
+
+permissions:
+    contents: read
+
+concurrency:
+    group: release-rehearsal-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build:
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - target: x86_64-unknown-linux-musl
+                      runner: ubuntu-latest
+                      archive: rune-cli-linux-x86_64.tar.gz
+                    - target: aarch64-apple-darwin
+                      runner: macos-latest
+                      archive: rune-cli-macos-aarch64.tar.gz
+                    - target: x86_64-pc-windows-msvc
+                      runner: windows-latest
+                      archive: rune-cli-windows-x86_64.zip
+
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              with:
+                  persist-credentials: false
+
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
+                  targets: ${{ matrix.target }}
+
+            - name: Install musl tools
+              if: contains(matrix.target, 'musl')
+              run: sudo apt-get install -y musl-tools
+
+            - name: Build
+              run: cargo build --release --locked --target ${{ matrix.target }}
+
+            - name: Package (unix)
+              if: runner.os != 'Windows'
+              env:
+                  ARCHIVE: ${{ matrix.archive }}
+                  TARGET: ${{ matrix.target }}
+              run: tar czf "$ARCHIVE" -C "target/$TARGET/release" rune
+
+            - name: Package (windows)
+              if: runner.os == 'Windows'
+              env:
+                  ARCHIVE: ${{ matrix.archive }}
+                  TARGET: ${{ matrix.target }}
+              run: Compress-Archive -Path "target/$env:TARGET/release/rune.exe" -DestinationPath "$env:ARCHIVE"
+              shell: pwsh

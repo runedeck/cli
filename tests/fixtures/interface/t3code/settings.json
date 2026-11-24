@@ -1,0 +1,19 @@
+{
+    "favorites": ["claudeAgent"],
+    "providerInstances": {
+        "claudeAgent": {
+            "driver": "claudeAgent",
+            "displayName": "Claude",
+            "environment": [
+                {"name": "OWNER_VARIABLE", "value": "fixture-value-that-no-output-shows", "sensitive": true}
+            ],
+            "config": {
+                "launchArgs": "--settings fixture-settings.json",
+                "customModels": ["owner-model", {"slug": "gpt-5.6-sol", "name": "Sol"}]
+            }
+        },
+        "codex": {"driver": "codex"},
+        "cursor": {"driver": "cursor", "enabled": false}
+    },
+    "usageLimitSources": {"hub": {"url": "http://127.0.0.1:8317"}}
+}

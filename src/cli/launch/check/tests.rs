@@ -63,6 +63,7 @@ fn resolved(
         display_argv: vec![OsString::from(tool)],
         display_env,
         base_url: None,
+        declared_secrets: Vec::new(),
     }
 }
 

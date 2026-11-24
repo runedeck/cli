@@ -1,0 +1,24 @@
+# Secret declaration for the secrets_profile scene of the
+# launch-secret-declaration-lookup proof. profiles.sh copies it to
+# .config/rune/secretspec.toml. The real secretspec reads it. Each profile
+# keeps its values in a file store in ./store beside the declaration, and
+# the declaration has no `default` profile, like a fleet declaration that
+# names only the owner and the agents. The stored values are fake.
+[project]
+name = "proof"
+revision = "1.0"
+
+[providers]
+store = "file:./store"
+
+[profiles.owner.defaults]
+providers = ["store"]
+
+[profiles.owner]
+PROOF_ORIGIN = { description = "The value the probe profile reads" }
+
+[profiles.agents.defaults]
+providers = ["store"]
+
+[profiles.agents]
+PROOF_ORIGIN = { description = "The value the probe profile reads" }

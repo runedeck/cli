@@ -51,7 +51,7 @@ struct Plan {
 
 #[allow(clippy::too_many_lines)]
 fn plan(from: &Path, to: &Path) -> Result<Plan, String> {
-    let from = fs::canonicalize(from)
+    let from = rune::folders::canonicalize(from)
         .map_err(|error| format!("cannot resolve {}: {error}", from.display()))?;
     if from
         .parent()
@@ -77,7 +77,7 @@ fn plan(from: &Path, to: &Path) -> Result<Plan, String> {
         .ok_or_else(|| format!("{} has no parent directory", to.display()))?;
     fs::create_dir_all(to_parent)
         .map_err(|error| format!("cannot create {}: {error}", to_parent.display()))?;
-    let to_parent = fs::canonicalize(to_parent)
+    let to_parent = rune::folders::canonicalize(to_parent)
         .map_err(|error| format!("cannot resolve {}: {error}", to_parent.display()))?;
     let to = to_parent.join(
         to.file_name()
@@ -305,10 +305,10 @@ fn relative(root: &Path, path: &Path) -> String {
 /// git store answers only to jj).
 fn repository_root(directory: &Path) -> Option<PathBuf> {
     if let Some(output) = git(directory, &["rev-parse", "--show-toplevel"]) {
-        return fs::canonicalize(output.trim()).ok();
+        return rune::folders::canonicalize(output.trim()).ok();
     }
     let output = jj(directory, &["workspace", "root"])?;
-    fs::canonicalize(output.trim()).ok()
+    rune::folders::canonicalize(output.trim()).ok()
 }
 
 /// The commit the transfer record pins: the last committed state. In a jj

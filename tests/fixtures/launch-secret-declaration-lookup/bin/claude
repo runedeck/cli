@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stub for Claude Code. It records that a harness started, then prints the
+# one variable the probe profile sets.
+: > "$(dirname "$0")/../claude-started"
+printf 'PROOF_VALUE=%s\n' "$PROOF_VALUE"

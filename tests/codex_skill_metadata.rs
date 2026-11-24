@@ -59,6 +59,7 @@ fn write(path: &Path, content: &str) {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a companion script with python3")]
 fn codex_selected_companions_remain_runnable_and_excluded_bundles_stay_absent() {
     let fixture = Fixture::new();
     let selected = fixture.source_skill("Runnable");

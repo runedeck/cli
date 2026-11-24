@@ -64,10 +64,9 @@ pub fn load(repo_root: &Path) -> Result<Option<DotRune>, Error> {
         return Ok(None);
     }
     // The form that was read, relative to the root: `.rune` or `.rune/manifest.yaml`.
-    let shown = path.strip_prefix(repo_root).map_or_else(
-        |_| path.display().to_string(),
-        |relative| relative.display().to_string(),
-    );
+    let shown = path
+        .strip_prefix(repo_root)
+        .map_or_else(|_| path.display().to_string(), rune::manifest::slash_lossy);
 
     let bytes = fs::read(&path).map_err(|error| {
         Error::new(

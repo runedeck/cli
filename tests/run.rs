@@ -498,6 +498,7 @@ printf '%s\n' '{"type":"turn.failed","error":{"message":null}}'
 
 /// The message of a run that failed on a JSON line rune cannot read: the
 /// tool, the line on stdout, and serde's reason for the truncated object.
+#[cfg(unix)]
 fn assert_unreadable_line(result: &serde_json::Value, tool: &str, line: usize) {
     let message = result["details"]["message"].as_str().unwrap_or_default();
     let prefix =
@@ -2577,7 +2578,7 @@ fn artifacts_of(output: &std::process::Output) -> Vec<String> {
 
 #[cfg(unix)]
 fn canonical(path: &std::path::Path) -> String {
-    std::fs::canonicalize(path)
+    rune::folders::canonicalize(path)
         .expect("canonical path")
         .to_string_lossy()
         .into_owned()
@@ -2877,16 +2878,24 @@ fn changed_files(home: &std::path::Path, repository: &str, change_id: &str) -> V
     .collect()
 }
 
-/// The names in `jj workspace list`.
+/// The names in `jj workspace list`, read through a template: jj 0.47
+/// marks the current workspace in the plain output (`default (current):`).
 #[cfg(unix)]
 fn workspace_names(home: &std::path::Path, repository: &str) -> Vec<String> {
-    jj(home, &["-R", repository, "workspace", "list"])
-        .lines()
-        .filter_map(|line| {
-            line.split_once(':')
-                .map(|(name, _)| name.trim().to_string())
-        })
-        .collect()
+    jj(
+        home,
+        &[
+            "-R",
+            repository,
+            "workspace",
+            "list",
+            "-T",
+            "name ++ \"\\n\"",
+        ],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
 }
 
 /// Every visible change id in the repository, in log order.
@@ -4277,16 +4286,15 @@ fn the_guard_refuses_rewrites_outside_the_run_and_allows_the_harness_own_commits
 /// The names of the folders jj keeps under `<home>/.config/jj/workspaces`:
 /// one for each workspace with its own configuration, such as a run's
 /// guard. None after a run means the run took its guard with it.
+#[cfg(unix)]
 fn guard_folders(home: &std::path::Path) -> Vec<String> {
     let config_root = home.join(".config/jj/workspaces");
-    let mut names: Vec<String> = std::fs::read_dir(config_root)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut names: Vec<String> = std::fs::read_dir(config_root).map_or_default(|entries| {
+        entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect()
+    });
     names.sort();
     names
 }
@@ -5848,7 +5856,6 @@ fn marking_provider(home: &std::path::Path, name: &str, reply: &str) -> std::pat
     )
 }
 
-#[cfg(unix)]
 fn confirmation_of(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(

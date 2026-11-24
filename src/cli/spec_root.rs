@@ -24,6 +24,7 @@ pub(crate) use fallback::{
 #[cfg(not(feature = "spec"))]
 mod fallback {
     use rune::error::{Error, ErrorKind};
+    use rune::folders::Canonical as _;
     use serde::Serialize;
     use std::ffi::OsString;
     use std::path::{Component, Path, PathBuf};
@@ -44,7 +45,7 @@ mod fallback {
 
     fn resolve_roots(root: &Path) -> Result<ResolvedRoots, Error> {
         let repository = root
-            .canonicalize()
+            .canonical()
             .map_err(|error| root_error("resolve repository", root, error))?;
         let merged = crate::cli::config::load_merged_config(root)?;
         let configured = crate::cli::config::source_spec_root(&merged);
@@ -129,7 +130,7 @@ mod fallback {
         }
 
         let resolved_existing = existing
-            .canonicalize()
+            .canonical()
             .map_err(|error| root_error("resolve spec path", existing, error))?;
         if !resolved_existing.starts_with(repository) {
             return Err(Error::new(

@@ -352,6 +352,14 @@ fn record_request(repo: &Repo, request: &Request, json: bool) -> Result<i32, Err
             ));
         }
     }
+    // The queue keeps its own copy of the receipt. A session often writes
+    // the receipt to a scratch folder, which is gone when the owner signs.
+    let mut request = request.clone();
+    let id = request.id.clone();
+    if let Some(receipt) = &mut request.receipt {
+        receipt.copy = Some(store.keep_receipt(&id, Path::new(&receipt.path), &receipt.digest)?);
+    }
+    let request = &request;
     store.save(request)?;
     let coverage = request
         .coverage
@@ -446,11 +454,12 @@ fn qualify_receipt(path: &Path, commit_id: &str) -> Result<Receipt, Error> {
     }
     // The owner signs from another directory, so the record keeps the
     // absolute path the session named.
-    let absolute = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let absolute = rune::folders::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     Ok(Receipt {
         path: absolute.to_string_lossy().into_owned(),
         digest: store::file_digest(path)?,
         exit_line: last.to_string(),
+        copy: None,
     })
 }
 
@@ -464,8 +473,13 @@ pub(crate) fn names_commit(body: &str, commit_id: &str) -> bool {
         .any(|word| word == prefix || word == commit_id)
 }
 
-/// The receipt as recorded must still be on disk unchanged when the owner
-/// signs: a request whose receipt was edited or replaced is refused.
+/// The receipt as recorded must still hold when the owner signs. The
+/// evidence is the queue's own copy, which must be unchanged. The file
+/// the session named may be gone by then, as a scratch folder is. When it
+/// is still there it must be unchanged too: a request whose receipt was
+/// edited or replaced is refused, because a later check that failed
+/// writes the same path. A request recorded before the queue kept copies
+/// has only the session's file.
 fn receipt_still_holds(request: &Request) -> Result<(), String> {
     let Some(receipt) = &request.receipt else {
         return match request.kind {
@@ -475,17 +489,37 @@ fn receipt_still_holds(request: &Request) -> Result<(), String> {
             }
         };
     };
-    let path = Path::new(&receipt.path);
-    let digest = store::file_digest(path).map_err(|error| error.to_string())?;
-    if digest != receipt.digest {
-        return Err(format!(
-            "receipt {} changed since the request was queued",
-            path.display()
-        ));
-    }
-    qualify_receipt(path, &request.head.commit_id)
+    let named = Path::new(&receipt.path);
+    let evidence = match receipt.copy.as_deref() {
+        Some(copy) if !named.exists() => Path::new(copy),
+        Some(copy) => {
+            unchanged(named, &receipt.digest, "receipt")?;
+            Path::new(copy)
+        }
+        None => named,
+    };
+    let what = if evidence == named {
+        "receipt"
+    } else {
+        "the queue's copy of the receipt,"
+    };
+    unchanged(evidence, &receipt.digest, what)?;
+    qualify_receipt(evidence, &request.head.commit_id)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+/// The file at `path` still hashes to the digest the request recorded.
+fn unchanged(path: &Path, digest: &str, what: &str) -> Result<(), String> {
+    let found = store::file_digest(path).map_err(|error| error.to_string())?;
+    if found == digest {
+        Ok(())
+    } else {
+        Err(format!(
+            "{what} {} changed since the request was queued",
+            path.display()
+        ))
+    }
 }
 
 /// `exit=0` and `dryrun-exit=0` qualify; `not-an-exit=0` does not, because
@@ -627,6 +661,9 @@ pub(crate) fn show(
         println!("{:<12} {}", "author", shown(&request.head.author));
         if let Some(receipt) = &request.receipt {
             println!("{:<12} {}", "receipt", shown(&receipt.path));
+            if let Some(copy) = &receipt.copy {
+                println!("{:<12} {}", "kept", shown(copy));
+            }
             println!("{:<12} {}", "exit", shown(&receipt.exit_line));
         }
         if let Some(open) = &request.open {
@@ -1605,7 +1642,7 @@ fn notify(message: &str) {
 }
 
 fn notification_icon() -> Option<PathBuf> {
-    let directory = dirs::cache_dir()?.join("rune");
+    let directory = rune::folders::cache_dir()?.join("rune");
     let path = directory.join("icon.png");
     if !path.is_file() {
         fs::create_dir_all(&directory).ok()?;

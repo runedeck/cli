@@ -28,6 +28,12 @@ pub(crate) struct Receipt {
     pub path: String,
     pub digest: String,
     pub exit_line: String,
+    /// The queue's own copy of the receipt, under its state directory. A
+    /// session often writes the receipt to a scratch folder that is gone
+    /// by the time the owner signs. The copy is the evidence then. A
+    /// request recorded before the queue kept copies has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<String>,
 }
 
 /// The identity a request records for its head: everything a rewrite must
@@ -233,6 +239,50 @@ impl Store {
         crate::cli::config::write_atomic(&path, body)
     }
 
+    /// Where the queue keeps its copy of request `id`'s receipt.
+    fn receipt_copy_path(&self, id: &str) -> PathBuf {
+        self.root.join("receipts").join(format!("{id}.log"))
+    }
+
+    /// Copy the receipt at `source` into the store for request `id`, and
+    /// return the copy's path. The copy must hash to `digest`, the digest
+    /// the request records: a receipt that changed between the check and
+    /// the copy is refused, so the copy is the file that qualified.
+    pub(crate) fn keep_receipt(
+        &self,
+        id: &str,
+        source: &Path,
+        digest: &str,
+    ) -> Result<String, Error> {
+        let bytes = fs::read(source).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read receipt {}: {error}", source.display()),
+            )
+        })?;
+        if hex_prefix(&Sha256::digest(&bytes), 64) != digest {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "receipt {} changed while the request was recorded",
+                    source.display()
+                ),
+            ));
+        }
+        let path = self.receipt_copy_path(id);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    ErrorKind::Io,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        crate::cli::config::write_atomic(&path, bytes)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// Remove the request and the queue's copy of its receipt.
     pub(crate) fn remove(&self, id: &str) -> Result<(), Error> {
         let path = self.request_path(id);
         fs::remove_file(&path).map_err(|error| {
@@ -240,7 +290,16 @@ impl Store {
                 ErrorKind::Io,
                 format!("cannot remove {}: {error}", path.display()),
             )
-        })
+        })?;
+        let copy = self.receipt_copy_path(id);
+        match fs::remove_file(&copy) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(Error::new(
+                ErrorKind::Io,
+                format!("cannot remove {}: {error}", copy.display()),
+            )),
+        }
     }
 
     /// One signer per repository, held as an OS file lock on the open file

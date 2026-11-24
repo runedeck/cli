@@ -435,6 +435,29 @@ rune --json run sol@claude --dry-run picker
 
 The JSON object carries `model_id`, `tool`, `model`, `argv`, `base_url`, `env`, `env_removed`, `repository`, `mode`, `timeout` (milliseconds, or null), `session_name`, and `artifacts_dir`. Under `--json`, every outcome is one JSON object on stdout, a configuration error and a usage error included. A run that fails reports the last lines of both streams, in the text error and as `details.stdout_tail` and `details.stderr_tail`, the harness's own error messages as `details.harness_errors`, and a `hint` when stderr shows that an outer sandbox blocked the harness. No credential value is ever printed.
 
+Ask a question set about a text. A judging model is not a harness, so it has its own verb: `rune ask <QUESTIONS> [TEXT]` posts the text as the state's `text` with a question set to `<base>/v1/systemone` and prints one answer per line, sorted by question key (`mood: noul 0.83`). `<QUESTIONS>` is a JSON file, or a name looked up as `<NAME>.json` in the folders `ask.questions` lists (default `~/Developer/runedeck/jev/questions`). Only the file's `questions` object is sent. A `signal` block or anything else in the file stays local. The text comes from the argument, `--file <FILE>`, or stdin. `--state-file <JSON>` sends the file's object as the whole state instead. The built-in route `jev` names `jev-1.13.0` at `https://api.typesafe.ai` and reads its key from `JEV_API_KEY` at call time, from the environment or the env file, never printed. `ask.routes.jev` overrides the id, the base URL, or the key variable, so routing through CLIProxyAPI is a configuration change alone. Any other route that speaks `POST <base>/v1/systemone` joins under `ask.routes.<name>`, and `ask.model` or `--model` picks it. `--model` with a name that is no route is a model id on the default route. `--check` asks `<base>/v1/models` and reports the route's model as served or missing. Under `--json` the result carries `answers`, `model`, `usage`, and `details` (`endpoint`, `questions`, `state_source`) beside `ok`, `kind`, and `exit_code`; a refused reply is `endpoint_error` (exit 1) with the status under `details`, no reply within `--timeout` (default 60s) is `timeout` (exit 124), and a missing key or question set is `configuration_error` (exit 125). `rune run jev` and `rune launch jev` point at `rune ask`.
+
+```sh
+rune ask session-shape "The afternoon went by in one sitting."
+rune ask session-shape --file state.txt
+rune ask ./questions/v2.json --state-file state.json --json
+rune ask session-shape --dry-run "picker"
+rune ask --model local --check
+```
+
+```yaml
+ask:
+    model: jev
+    questions: [~/Developer/runedeck/jev/questions]
+    routes:
+        jev:
+            base_url: https://cliproxy.internal
+            key_env: CLIPROXY_API_KEY
+        local:
+            id: gemma3
+            base_url: http://127.0.0.1:11434
+```
+
 Let claude build its own work: workspace-write mode allows `Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit` and turns on Claude Code's own sandbox, which is the only way the shell runs.
 
 ```sh
@@ -462,7 +485,11 @@ rune queue list --state posted       # the postbox, changed by nothing
 
 Every message is recorded in the postbox, `~/.rune/postbox.tsv`, one file for every session on the machine. Each event is one tab-separated line: timestamp, id, state, sender, harness, session, message. A tab, newline, or backslash in a message is escaped, so `rg` and `column -t -s $'\t'` read the file. Nothing is removed: a state change (`posted`, `queued`, `read`) is a new line with the message's id, and its last line is its state. The sender is `--from`, else the posting session as `harness:id`, else `user:<login>`.
 
-Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed.
+Codex takes the message through its own queue, `codex queue --remote unix://`, the local app-server daemon that holds the running sessions, and the postbox records it as `queued`. A route's environment applies, so a profile that sets `CODEX_HOME` reaches the sessions of that home. The profile's arguments start a session, so they are not passed, and a warning names them. `--remote <ADDR>` and `--remote-auth-token-env <VAR>` reach another server. `--postbox` leaves a Codex message in the postbox instead. The result names the message id and the thread id that Codex printed, and the `queued` line names that thread id, so a message posted by name lists under its thread.
+
+Post to a Codex session by its UUID, which the session reads from `CODEX_THREAD_ID`. Codex finds a UUID at once, but searches its server's sessions page by page for a name, which can take a minute or more. So a post by name warns before it starts. When Codex refuses a name and names the UUID it matched, the hint says to post with `--session <uuid>`.
+
+Inside Claude Code's command sandbox, `post` cannot reach the socket of the Codex daemon, and `post` and `read` cannot write `~/.rune/`. Add `rune queue *` to `sandbox.excludedCommands`, as for `rune run *`.
 
 Claude Code, agy, grok, cursor, and OpenCode have no queue for a running session, so their messages wait in the postbox as `posted`. A session reads them in one of two ways. The `postbox` hook handler adds them to Claude Code's session start and next prompt, and at the end of a Claude Code or Codex turn it keeps the turn going with the messages as the reason:
 
@@ -474,9 +501,42 @@ hooks:
       events: [session.start, prompt.before, turn.finish]
 ```
 
-Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. A grok, agy, cursor, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
+Then run `rune hook install`. The hook reads by the session's id, so post to a Claude Code session by the id in its `CLAUDE_CODE_SESSION_ID`. In a Codex session, the same handler records a `queued` message as `read` when the queue starts the session's turn with it, because that turn's prompt is the message's text. A grok, agy, cursor, or OpenCode session runs `rune queue read --session <its id or name>`, as the rune skill tells it to. Inside Claude Code or Codex, `rune queue read` finds its own session in `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`.
 
 `--json` makes every result one object (`posted`, `queued`, `read`, `list`, `dry_run`). `--dry-run` prints what would be posted with the message as `<message>`. A route that names no harness exits 125 with kind `unsupported_harness`. Every other exit status uses the table of `rune run`: the harness's own status passes through, and 124 to 127 are the runner's.
+
+Keep a copy of every harness session in your data folder:
+
+```sh
+rune session capture --harness claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a
+rune session sweep                   # every source, from launchd every hour
+rune session debt                    # the sessions whose copy failed
+```
+
+Rune copies the session files of Claude Code, Codex (compressed files included), Grok, and Antigravity into `~/Data` (`DATA_DIR` or `capture.data_dir` in the rune config), kind first and harness second: `Sessions/<harness>/` holds the native copies at their path in the store, `SessionVersions/<harness>/` the replaced copies that lost bytes and one database backup per day, `Transcripts/<harness>/` the readable copies (Grok through rune, Claude Code through SpecStory when it is installed), and `Plans/claude/` the plan-mode plans. The copy is read-only on the harness's files, never deletes a copy, and keeps a version only when the new file does not start with the bytes of the old copy. Three callers share it: the `session-capture` hook handler at session end and before compaction, `rune run` and `rune launch` after the harness exits (a clean run is not captured), and the hourly sweep. Each host captures its own sessions.
+
+A session classified as work never reaches the data folder:
+
+```yaml
+capture:
+  exclude:
+    paths: ["~/Developer/acme/**", "/srv/client-*"]
+    sessions: ["0f3c2a1e-work-session-id"]
+```
+
+`paths` matches the working folder that a session file records, and rune reads it in a compressed Codex file too. While `paths` is set, a compressed file that rune cannot read stays out, because its working folder is unknown. `sessions` matches the session id. For Antigravity that is the conversation id, and its database gets no native copy and no daily backup.
+
+A capture records debt only when a session file exists and its native copy fails, under `$RUNE_STATE_DIR/capture-debt/`. A later success, or a sweep that finds a complete copy, moves the record to `capture-debt/closed/` with the reason. `rune doctor` prints the open count and the oldest date. A skipped session, a readable copy that fails, or a session that never wrote a file records nothing.
+
+See what rune would install into an interface, a program that starts and watches harness sessions:
+
+```sh
+rune interface list                           # the known interfaces, and whether each is on this machine
+rune interface status t3code                  # T3 Code's provider instances, and what the profiles would own
+rune interface enable t3code --dry-run        # the plan, as text or with --json
+```
+
+This release reads T3 Code's settings file (`userdata/settings.json` under `T3CODE_HOME` or `~/.t3`) and never writes it. `rune interface enable t3code` without `--dry-run` refuses. The plan names each launch profile of `claude` and `codex`, the provider instance it goes to, the settings keys rune would own, and what T3 Code cannot represent. A profile without environment values adds its model to the native instance. A profile with a base URL or any other environment value gets an instance of its own beside the native one, and profiles with the same environment share it. The plan reads profile data only: it resolves no secret and runs no middleware. A `from_env` value shows as the name of its variable, and a literal shows only for the base URL. A profile with middleware, arguments, an unknown model route, or a tool that T3 Code has no driver for is rejected whole, with every reason. So is a profile whose base URL has a query string or a fragment, because that part can hold a key, and so are profiles that would get the same instance id with different environments. An instance that the settings file already has is the profile's only when its environment is the profile's: the status then says `installed`, and otherwise `conflict`, or `route unknown` when the comparison needs a secret.
 
 Run a helper script bundled with a skill:
 

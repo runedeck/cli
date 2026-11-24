@@ -1,13 +1,19 @@
 name: Quality
 
+# Two runs, two facts. The push run proves the head commit: it is the
+# green-head signal Draft Open and the review controller re-enter on, and
+# its log is the receipt `rune sign submit` carries. The merge_group run
+# proves the merge the queue is about to make, and the ruleset requires it.
+# There is no pull_request run: GitHub builds that merge commit once and
+# never rebuilds it when the base moves, so its verdict is about a tree
+# nobody can inspect (runedeck/cli #67, 2026-09-21). The queue's temporary
+# branches are proven by the merge_group run alone.
 on:
     push:
-        branches: [main]
-    pull_request:
-        branches: [main]
-    # draft-open.yaml calls this workflow on the first push of a ceremony
-    # branch, so the draft opens only after the deterministic checks pass.
-    workflow_call: {}
+        branches-ignore:
+            - "gh-readonly-queue/**"
+    merge_group:
+        types: [checks_requested]
 
 concurrency:
     group: quality-${{ github.ref }}
@@ -45,14 +51,36 @@ jobs:
                   fi
                   echo "All third-party actions pinned."
 
+            # The pull request under check: on merge_group its number is in
+            # the queue branch name, on push it is the open pull request whose
+            # head is this branch. A push with no pull request yet (the first
+            # push, before Draft Open) and a push to the default branch have
+            # no body to attest.
             - name: Release notes attestation
-              if: github.event_name == 'pull_request'
+              if: github.event_name == 'merge_group' || github.ref_name != github.event.repository.default_branch
               env:
                   GH_TOKEN: ${{ github.token }}
+                  REPOSITORY: ${{ github.repository }}
+                  OWNER: ${{ github.repository_owner }}
+                  BRANCH: ${{ github.ref_name }}
+                  QUEUE_REF: ${{ github.event.merge_group.head_ref }}
               run: |
+                  set -o pipefail
+                  if [ -n "$QUEUE_REF" ]; then
+                      number=$(printf '%s\n' "$QUEUE_REF" | sed -nE 's#^refs/heads/gh-readonly-queue/[^/]+/pr-([0-9]+)-.*$#\1#p')
+                      [ -n "$number" ] || { echo "cannot read the pull request number from $QUEUE_REF"; exit 1; }
+                  else
+                      number=$(gh api --paginate "repos/$REPOSITORY/pulls?state=open&head=$OWNER:$BRANCH&per_page=100" \
+                          --jq '[.[].number]' | jq -s -r 'add // [] | first // ""') \
+                          || { echo "could not read the pull requests for $BRANCH (API or permission failure)"; exit 1; }
+                      if [ -z "$number" ]; then
+                          echo "no open pull request for $BRANCH yet; nothing to attest."
+                          exit 0
+                      fi
+                  fi
                   # The fetch and the parse fail separately: an API or
                   # permission fault must not read as a missing section.
-                  body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""') \
+                  body=$(gh api "repos/$REPOSITORY/pulls/$number" --jq '.body // ""') \
                       || { echo "could not read the pull request body (API or permission failure)"; exit 1; }
                   if printf '%s\n' "$body" \
                       | awk '/^## Release Notes[[:space:]]*$/{in_section=1; next} /^## /{in_section=0} in_section && /^([-*+]|[0-9]+[.)]) /{found=1} END{exit !found}'; then
@@ -75,19 +103,25 @@ jobs:
                   REQUIRE_GATES: "1"
               run: prek run --all-files
 
-            # Scan exactly the commits this event introduces. Without a usable
+            # Scan exactly the commits this event introduces: the merge group
+            # from its base, a push from its previous tip. Without a usable
             # base, gitleaks scans the target history and other hooks inspect all files.
             - name: Pre-push-stage checks
+              env:
+                  MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+                  MERGE_HEAD: ${{ github.event.merge_group.head_sha }}
+                  PUSH_BEFORE: ${{ github.event.before }}
+                  PUSH_SHA: ${{ github.sha }}
               run: |
-                  if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-                      from="${{ github.event.pull_request.base.sha }}"
-                      to="${{ github.event.pull_request.head.sha }}"
-                  elif [ -n "${{ github.event.before }}" ] && ! printf '%s' "${{ github.event.before }}" | grep -q '^0*$'; then
-                      from="${{ github.event.before }}"
-                      to="${{ github.sha }}"
+                  if [ -n "$MERGE_BASE" ]; then
+                      from="$MERGE_BASE"
+                      to="$MERGE_HEAD"
+                  elif [ -n "$PUSH_BEFORE" ] && ! printf '%s' "$PUSH_BEFORE" | grep -q '^0*$'; then
+                      from="$PUSH_BEFORE"
+                      to="$PUSH_SHA"
                   else
                       from=""
-                      to="${{ github.sha }}"
+                      to="$PUSH_SHA"
                   fi
                   if [ -n "$from" ] && git cat-file -e "$from" 2>/dev/null; then
                       prek run --stage pre-push --from-ref "$from" --to-ref "$to"

@@ -46,6 +46,7 @@ fn runner(fakes: HashMap<String, Fake>) -> (Runner, Seen) {
         cover: Cover::default(),
         env: cover::Environment::default(),
         started: Instant::now(),
+        policy: None,
         spawn: Box::new(move |handler, stdin, timeout, _env, _cwd| {
             let payload: HandlerPayload = serde_json::from_slice(stdin).expect("payload json");
             log.borrow_mut().push((handler.id.clone(), payload));
@@ -116,6 +117,7 @@ fn answer_from(path: &std::path::Path) -> (Value, Value) {
         cover: Cover::default(),
         env: cover::Environment::default(),
         started: Instant::now(),
+        policy: None,
         spawn: Box::new(|handler, _stdin, _timeout, _env, _cwd| {
             let stdout = match handler.exec[0].as_str() {
                 "dcg" => r#"{"effect":"deny","reason":"no rm"}"#,
@@ -1085,6 +1087,7 @@ fn a_handler_timeout_leaves_the_stop_allowance_inside_the_budget() {
         cover: Cover::default(),
         env: cover::Environment::default(),
         started: Instant::now(),
+        policy: None,
         spawn: Box::new(move |_, _, timeout, _, _| {
             *seen.borrow_mut() = timeout;
             Ok((Some(0), "{}".to_string(), String::new()))
@@ -1297,6 +1300,10 @@ fn two_hooks_on_one_event_leave_two_records_in_order_with_the_answer() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_budget_spent_before_a_hook_records_the_budget_failure() {
     let temp = tempfile::tempdir().unwrap();
     let plan = plan(
@@ -1430,6 +1437,7 @@ fn observing(fakes: HashMap<String, Fake>) -> (Runner, Observed) {
         cover: Cover::default(),
         env: cover::Environment::default(),
         started: Instant::now(),
+        policy: None,
         spawn: Box::new(move |handler, _stdin, timeout, env, _cwd| {
             let env = env
                 .iter()
@@ -1665,4 +1673,226 @@ fn the_wrapper_defaults_to_its_own_timeout_and_honors_an_explicit_one() {
     );
     let event = explicit.event(Harness::Claude, "Stop").unwrap();
     assert_eq!(event.handlers[0].timeout_ms, 900);
+}
+
+// ---------------------------------------------------------- the policy ----
+
+/// A guard that names a policy entry and denies every call, and a plain
+/// observer after it.
+const POLICY_PLAN: &str = "handlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    order: 10\n    policy: guard.deny\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 20\n";
+
+/// A scratch directory with a user policy file that grants `guard.*`
+/// everywhere and revokes `guard.deny` under `work/`.
+fn policy_scene() -> (tempfile::TempDir, std::path::PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = rune::folders::canonicalize(temp.path()).unwrap();
+    for sub in ["work", "other", "record", "session"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    std::fs::write(
+        dir.join("policy.yaml"),
+        format!(
+            "version: 1\ngrant: [guard.*]\nscopes:\n  - path: {}\n    revoke: [guard.deny]\n",
+            dir.join("work").display()
+        ),
+    )
+    .unwrap();
+    (temp, dir)
+}
+
+fn policy_env(dir: &std::path::Path) -> rune::policy::Environment {
+    rune::policy::Environment {
+        home: dir.to_path_buf(),
+        file: dir.join("policy.yaml"),
+        disable: Vec::new(),
+        session_dir: Some(dir.join("session")),
+        fold_case: rune::policy::FOLD_CASE,
+        cwd: dir.to_path_buf(),
+    }
+}
+
+fn guard_fakes() -> HashMap<String, Fake> {
+    HashMap::from([
+        (
+            "guard".to_string(),
+            fake(r#"{"effect":"deny","reason":"guard says no"}"#),
+        ),
+        ("watch".to_string(), fake("{}")),
+    ])
+}
+
+fn tool_in(cwd: &std::path::Path, session: &str) -> Value {
+    json!({"hook_event_name": "PreToolUse", "session_id": session, "cwd": cwd, "tool_name": "Bash", "tool_input": {"command": "ls"}})
+}
+
+#[test]
+fn a_handler_the_policy_refuses_does_not_start_and_is_recorded_as_skipped() {
+    let (_temp, dir) = policy_scene();
+    let (mut runner, seen) = runner(guard_fakes());
+    runner.policy = Some(policy_env(&dir));
+    runner.record_dir = Some(dir.join("record"));
+    let answer = dispatch(
+        &plan(POLICY_PLAN),
+        Harness::Claude,
+        "PreToolUse",
+        Ok(tool_in(&dir.join("work"), "s1")),
+        &runner,
+    );
+    let ids: Vec<String> = seen.borrow().iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(ids, ["watch"], "the refused guard never started");
+    assert!(
+        answer
+            .stdout
+            .as_deref()
+            .is_none_or(|out| !out.contains("deny")),
+        "{answer:?}"
+    );
+    assert!(
+        answer.stderr.iter().all(|line| !line.contains("failed")),
+        "a skip is no failure: {:?}",
+        answer.stderr
+    );
+    let records = super::record::load(&dir.join("record")).unwrap();
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert_eq!(records[0].hook, "guard");
+    assert_eq!(
+        records[0].skipped.as_deref(),
+        Some(
+            format!(
+                "skipped by policy: guard.deny (scope {})",
+                dir.join("work").display()
+            )
+            .as_str()
+        )
+    );
+    assert_eq!(records[0].failure, None);
+    assert_eq!(records[0].duration_ms, Some(0));
+    assert_eq!(records[1].hook, "watch");
+    assert_eq!(records[1].skipped, None);
+}
+
+#[test]
+fn a_handler_the_policy_allows_runs_and_its_denial_reaches_the_harness() {
+    let (_temp, dir) = policy_scene();
+    let (mut runner, seen) = runner(guard_fakes());
+    runner.policy = Some(policy_env(&dir));
+    let answer = dispatch(
+        &plan(POLICY_PLAN),
+        Harness::Claude,
+        "PreToolUse",
+        Ok(tool_in(&dir.join("other"), "s1")),
+        &runner,
+    );
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(seen.borrow().len(), 1, "the gate ends at the denial");
+}
+
+#[test]
+fn a_session_switch_refuses_the_handler_for_that_session_alone() {
+    let (_temp, dir) = policy_scene();
+    std::fs::write(dir.join("session/s1.yaml"), "disabled: [guard.*]\n").unwrap();
+    for (session, started) in [("s1", false), ("s2", true)] {
+        let (mut runner, seen) = runner(guard_fakes());
+        runner.policy = Some(policy_env(&dir));
+        let _ = dispatch(
+            &plan(POLICY_PLAN),
+            Harness::Claude,
+            "PreToolUse",
+            Ok(tool_in(&dir.join("other"), session)),
+            &runner,
+        );
+        let ran = seen.borrow().iter().any(|(id, _)| id == "guard");
+        assert_eq!(ran, started, "{session}");
+    }
+}
+
+#[test]
+fn a_missing_policy_refuses_a_named_handler_and_runs_the_rest() {
+    let (_temp, dir) = policy_scene();
+    std::fs::remove_file(dir.join("policy.yaml")).unwrap();
+    let (mut runner, seen) = runner(guard_fakes());
+    runner.policy = Some(policy_env(&dir));
+    let _ = dispatch(
+        &plan(POLICY_PLAN),
+        Harness::Claude,
+        "PreToolUse",
+        Ok(tool_in(&dir.join("other"), "s1")),
+        &runner,
+    );
+    let ids: Vec<String> = seen.borrow().iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(ids, ["watch"]);
+}
+
+#[test]
+fn a_dispatch_without_a_policy_reader_refuses_only_named_handlers() {
+    let (runner, seen) = runner(guard_fakes());
+    assert!(runner.policy.is_none());
+    let _ = dispatch(
+        &plan(POLICY_PLAN),
+        Harness::Claude,
+        "PreToolUse",
+        Ok(claude_tool("ls")),
+        &runner,
+    );
+    let ids: Vec<String> = seen.borrow().iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(ids, ["watch"]);
+}
+
+#[test]
+fn a_plan_without_policy_names_never_reads_the_policy() {
+    let (_temp, dir) = policy_scene();
+    // A broken policy file would refuse every name it is asked about.
+    std::fs::write(dir.join("policy.yaml"), "version: [\n").unwrap();
+    let (mut runner, seen) = runner(guard_fakes());
+    runner.policy = Some(policy_env(&dir));
+    let plain = plan(
+        "handlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    on_failure: deny\n",
+    );
+    let answer = dispatch(
+        &plain,
+        Harness::Claude,
+        "PreToolUse",
+        Ok(tool_in(&dir.join("work"), "s1")),
+        &runner,
+    );
+    assert_eq!(seen.borrow().len(), 1);
+    let out: Value = serde_json::from_str(answer.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
+    let event = plain.event(Harness::Claude, "PreToolUse").unwrap();
+    let payload: HandlerPayload =
+        super::payload::decode(Harness::Claude, "PreToolUse", tool_in(&dir, "s1"));
+    let mut stderr = Vec::new();
+    assert!(super::run::refusals(event, &payload, &runner, &mut stderr).is_empty());
+    assert_eq!(stderr, Vec::<String>::new());
+}
+
+#[test]
+fn a_repository_grant_warns_on_stderr_once() {
+    let (_temp, dir) = policy_scene();
+    let repo = dir.join("other/repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(repo.join(".rune")).unwrap();
+    std::fs::write(
+        repo.join(".rune/policy.yaml"),
+        "version: 1\ngrant: [anything.*]\n",
+    )
+    .unwrap();
+    let two = "handlers:\n  - id: guard\n    exec: [guard]\n    events: [tool.before]\n    policy: guard.deny\n  - id: watch\n    exec: [watch]\n    events: [tool.before]\n    order: 200\n    policy: guard.watch\n";
+    let (mut runner, seen) = runner(guard_fakes());
+    runner.policy = Some(policy_env(&dir));
+    let answer = dispatch(
+        &plan(two),
+        Harness::Claude,
+        "PreToolUse",
+        Ok(tool_in(&repo, "s1")),
+        &runner,
+    );
+    let warnings: Vec<&String> = answer
+        .stderr
+        .iter()
+        .filter(|line| line.contains("grant is ignored in a repository policy"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{:?}", answer.stderr);
+    assert_eq!(seen.borrow().len(), 1, "the guard still runs and denies");
 }

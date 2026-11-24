@@ -34,6 +34,7 @@ fn request(id: &str, repository: &str, at: &str) -> Request {
             path: "r.log".to_string(),
             digest: "d".to_string(),
             exit_line: "exit=0".to_string(),
+            copy: None,
         }),
         requested_at: at.to_string(),
         status: Status::Queued,
@@ -193,6 +194,81 @@ fn store_round_trips_requests_and_removes_them() {
 }
 
 #[test]
+fn the_store_keeps_its_own_copy_of_a_receipt_and_removes_it_with_the_request() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("requests")).expect("requests dir");
+    let store = Store::at(dir.path().join("queue"));
+    std::fs::create_dir_all(dir.path().join("queue/requests")).expect("requests dir");
+    let receipt = dir.path().join("scratch.log");
+    std::fs::write(&receipt, "bookmark: x [to abc]\nexit=0\n").expect("receipt");
+    let digest = super::store::file_digest(&receipt).expect("digest");
+
+    let copy = store
+        .keep_receipt("one", &receipt, &digest)
+        .expect("the copy is kept");
+    assert_eq!(
+        copy,
+        rune::folders::join(dir.path(), "queue/receipts/one.log")
+            .to_string_lossy()
+            .as_ref()
+    );
+    std::fs::remove_file(&receipt).expect("the session's file goes away");
+    assert_eq!(
+        super::store::file_digest(std::path::Path::new(&copy)).expect("copy digest"),
+        digest,
+        "the copy holds the bytes that qualified"
+    );
+
+    let mut request = request("one", "repo", "2026-09-15T10:00:00Z");
+    request.receipt.as_mut().expect("receipt").copy = Some(copy.clone());
+    store.save(&request).expect("save");
+    assert_eq!(store.load("one").expect("load"), request);
+    store.remove("one").expect("remove");
+    assert!(
+        !std::path::Path::new(&copy).exists(),
+        "the copy leaves with its request"
+    );
+}
+
+#[test]
+fn a_receipt_that_changed_before_the_copy_is_refused() {
+    let dir = TempDir::new().expect("tempdir");
+    let store = Store::at(dir.path().join("queue"));
+    let receipt = dir.path().join("scratch.log");
+    std::fs::write(&receipt, "bookmark: x [to abc]\nexit=0\n").expect("receipt");
+    let digest = super::store::file_digest(&receipt).expect("digest");
+    std::fs::write(&receipt, "bookmark: x [to abc]\nexit=1\n").expect("a later check failed");
+
+    let error = store
+        .keep_receipt("one", &receipt, &digest)
+        .expect_err("a changed receipt is not copied");
+    assert!(
+        error
+            .to_string()
+            .contains("changed while the request was recorded"),
+        "{error}"
+    );
+    assert!(!dir.path().join("queue/receipts/one.log").exists());
+}
+
+#[test]
+fn removing_a_request_without_a_copy_succeeds() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("requests")).expect("requests dir");
+    let store = Store::at(dir.path().to_path_buf());
+    store
+        .save(&request("old", "repo", "2026-09-15T10:00:00Z"))
+        .expect("save");
+    store
+        .remove("old")
+        .expect("a request from before the copies");
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "a Windows file lock is mandatory, so the holder line cannot be read while the lock is held"
+)]
 fn repository_lock_refuses_a_live_holder_and_releases_on_drop() {
     let dir = TempDir::new().expect("tempdir");
     std::fs::create_dir_all(dir.path().join("locks")).expect("locks dir");
@@ -270,6 +346,16 @@ fn a_record_written_before_the_ceremony_reads_as_a_head_request() {
     assert_eq!(
         request.receipt.as_ref().map(|r| r.path.as_str()),
         Some("r.log")
+    );
+    assert_eq!(
+        request.receipt.as_ref().and_then(|r| r.copy.as_deref()),
+        None,
+        "a record from before the queue kept copies has none"
+    );
+    let written = serde_json::to_string(&request).expect("the record writes");
+    assert!(
+        !written.contains("\"copy\""),
+        "a missing copy is not written: {written}"
     );
 }
 

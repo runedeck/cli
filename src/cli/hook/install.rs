@@ -1,5 +1,9 @@
 //! Render the plan into the harness hook tables: one dispatcher entry per
-//! subscribed event in Claude's `settings.json` and Codex's `hooks.json`.
+//! subscribed event in Claude's `settings.json`, Codex's `hooks.json`, and
+//! Cursor's `hooks.json`. Claude and Codex group their hooks under a
+//! matcher; Cursor lists them flat, so install wraps each Cursor entry as
+//! a group of one on the way in and unwraps it on the way out, and the
+//! one reconciliation serves all three.
 //! rune owns only the entries it wrote (known by their command), keeps
 //! every other entry, adopts the entries of the tools its adapters
 //! replace, and stops on an owned entry a hand changed. The legacy
@@ -52,6 +56,11 @@ pub(crate) struct HarnessManifest {
     pub foreign: Vec<Recorded>,
     #[serde(default)]
     pub adopted: Vec<Recorded>,
+    /// The plan generations this harness's table named when an install
+    /// last read it. An install that leaves the harness alone reads this
+    /// instead of the table, so the sweep keeps them named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +84,14 @@ pub(crate) struct Manifest {
 /// What one run of the installer found and did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Report {
+    /// The install had nothing to do: no handler is declared, or a
+    /// removal found nothing of rune's, and no earlier install left a
+    /// generation or an owned entry to take back. `skipped` still names
+    /// the harnesses the folder rule left out.
+    pub nothing: bool,
+    /// A harness the install left alone because its folder does not
+    /// exist: nothing was read, locked, or created for it.
+    pub skipped: Vec<Harness>,
     pub written: Vec<(Harness, String)>,
     pub unchanged: Vec<(Harness, String)>,
     pub adopted: Vec<(Harness, String, String)>,
@@ -94,6 +111,11 @@ impl Report {
     pub(crate) fn summary(&self) -> rune::result::HookSummary {
         rune::result::HookSummary {
             skipped: None,
+            skipped_harnesses: self
+                .skipped
+                .iter()
+                .map(|h| format!("{h}: ~/.{h} does not exist"))
+                .collect(),
             written: self
                 .written
                 .iter()
@@ -120,6 +142,9 @@ impl Report {
 
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
+        for harness in &self.skipped {
+            let _ = writeln!(out, "{harness}: skipped, ~/.{harness} does not exist");
+        }
         // A written entry is an event registered, or an event with what
         // happened to it, such as `PreToolUse removed`.
         for (harness, event) in &self.written {
@@ -313,8 +338,7 @@ fn predecessor_run(words: &[String], adapters: &[String]) -> Option<&'static str
     let name = |word: &String| {
         Path::new(word)
             .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .map_or_default(|n| n.to_string_lossy().into_owned())
     };
     let program = name(words.first()?);
     let second = words.get(1).map(String::as_str);
@@ -348,7 +372,10 @@ fn hash_value(value: &Value) -> String {
 
 /// The entry rune writes for one event. On a guarded Claude event the
 /// entry also asks Claude to block when the dispatcher itself fails or
-/// overruns its timeout (`onFailure`, Claude Code 2.1.295 and later).
+/// overruns its timeout (`onFailure`, Claude Code 2.1.295 and later); on
+/// a guarded Cursor event `failClosed` does the same (hooks reference,
+/// read 2026-11-02). A Cursor entry is flat, `type` left to its default,
+/// and wrapped as a group of one here like every other.
 fn rendered(
     rune: &str,
     harness: Harness,
@@ -358,16 +385,53 @@ fn rendered(
 ) -> Value {
     let timeout = planned.timeout_s();
     let guarded = guarded(harness, planned);
-    let mut hook = json!({
-        "type": "command",
-        "command": dispatcher(rune, harness, event, plan, guarded),
-        "timeout": timeout,
-    });
+    let command = dispatcher(rune, harness, event, plan, guarded);
+    let mut hook = if harness == Harness::Cursor {
+        json!({ "command": command, "timeout": timeout })
+    } else {
+        json!({ "type": "command", "command": command, "timeout": timeout })
+    };
     if guarded && harness == Harness::Claude {
         hook["onFailure"] = json!("block");
     }
+    if guarded && harness == Harness::Cursor {
+        hook["failClosed"] = json!(true);
+    }
     json!({ "hooks": [hook] })
 }
+
+/// Whether the harness lists its hooks flat, one object per hook, where
+/// Claude and Codex group them under a matcher.
+fn flat_table(harness: Harness) -> bool {
+    harness == Harness::Cursor
+}
+
+/// A flat table's entries, each wrapped as a group of one, so the one
+/// reconciliation reads them.
+fn wrapped(entries: Vec<Value>) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|entry| json!({ "hooks": [entry] }))
+        .collect()
+}
+
+/// The hooks of reconciled groups, flat again for a flat table.
+fn unwrapped(groups: &[Value]) -> Vec<Value> {
+    groups.iter().flat_map(hooks_of).cloned().collect()
+}
+
+/// The hooks of one table group: the `hooks` array of a Claude or Codex
+/// group, or the entry itself in a flat table.
+fn hooks_of(group: &Value) -> Vec<&Value> {
+    match group["hooks"].as_array() {
+        Some(hooks) => hooks.iter().collect(),
+        None if group.get("command").is_some() => vec![group],
+        None => Vec::new(),
+    }
+}
+
+/// The `version` Cursor's table requires; a table rune creates gets it.
+const CURSOR_TABLE_VERSION: &str = "1";
 
 /// The manifest's path, made absolute like the plan's, because
 /// `RUNE_STATE_DIR` may be relative.
@@ -397,6 +461,9 @@ fn table_path(home: &Path, harness: Harness) -> PathBuf {
     match harness {
         Harness::Claude => home.join(".claude").join("settings.json"),
         Harness::Codex => home.join(".codex").join("hooks.json"),
+        // The user-level file; the project-level `.cursor/hooks.json`
+        // is the repository's own.
+        Harness::Cursor => home.join(".cursor").join("hooks.json"),
         _ => home.join(format!(".{harness}")).join("hooks.json"),
     }
 }
@@ -415,15 +482,30 @@ fn config_root(home: &Path) -> PathBuf {
 /// in, `~/.<harness>/`, or its directory under the XDG config root, which
 /// `OpenCode` uses, exists.
 fn harness_present(home: &Path, config_root: &Path, harness: Harness) -> bool {
+    table_dir_exists(home, harness) || config_root.join(harness.as_str()).exists()
+}
+
+/// Whether the folder a registered harness's table lives in exists: the
+/// mark that the harness is set up in `home`. An install skips a harness
+/// without it, and creates neither the folder nor anything in it.
+pub(crate) fn table_dir_exists(home: &Path, harness: Harness) -> bool {
     table_path(home, harness).parent().is_some_and(Path::exists)
-        || config_root.join(harness.as_str()).exists()
+}
+
+/// The harnesses of `requested` that are set up in `home`, and the ones
+/// that are not, in that order.
+pub(crate) fn present(home: &Path, requested: &[Harness]) -> (Vec<Harness>, Vec<Harness>) {
+    requested
+        .iter()
+        .copied()
+        .partition(|harness| table_dir_exists(home, *harness))
 }
 
 /// The file a table path names: the target of a symbolic link, so the
 /// write lands in the owner's file and the link stays a link.
 fn resolved(path: &Path) -> Result<PathBuf, Error> {
     if path.is_symlink() {
-        fs::canonicalize(path).map_err(|error| {
+        rune::folders::canonicalize(path).map_err(|error| {
             Error::io(format!(
                 "{} is a link rune cannot follow: {error}",
                 path.display()
@@ -434,10 +516,12 @@ fn resolved(path: &Path) -> Result<PathBuf, Error> {
     }
 }
 
-/// The table files install may write for every registered harness, links
-/// resolved: the set its lock covers with the plan and the manifest.
-pub(crate) fn table_files(home: &Path) -> Result<Vec<PathBuf>, Error> {
-    Harness::REGISTERED
+/// The table files install may write for the selected harnesses, links
+/// resolved: the set its lock covers with the plan and the manifest. An
+/// unselected harness's table is not in it, so its directory is neither
+/// locked nor created.
+pub(crate) fn table_files(home: &Path, harnesses: &[Harness]) -> Result<Vec<PathBuf>, Error> {
+    harnesses
         .iter()
         .map(|harness| resolved(&table_path(home, *harness)))
         .collect()
@@ -498,6 +582,7 @@ pub(crate) fn apply(
         rune,
         Path::new(generations),
         manifest_path,
+        &Harness::REGISTERED,
         check,
         chrono::Utc::now(),
     )?;
@@ -516,21 +601,23 @@ fn generation_of(command: &str) -> Option<PathBuf> {
 }
 
 /// Keep every generation in `dir` that a registration in a table under
-/// `home` names, from a fresh read of the tables. Record in the manifest
-/// when, at which install, and on which days installs found each other
-/// one unnamed, and delete it only once `retire::observe` lets it go.
+/// `home` names, from a fresh read of the selected harnesses' tables and
+/// the manifest's record of the others'. Record in the manifest when, at
+/// which install, and on which days installs found each other one
+/// unnamed, and delete it only once `retire::observe` lets it go.
 /// Returns the generations deleted.
 pub(crate) fn sweep_generations(
     home: &Path,
     dir: &Path,
     manifest_path: &Path,
+    harnesses: &[Harness],
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<PathBuf>, Error> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
-    let named = named_generations(home, &canonical)?;
     let mut manifest = read_manifest(manifest_path);
+    let named = named_generations(home, &manifest, harnesses, &canonical)?;
     let installs = manifest.installs;
     let earlier: BTreeMap<PathBuf, &Retired> = manifest
         .retired
@@ -565,14 +652,26 @@ pub(crate) fn sweep_generations(
     Ok(swept)
 }
 
-/// The canonical path of every generation a rune registration in a
-/// table under `home` names.
+/// The canonical path of every generation a rune registration names: read
+/// from the table of each harness in `harnesses`, and from the manifest's
+/// record for every other registered harness, whose table this install
+/// does not open.
 fn named_generations(
     home: &Path,
+    manifest: &Manifest,
+    harnesses: &[Harness],
     canonical: &dyn Fn(&Path) -> PathBuf,
 ) -> Result<std::collections::BTreeSet<PathBuf>, Error> {
     let mut named = std::collections::BTreeSet::new();
     for harness in Harness::REGISTERED {
+        if !harnesses.contains(&harness) {
+            named.extend(
+                recorded_generations(manifest, harness)
+                    .iter()
+                    .map(|plan| canonical(plan)),
+            );
+            continue;
+        }
         let table = Table::read(&resolved(&table_path(home, harness))?)?;
         for event in table.event_names() {
             for plan in generations_in(&table.groups(&event)) {
@@ -583,26 +682,48 @@ fn named_generations(
     Ok(named)
 }
 
-/// The generation every rune registration in an event's groups names.
+/// The generations the manifest records one harness's table as naming:
+/// its `generations` list, and the plan each owned entry's command names,
+/// which a manifest from before the list carries too.
+fn recorded_generations(manifest: &Manifest, harness: Harness) -> Vec<PathBuf> {
+    let Some(record) = manifest.harnesses.get(&harness) else {
+        return Vec::new();
+    };
+    let mut named: Vec<PathBuf> = record.generations.iter().map(PathBuf::from).collect();
+    for owned in &record.owned {
+        if let Some(plan) = generation_of(&owned.command)
+            && !named.contains(&plan)
+        {
+            named.push(plan);
+        }
+    }
+    named
+}
+
+/// The generation every rune registration in an event's groups names,
+/// grouped or flat.
 fn generations_in(groups: &[Value]) -> Vec<PathBuf> {
     groups
         .iter()
-        .filter_map(|group| group["hooks"].as_array())
-        .flatten()
+        .flat_map(hooks_of)
         .filter_map(|hook| generation_of(hook["command"].as_str().unwrap_or_default()))
         .collect()
 }
 
-/// Read every table, find every conflict, and compute what install would
-/// write. `rune` is the dispatcher's own path as the tables will call it,
-/// and `now` the time a generation the new tables stop naming is retired
-/// at. The XDG config root comes from this process's environment.
+/// Read the selected tables, find every conflict, and compute what install
+/// would write. `rune` is the dispatcher's own path as the tables will
+/// call it, `harnesses` the registered harnesses this install writes (the
+/// others keep their tables, unopened, and their manifest records), and
+/// `now` the time a generation the new tables stop naming is retired at.
+/// The XDG config root comes from this process's environment.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     plan: &Plan,
     home: &Path,
     rune: &str,
     generations_dir: &Path,
     manifest_path: &Path,
+    harnesses: &[Harness],
     check: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Prepared, Error> {
@@ -613,6 +734,7 @@ pub(crate) fn prepare(
         rune,
         generations_dir,
         manifest_path,
+        harnesses,
         check,
         now,
     )
@@ -620,7 +742,7 @@ pub(crate) fn prepare(
 
 /// `prepare` with the XDG config root given, so a test names one without
 /// touching the environment. One pass over every event of every
-/// registered harness: long, and linear.
+/// selected harness: long, and linear.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prepare_in(
     plan: &Plan,
@@ -629,6 +751,7 @@ fn prepare_in(
     rune: &str,
     generations_dir: &Path,
     manifest_path: &Path,
+    harnesses: &[Harness],
     check: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Prepared, Error> {
@@ -648,12 +771,14 @@ fn prepare_in(
     // Every harness the plan targets, a harness install registers nothing
     // for included: an event it lacks is named, never substituted. A
     // harness that is not set up in this home, and that the owner's
-    // config never names, has no gap to name.
+    // config never names, has no gap to name; nor has a registered
+    // harness this install leaves alone.
     for gap in &plan.unsupported {
-        if !Harness::REGISTERED.contains(&gap.harness)
-            && !gap.named
-            && !harness_present(home, config_root, gap.harness)
-        {
+        let registered = Harness::REGISTERED.contains(&gap.harness);
+        if registered && !harnesses.contains(&gap.harness) {
+            continue;
+        }
+        if !registered && !gap.named && !harness_present(home, config_root, gap.harness) {
             continue;
         }
         report.unsupported.push(format!(
@@ -664,9 +789,18 @@ fn prepare_in(
         ));
     }
     for harness in Harness::REGISTERED {
+        if !harnesses.contains(&harness) {
+            // A harness this install leaves alone keeps its table unopened
+            // and its manifest record, and the generations the record says
+            // its table names stay named, so the sweep keeps them.
+            let named = recorded_generations(&manifest, harness);
+            named_before.extend(named.iter().cloned());
+            named_after.extend(named);
+            continue;
+        }
         let path = table_path(home, harness);
         let file = resolved(&path)?;
-        let table = Table::read(&file)?;
+        let mut table = Table::read(&file)?;
         let previous = manifest
             .harnesses
             .get(&harness)
@@ -676,6 +810,7 @@ fn prepare_in(
         let mut changed = false;
         let mut rewritten: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let codex = harness == Harness::Codex;
+        let flat = flat_table(harness);
         // Each registration names its own generation: the event as the
         // plan compiles it, every handler included. A handler that a part
         // of a kept legacy dispatcher entry covers goes in the event's
@@ -724,15 +859,27 @@ fn prepare_in(
         let mut moved: Vec<(String, Slot, Slot)> = Vec::new();
         let mut deferred: Vec<String> = Vec::new();
         for name in &names {
-            let entries = table.groups(name);
+            let entries = if flat {
+                wrapped(table.groups(name))
+            } else {
+                table.groups(name)
+            };
             named_before.extend(generations_in(&entries));
+            // On Cursor no entry is adopted: the tools that register
+            // themselves there, dcg and git-ai among them, keep their
+            // entries beside rune's, so the adapter list is empty.
+            let adapters = if flat {
+                Vec::new()
+            } else {
+                events.get(name).map_or_default(adapters_of)
+            };
             let mut event = Event {
                 harness,
                 name,
                 path: &path,
                 want: wanted.get(name),
                 previous: &previous,
-                adapters: events.get(name).map(adapters_of).unwrap_or_default(),
+                adapters,
                 adopt: !codex,
                 keep_slots: codex,
                 hold: std::collections::BTreeSet::new(),
@@ -806,7 +953,10 @@ fn prepare_in(
                 // hook from, must still be trusted where it stands.
                 touched_trust(&event, &codex_config, &kept, &mut report.drift);
             }
-            named_after.extend(generations_in(&kept.groups));
+            for generation in generations_in(&kept.groups) {
+                next.generations.push(generation.display().to_string());
+                named_after.insert(generation);
+            }
             // The cover names each entry at the slot the table has once
             // this install wrote it, so an entry adopted before the
             // dispatcher in this same install does not shift the slot.
@@ -818,13 +968,16 @@ fn prepare_in(
             }
             if kept.changed {
                 changed = true;
-                rewritten.insert(name.clone(), kept.groups);
+                let groups = if flat {
+                    unwrapped(&kept.groups)
+                } else {
+                    kept.groups
+                };
+                rewritten.insert(name.clone(), groups);
             }
         }
         for (name, trust, slot) in &untrusted {
-            let at = slot
-                .map(|s| format!(" at {}", slot_word(s)))
-                .unwrap_or_default();
+            let at = slot.map_or_default(|s| format!(" at {}", slot_word(s)));
             report.trust.push(format!(
                 "{harness}: the rune entry for {name}{at} is {}: run `/hooks` in {harness} and trust it there, then run `rune hook install`; the entries it replaces stay until then",
                 trust.word()
@@ -901,6 +1054,11 @@ fn prepare_in(
             continue;
         }
         if changed {
+            if harness == Harness::Cursor {
+                // Cursor requires `version`; a table rune creates, or one
+                // without it, gets `1`. An existing value is the owner's.
+                table.ensure_member("version", CURSOR_TABLE_VERSION);
+            }
             files.push(Staged {
                 target: file.clone(),
                 text: table.render(&names, &rewritten),
@@ -1634,7 +1792,7 @@ fn legacy_codex_toml(
     report: &mut Report,
 ) {
     for hook in hooks {
-        let adapters = events.get(&hook.event).map(adapters_of).unwrap_or_default();
+        let adapters = events.get(&hook.event).map_or_default(adapters_of);
         let (by, alone) = match predecessor(&hook.command, &adapters) {
             Some(Predecessor::Alone(by)) => (by, true),
             Some(Predecessor::Compound(by)) => (by, false),
@@ -1645,7 +1803,7 @@ fn legacy_codex_toml(
         } else {
             format!("runs {by} with other commands; split it in config.toml")
         };
-        let at = hook.line.map(|line| format!(":{line}")).unwrap_or_default();
+        let at = hook.line.map_or_default(|line| format!(":{line}"));
         report.legacy_toml.push(format!(
             "{}{at}: `{}` {what} by hand, rune does not rewrite that file",
             path.display(),
@@ -1772,7 +1930,9 @@ impl Dispatchers<'_> {
     ) -> BTreeMap<String, cover::Coverage> {
         let (harness, home) = (self.harness, self.home);
         let mut out: BTreeMap<String, cover::Coverage> = BTreeMap::new();
-        if harness == Harness::Codex {
+        // Nothing is covered on Codex, and no legacy dispatcher entry was
+        // ever written for Cursor: only Claude's table is read for parts.
+        if harness != Harness::Claude {
             return out;
         }
         let canonical = planned
@@ -1949,6 +2109,7 @@ mod tests {
             rune,
             generations_dir,
             manifest_path,
+            &Harness::REGISTERED,
             check,
             now,
         )
@@ -1990,6 +2151,10 @@ mod tests {
     const LIVE: &str = r#"{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/Users/x/.local/bin/dcg"}]},{"hooks":[{"type":"command","command":"sh /Users/x/.sd/hook PreToolUse"}]},{"matcher":"*","hooks":[{"type":"command","command":"/Users/x/.git-ai/bin/git-ai checkpoint claude --hook-input stdin"}]}],"Notification":[{"hooks":[{"type":"command","command":"cmux hooks claude Notification"}]}]}}"#;
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn foreign_entries_survive_predecessors_are_adopted_and_one_rune_entry_per_event() {
         let home = tempfile::tempdir().unwrap();
         let path = settings(home.path(), LIVE);
@@ -2105,6 +2270,400 @@ mod tests {
             false,
         );
         assert!(report.is_err(), "check reports the same conflict");
+    }
+
+    /// `apply` into the registered harnesses in `selected` only.
+    fn apply_to(
+        plan: &Plan,
+        home: &Path,
+        manifest: &Path,
+        selected: &[Harness],
+        check: bool,
+        dry_run: bool,
+    ) -> Result<Report, Error> {
+        let prepared = prepare_in(
+            plan,
+            home,
+            &home.join(".config"),
+            "/opt/rune",
+            Path::new(PLAN),
+            manifest,
+            selected,
+            check,
+            chrono::Utc::now(),
+        )?;
+        if !check && !dry_run {
+            super::super::publish::publish(&prepared.files)?;
+        }
+        Ok(prepared.report)
+    }
+
+    /// The owner's Cursor table as it stands (read 2026-11-02): a dcg
+    /// guard on an event rune has no name for, git-ai on three events,
+    /// and the required `version`.
+    const CURSOR_LIVE: &str = r#"{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {"command": "/Users/x/.local/bin/dcg-cursor.sh", "failClosed": true}
+    ],
+    "postToolUse": [
+      {"command": "/Users/x/.git-ai/bin/git-ai checkpoint cursor --hook-input stdin"},
+      {"command": "/Users/x/.git-ai/bin/git-ai proton-cursor-hook"}
+    ],
+    "preToolUse": [
+      {"command": "/Users/x/.git-ai/bin/git-ai checkpoint cursor --hook-input stdin"}
+    ],
+    "stop": [
+      {"command": "/Users/x/.git-ai/bin/git-ai proton-cursor-hook"}
+    ]
+  }
+}"#;
+
+    fn cursor_table(home: &Path, text: &str) -> PathBuf {
+        let path = home.join(".cursor").join("hooks.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    /// The commands of one Cursor event, in table order.
+    fn cursor_commands(table: &Value, event: &str) -> Vec<String> {
+        table["hooks"][event].as_array().map_or_default(|entries| {
+            entries
+                .iter()
+                .map(|e| e["command"].as_str().unwrap().to_string())
+                .collect()
+        })
+    }
+
+    #[test]
+    fn cursor_entries_sit_beside_the_guard_and_git_ai_and_a_second_install_changes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let path = cursor_table(home.path(), CURSOR_LIVE);
+        let manifest = home.path().join("state").join("manifest.json");
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let first = fs::read_to_string(&path).unwrap();
+        let table: Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(table["version"], json!(1), "the version member stays");
+        assert_eq!(
+            cursor_commands(&table, "beforeShellExecution"),
+            ["/Users/x/.local/bin/dcg-cursor.sh"],
+            "an event rune has no name for is untouched"
+        );
+        assert_eq!(
+            table["hooks"]["beforeShellExecution"][0]["failClosed"],
+            json!(true)
+        );
+        for (event, foreign) in [("preToolUse", 1), ("postToolUse", 2), ("stop", 1)] {
+            let commands = cursor_commands(&table, event);
+            let rune: Vec<_> = commands
+                .iter()
+                .filter(|c| {
+                    c.contains(&format!("hook run --harness cursor --native-event {event}"))
+                })
+                .collect();
+            assert_eq!(
+                commands.len() - rune.len(),
+                foreign,
+                "{event}: every git-ai entry stays"
+            );
+            assert_eq!(
+                rune.len(),
+                usize::from(event != "stop"),
+                "{event}: one rune entry where the plan has the event"
+            );
+            assert!(
+                commands.iter().take(foreign).all(|c| c.contains("git-ai")),
+                "{event}: the foreign entries keep their place in front"
+            );
+        }
+        assert_eq!(cursor_commands(&table, "sessionEnd").len(), 1);
+        let pre = table["hooks"]["preToolUse"][1].clone();
+        assert_eq!(pre["failClosed"], json!(true), "dcg denies on failure");
+        assert!(
+            pre.get("type").is_none(),
+            "Cursor's type is left to its default"
+        );
+        assert!(
+            pre["command"]
+                .as_str()
+                .unwrap()
+                .ends_with("--on-failure deny"),
+            "{pre}"
+        );
+        assert!(
+            table["hooks"]["postToolUse"][2].get("failClosed").is_none(),
+            "an observer event fails open"
+        );
+        let recorded: Manifest =
+            serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+        let cursor = &recorded.harnesses[&Harness::Cursor];
+        assert_eq!(cursor.owned.len(), 3, "preToolUse, postToolUse, sessionEnd");
+        assert_eq!(cursor.foreign.len(), 5, "dcg and four git-ai entries");
+        assert!(cursor.adopted.is_empty(), "nothing is adopted on Cursor");
+        // The second install writes nothing; a hand edit is a conflict.
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(report.written.is_empty(), "{report:?}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+        let edited = first.replace("\"timeout\": 3", "\"timeout\": 99");
+        assert_ne!(edited, first);
+        fs::write(&path, &edited).unwrap();
+        let error = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            true,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("changed by hand"), "{error}");
+    }
+
+    #[test]
+    fn a_fresh_cursor_table_gets_its_version_and_a_dry_run_writes_no_table() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = home.path().join("state").join("manifest.json");
+        let path = home.path().join(".cursor").join("hooks.json");
+        let report = apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(
+            report.written.iter().any(|(h, _)| *h == Harness::Cursor),
+            "{report:?}"
+        );
+        assert!(!path.exists(), "a dry run writes nothing");
+        assert!(!manifest.exists());
+        apply(
+            &plan(),
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(table["version"], json!(1), "Cursor requires a version");
+        assert_eq!(cursor_commands(&table, "preToolUse").len(), 1);
+    }
+
+    #[test]
+    fn an_unselected_harness_s_generations_come_from_the_manifest_not_its_table() {
+        // The record lists them, or, from a manifest written before the
+        // list, its owned entries' commands name them. The table itself is
+        // not opened: here it does not even parse.
+        let home = tempfile::tempdir().unwrap();
+        settings(home.path(), "{ not json");
+        let manifest = Manifest {
+            version: 1,
+            harnesses: [(
+                Harness::Claude,
+                HarnessManifest {
+                    owned: vec![Recorded {
+                        event: "PreToolUse".into(),
+                        command: "/opt/rune hook run --harness claude --native-event PreToolUse --plan /state/hooks/plans/old.json".into(),
+                        hash: Some("h".into()),
+                        by: None,
+                        source: None,
+                    }],
+                    generations: vec!["/state/hooks/plans/listed.json".into()],
+                    ..HarnessManifest::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Manifest::default()
+        };
+        assert_eq!(
+            recorded_generations(&manifest, Harness::Claude),
+            [
+                PathBuf::from("/state/hooks/plans/listed.json"),
+                PathBuf::from("/state/hooks/plans/old.json")
+            ]
+        );
+        assert_eq!(
+            recorded_generations(&manifest, Harness::Codex),
+            Vec::<PathBuf>::new()
+        );
+        let named = named_generations(home.path(), &manifest, &[Harness::Cursor], &|p| {
+            p.to_path_buf()
+        })
+        .unwrap();
+        assert!(named.contains(Path::new("/state/hooks/plans/old.json")));
+        assert!(named.contains(Path::new("/state/hooks/plans/listed.json")));
+        // Selecting Claude reads its table, and the garbled one is an error.
+        assert!(
+            named_generations(home.path(), &manifest, &[Harness::Claude], &|p| p
+                .to_path_buf())
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_install_into_one_harness_leaves_the_others_their_tables_and_generations() {
+        let home = tempfile::tempdir().unwrap();
+        let claude = settings(home.path(), LIVE);
+        let cursor = cursor_table(home.path(), CURSOR_LIVE);
+        let manifest = home.path().join("state").join("manifest.json");
+        let all = &Harness::REGISTERED;
+        apply_to(&plan(), home.path(), &manifest, all, false, false).unwrap();
+        let claude_before = fs::read_to_string(&claude).unwrap();
+        let claude_generation =
+            super::super::plan::generation(Path::new(PLAN), &plan(), Harness::Claude, "PreToolUse")
+                .unwrap()
+                .path;
+        let manifest_before: Manifest =
+            serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+        // A smaller plan goes into Cursor alone: Claude keeps its table,
+        // its manifest record, and its generation is still named.
+        let smaller = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: capture\n    exec: [rune-hook-capture]\n    events: [session.end]\n",
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        let report = apply_to(
+            &smaller,
+            home.path(),
+            &manifest,
+            &[Harness::Cursor],
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(
+            report.written.iter().all(|(h, _)| *h == Harness::Cursor),
+            "{report:?}"
+        );
+        assert_eq!(fs::read_to_string(&claude).unwrap(), claude_before);
+        let after: Manifest =
+            serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(
+            after.harnesses[&Harness::Claude],
+            manifest_before.harnesses[&Harness::Claude]
+        );
+        assert!(
+            after
+                .retired
+                .iter()
+                .all(|r| Path::new(&r.generation) != claude_generation),
+            "Claude's generation is still named, so it is not retired: {:?}",
+            after.retired
+        );
+        let table: Value = serde_json::from_str(&fs::read_to_string(&cursor).unwrap()).unwrap();
+        assert_eq!(
+            cursor_commands(&table, "preToolUse").len(),
+            1,
+            "rune's entry went"
+        );
+        assert_eq!(cursor_commands(&table, "sessionEnd").len(), 1);
+        assert_eq!(after.harnesses[&Harness::Cursor].owned.len(), 1);
+        // An empty plan into Cursor alone takes rune's last entry out and
+        // leaves every foreign entry and the version.
+        let empty = Plan {
+            version: 1,
+            ..Plan::default()
+        };
+        apply_to(
+            &empty,
+            home.path(),
+            &manifest,
+            &[Harness::Cursor],
+            false,
+            false,
+        )
+        .unwrap();
+        let text = fs::read_to_string(&cursor).unwrap();
+        let table: Value = serde_json::from_str(&text).unwrap();
+        assert!(!text.contains("hook run --harness cursor"), "{text}");
+        assert_eq!(table["version"], json!(1));
+        assert_eq!(cursor_commands(&table, "beforeShellExecution").len(), 1);
+        assert_eq!(cursor_commands(&table, "postToolUse").len(), 2);
+        assert_eq!(cursor_commands(&table, "preToolUse").len(), 1);
+        assert_eq!(cursor_commands(&table, "stop").len(), 1);
+        assert!(table["hooks"].get("sessionEnd").is_none(), "{text}");
+        assert_eq!(fs::read_to_string(&claude).unwrap(), claude_before);
+    }
+
+    #[test]
+    fn a_handler_switched_off_in_one_harness_leaves_that_harness_s_entry_unguarded() {
+        let home = tempfile::tempdir().unwrap();
+        let claude = settings(home.path(), "{}");
+        let cursor = home.path().join(".cursor").join("hooks.json");
+        let manifest = home.path().join("state").join("manifest.json");
+        let hooks = serde_yaml::from_str::<Hooks>(
+            "handlers:\n  - id: dcg\n    exec: [rune-hook-dcg]\n    events: [tool.before]\n    on_failure: deny\n  - id: git-ai\n    exec: [rune-hook-git-ai]\n    events: [tool.before, tool.after]\n",
+        )
+        .unwrap();
+        let mut switches = rune::hooks::Switches::default();
+        switches.turn_off("dcg", [Harness::Cursor]);
+        let plan = hooks.compile_with(&switches).unwrap();
+        apply(
+            &plan,
+            home.path(),
+            "/opt/rune",
+            PLAN,
+            &manifest,
+            false,
+            false,
+        )
+        .unwrap();
+        let cursor: Value = serde_json::from_str(&fs::read_to_string(&cursor).unwrap()).unwrap();
+        let pre = &cursor["hooks"]["preToolUse"][0];
+        assert!(
+            pre.get("failClosed").is_none(),
+            "without dcg, Cursor's preToolUse fails open: {pre}"
+        );
+        assert!(
+            !pre["command"]
+                .as_str()
+                .unwrap()
+                .contains("--on-failure deny")
+        );
+        let claude: Value = serde_json::from_str(&fs::read_to_string(&claude).unwrap()).unwrap();
+        let pre = &claude["hooks"]["PreToolUse"][0]["hooks"][0];
+        assert_eq!(
+            pre["onFailure"],
+            json!("block"),
+            "Claude still runs dcg: {pre}"
+        );
+        assert_eq!(
+            plan.off,
+            [rune::hooks::SwitchedOff {
+                harness: Harness::Cursor,
+                handler: "dcg".to_string()
+            }]
+        );
     }
 
     #[test]
@@ -2373,16 +2932,13 @@ mod tests {
         .unwrap();
         let table: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let commands = |event: &str| -> Vec<String> {
-            table["hooks"][event]
-                .as_array()
-                .map(|groups| {
-                    groups
-                        .iter()
-                        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                        .map(|h| h["command"].as_str().unwrap().to_string())
-                        .collect()
-                })
-                .unwrap_or_default()
+            table["hooks"][event].as_array().map_or_default(|groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_string())
+                    .collect()
+            })
         };
         assert_eq!(
             commands("Stop"),
@@ -2429,10 +2985,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_sweep_keeps_an_unnamed_generation_and_records_when_it_went() {
         let (home, plans, manifest) = sweep_home();
         let now = at("2026-10-24T12:00:00Z");
-        let swept = sweep_generations(home.path(), &plans, &manifest, now).unwrap();
+        let swept =
+            sweep_generations(home.path(), &plans, &manifest, &Harness::REGISTERED, now).unwrap();
         assert_eq!(swept, Vec::<PathBuf>::new());
         for name in ["named.json", "orphan.json", "notes.txt"] {
             assert!(plans.join(name).exists(), "{name} stays");
@@ -2445,6 +3006,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_sweep_deletes_only_a_generation_retire_lets_go() {
         let (home, plans, manifest) = sweep_home();
         for name in [
@@ -2488,7 +3053,8 @@ mod tests {
         };
         fs::write(&manifest, serde_json::to_string(&earlier).unwrap()).unwrap();
         let now = at("2026-10-24T12:00:00Z");
-        let swept = sweep_generations(home.path(), &plans, &manifest, now).unwrap();
+        let swept =
+            sweep_generations(home.path(), &plans, &manifest, &Harness::REGISTERED, now).unwrap();
         assert_eq!(swept, [plans.join("orphan.json")], "14 days to the second");
         for name in ["named.json", "recent.json", "young.json", "garbled.json"] {
             assert!(plans.join(name).exists(), "{name} stays");
@@ -2565,7 +3131,7 @@ mod tests {
             return;
         }
         write(&prepared).unwrap();
-        sweep_generations(home, plans, manifest, now).unwrap();
+        sweep_generations(home, plans, manifest, &Harness::REGISTERED, now).unwrap();
     }
 
     #[test]
@@ -2598,6 +3164,7 @@ mod tests {
         // know, and installs again: the tables stop naming the generation.
         let _ = fs::remove_file(home.path().join(".claude").join("settings.json"));
         let _ = fs::remove_file(home.path().join(".codex").join("hooks.json"));
+        let _ = fs::remove_file(home.path().join(".cursor").join("hooks.json"));
         // The record from day 2 would end the window on day 16, two days
         // after the tables last named the generation. Its window starts on
         // day 15 instead, and lasts 14 days and 14 install days.
@@ -2693,6 +3260,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_compound_legacy_command_stays_and_is_named_for_a_hand_split() {
         let home = tempfile::tempdir().unwrap();
         let compound = "sh ~/.sd/hook PreToolUse && /owner/check-policy";
@@ -2759,16 +3330,13 @@ mod tests {
         .unwrap();
         let commands = |path: &Path, event: &str| -> Vec<String> {
             let table: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-            table["hooks"][event]
-                .as_array()
-                .map(|groups| {
-                    groups
-                        .iter()
-                        .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                        .map(|h| h["command"].as_str().unwrap().to_string())
-                        .collect()
-                })
-                .unwrap_or_default()
+            table["hooks"][event].as_array().map_or_default(|groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                    .map(|h| h["command"].as_str().unwrap().to_string())
+                    .collect()
+            })
         };
         assert!(
             !commands(&claude, "PreToolUse").contains(&"/Users/x/.local/bin/dcg".to_string()),
@@ -2932,6 +3500,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn removing_rune_s_earlier_entry_waits_while_it_would_move_a_trusted_hook() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
@@ -3018,6 +3590,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn rune_s_trusted_codex_entry_stays_until_codex_trusts_its_replacement() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
@@ -3118,6 +3694,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn rune_s_trusted_postbox_entries_stay_at_group_one_until_codex_trusts_group_two() {
         const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
         let home = tempfile::tempdir().unwrap();
@@ -3228,6 +3808,10 @@ mod tests {
     /// 2026-10-26). Install reads the trust at that position and asks
     /// for nothing.
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn removing_a_trusted_preview_entry_keeps_the_live_entry_at_its_trusted_slot() {
         const EVENTS: [&str; 2] = ["Stop", "UserPromptSubmit"];
         let home = tempfile::tempdir().unwrap();
@@ -3335,6 +3919,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_codex_predecessor_stays_until_codex_trusts_its_replacement() {
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join(".codex").join("hooks.json");
@@ -3438,6 +4026,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_codex_predecessor_before_rune_in_its_group_stays_although_rune_is_trusted() {
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join(".codex").join("hooks.json");
@@ -3642,6 +4234,7 @@ mod tests {
             cover,
             env: cover::Environment::under(home),
             started: std::time::Instant::now(),
+            policy: None,
             spawn: Box::new(move |handler, _, _, _, _| {
                 log.borrow_mut().push(handler.id.clone());
                 Ok((Some(0), "{}".to_string(), String::new()))
@@ -3726,19 +4319,20 @@ mod tests {
             .find(|staged| staged.target.ends_with(file))
             .unwrap_or_else(|| panic!("{file} is staged: {:?}", prepared.files));
         let table: Value = serde_json::from_str(&staged.text).unwrap();
-        table["hooks"][event]
-            .as_array()
-            .map(|groups| {
-                groups
-                    .iter()
-                    .flat_map(|g| g["hooks"].as_array().unwrap().clone())
-                    .map(|h| h["command"].as_str().unwrap().to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
+        table["hooks"][event].as_array().map_or_default(|groups| {
+            groups
+                .iter()
+                .flat_map(|g| g["hooks"].as_array().unwrap().clone())
+                .map(|h| h["command"].as_str().unwrap().to_string())
+                .collect()
+        })
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_owner_s_stop_parts_cover_tmux_alone_on_claude() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh $HOME/.config/just/hook Stop";
@@ -3840,6 +4434,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_owner_s_turn_wrap_part_is_the_wrapper_and_runs_twice_behind_the_first() {
         let home = owner_home(STOP_PARTS);
         // The script the part runs, so the part's command resolves.
@@ -3924,6 +4522,7 @@ mod tests {
             "/opt/rune",
             Path::new(PLAN),
             &manifest,
+            &Harness::REGISTERED,
             false,
             chrono::Utc::now(),
         )
@@ -4004,6 +4603,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_covered_handler_is_skipped_at_each_firing_and_runs_once_its_part_goes() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh ~/.config/just/hook Stop";
@@ -4108,6 +4711,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_covered_wrapper_holds_no_time_back_from_the_handlers_before_it() {
         // The wrap part first in the owner's Stop.d, with its script, so
         // the cover skips the wrapper at each firing.
@@ -4172,6 +4779,7 @@ mod tests {
             cover,
             env: cover::Environment::under(home.path()),
             started: std::time::Instant::now(),
+            policy: None,
             spawn: Box::new(move |handler, _, timeout, _, _| {
                 log.borrow_mut().push((handler.id.clone(), timeout));
                 Ok((Some(0), "{}".to_string(), String::new()))
@@ -4278,6 +4886,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_rewriter_is_never_covered_even_by_a_part_that_runs_its_command() {
         // A rewriter's output is the call the handlers after it read. A
         // part's output is not: with rtk covered, dcg read `git status`
@@ -4490,6 +5102,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_first_part_without_the_shape_covers_nothing_and_is_named() {
         // The first part has no exec line, so the folder covers nothing,
         // even when a later part runs a handler's command: rune reads the
@@ -4687,6 +5303,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_matcher_covers_nothing() {
         let mixed = mixed_install();
         let report = &mixed.prepared.report;
@@ -4711,6 +5331,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_compound_line_covers_nothing() {
         let mixed = mixed_install();
         let report = &mixed.prepared.report;
@@ -4811,6 +5435,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_gone_dispatcher_entry_an_earlier_install_adopted_is_named() {
         let home = owner_home(STOP_PARTS);
         let dispatcher = "sh ~/.config/just/hook Stop";
@@ -4974,6 +5602,10 @@ mod tests {
     const PLAIN_ENTRY: &str = "sh ~/.config/just/hook Stop";
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn an_entry_with_a_key_rune_does_not_read_covers_nothing() {
         // Claude reads `if`, `args`, and `async` on a hook, and each
         // changes whether and how the command runs. Install names the key.
@@ -5053,6 +5685,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_firing_covers_nothing_unless_home_and_the_harness_folder_are_install_s() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5108,6 +5744,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_handler_that_is_not_the_recorded_one_is_not_covered() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5176,6 +5816,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn one_firing_reads_the_table_the_script_and_the_parts_once() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5195,6 +5839,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_cover_that_holds_past_the_budget_still_skips_its_handler() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path().to_path_buf();
@@ -5232,6 +5880,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_slot_is_the_entry_s_place_in_the_table_install_writes() {
         // An adopted entry before the dispatcher goes at this install, so
         // the dispatcher's slot is read from the table as written, and
@@ -5387,6 +6039,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_firing_whose_sh_is_not_bin_sh_runs_every_handler() {
         let installed =
             installed(&json!({"type": "command", "command": "/bin/sh ~/.config/just/hook Stop"}));
@@ -5429,6 +6085,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_folder_past_a_limit_covers_nothing_at_install_and_at_the_firing() {
         let installed = installed(&json!({"type": "command", "command": PLAIN_ENTRY}));
         let home = installed.home.path();
@@ -5516,6 +6176,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_first_part_with_an_unquoted_glob_covers_nothing_and_a_later_one_blocks_nothing() {
         // `b[ab]` names one word to rune and the files it matches to the
         // shell, so a part that holds one has no shape rune reads. First
@@ -5583,6 +6247,10 @@ mod tests {
     const SNAPSHOT_WITH_COMMENT: &str = "#!/bin/sh\n# Snapshot the footprint so the ± segment and review see the turn.\n[ -f \"$HOME/.config/just/claude/turn/checkpoint\" ] || exit 0\nexec sh \"$HOME/.config/just/claude/turn/checkpoint\" snapshot\n";
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_comment_in_a_later_part_keeps_the_handler_it_runs_named() {
         // The shell runs no comment, so the message about a later part
         // drops it before the text is checked: the `±` keeps turn named.
@@ -5627,6 +6295,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_later_part_that_cannot_be_read_is_named_as_unreadable() {
         // A `±` on a line that runs is text rune does not read. The part
         // is named as unreadable, for no handler, and blocks nothing.

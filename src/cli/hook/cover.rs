@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use rune::hooks::{Harness, OnFailure, PlannedHandler};
@@ -211,7 +210,7 @@ fn tables_in(dir: &Path, harness: Harness) -> Vec<PathBuf> {
 fn same_path(a: &Path, b: &Path) -> bool {
     a == b
         || matches!(
-            (fs::canonicalize(a), fs::canonicalize(b)),
+            (rune::folders::canonicalize(a), rune::folders::canonicalize(b)),
             (Ok(x), Ok(y)) if x == y
         )
 }
@@ -413,7 +412,7 @@ fn same_program(a: &str, b: &str) -> bool {
     match (a.contains('/'), b.contains('/')) {
         (false, false) => a == b,
         (true, true) => matches!(
-            (fs::canonicalize(a), fs::canonicalize(b)),
+            (rune::folders::canonicalize(a), rune::folders::canonicalize(b)),
             (Ok(x), Ok(y)) if x == y
         ),
         _ => false,
@@ -621,6 +620,7 @@ pub(crate) fn holds(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     fn w(words: &[&str]) -> Vec<String> {
         words.iter().map(ToString::to_string).collect()
@@ -632,6 +632,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn a_command_matches_by_program_file_and_exact_arguments() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
@@ -699,6 +703,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn what_an_adapter_runs_follows_the_harness_the_event_and_the_home() {
         let home = tempfile::tempdir().unwrap();
         let at = |event: &str, adapter: &str, harness: Harness| {
@@ -823,6 +831,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+    )]
     fn the_environment_names_the_home_and_the_harness_folder_the_harness_reads() {
         let env = Environment {
             home: Some("/h".into()),

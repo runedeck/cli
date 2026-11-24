@@ -1,6 +1,10 @@
 name: Test
 
 on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
     workflow_dispatch:
 
 permissions:
@@ -15,12 +19,70 @@ jobs:
                   persist-credentials: false
 
             - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
 
-            # The run tests create jj repositories for isolated runs.
-            - name: Install jj
+            # The run tests create jj repositories for isolated runs, and
+            # tests/runeshell.rs runs the standalone mdschema checker.
+            - name: Install jj and mdschema
               run: |
-                  bash scripts/install-tools jj
+                  bash scripts/install-tools jj mdschema
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+            - name: Show the mdschema version
+              run: mdschema version
 
             - name: Test
               run: cargo test --workspace
+
+    # release.yaml builds for Windows only on a signed tag, and the release
+    # rehearsal runs only when a release input changes. A pull request that
+    # changes Rust code alone reached a tag with a Windows build that did
+    # not compile, and a build that compiles says nothing about whether
+    # rune works there. This job compiles every target of the workspace for
+    # Windows on every pull request, and a warning fails it. It runs the
+    # release build command, which compiles code that only the release
+    # profile enables and links rune.exe. Then it runs the workspace tests.
+    windows:
+        runs-on: windows-latest
+        env:
+            RUSTFLAGS: -D warnings
+        steps:
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              with:
+                  persist-credentials: false
+
+            - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+              with:
+                  toolchain: 1.100.0
+
+            - name: Check
+              run: cargo check --locked --workspace --all-features --all-targets
+
+            # The same command as the Windows row of the release matrix.
+            - name: Build the release binary
+              run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+            # The tests start jj and mdschema, as on Linux, and sh, bash,
+            # and ssh-keygen from Git for Windows. Its tools go first on
+            # the PATH: System32 can hold a bash.exe that is the WSL
+            # launcher, which cannot read a Windows path.
+            - name: Install jj and mdschema
+              shell: bash
+              run: |
+                  bash scripts/install-tools jj mdschema
+                  cygpath -w "$HOME/.local/bin" >> "$GITHUB_PATH"
+                  cygpath -w /usr/bin >> "$GITHUB_PATH"
+
+            - name: Show the mdschema version
+              run: mdschema version
+
+            # A test that needs a Unix shell script as a program, the
+            # executable bit, a process group, or python3 is marked
+            # `#[cfg_attr(windows, ignore = "...")]` with its reason, and
+            # the run reports it as ignored. Every other test runs here:
+            # spec transactions, file identity from an open handle,
+            # install, deploy, drift, doctor, and the isolation of every
+            # test from the runner's own profile.
+            - name: Test
+              run: cargo test --locked --workspace

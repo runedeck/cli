@@ -23,4 +23,7 @@ paths = [
 # fingerprint: exactly forty hexadecimal characters, nothing else.
 regexes = [
     "^[0-9A-Fa-f]{40}$",
+    # A plan line that names a key variable and says it is unset carries no
+    # secret: `rune ask --dry-run` prints `key: JEV_API_KEY=unset`.
+    "^[A-Z][A-Z0-9_]*_KEY=unset$",
 ]

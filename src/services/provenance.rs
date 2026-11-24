@@ -28,7 +28,7 @@ pub(super) fn collect_provenance(
 /// Short label for a deployment target base: `~` for the home directory,
 /// otherwise the final path component.
 pub(super) fn deployment_target_label(target_base: &Path) -> String {
-    if let Some(home) = dirs::home_dir()
+    if let Some(home) = crate::folders::home_dir()
         && target_base == home
     {
         return "~".to_string();
@@ -144,8 +144,7 @@ pub(super) fn parse_sidecar(
         .join("/");
     let deployed_path = provider_path.join(&deployed_rel);
     let deployed_sha = fs::read_to_string(&deployed_path)
-        .map(|content| manifest::content_sha256(&content))
-        .unwrap_or_default();
+        .map_or_default(|content| manifest::content_sha256(&content));
     let verified = !expected_sha.is_empty() && deployed_sha == expected_sha;
     let input_sha = recorded_input_sha(sidecar_content).unwrap_or_default();
     ProvenanceArtifact {

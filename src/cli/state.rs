@@ -13,7 +13,7 @@ pub(crate) fn dir() -> Result<PathBuf, Error> {
     if let Some(dir) = std::env::var_os("XDG_STATE_HOME").filter(|dir| !dir.is_empty()) {
         return Ok(PathBuf::from(dir).join("rune"));
     }
-    dirs::home_dir()
-        .map(|home| home.join(".local/state/rune"))
+    rune::folders::home_dir()
+        .map(|home| rune::folders::join(&home, ".local/state/rune"))
         .ok_or_else(|| Error::new(ErrorKind::Config, "cannot resolve home directory"))
 }

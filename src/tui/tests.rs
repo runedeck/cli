@@ -1248,7 +1248,7 @@ fn file_editor_save_stays_bound_to_artifact_selected_when_opened() {
         app.code_source_override_for_test(),
         Some((
             "rune-core:skills/BuildSkill/SKILL.md",
-            std::fs::canonicalize(root.path().join(first_source))
+            rune::folders::canonicalize(root.path().join(first_source))
                 .unwrap()
                 .as_path(),
         ))

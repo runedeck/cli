@@ -276,8 +276,7 @@ fn list(json: bool) -> Result<i32, Error> {
         let plugin = provider
             .plugin
             .as_ref()
-            .map(|plugin| sheet.dim(&format!("  plugin: {plugin}")))
-            .unwrap_or_default();
+            .map_or_default(|plugin| sheet.dim(&format!("  plugin: {plugin}")));
         println!(
             "   {:<12} {state:<10} {}{plugin}",
             sheet.bold(name),

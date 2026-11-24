@@ -65,6 +65,11 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
         let config = ontology::load().map_err(|error| error.to_string())?;
         return Ok(list_tools(&config.launch));
     }
+    // A judging model has no process to launch: `rune ask` asks it.
+    let (tool_name, _) = split_invocation(tool);
+    if let Some(message) = crate::cli::ask::not_a_harness(tool_name) {
+        return Err(message);
+    }
     let resolved = resolve(tool, rest).map_err(|error| error.message)?;
     if resolved.check {
         let report = check::run_checks(&resolved, None);
@@ -90,7 +95,19 @@ pub fn execute_cli(tool: &str, rest: &[OsString], json: bool) -> Result<i32, Str
     }
     run_pre_steps(&resolved.pre);
     let isolation = surface::parent_session_isolation(&resolved.route_keys());
-    run_child(&resolved.argv, &resolved.env, &isolation.removals())
+    let started_at = std::time::SystemTime::now();
+    let status = run_child(&resolved.argv, &resolved.env, &isolation.removals())?;
+    // The session the harness wrote goes to the data folder after it
+    // exits. A failed capture is one warning, never the exit status.
+    if let Ok(cwd) = std::env::current_dir() {
+        crate::cli::session::capture_after_run(
+            rune::session::Harness::parse(&resolved.tool),
+            &cwd,
+            started_at,
+            status,
+        );
+    }
+    Ok(status)
 }
 
 /// Why a launch could not be resolved: the message, and for an unknown
@@ -171,9 +188,10 @@ fn resolve_with_config(
     if let Some(profile) = &profile {
         let manifest = context.config.secrets_manifest();
         let env_file = context.config.env_file();
-        let secretspec = manifest
-            .as_deref()
-            .map(|path| secrets::SecretspecBinary::new(path, invocation));
+        let secretspec = manifest.as_deref().map(|path| {
+            secrets::SecretspecBinary::new(path, invocation)
+                .with_profile(context.config.secrets_profile())
+        });
         let fallback = match &secretspec {
             Some(source) => SecretFallback::Manifest(source),
             None => SecretFallback::EnvFile(env_file.as_deref()),
@@ -208,6 +226,7 @@ fn resolve_with_config(
         display_argv,
         display_env,
         base_url: plan.base_url,
+        declared_secrets: plan.declared_secrets,
     })
 }
 
@@ -283,6 +302,8 @@ pub(crate) struct ResolvedLaunch {
     display_argv: Vec<OsString>,
     display_env: Vec<(OsString, OsString)>,
     base_url: Option<String>,
+    /// Values read through a secret declaration, hidden in the dry run.
+    declared_secrets: Vec<String>,
 }
 
 impl ResolvedLaunch {
@@ -357,6 +378,7 @@ impl ResolvedLaunch {
         let effective = self.effective_env();
         let mut secrets = credential_values(&effective);
         secrets.extend(credential_values(inherited));
+        secrets.extend(self.declared_secrets.iter().cloned());
         secrets.extend(proxy_credentials(&effective));
         secrets.extend(proxy_credentials(inherited));
         for part in &self.argv {
@@ -494,6 +516,9 @@ impl ResolvedLaunch {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct LaunchPlan {
     env: Vec<(OsString, OsString)>,
+    /// Every value read through a secret declaration. Each one is a secret
+    /// whatever variable the profile puts it in, so the dry run hides it.
+    declared_secrets: Vec<String>,
     base_url: Option<String>,
     wrap: Vec<Vec<OsString>>,
     pre: Vec<PreStep>,
@@ -669,8 +694,7 @@ fn profile_names(tool: &str, launch: &Launch) -> Vec<String> {
     let mut profiles: Vec<String> = launch
         .profiles
         .get(tool)
-        .map(|profiles| profiles.keys().cloned().collect())
-        .unwrap_or_default();
+        .map_or_default(|profiles| profiles.keys().cloned().collect());
     profiles.extend(
         BUILT_IN_PROFILES
             .iter()
@@ -748,7 +772,10 @@ fn apply_profile_model(
     }))
 }
 
-fn resolve_model(alias: &str, launch: &Launch) -> Result<(LaunchModel, ModelSource), String> {
+pub(crate) fn resolve_model(
+    alias: &str,
+    launch: &Launch,
+) -> Result<(LaunchModel, ModelSource), String> {
     if let Some(model) = launch.models.get(alias) {
         return Ok((model.clone(), ModelSource::Config));
     }
@@ -817,7 +844,11 @@ fn apply_profile_env(
                     value.clone()
                 } else {
                     let value = match fallback {
-                        SecretFallback::Manifest(source) => source.get(from_env)?,
+                        SecretFallback::Manifest(source) => {
+                            let value = source.get(from_env)?;
+                            plan.declared_secrets.push(value.clone());
+                            value
+                        }
                         SecretFallback::EnvFile(env_file) => {
                             resolve_env_reference(from_env, *env_file, &mut file_values)?
                         }
@@ -860,6 +891,28 @@ fn resolve_env_reference(
                 path.display()
             )
         })
+}
+
+/// The value of `name` for a command that reads a key at call time: the
+/// process environment, else the env file. `Ok(None)` when neither holds
+/// it or there is no env file; `Err` only for an env file that cannot be
+/// read.
+pub(crate) fn lookup_env_reference(
+    name: &str,
+    env_file: Option<&Path>,
+) -> Result<Option<String>, String> {
+    if let Ok(value) = std::env::var(name) {
+        return Ok(Some(value));
+    }
+    let Some(path) = env_file else {
+        return Ok(None);
+    };
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    Ok(parse_env_file(&content).remove(name))
 }
 
 fn parse_env_file(content: &str) -> HashMap<String, String> {

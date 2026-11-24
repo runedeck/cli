@@ -13,6 +13,7 @@
 //! directory and are read through the handle the runner holds, so a
 //! command cannot rewrite what it printed.
 
+use rune::folders::Canonical as _;
 use std::fs::{self, File};
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -189,9 +190,7 @@ fn marker(capture_dir: &Path) -> PathBuf {
 /// line, in a file nobody else made.
 fn write_marker(capture_dir: &Path) -> Result<(), String> {
     use std::io::Write as _;
-    let home = dirs::home_dir()
-        .map(|home| home.display().to_string())
-        .unwrap_or_default();
+    let home = rune::folders::home_dir().map_or_default(|home| home.display().to_string());
     File::options()
         .write(true)
         .create_new(true)
@@ -219,7 +218,7 @@ fn working_directory(
         }
         let canonical = root
             .join(target)
-            .canonicalize()
+            .canonical()
             .map_err(|error| format!("`cd {target}`: {error}"))?;
         if !canonical.starts_with(root) {
             return Err(format!("`cd {target}` leaves the repository"));
@@ -314,8 +313,7 @@ fn execute(
     let mut path = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .map(|dir| dir.as_os_str().to_os_string())
-        .unwrap_or_default();
+        .map_or_default(|dir| dir.as_os_str().to_os_string());
     if let Some(existing) = std::env::var_os("PATH") {
         if !path.is_empty() {
             path.push(":");
@@ -374,7 +372,7 @@ mod tests {
     }
 
     fn root() -> PathBuf {
-        std::env::current_dir().unwrap().canonicalize().unwrap()
+        std::env::current_dir().unwrap().canonical().unwrap()
     }
 
     #[test]
@@ -435,12 +433,12 @@ mod tests {
 
     #[test]
     fn a_scene_has_a_marker_while_it_runs_and_its_own_state() {
-        let Some(home) = dirs::home_dir() else {
+        let Some(home) = rune::folders::home_dir() else {
             return;
         };
         let (home, pid) = (home.display(), std::process::id());
         let s = scene(&format!(
-            "$ sh -c 'echo \"$RUNE_PROOF_SCENE\"; cat \"$RUNE_PROOF_SCENE\"; test \"$RUNE_STATE_DIR\" != \"$HOME/.local/state/rune\" && echo own-state'\n[..]/scene\n{pid}\n{home}\nown-state"
+            "$ sh -c 'echo \"$RUNE_PROOF_SCENE\"; cat \"$RUNE_PROOF_SCENE\"; test \"$RUNE_STATE_DIR\" != \"$HOME/.local/state/rune\" && echo own-state'\n[..]scene\n{pid}\n{home}\nown-state"
         ));
         let run = run_scene(&s, &root());
         assert!(run.passed, "{:?}", run.failure);
@@ -449,7 +447,11 @@ mod tests {
             .section
             .lines()
             .map(str::trim)
-            .find(|line| line.ends_with("/scene"))
+            .find(|line| {
+                Path::new(line)
+                    .file_name()
+                    .is_some_and(|name| name == "scene")
+            })
             .expect("the scene printed its marker");
         assert!(!Path::new(marker).exists(), "{marker}");
     }
@@ -484,7 +486,7 @@ mod tests {
         );
         let dir = tempfile::tempdir().unwrap();
         let s = scene("$ cd ..\n$ ls");
-        let run = run_scene(&s, &dir.path().canonicalize().unwrap());
+        let run = run_scene(&s, &dir.path().canonical().unwrap());
         assert!(run.failure.unwrap().contains("leaves the repository"));
     }
 }

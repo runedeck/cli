@@ -271,6 +271,10 @@ fn configure(command: &mut Process, fixture: &Fixture) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn stacked_requests_sign_base_first_and_the_descendant_stays_current() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -353,6 +357,10 @@ fn stacked_requests_sign_base_first_and_the_descendant_stays_current() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_request_refuses_a_failing_receipt_a_foreign_receipt_and_a_signed_head() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -397,6 +405,10 @@ fn a_request_refuses_a_failing_receipt_a_foreign_receipt_and_a_signed_head() {
 /// or one beneath the remote head, would come back as a force-push of a
 /// published tip (2026-09-20: `4fa850b9` re-signed sideways to `64fc7e85`).
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_request_refuses_a_head_the_remote_already_holds() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -443,6 +455,10 @@ fn a_request_refuses_a_head_the_remote_already_holds() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_moved_head_is_stale_and_is_never_signed() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -478,6 +494,10 @@ fn a_moved_head_is_stale_and_is_never_signed() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_timed_out_pinentry_is_retried_and_a_cancelled_one_is_not() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -515,6 +535,10 @@ fn a_timed_out_pinentry_is_retried_and_a_cancelled_one_is_not() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_signature_from_a_key_outside_keys_is_a_failure() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -540,7 +564,177 @@ fn a_signature_from_a_key_outside_keys_is_a_failure() {
         .stdout(predicate::str::contains("failed"));
 }
 
+/// A receipt outside the workspace, as a session's scratch folder is.
+fn scratch_receipt(fixture: &Fixture, name: &str, commit: &str) -> PathBuf {
+    let path = fixture.workspace.parent().expect("parent").join(name);
+    fs::write(
+        &path,
+        format!("bookmark: x [move sideways from 0000 to {commit}]\nexit=0\n"),
+    )
+    .expect("receipt");
+    path
+}
+
+/// The queue's copies of the receipts, by file name.
+fn kept_receipts(fixture: &Fixture) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(fixture.state.join("sign-queue/receipts"))
+        .map_or_default(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        });
+    names.sort();
+    names
+}
+
+/// The receipt of 2026-11-14 sat in a session scratch folder that was gone
+/// when the owner came to the key, and the request could never be signed.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
+fn a_receipt_deleted_after_queueing_still_signs_from_the_queue_s_copy() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    assert_eq!(kept_receipts(&fixture).len(), 1, "one copy is kept");
+
+    fs::remove_file(&receipt).expect("the scratch folder is cleared");
+    rune(&fixture)
+        .args(["sign", "show", "change/base"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kept"))
+        .stdout(predicate::str::contains("sign-queue/receipts/"));
+    rune(&fixture)
+        .args(["sign", "all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signed change/base"));
+    assert!(head_is_signed(&fixture, "change/base"));
+
+    rune(&fixture)
+        .args(["sign", "queue", "--prune"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pruned"));
+    assert_eq!(
+        kept_receipts(&fixture),
+        Vec::<String>::new(),
+        "the copy leaves with its request"
+    );
+}
+
+/// A later check that failed writes the same path. The request must not
+/// sign on the strength of the copy then.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
+fn a_receipt_edited_after_queueing_is_refused_although_the_copy_holds() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    fs::write(
+        &receipt,
+        format!("bookmark: x [move sideways from 0000 to {base}]\nexit=1\n"),
+    )
+    .expect("a later check failed");
+
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "changed since the request was queued",
+        ));
+    assert!(!head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
+fn a_changed_copy_is_refused_when_the_receipt_is_gone() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    fs::remove_file(&receipt).expect("the scratch folder is cleared");
+    let kept = kept_receipts(&fixture);
+    let copy = fixture.state.join("sign-queue/receipts").join(&kept[0]);
+    fs::write(&copy, format!("{base}\nexit=0\nedited\n")).expect("the copy is edited");
+
+    rune(&fixture)
+        .args(["sign", "next"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("the queue's copy of the receipt,"))
+        .stdout(predicate::str::contains(
+            "changed since the request was queued",
+        ));
+    assert!(!head_is_signed(&fixture, "change/base"));
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
+fn dropping_a_request_removes_the_queue_s_copy() {
+    let Some(fixture) = fixture() else {
+        eprintln!("skipped: jj or gpg is not installed");
+        return;
+    };
+    let base = head_commit(&fixture, "change/base");
+    let receipt = scratch_receipt(&fixture, "scratch-base.log", &base);
+    rune(&fixture)
+        .args(["sign", "queue", "change/base", "--receipt"])
+        .arg(&receipt)
+        .assert()
+        .success();
+    assert_eq!(kept_receipts(&fixture).len(), 1);
+    rune(&fixture)
+        .args(["sign", "drop", "change/base"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dropped"));
+    assert_eq!(kept_receipts(&fixture), Vec::<String>::new());
+    assert!(receipt.is_file(), "the session's own file is never removed");
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_repository_level_signing_program_is_never_run() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -601,6 +795,10 @@ fn a_repository_level_signing_program_is_never_run() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn queueing_with_json_emits_a_json_object() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -630,6 +828,10 @@ fn the_ceremony_forms_and_the_queue_do_not_mix() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_dead_claim_on_a_head_the_owner_already_signed_is_recorded_not_resigned() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -702,6 +904,10 @@ fn wait_for_signing(wait: &Path) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_bookmark_moved_after_the_claim_is_stale_and_nothing_is_signed() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -737,6 +943,10 @@ fn a_bookmark_moved_after_the_claim_is_stale_and_nothing_is_signed() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_second_signer_on_the_same_repository_is_refused_while_the_first_runs() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -770,6 +980,10 @@ fn a_second_signer_on_the_same_repository_is_refused_while_the_first_runs() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_stale_request_is_skipped_and_the_next_current_one_is_signed() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -806,6 +1020,10 @@ fn a_stale_request_is_skipped_and_the_next_current_one_is_signed() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_repository_that_aliases_a_listing_keyword_is_refused() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -833,6 +1051,10 @@ fn a_repository_that_aliases_a_listing_keyword_is_refused() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_cancelled_attempt_on_a_rewritten_head_leaves_the_request_signable() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -874,6 +1096,10 @@ fn a_cancelled_attempt_on_a_rewritten_head_leaves_the_request_signable() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn an_empty_queue_names_the_ledger_it_read() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -895,6 +1121,10 @@ fn an_empty_queue_names_the_ledger_it_read() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_relative_receipt_is_recorded_absolute_and_the_owner_signs_from_elsewhere() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -924,6 +1154,10 @@ fn a_relative_receipt_is_recorded_absolute_and_the_owner_signs_from_elsewhere() 
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_request_whose_workspace_is_gone_is_stale_and_prunable_not_fatal() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -1271,6 +1505,10 @@ fn open_top(ceremony: &Ceremony) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_refuses_the_protected_branch_and_a_branch_without_a_draft() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1300,6 +1538,10 @@ fn open_refuses_the_protected_branch_and_a_branch_without_a_draft() {
 /// Every other refusal of `rune sign open`, in the order the command
 /// checks them, each leaving the head unsigned and the remote untouched.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_refuses_a_ready_draft_a_stale_head_two_drafts_a_bad_body_and_a_foreign_branch_and_seals_above_an_owner_signed_head()
  {
     let Some(ceremony) = ceremony() else {
@@ -1396,6 +1638,10 @@ fn open_refuses_a_ready_draft_a_stale_head_two_drafts_a_bad_body_and_a_foreign_b
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_seals_pushes_flips_the_draft_and_appends_the_nonce() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1428,6 +1674,10 @@ fn open_seals_pushes_flips_the_draft_and_appends_the_nonce() {
 /// `open --queue` records the request; `next` shows the view, declines on
 /// `n`, and completes the whole flow on `y`.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_queued_is_completed_by_next_after_the_acknowledgment() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1492,6 +1742,10 @@ fn tree_of(ceremony: &Ceremony, commit: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn submit_refuses_an_open_thread_and_an_undisposed_generation() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1571,6 +1825,10 @@ fn submit_top(ceremony: &Ceremony) -> (String, PathBuf) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn next_shows_the_view_refuses_on_n_and_seals_on_y() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1629,6 +1887,10 @@ fn next_shows_the_view_refuses_on_n_and_seals_on_y() {
 /// The view shows the coverage state the ledger recorded when Runeseer
 /// stood down, with its reason, before the key.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn next_shows_free_lanes_only_with_its_reason() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1676,6 +1938,10 @@ fn next_shows_free_lanes_only_with_its_reason() {
 /// ledger, a newer forged run does not win over the controller's, and an
 /// artifact that does not hash to the controller's line is refused.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn submit_reads_the_ledger_from_the_controller_alone() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1837,6 +2103,10 @@ fn install_schema(fixture: &Fixture) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn verify_accepts_a_valid_pair_and_rejects_an_inherited_open_seal() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -1943,6 +2213,10 @@ fn verify_accepts_a_valid_pair_and_rejects_an_inherited_open_seal() {
 /// binds one of them, and without the number two pull requests at one
 /// head are refused rather than guessed.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn verify_rejects_a_merged_seal_and_a_second_base() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2022,6 +2296,10 @@ fn verify_rejects_a_merged_seal_and_a_second_base() {
 /// The path the `owner-seal` workflow runs: a plain `git clone` with no
 /// jj, `gpg` from PATH, and `KEYS` from `origin/main`.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn verify_runs_on_a_plain_git_checkout() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2110,6 +2388,10 @@ fn verify_runs_on_a_plain_git_checkout() {
 /// origin, and the pushed branch is the sealed one, which the app's draft
 /// then carries with the nonce. The seal names the outside pull request.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn adopt_seals_the_outside_head_before_anything_is_pushed() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2202,6 +2484,10 @@ fn adopt_seals_the_outside_head_before_anything_is_pushed() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn verify_rejects_a_moved_parent_and_an_unequal_tree() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2239,6 +2525,10 @@ fn verify_rejects_a_moved_parent_and_an_unequal_tree() {
 /// commits it, not from the working copy: the workspace `open` runs in sits
 /// on another change whose copy of the file says something else.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_reads_the_body_from_the_bookmark_tree_not_the_working_copy() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2285,6 +2575,10 @@ fn open_reads_the_body_from_the_bookmark_tree_not_the_working_copy() {
 /// helper, an HTTPS origin is refused before the key touch, not after the
 /// seal is signed.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn open_refuses_an_https_origin_with_only_a_repository_scope_helper() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -2359,6 +2653,10 @@ fn queue_range(fixture: &Fixture, head: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_range_of_model_commits_is_signed_in_one_run_and_every_commit_verifies() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2407,6 +2705,10 @@ fn a_range_of_model_commits_is_signed_in_one_run_and_every_commit_verifies() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_declined_range_signs_nothing_and_stays_current() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2430,6 +2732,10 @@ fn a_declined_range_signs_nothing_and_stays_current() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_declined_range_under_json_leaves_stdout_to_the_outcomes() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2456,6 +2762,10 @@ fn a_declined_range_under_json_leaves_stdout_to_the_outcomes() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_range_goes_stale_when_its_head_or_the_protected_branch_moves() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2502,6 +2812,10 @@ fn a_range_goes_stale_when_its_head_or_the_protected_branch_moves() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_range_the_owner_already_signed_is_recorded_without_the_key() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2521,6 +2835,10 @@ fn a_range_the_owner_already_signed_is_recorded_without_the_key() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_bookmark_named_after_the_commit_id_does_not_redirect_the_key() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2544,6 +2862,10 @@ fn a_bookmark_named_after_the_commit_id_does_not_redirect_the_key() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_commit_id_alias_is_refused_and_nothing_is_signed() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2579,6 +2901,10 @@ fn a_commit_id_alias_is_refused_and_nothing_is_signed() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_signed_request_whose_bookmark_moved_lists_as_moved_and_fails_nothing() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2618,6 +2944,10 @@ fn a_signed_request_whose_bookmark_moved_lists_as_moved_and_fails_nothing() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_commit_id_alias_scoped_to_the_sign_command_is_refused() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2653,6 +2983,10 @@ fn a_commit_id_alias_scoped_to_the_sign_command_is_refused() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_commit_id_alias_in_a_scope_nested_in_a_scope_is_refused() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2790,6 +3124,10 @@ fn expect_refused(fixture: &Fixture, path: &str, side_change: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_run_that_asks_the_key_for_a_commit_outside_the_named_set_is_refused_at_the_key() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2812,6 +3150,10 @@ fn a_run_that_asks_the_key_for_a_commit_outside_the_named_set_is_refused_at_the_
 /// `side`. The shim refuses it, so nothing signed of `side` exists for a
 /// push to carry.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn an_alias_written_after_the_guard_and_before_the_run_is_refused_at_the_key() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2839,6 +3181,10 @@ fn an_alias_written_after_the_guard_and_before_the_run_is_refused_at_the_key() {
 /// `side` whatever the operation store holds, and the request fails
 /// instead of staying current with `side` signed.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_concurrent_operation_during_the_run_does_not_let_a_refused_commit_through() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -2930,6 +3276,10 @@ fn header(object: &str, name: &str) -> Vec<String> {
 /// change id, and message, and the payload with the signature as a
 /// `gpgsig` header hashes to the id jj stores for the signed commit.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn the_sign_payload_is_a_rewrite_whose_parents_are_signed_ids_and_the_signed_object_rebuilds() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3029,6 +3379,10 @@ fn the_sign_payload_is_a_rewrite_whose_parents_are_signed_ids_and_the_signed_obj
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_merge_seal_rewritten_by_signing_its_ancestor_needs_the_key_and_never_lists_as_done() {
     let Some(ceremony) = ceremony() else {
         eprintln!("skipped: jj, gpg, or python3 is not installed");
@@ -3085,6 +3439,10 @@ fn a_merge_seal_rewritten_by_signing_its_ancestor_needs_the_key_and_never_lists_
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_git_replacement_object_never_hides_what_the_range_shows_or_signs() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3116,6 +3474,10 @@ fn a_git_replacement_object_never_hides_what_the_range_shows_or_signs() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_git_graft_never_hides_a_commit_the_range_shows_or_signs() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3141,6 +3503,10 @@ fn a_git_graft_never_hides_a_commit_the_range_shows_or_signs() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_signed_head_rewritten_by_signing_its_ancestor_is_current_and_signed_again() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3194,6 +3560,10 @@ fn a_signed_head_rewritten_by_signing_its_ancestor_is_current_and_signed_again()
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_protected_branch_that_moves_before_a_retry_stops_the_range() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3227,6 +3597,10 @@ fn a_protected_branch_that_moves_before_a_retry_stops_the_range() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_protected_branch_that_moves_while_the_key_signs_fails_the_range() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");
@@ -3260,6 +3634,10 @@ fn a_protected_branch_that_moves_while_the_key_signs_fails_the_range() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "signs through a fake gpg, a shell script that jj must start as its signing program"
+)]
 fn a_range_head_written_by_plain_git_verifies_after_jj_adds_its_change_id() {
     let Some(fixture) = fixture() else {
         eprintln!("skipped: jj or gpg is not installed");

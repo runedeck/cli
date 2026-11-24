@@ -386,6 +386,7 @@ fn only_matches_keeps_separated_names_distinct() {
     assert!(only_matches("skills/a-b/SKILL.md", "skills/a-b"));
 }
 
+#[cfg(unix)]
 #[test]
 fn ensure_destination_within_rejects_symlink_escape() {
     let temp_directory = TempDir::new().unwrap();
@@ -425,14 +426,16 @@ impl CodexSkillFixture {
         fixture
     }
 
+    // Joined part by part: a migration names these folders as text, and
+    // a test compares that text.
     fn build(&self) -> PathBuf {
-        self.module.path().join("build/codex/skills/Alpha")
+        rune::folders::join(self.module.path(), "build/codex/skills/Alpha")
     }
     fn old(&self) -> PathBuf {
-        self.target.path().join(".codex/skills/Alpha")
+        rune::folders::join(self.target.path(), ".codex/skills/Alpha")
     }
     fn new_bundle(&self) -> PathBuf {
-        self.target.path().join(".agents/skills/Alpha")
+        rune::folders::join(self.target.path(), ".agents/skills/Alpha")
     }
 
     fn content(&self, relative: &str, bytes: &[u8]) {
@@ -683,7 +686,7 @@ fn codex_migration_preserves_conflicts_before_any_content_write_even_with_force(
 }
 
 fn introduce_migration_conflict(fixture: &CodexSkillFixture, scenario: &str) -> PathBuf {
-    let sidecar = fixture.old().join(".provenance/guide.md.yaml");
+    let sidecar = rune::folders::join(&fixture.old(), ".provenance/guide.md.yaml");
     match scenario {
         "edit" | "entrypoint-edit" | "extra" => {
             let relative = match scenario {
@@ -730,7 +733,7 @@ fn introduce_migration_conflict(fixture: &CodexSkillFixture, scenario: &str) -> 
             fixture.new_bundle()
         }
         "missing-source" => {
-            let source = fixture.build().join(".provenance/guide.md.yaml");
+            let source = rune::folders::join(&fixture.build(), ".provenance/guide.md.yaml");
             fs::remove_file(&source).unwrap();
             source
         }

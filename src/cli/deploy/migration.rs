@@ -5,6 +5,7 @@ use super::{
     parse_repo, resolve_target_base, same_entry_semantics, write_manifest,
 };
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::manifest::{self, ManifestEntry};
 use rune::provider::{ContentKind, ProviderConfig};
 use rune::result::{ActionResult, PrunedFile};
@@ -80,7 +81,7 @@ pub(super) fn canonical_target(path: &Path) -> Result<PathBuf, Error> {
         .find(|entry| entry.exists())
         .ok_or_else(|| conflict(path, "cannot resolve the destination"))?;
     let mut resolved = ancestor
-        .canonicalize()
+        .canonical()
         .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
     for component in absolute
         .strip_prefix(ancestor)
@@ -230,7 +231,7 @@ impl MigrationPlan {
         {
             return Err(conflict(&old_root, "migration roots escape the target"));
         }
-        let build = module.join("build/codex/skills");
+        let build = rune::folders::join(module, "build/codex/skills");
         let mut plan = Self {
             old_root,
             new_root,
@@ -251,9 +252,8 @@ impl MigrationPlan {
             }
             if let Some(prefix) = only {
                 let selected = collect_files_recursive(&bundle.path())?.iter().any(|file| {
-                    file.strip_prefix(&build).is_ok_and(|path| {
-                        super::only_matches(&format!("skills/{}", path.display()), prefix)
-                    })
+                    file.strip_prefix(&build)
+                        .is_ok_and(|path| super::only_matches(&skill_key(path), prefix))
                 });
                 if !selected {
                     continue;
@@ -277,7 +277,7 @@ impl MigrationPlan {
                     .filter(|entry| entry.kind != manifest::bundle::BundleEntryKind::Directory)
                     .all(|entry| {
                         super::only_matches(
-                            &format!("{}/{}", relative.display(), entry.path),
+                            &format!("{}/{}", manifest::slash_lossy(&relative), entry.path),
                             prefix,
                         )
                     });
@@ -413,6 +413,11 @@ fn rollback(moved: &[(PathBuf, PathBuf)]) {
     }
 }
 
+/// A file under the build's `skills` folder, as a manifest key names it.
+fn skill_key(path: &Path) -> String {
+    format!("skills/{}", manifest::slash_lossy(path))
+}
+
 fn build_source(bundle: &Path, key: &str) -> Result<String, Error> {
     let path = bundle.join("SKILL.md");
     let bytes = deployed_bytes(&path).map_err(|error| conflict(&path, &error.to_string()))?;
@@ -426,18 +431,18 @@ fn inspect_selected_build(
     relative: &Path,
     expected: &manifest::bundle::BundleInspection,
 ) -> Result<(String, String), Error> {
-    let source = build_source(bundle, &relative.join("SKILL.md").to_string_lossy())?;
+    let source = build_source(bundle, &manifest::slash_lossy(&relative.join("SKILL.md")))?;
     for entry in &expected.entries {
         if entry.kind == manifest::bundle::BundleEntryKind::Directory {
             continue;
         }
-        let file = bundle.join(&entry.path);
+        let file = rune::folders::join(bundle, &entry.path);
         let fingerprint = manifest::content_sha256_bytes(
             &deployed_bytes(&file).map_err(|error| conflict(&file, &error.to_string()))?,
         );
         let selected_source = provenance_source(
             &manifest::sidecar_path(&file),
-            &format!("{}/{}", relative.display(), entry.path),
+            &format!("{}/{}", manifest::slash_lossy(relative), entry.path),
             &fingerprint,
         )?;
         if !same_source(&source, &selected_source) {
@@ -503,7 +508,7 @@ fn inspect_legacy(
             "bundle contains invalid paths, references, or symbolic links",
         ));
     };
-    let prefix = format!("{}/", relative.display());
+    let prefix = format!("{}/", manifest::slash_lossy(relative));
     let mut keys: Vec<_> = entries
         .keys()
         .filter(|key| key.starts_with(&prefix))
@@ -522,7 +527,9 @@ fn inspect_legacy(
             return Err(conflict(&bundle, "invalid manifest key"));
         }
         let entry = &entries[key];
-        let file = root.join(key);
+        // A key is written with `/`. Joined part by part, a conflict names
+        // the file with one kind of separator.
+        let file = rune::folders::join(root, key);
         let bytes = deployed_bytes(&file).map_err(|error| conflict(&file, &error.to_string()))?;
         if manifest::content_sha256_bytes(&bytes) != entry.fingerprint {
             return Err(conflict(&file, "managed content was modified locally"));
@@ -534,7 +541,8 @@ fn inspect_legacy(
         {
             return Err(conflict(&file, "provenance leaves the skill bundle"));
         }
-        let source = provenance_source(&root.join(provenance), key, &entry.fingerprint)?;
+        let sidecar = rune::folders::join(root, provenance);
+        let source = provenance_source(&sidecar, key, &entry.fingerprint)?;
         if !same_source(&source, expected_source) {
             return Err(conflict(
                 &file,
@@ -553,7 +561,7 @@ fn inspect_legacy(
             ));
         }
         claimed.insert(file);
-        claimed.insert(root.join(provenance));
+        claimed.insert(sidecar);
     }
     for file in collect_files_recursive(&bundle)? {
         if !claimed.contains(&file) {

@@ -174,7 +174,7 @@ fn secrets_manifest_env_beats_config_and_keeps_a_missing_path() {
         ..Config::default()
     };
     let from_config = resolve_config(&config, &no_env);
-    let home = dirs::home_dir().expect("home for test");
+    let home = crate::folders::home_dir().expect("home for test");
     assert_eq!(
         from_config.secrets_manifest(),
         Some(home.join("configured/secretspec.toml")),
@@ -194,6 +194,46 @@ fn secrets_manifest_env_beats_config_and_keeps_a_missing_path() {
         fields(&from_env)
             .iter()
             .any(|field| field.key == "secrets" && field.env == "RUNE_SECRETS")
+    );
+}
+
+#[test]
+fn secrets_profile_env_beats_config_and_an_empty_value_names_none() {
+    assert_eq!(
+        resolve_config(&Config::default(), &no_env).secrets_profile(),
+        None
+    );
+
+    let config = Config {
+        secrets_profile: Some("owner".to_string()),
+        ..Config::default()
+    };
+    let from_config = resolve_config(&config, &no_env);
+    assert_eq!(from_config.secrets_profile(), Some("owner"));
+    let field = fields(&from_config)
+        .into_iter()
+        .find(|field| field.key == "secrets_profile")
+        .expect("secrets_profile field");
+    assert_eq!(field.env, "RUNE_SECRETS_PROFILE");
+    assert_eq!(field.value.as_deref(), Some("owner"));
+    assert_eq!(field.source, Some(Source::Config));
+
+    let from_env = resolve_config(&config, &env_from(&[("RUNE_SECRETS_PROFILE", "agents")]));
+    assert_eq!(from_env.secrets_profile(), Some("agents"));
+    assert_eq!(
+        from_env.secrets_profile.as_ref().map(|value| value.source),
+        Some(Source::Env)
+    );
+
+    let emptied = resolve_config(&config, &env_from(&[("RUNE_SECRETS_PROFILE", "")]));
+    assert_eq!(emptied.secrets_profile(), None);
+    let empty_config = Config {
+        secrets_profile: Some(String::new()),
+        ..Config::default()
+    };
+    assert_eq!(
+        resolve_config(&empty_config, &no_env).secrets_profile(),
+        None
     );
 }
 
@@ -219,7 +259,7 @@ fn default_manifest_applies_only_when_present_and_no_env_file_is_named() {
 
 #[test]
 fn tilde_expansion_resolves_under_home() {
-    let home = dirs::home_dir().expect("home for test");
+    let home = crate::folders::home_dir().expect("home for test");
     assert_eq!(expand_tilde("~/Agents"), home.join("Agents"));
 }
 
@@ -382,4 +422,60 @@ fn unknown_top_level_config_key_errors() {
     let error = load_from_dir_with_env(dir.path(), &no_env).expect_err("unknown key");
     assert_eq!(error.kind(), ErrorKind::Config);
     assert!(error.message().contains("unknown field"), "got: {error}");
+}
+
+#[test]
+fn ask_defaults_name_the_built_in_route_and_question_folder() {
+    let config = Config::default();
+    assert_eq!(config.ask.model, DEFAULT_ASK_MODEL);
+    assert_eq!(
+        config.ask.questions,
+        vec![DEFAULT_ASK_QUESTIONS.to_string()]
+    );
+    assert!(config.ask.routes.is_empty());
+
+    let resolved = resolve_config(&config, &no_env);
+    assert_eq!(resolved.ask, Ask::default());
+}
+
+#[test]
+fn ask_section_deserializes_model_questions_and_routes() {
+    let config: Config = serde_yaml::from_str(
+        "ask:\n    model: local\n    questions: [~/Agents/questions]\n    routes:\n        jev:\n            base_url: https://cliproxy.internal\n            key_env: CLIPROXY_API_KEY\n        local:\n            id: gemma3\n            base_url: http://127.0.0.1:11434\n",
+    )
+    .expect("ask config");
+
+    assert_eq!(config.ask.model, "local");
+    assert_eq!(config.ask.questions, vec!["~/Agents/questions".to_string()]);
+    let jev = &config.ask.routes["jev"];
+    assert_eq!(jev.id, None);
+    assert_eq!(jev.base_url.as_deref(), Some("https://cliproxy.internal"));
+    assert_eq!(jev.key_env.as_deref(), Some("CLIPROXY_API_KEY"));
+    let local = &config.ask.routes["local"];
+    assert_eq!(local.id.as_deref(), Some("gemma3"));
+    assert_eq!(local.base_url.as_deref(), Some("http://127.0.0.1:11434"));
+    assert_eq!(local.key_env, None);
+
+    // A partial section keeps the defaults for the rest.
+    let partial: Config =
+        serde_yaml::from_str("ask:\n    routes:\n        jev:\n            id: jev-1.14.0\n")
+            .expect("partial ask config");
+    assert_eq!(partial.ask.model, DEFAULT_ASK_MODEL);
+    assert_eq!(
+        partial.ask.questions,
+        vec![DEFAULT_ASK_QUESTIONS.to_string()]
+    );
+    assert_eq!(partial.ask.routes["jev"].id.as_deref(), Some("jev-1.14.0"));
+}
+
+#[test]
+fn unknown_ask_keys_error() {
+    // No key value lives in the configuration, under any name.
+    let error = serde_yaml::from_str::<Config>("ask:\n    key: secret\n").expect_err("key");
+    assert!(error.to_string().contains("unknown field"), "got: {error}");
+    let error = serde_yaml::from_str::<Config>(
+        "ask:\n    routes:\n        jev:\n            api_key: secret\n",
+    )
+    .expect_err("route key");
+    assert!(error.to_string().contains("unknown field"), "got: {error}");
 }

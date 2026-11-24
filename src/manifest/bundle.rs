@@ -1,5 +1,6 @@
 //! Read-only identity and reference checks for a complete deployed skill.
 
+use crate::folders::Canonical as _;
 use pulldown_cmark::{Event, LinkType, Parser, Tag};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -72,7 +73,8 @@ impl BundleProblem {
     fn new(kind: BundleProblemKind, path: &Path, message: impl Into<String>) -> Self {
         Self {
             kind,
-            path: path.to_string_lossy().into_owned(),
+            // A bundle path, like an entry's: `/` between its parts.
+            path: super::slash_lossy(path),
             message: message.into(),
         }
     }
@@ -90,7 +92,7 @@ struct Inventory {
 /// Relative symlinks may resolve only to entries inside this bundle.
 pub fn inspect_bundle(root: &Path) -> BundleInspection {
     let mut inventory = Inventory::default();
-    match root.canonicalize() {
+    match root.canonical() {
         Ok(root) if root.is_dir() => {
             inventory.walk(&root, Path::new(""));
             inventory.check(&root);
@@ -144,7 +146,7 @@ impl Inventory {
                 continue;
             }
             let path = relative.join(child.file_name());
-            let Some(path_text) = path.to_str() else {
+            let Some(path_text) = super::slash_text(&path) else {
                 self.incomplete = true;
                 self.problems.push(BundleProblem::new(
                     BundleProblemKind::InvalidPath,
@@ -153,6 +155,7 @@ impl Inventory {
                 ));
                 continue;
             };
+            let path_text = path_text.as_str();
             if path_text.contains('\\') || path_text.chars().any(char::is_control) {
                 self.problems.push(BundleProblem::new(
                     BundleProblemKind::InvalidPath,
@@ -261,7 +264,7 @@ impl Inventory {
             } else if entry.kind == BundleEntryKind::Symlink {
                 match contained_symlink_target(root, &root.join(path)) {
                     Ok(target) => {
-                        let target = target.to_string_lossy().into_owned();
+                        let target = super::slash_lossy(&target);
                         if !target.is_empty() && !self.entries.contains_key(&target) {
                             self.problems.push(BundleProblem::new(
                                 BundleProblemKind::BrokenSymlink,
@@ -516,7 +519,7 @@ fn check_references(
         match result {
             Ok(target)
                 if target.as_os_str().is_empty()
-                    || entries.contains_key(target.to_string_lossy().as_ref()) => {}
+                    || entries.contains_key(&super::slash_lossy(&target)) => {}
             Ok(_) => problems.push(BundleProblem::new(
                 BundleProblemKind::BrokenReference,
                 Path::new(document),

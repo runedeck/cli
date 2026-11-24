@@ -565,15 +565,13 @@ fn git_show(repo: &Path, object: &str) -> Option<String> {
 
 /// Lists the entry names directly under a tree object (`git show <tree>/`).
 fn git_show_lines(repo: &Path, tree: &str) -> Vec<String> {
-    git_show(repo, tree)
-        .map(|text| {
-            text.lines()
-                .skip_while(|line| !line.trim().is_empty())
-                .filter(|line| !line.trim().is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    git_show(repo, tree).map_or_default(|text| {
+        text.lines()
+            .skip_while(|line| !line.trim().is_empty())
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect()
+    })
 }
 
 #[cfg(test)]

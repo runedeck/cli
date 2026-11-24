@@ -23,6 +23,10 @@ pub struct ActionResult {
 pub struct HookSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// A registered harness the install left alone, with why: its folder
+    /// does not exist, so nothing was read, locked, or created for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_harnesses: Vec<String>,
     pub written: Vec<String>,
     pub adopted: Vec<String>,
     pub foreign: Vec<String>,
@@ -43,6 +47,11 @@ impl HookSummary {
     pub fn lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.extend(self.skipped.iter().map(|why| format!("skipped: {why}")));
+        lines.extend(
+            self.skipped_harnesses
+                .iter()
+                .map(|why| format!("skipped: {why}")),
+        );
         lines.extend(self.written.iter().map(|w| format!("registered {w}")));
         lines.extend(self.adopted.iter().map(|a| format!("adopted {a}")));
         for (label, list) in [

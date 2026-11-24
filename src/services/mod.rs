@@ -32,6 +32,7 @@ pub use source::{parse_frontmatter, strip_frontmatter};
 pub use target::git_log_in_repo;
 
 use crate::error::{Error, ErrorKind};
+use crate::folders::canonicalize;
 use crate::manifest::FileStatus;
 use crate::provider::ContentKind;
 use crate::view::{
@@ -97,7 +98,7 @@ pub fn build_view(
     let mut modules: Vec<ModuleView> = modules_by_source.into_values().collect();
 
     for location in watched_locations {
-        let module_root = fs::canonicalize(location).unwrap_or_else(|_| location.clone());
+        let module_root = canonicalize(location).unwrap_or_else(|_| location.clone());
         if let Some(mut watched_module) = scan_source_module(&module_root) {
             watched_module.is_target = true;
             modules.push(watched_module);
@@ -139,7 +140,7 @@ pub fn build_view(
         let repo_vcs = cached.and_then(|(state, _)| state.as_ref());
         module.local_path = repo.cloned();
         module.vcs = repo_vcs.map(vcs::RepoVcs::module_state);
-        module.git_log = cached.map(|(_, log)| log.clone()).unwrap_or_default();
+        module.git_log = cached.map_or_default(|(_, log)| log.clone());
         let tint = module_index % 8;
         for artifact in &mut module.artifacts {
             artifact.module.clone_from(&module.name);
@@ -158,9 +159,9 @@ pub fn build_view(
             );
             artifact.broken_refs = broken;
             artifact.age_days = age;
-            artifact.variants = repo
-                .map(|repo| collect_variants(repo, &artifact.relative_path, &provider_names))
-                .unwrap_or_default();
+            artifact.variants = repo.map_or_default(|repo| {
+                collect_variants(repo, &artifact.relative_path, &provider_names)
+            });
         }
     }
 
@@ -180,7 +181,7 @@ fn build_deck_view(
     providers: &[(String, String)],
     watched_locations: &[PathBuf],
 ) -> Result<DashboardView, Error> {
-    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let deck =
         crate::deck::load(&root).map_err(|message| Error::new(ErrorKind::Config, message))?;
     let repo_vcs = vcs::repo_vcs(&root);
@@ -383,7 +384,7 @@ fn discover_deck_targets(
     providers: &[(String, String)],
     watched_locations: &[PathBuf],
 ) -> Vec<DeckTargetView> {
-    let deck_root = fs::canonicalize(&deck.root).unwrap_or_else(|_| deck.root.clone());
+    let deck_root = canonicalize(&deck.root).unwrap_or_else(|_| deck.root.clone());
     let deck_remote = discovery::git_remote(&deck_root);
     let mut source_roots = std::collections::HashMap::new();
     for deck_entry in &deck.entries {
@@ -405,7 +406,7 @@ fn discover_deck_targets(
 
     let mut locations = watched_locations
         .iter()
-        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| canonicalize(path).unwrap_or_else(|_| path.clone()))
         .filter(|path| path != &deck_root)
         .filter(|path| target_points_at_deck(path, &deck_root, deck_remote.as_deref()))
         .collect::<Vec<_>>();
@@ -510,7 +511,7 @@ fn target_points_at_deck(target: &Path, deck_root: &Path, deck_remote: Option<&s
             } else {
                 target.join(local)
             };
-            return fs::canonicalize(&resolved).unwrap_or(resolved) == deck_root;
+            return canonicalize(&resolved).unwrap_or(resolved) == deck_root;
         }
         source
             .get("git")
@@ -751,7 +752,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), Error> {
 /// rest of the dashboard, dropping ADRs from unrelated sibling repos.
 pub fn active_repo_names(modules: &[ModuleView], root: &Path) -> HashSet<String> {
     let mut names: HashSet<String> = modules.iter().map(|module| module.name.clone()).collect();
-    if let Some(root_name) = fs::canonicalize(root)
+    if let Some(root_name) = canonicalize(root)
         .unwrap_or_else(|_| root.to_path_buf())
         .file_name()
     {
@@ -809,11 +810,7 @@ pub(super) fn collect_variants(
 }
 
 pub(super) fn make_variant(repo: &Path, provider: &str, model: &str, file: &Path) -> Variant {
-    let relative_path = file
-        .strip_prefix(repo)
-        .unwrap_or(file)
-        .to_string_lossy()
-        .to_string();
+    let relative_path = crate::manifest::slash_lossy(file.strip_prefix(repo).unwrap_or(file));
     let content = fs::read_to_string(file).unwrap_or_default();
     let mode = match extract_frontmatter_field(&content, "mode") {
         mode if mode.is_empty() => "replace".to_string(),

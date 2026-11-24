@@ -13,6 +13,7 @@ fn process_request_has_no_default_timeout() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_captures_stdout_stderr_and_exit_code() {
     let request = shell_request("printf answer; printf warning >&2; exit 7");
     let output = run_process_request(&request).expect("process output");
@@ -23,6 +24,7 @@ fn process_captures_stdout_stderr_and_exit_code() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_captures_stdin_without_deadlock() {
     let mut request = ProcessRequest::new("/bin/cat");
     request.stdin = Some(b"question\n".to_vec());
@@ -33,6 +35,7 @@ fn process_captures_stdin_without_deadlock() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_preserves_exit_when_child_closes_stdin_early() {
     let mut request = shell_request("exit 23");
     request.stdin = Some(vec![b'x'; DEFAULT_OUTPUT_LIMIT_BYTES * 2]);
@@ -42,6 +45,7 @@ fn process_preserves_exit_when_child_closes_stdin_early() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_reports_signal_termination() {
     let request = shell_request("kill -TERM $$");
     let output = run_process_request(&request).expect("process output");
@@ -54,6 +58,7 @@ fn process_reports_signal_termination() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_timeout_uses_grace_then_reports_timeout_with_partial_output() {
     let mut request =
         shell_request("printf partial; printf 'still going' >&2; trap '' TERM; sleep 5");
@@ -75,6 +80,7 @@ fn process_timeout_uses_grace_then_reports_timeout_with_partial_output() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_drains_output_after_limit_is_crossed() {
     let mut request =
         shell_request("i=0; while [ \"$i\" -lt 100 ]; do printf 0123456789; i=$((i + 1)); done");
@@ -98,6 +104,7 @@ fn process_drains_output_after_limit_is_crossed() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_cleanup_kills_a_descendant_that_holds_the_pipe() {
     // The leader exits at once; a background child keeps stdout open. The
     // supervisor kills the group after the grace period instead of waiting
@@ -117,6 +124,7 @@ fn process_cleanup_kills_a_descendant_that_holds_the_pipe() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn a_forwarded_signal_leaves_the_group_its_grace_before_the_kill() {
     // The signal that stopped the leader is recorded already when the
     // drain starts. A group member that finishes within the grace is
@@ -170,6 +178,7 @@ const DETACHED_SLEEP: &str = "if command -v setsid >/dev/null 2>&1; then setsid 
     else perl -e 'use POSIX; setsid(); sleep 10' & fi;";
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_timeout_ends_promptly_when_a_setsid_descendant_holds_the_pipes() {
     // The leader ignores the deadline's SIGTERM and a survivor outside the
     // group holds every pipe. The group kill ends the leader, the bounded
@@ -195,6 +204,7 @@ fn process_timeout_ends_promptly_when_a_setsid_descendant_holds_the_pipes() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_exit_ends_promptly_when_a_setsid_descendant_holds_stdin() {
     // The leader exits before it reads a stdin larger than the pipe, and a
     // survivor outside the group keeps the read end open, so the writer
@@ -215,6 +225,7 @@ fn process_exit_ends_promptly_when_a_setsid_descendant_holds_stdin() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "starts /bin/sh and signals its process group")]
 fn process_request_removes_inherited_automation_mode() {
     let mut request = shell_request("printf %s \"${HARNESS_AUTOMATED-unset}\"");
     request.env = vec![(OsString::from("HARNESS_AUTOMATED"), OsString::from("1"))];

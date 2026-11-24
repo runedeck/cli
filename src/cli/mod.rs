@@ -2,6 +2,7 @@ mod add;
 mod adopt;
 #[cfg(feature = "adr")]
 mod adr;
+mod ask;
 mod assemble;
 mod bench;
 mod closure;
@@ -29,10 +30,12 @@ mod graph;
 mod hook;
 mod init;
 pub(crate) mod install;
+mod interface;
 mod launch;
 mod ontology;
 mod output;
 mod plugin;
+mod policy;
 mod process;
 #[cfg(feature = "spec")]
 mod promote;
@@ -44,6 +47,7 @@ mod release;
 mod repair;
 mod review;
 mod run;
+mod session;
 mod setup;
 mod sign;
 mod skill;
@@ -68,6 +72,7 @@ mod update_check;
 
 use clap::{Parser, Subcommand};
 use rune::error::{Error, ErrorKind};
+use rune::folders::Canonical as _;
 use rune::result::ActionResult;
 use std::path::PathBuf as QueuePathBuf;
 use std::{ffi::OsString, fmt::Write as _};
@@ -82,6 +87,9 @@ const BUILD_VERSION: &str = concat!(
 
 #[derive(Parser)]
 #[command(name = "rune", about = "Rune Deck toolkit", version = BUILD_VERSION)]
+// Windows starts the program as `rune.exe`, and the usage line would say
+// so. The command is `rune` in every shell there, as it is in the docs.
+#[cfg_attr(windows, command(bin_name = "rune"))]
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -377,6 +385,12 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         action: Option<PluginAction>,
+    },
+
+    /// Read the agent policy: which names agents may use in a place
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
     },
 
     /// List deploy providers, or toggle them for this source
@@ -755,7 +769,7 @@ enum Command {
 
     /// Launch a coding tool with composable environment middleware
     #[command(
-        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  --check           Ask each base URL for its model list and report every\n                    model the plan sends as served or missing; no spawn.\n                    Exit 0 served, 1 missing, 2 endpoint failure\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch sol@claude\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:8317   # your Anthropic-compatible proxy\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: CLIPROXY_API_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. An unset reference is read through secretspec from the\n  secrets manifest (config key secrets, default\n  ~/.config/rune/secretspec.toml when it exists). Without a manifest it\n  falls back to the env file (config key env, default ~/.env). ollama\n  profiles double as models: rune launch llama3@ollama\n\nCURSOR:\n  rune launch cursor starts cursor-agent, because cursor on a Mac opens\n  the editor; tools.cursor.binary names another binary. fable@cursor is\n  built in and passes --model claude-fable-5-1-high; a configured\n  profile or route of the same name replaces it."
+        after_help = "LAUNCH OPTIONS:\n  --with <A,B>      Middleware chain to apply in order\n  --pxpipe          Legacy sugar for --with pxpipe\n  --direct          Clear the configured/default middleware chain\n  --tmux[=NAME]     Wrap the launch in a tmux session\n  --dry-run         Print the resolved launch plan without spawning\n  --check           Ask each base URL for its model list and report every\n                    model the plan sends as served or missing; no spawn.\n                    Exit 0 served, 1 missing, 2 endpoint failure\n  -- ARGS...        Arguments passed to the launched tool\n\nPROFILES (~/.config/rune/config.yaml):\n  launch:\n    profiles:\n      claude:\n        sol:                              # rune launch sol@claude\n          env:\n            ANTHROPIC_BASE_URL: http://localhost:8317   # your Anthropic-compatible proxy\n            ANTHROPIC_MODEL: gpt-5.6-sol\n            # ANTHROPIC_API_KEY: { from_env: CLIPROXY_API_KEY }\n          args: []\n          with: []\n      codex:\n        deep:\n          args: [\"-m\", \"gpt-5.6-sol\", \"-c\", \"model_reasoning_effort=xhigh\"]\n\n  Env values are literals or { from_env: KEY } references; secrets stay\n  out of config. An unset reference is read through secretspec from the\n  secrets manifest (config key secrets, default\n  ~/.config/rune/secretspec.toml when it exists). Config key\n  secrets_profile names the secretspec profile for each read; without\n  it secretspec uses its own default. Without a manifest it falls back\n  to the env file (config key env, default ~/.env). ollama profiles\n  double as models: rune launch llama3@ollama\n\nCURSOR:\n  rune launch cursor starts cursor-agent, because cursor on a Mac opens\n  the editor; tools.cursor.binary names another binary. fable@cursor is\n  built in and passes --model claude-fable-5-1-high; a configured\n  profile or route of the same name replaces it."
     )]
     Launch {
         /// Coding tool to launch, such as `claude` or `sol@claude` for a
@@ -848,6 +862,50 @@ enum Command {
         output: Option<std::path::PathBuf>,
     },
 
+    /// Ask a judging model a question set about a text and print typed answers
+    #[command(
+        after_help = "TEXT SOURCES:\n  rune ask session-shape \"The afternoon went by in one sitting.\"\n  rune ask session-shape --file state.txt\n  command cat state.txt | rune ask ./questions/v2.json\n  rune ask session-shape --state-file state.json\n  rune ask --check\n\nThe text becomes the state's text. --state-file sends the file's JSON\nobject as the whole state instead. No text goes to the model under\n--dry-run or --check.\n\nQUESTION SETS:\n  QUESTIONS is a JSON file, or a name looked up as <NAME>.json in the\n  folders ask.questions lists (default ~/Developer/runedeck/jev/questions).\n  Only the file's questions object is sent. A signal block or anything\n  else in the file stays local.\n\nROUTES (~/.config/rune/config.yaml):\n  ask:\n    model: jev                       # the route --model falls back to\n    questions: [~/Developer/runedeck/jev/questions]\n    routes:\n      jev:                           # built in: jev-1.13.0 at\n        base_url: https://cliproxy.internal   # https://api.typesafe.ai\n        key_env: CLIPROXY_API_KEY    # default JEV_API_KEY\n      local:                         # any POST <base>/v1/systemone\n        id: gemma3\n        base_url: http://127.0.0.1:11434\n\n  --model names a route, or a model id on the default route. The key is\n  read from the variable the route names at call time, from the\n  environment or the env file (config key env, default ~/.env), and\n  never printed. A route without key_env sends no authorization header.\n\nRESULT:\n  One answer per line, sorted by question key (mood: noul 0.83). Under\n  --json one object with ok, kind, model, answers, usage, details, and\n  exit_code. Exit 0 answered, 1 the endpoint refused or answered without\n  answers, 124 no reply within --timeout (default 60s), 125 a usage or\n  configuration error. --check asks <base>/v1/models: 0 served, 1\n  missing, 2 endpoint failure."
+    )]
+    Ask {
+        /// Question set: a JSON file, or a name looked up as `<NAME>.json`
+        /// in the folders `ask.questions` lists.
+        #[arg(value_name = "QUESTIONS", required_unless_present = "check")]
+        questions: Option<String>,
+
+        /// Text the questions are asked about. Omit to use --file,
+        /// --state-file, or noninteractive stdin.
+        #[arg(value_name = "TEXT", conflicts_with_all = ["file", "state_file"])]
+        text: Option<String>,
+
+        /// Read the text from a UTF-8 file.
+        #[arg(long, value_name = "FILE", conflicts_with = "state_file")]
+        file: Option<std::path::PathBuf>,
+
+        /// A JSON file holding the whole state object, instead of text that
+        /// becomes the state's `text`.
+        #[arg(long, value_name = "JSON")]
+        state_file: Option<std::path::PathBuf>,
+
+        /// A route from `ask.routes` (or the built-in `jev`), or a model
+        /// id on the default route.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Deadline for the reply, such as 30s or 5m. Default 60s.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+
+        /// Print the route, the endpoint, the question-set path, and the
+        /// state source without sending anything.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Ask the route's base URL for its model list and report the
+        /// route's model as served or missing. Sends no text.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
+    },
+
     /// Post and read messages between harness sessions, read at the next turn
     #[command(
         after_help = "EXAMPLES:\n  rune queue post codex --session 019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8 \"Is the deck ready?\"\n  rune queue post claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a --message-file question.md\n  rune queue read\n  rune queue list --state posted\n\nPOSTBOX:\n  Every message is recorded in ~/.rune/postbox.tsv, one tab-separated line\n  per event: timestamp, id, state, sender, harness, session, message.\n  Nothing is removed: a state change (posted, queued, read) is a new line.\n\nDELIVERY:\n  codex takes the message through its own queue, `codex queue --remote\n  unix://`. claude, agy, grok and opencode read it from the postbox: the\n  `postbox` hook handler adds it to the next turn, or the session runs\n  `rune queue read`.\n\nThe exit status follows rune run: the harness's own status passes through,\n124 is the time limit, 125 an error of rune itself, 126 and 127 a binary\nthat cannot run or is not found."
@@ -855,6 +913,24 @@ enum Command {
     Queue {
         #[command(subcommand)]
         action: QueueAction,
+    },
+
+    /// Copy harness sessions into the data folder, and list the capture debt
+    #[command(
+        after_help = "EXAMPLES:\n  rune session capture --harness claude --session 42e43c0b-9a0e-4e2c-b822-0035be59e69a\n  rune session sweep\n  rune session debt --json\n\nLAYOUT:\n  Sessions/<harness>/ native copies, SessionVersions/<harness>/ replaced\n  copies that held lost bytes and the daily database backups,\n  Transcripts/<harness>/ readable copies, Plans/claude/ plan-mode plans,\n  under ~/Data or DATA_DIR or capture.data_dir in the rune config.\n\nEXCLUDE:\n  capture.exclude.paths names working-folder globs and\n  capture.exclude.sessions names session ids; a matching session is never\n  copied and records no debt.\n\nDebt records live under $RUNE_STATE_DIR/capture-debt; rune doctor reports\nthe open count."
+    )]
+    Session {
+        #[command(subcommand)]
+        action: session::SessionAction,
+    },
+
+    /// List the interfaces that start harness sessions, and show what rune would install into one
+    #[command(
+        after_help = "EXAMPLES:\n  rune interface list\n  rune interface status t3code\n  rune interface enable t3code --dry-run --json\n\nINTERFACES:\n  t3code reads T3 Code's settings file, userdata/settings.json under\n  T3CODE_HOME or ~/.t3.\n\nPLAN:\n  The dry run names the launch profiles T3 Code can carry, the provider\n  instance of each, the settings keys rune would own, and what T3 Code\n  cannot represent. A profile without environment values adds its model to\n  the native instance. A profile with environment values gets an instance\n  beside it. The plan reads profile data only: it resolves no secret, runs\n  no middleware, and shows a value only for the base URL.\n\nThis release writes nothing: `enable` without --dry-run refuses."
+    )]
+    Interface {
+        #[command(subcommand)]
+        action: Option<interface::InterfaceAction>,
     },
 
     /// Launch a read-only web dashboard showing rune state, provenance,
@@ -1431,7 +1507,7 @@ enum HookAction {
         #[arg(long)]
         write: bool,
     },
-    /// Write the dispatcher entries into the Claude and Codex hook tables
+    /// Write the dispatcher entries into the Claude, Codex, and Cursor hook tables
     Install {
         /// Report what differs from the plan and write nothing; exit 1 on drift.
         #[arg(long)]
@@ -1439,6 +1515,20 @@ enum HookAction {
         /// Print what would be written and write nothing.
         #[arg(long = "dry-run")]
         dry_run: bool,
+        /// Only this harness's table: claude, codex, or cursor. Repeat or
+        /// comma-separate for several; omit for all three.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
+    },
+    /// Take rune's own entries out of the hook tables; every other entry stays
+    Remove {
+        /// Print what would be written and write nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Only this harness's table: claude, codex, or cursor. Repeat or
+        /// comma-separate for several; omit for all three.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
     /// Run one built-in handler over a handler payload on stdin (the dispatcher's entry)
     #[command(hide = true)]
@@ -1472,19 +1562,31 @@ enum HookAction {
         #[command(flatten)]
         filter: RecordFilter,
     },
-    /// Turn one staged hook rune on for one or all providers
+    /// Turn a dispatcher handler on for one or all harnesses, or a staged hook rune on for one or all providers
     On {
+        /// A handler id from `hooks:` in the rune config, or a staged hook rune's name.
         #[arg(value_name = "NAME")]
         name: String,
-        #[arg(long, value_name = "PROVIDER")]
+        /// Provider to toggle a staged hook rune for. Omit to apply to every provider.
+        #[arg(long, value_name = "PROVIDER", conflicts_with = "harness")]
         provider: Option<String>,
+        /// Harness to switch a handler on for, such as cursor. Repeat or
+        /// comma-separate for several; omit for every harness.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
-    /// Turn one staged hook rune off for one or all providers
+    /// Turn a dispatcher handler off for one or all harnesses, or a staged hook rune off for one or all providers
     Off {
+        /// A handler id from `hooks:` in the rune config, or a staged hook rune's name.
         #[arg(value_name = "NAME")]
         name: String,
-        #[arg(long, value_name = "PROVIDER")]
+        /// Provider to toggle a staged hook rune for. Omit to apply to every provider.
+        #[arg(long, value_name = "PROVIDER", conflicts_with = "harness")]
         provider: Option<String>,
+        /// Harness to switch a handler off for, such as cursor. Repeat or
+        /// comma-separate for several; omit for every harness.
+        #[arg(long, value_name = "HARNESS")]
+        harness: Vec<String>,
     },
     /// Stage hook runes in the consumer `.rune` manifest
     Add {
@@ -1499,6 +1601,22 @@ enum HookAction {
     Wrap {
         #[command(subcommand)]
         action: WrapAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyAction {
+    /// Print allowed or refused and the deciding layer for each name; exit 1 when any is refused
+    Check {
+        /// The directory or file to ask about. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        path: Option<std::path::PathBuf>,
+        /// The session id whose switch file also applies.
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+        /// The policy names to check, such as `jev.send.hosted`.
+        #[arg(value_name = "NAME", required = true)]
+        names: Vec<String>,
     },
 }
 
@@ -2094,6 +2212,16 @@ pub fn run() -> i32 {
         Command::Provider { action } => {
             return exit_code(provider_cmd::execute(action, args.json), args.json);
         }
+        Command::Policy {
+            action:
+                PolicyAction::Check {
+                    path,
+                    session,
+                    names,
+                },
+        } => {
+            return policy::check(path, session.as_deref(), &names, args.json);
+        }
         Command::Todo { action, all } => {
             return exit_code(todo::execute(action, all, args.json), args.json);
         }
@@ -2396,7 +2524,32 @@ pub fn run() -> i32 {
                 json: args.json,
             });
         }
+        Command::Ask {
+            questions,
+            text,
+            file,
+            state_file,
+            model,
+            timeout,
+            dry_run,
+            check,
+        } => {
+            return ask::execute(&ask::AskOptions {
+                questions,
+                text,
+                file,
+                state_file,
+                model,
+                timeout,
+                plan: run::RunPlan::from_flags(dry_run, check),
+                json: args.json,
+            });
+        }
         Command::Queue { action } => return run_queue(action, args.json),
+        Command::Session { action } => return session::run(action, args.json),
+        Command::Interface { action } => {
+            return exit_code(interface::execute(action, args.json), args.json);
+        }
         #[cfg(feature = "dashboard")]
         Command::Dashboard { root, port } => {
             return exit_code(dashboard::execute(&root, port), args.json);
@@ -2521,9 +2674,34 @@ pub fn run() -> i32 {
                 Some(HookAction::List { events, write }) => {
                     exit_code(hook::list(events, write, args.json), args.json)
                 }
-                Some(HookAction::Install { check, dry_run }) => {
-                    exit_code(hook::install_tables(check, dry_run, args.json), args.json)
-                }
+                Some(HookAction::Install {
+                    check,
+                    dry_run,
+                    harness,
+                }) => exit_code(
+                    hook::install_tables(
+                        hook::Mode {
+                            check,
+                            dry_run,
+                            remove: false,
+                        },
+                        &harness,
+                        args.json,
+                    ),
+                    args.json,
+                ),
+                Some(HookAction::Remove { dry_run, harness }) => exit_code(
+                    hook::install_tables(
+                        hook::Mode {
+                            check: false,
+                            dry_run,
+                            remove: true,
+                        },
+                        &harness,
+                        args.json,
+                    ),
+                    args.json,
+                ),
                 Some(HookAction::Adapter { name, args }) => hook::adapters::run(&name, &args),
                 Some(HookAction::Run {
                     harness,
@@ -2534,18 +2712,16 @@ pub fn run() -> i32 {
                 Some(HookAction::Record { action, filter }) => {
                     exit_code(hook::record_command(action, filter, args.json), args.json)
                 }
-                Some(HookAction::On { name, provider }) => run_kind_add(
-                    kind,
-                    Some(KindAction::On { name, provider }),
-                    args.no_color,
-                    args.json,
-                ),
-                Some(HookAction::Off { name, provider }) => run_kind_add(
-                    kind,
-                    Some(KindAction::Off { name, provider }),
-                    args.no_color,
-                    args.json,
-                ),
+                Some(HookAction::On {
+                    name,
+                    provider,
+                    harness,
+                }) => hook_switch(name, provider, &harness, true, args.no_color, args.json),
+                Some(HookAction::Off {
+                    name,
+                    provider,
+                    harness,
+                }) => hook_switch(name, provider, &harness, false, args.no_color, args.json),
                 Some(HookAction::Add {
                     name,
                     source,
@@ -2705,13 +2881,15 @@ fn run_queue(action: QueueAction, json: bool) -> i32 {
     }
 }
 
-/// Whether the command line names the `run` or the `queue` subcommand:
-/// the first argument before `--` that is not a flag. The global flags take
-/// no value, so no flag swallows the word after it.
+/// Whether the command line names the `run`, `ask`, `queue`, or `session`
+/// subcommand: the first argument before `--` that is not a flag. The
+/// global flags take no value, so no flag swallows the word after it.
 fn run_requested(args: impl Iterator<Item = OsString>) -> bool {
     args.take_while(|argument| argument != "--")
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
-        .is_some_and(|argument| argument == "run" || argument == "queue")
+        .is_some_and(|argument| {
+            argument == "run" || argument == "ask" || argument == "queue" || argument == "session"
+        })
 }
 
 #[cfg(test)]
@@ -3035,6 +3213,12 @@ fn plumbing_help(help: &mut String) {
     );
     help_command(
         help,
+        "policy",
+        "check [--path <DIR>] [--session <ID>] <NAME>...",
+        "Say whether the agent policy allows each name here",
+    );
+    help_command(
+        help,
         "update",
         "--check",
         "Check for a newer release (read-only)",
@@ -3084,9 +3268,27 @@ fn plumbing_help(help: &mut String) {
     );
     help_command(
         help,
+        "ask",
+        "<QUESTIONS> [TEXT|--file <FILE>|--state-file <JSON>]",
+        "Ask a judging model a question set about a text",
+    );
+    help_command(
+        help,
         "queue",
         "post <TOOL> --session <ID> [MESSAGE] | read | list",
         "Post and read messages between sessions",
+    );
+    help_command(
+        help,
+        "session",
+        "capture --harness <NAME> | sweep | debt",
+        "Copy harness sessions into the data folder, list capture debt",
+    );
+    help_command(
+        help,
+        "interface",
+        "list | status <NAME> | enable <NAME> --dry-run",
+        "List interfaces, and show what enable would write",
     );
     help_command(
         help,
@@ -3178,7 +3380,7 @@ pub(crate) fn print_fatal<E: std::fmt::Display>(error: &E) {
 }
 
 pub(crate) fn resolved_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.canonicalize()
+    path.canonical()
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf())
 }
@@ -3203,14 +3405,13 @@ fn install_theme() {
     let selection = rune::ontology::load()
         .ok()
         .and_then(|config| config.theme)
-        .map(|config| theme::ThemeSelection {
+        .map_or_default(|config| theme::ThemeSelection {
             name: config.name,
             auto_switch: config.auto_switch,
             dark_name: config.dark_name,
             light_name: config.light_name,
             custom: config.custom,
-        })
-        .unwrap_or_default();
+        });
     let appearance = theme::appearance_from_colorfgbg(std::env::var("COLORFGBG").ok().as_deref());
     let (tones, warnings) = theme::resolve(&selection, appearance);
     let sheet = style::Sheet::detect_stderr(false);
@@ -3394,6 +3595,55 @@ fn run_spec(action: SpecAction, json: bool) -> i32 {
 }
 
 /// Dispatch a kind namespace: bare lists the kind, `add` stages by name.
+/// `rune hook on|off <NAME>`: a name that is a dispatcher handler's id in
+/// the rune config switches that handler per harness; any other name
+/// toggles a staged hook rune per provider, as `rune skill on` does. The
+/// two never share a flag: `--harness` names a handler's harnesses, and
+/// `--provider` a rune's deploy provider.
+fn hook_switch(
+    name: String,
+    provider: Option<String>,
+    harness: &[String],
+    on: bool,
+    no_color: bool,
+    json: bool,
+) -> i32 {
+    let kind = rune::provider::ContentKind::Hooks;
+    let declared = match hook::switches::declares(&name) {
+        Ok(declared) => declared,
+        // A config that does not load still lets a staged rune toggle,
+        // which reads the consumer manifest alone.
+        Err(error) if harness.is_empty() && provider.is_some() => {
+            eprintln!("rune hook: the rune config did not load ({error}); toggling a staged rune");
+            false
+        }
+        Err(error) => return exit_code(Err(error), json),
+    };
+    // The manifest is read only where the name could go either way.
+    let staged =
+        declared && provider.is_none() && harness.is_empty() && add::stages_kind(kind, &name);
+    let flag = if provider.is_some() {
+        hook::switches::Flag::Provider
+    } else if harness.is_empty() {
+        hook::switches::Flag::None
+    } else {
+        hook::switches::Flag::Harness
+    };
+    match hook::switches::route(&name, declared, staged, flag) {
+        Ok(hook::switches::Route::Handler) => {
+            return exit_code(hook::switches::switch(&name, harness, on, json), json);
+        }
+        Ok(hook::switches::Route::Rune) => {}
+        Err(error) => return exit_code(Err(error), json),
+    }
+    let action = if on {
+        KindAction::On { name, provider }
+    } else {
+        KindAction::Off { name, provider }
+    };
+    run_kind_add(kind, Some(action), no_color, json)
+}
+
 fn run_kind_add(
     kind: rune::provider::ContentKind,
     action: Option<KindAction>,

@@ -23,6 +23,20 @@ fn skeleton_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/skeleton")
 }
 
+/// Whether `make` starts on this machine. rune checks this before it
+/// offers the project setup, and a run that cannot start `make` says so
+/// instead of naming the noninteractive run. A Windows machine often has
+/// no `make`.
+fn make_starts() -> bool {
+    std::process::Command::new("make")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 fn init(home: &Path, quests: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     rune()
         .env("HOME", home)
@@ -378,6 +392,9 @@ fn bare_name_resolves_under_rune_quests_and_quest_flag_binds_it() {
     let destination = quests.path().join("demo");
     assert!(destination.join("Makefile").is_file());
     let state = fs::read_to_string(home.path().join(".config/rune/state.yaml")).unwrap();
+    // The state names the destination in its canonical form, and the temp
+    // folder can be written another way, as a short name on Windows.
+    let destination = rune::folders::canonicalize(&destination).unwrap();
     assert!(state.contains(&destination.to_string_lossy().to_string()));
 }
 
@@ -452,12 +469,15 @@ fn noninteractive_init_without_templates_applies_base_only() {
     let quests = tempfile::tempdir().unwrap();
     let destination = quests.path().join("base-only");
 
+    let setup = if make_starts() {
+        "setup: skipped in noninteractive mode"
+    } else {
+        "setup: make is unavailable"
+    };
     init(home.path(), quests.path(), &["base-only"])
         .success()
         .stdout(predicate::str::contains("layers: base"))
-        .stdout(predicate::str::contains(
-            "setup: skipped in noninteractive mode",
-        ))
+        .stdout(predicate::str::contains(setup))
         .stdout(predicate::str::contains("  make install"));
 
     assert!(destination.join("Makefile").is_file());
@@ -559,7 +579,14 @@ fn dry_run_predicts_gitignore_retrofit_performed_by_real_init() {
     .clone();
     let real_run_result: serde_json::Value = serde_json::from_slice(&real_run_output).unwrap();
     assert_eq!(dry_run_result["setup"]["status"], "dry_run");
-    assert_eq!(real_run_result["setup"]["status"], "non_interactive");
+    assert_eq!(
+        real_run_result["setup"]["status"],
+        if make_starts() {
+            "non_interactive"
+        } else {
+            "make_unavailable"
+        }
+    );
     let real_run_gitignore = real_run_result["installed"]
         .as_array()
         .unwrap()
@@ -637,7 +664,7 @@ fn embedded_init_writes_tagged_copier_metadata_offline() {
     assert!(copier_answers.contains("BRIEF: Works offline"));
     assert!(copier_answers.contains("NAME: offline-copy"));
     // No skeleton release is tagged, so the embedded copy pins its commit.
-    assert!(copier_answers.contains("_commit: 6374d8fccf0643b1925da0a384b46f02e8ef905a"));
+    assert!(copier_answers.contains("_commit: d7c9bdf752b6d8790f54687d770f60e6afa72caa"));
     assert!(copier_answers.contains("_src_path: https://github.com/runedeck/skeleton.git"));
     assert!(!destination.join("AGENTS.md.jinja").exists());
     let agents = fs::read_to_string(destination.join("AGENTS.md")).unwrap();
@@ -645,7 +672,7 @@ fn embedded_init_writes_tagged_copier_metadata_offline() {
     let workflow = fs::read_to_string(destination.join(".github/workflows/quality.yaml")).unwrap();
     assert!(workflow.contains("${{ github.ref }}"));
     let overlay = fs::read_to_string(destination.join(".rune-skeleton-overlay.yaml")).unwrap();
-    assert!(overlay.contains("release: 6374d8fccf0643b1925da0a384b46f02e8ef905a"));
+    assert!(overlay.contains("release: d7c9bdf752b6d8790f54687d770f60e6afa72caa"));
     assert!(overlay.contains("owner: runedeck/cli"));
     for path in [
         "scripts/author-identity.py",

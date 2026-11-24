@@ -21,6 +21,7 @@
 //! nothing and says so, since the turn may be unfinished. The change's
 //! design file maps each part to the review finding it closes.
 
+use rune::folders::Canonical as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -184,7 +185,7 @@ fn alone(root: &Path, key: &str) -> bool {
     let Ok(slot) = read_slot(&dir.join(SLOT)) else {
         return false;
     };
-    let mut keys = slot.map(|slot| slot.keys).unwrap_or_default();
+    let mut keys = slot.map_or_default(|slot| slot.keys);
     if let Ok(markers) = fs::read_dir(dir.join(TOUCHED)) {
         keys.extend(
             markers
@@ -528,7 +529,7 @@ pub(crate) fn session_key(harness: Harness, session_id: Option<&str>) -> String 
 /// The nearest ancestor of `cwd` that holds a `.jj/` directory: the jj
 /// workspace root, found without a process.
 fn workspace_root(cwd: &Path) -> Option<PathBuf> {
-    let start = cwd.canonicalize().ok()?;
+    let start = cwd.canonical().ok()?;
     start
         .ancestors()
         .find(|dir| dir.join(".jj").is_dir())

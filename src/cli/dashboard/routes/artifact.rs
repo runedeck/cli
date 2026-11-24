@@ -151,8 +151,7 @@ fn primary_deployed_content(
         return String::new();
     };
     read_deployed_file(root, &provider_dir, &entry.deployed_path)
-        .map(|(_, content)| content)
-        .unwrap_or_default()
+        .map_or_default(|(_, content)| content)
 }
 
 pub(super) async fn companion_detail(
@@ -362,7 +361,7 @@ fn read_deployed_file(
     provider_dir: &str,
     path: &str,
 ) -> Option<(String, String)> {
-    let home = dirs::home_dir();
+    let home = rune::folders::home_dir();
     let mut bases: Vec<PathBuf> = Vec::new();
     if let Some(ref home) = home {
         bases.push(home.clone());
@@ -406,9 +405,7 @@ pub(super) async fn version_page(
     });
     let short: String = sha.chars().take(7).collect();
     let files = content.map_or_else(Vec::new, |body| {
-        let path = located
-            .map(|(_, source_path)| source_path)
-            .unwrap_or_default();
+        let path = located.map_or_default(|(_, source_path)| source_path);
         vec![templates::ConfigFile {
             label: format!("{kind}/{name} @ {short}"),
             path,
@@ -543,11 +540,7 @@ fn resolve_effective_content(
     use rune::assemble::variants;
     match variant_path {
         Some(path) => {
-            let label = path
-                .strip_prefix(repo)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let label = rune::manifest::slash_lossy(path.strip_prefix(repo).unwrap_or(path));
             let variant_content = match std::fs::read_to_string(path) {
                 Ok(content) => content,
                 Err(error) => {

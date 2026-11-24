@@ -5,7 +5,6 @@ use crate::cli::dotrune::{self, Source};
 use rune::error::{Error, ErrorKind};
 use rune::manifest::source_snapshot::SourceInput;
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 // The consumer manifest is not in this list: its path depends on the form
@@ -56,7 +55,8 @@ fn source_inputs_with_cache(
     let mut inputs = Vec::new();
     append_inputs(&mut inputs, "root", &root);
     let executable = std::env::current_exe().map_err(|error| incomplete(error.to_string()))?;
-    let executable = fs::canonicalize(executable).map_err(|error| incomplete(error.to_string()))?;
+    let executable =
+        rune::folders::canonicalize(executable).map_err(|error| incomplete(error.to_string()))?;
     inputs.push(SourceInput::required("builder:executable", executable));
     let merged = config::load_merged_config(&root)?;
     let providers: BTreeMap<_, _> = config::load_providers(&merged)?.into_iter().collect();
@@ -146,7 +146,7 @@ fn append_inputs(inputs: &mut Vec<SourceInput>, label: &str, root: &Path) {
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, Error> {
-    let path = fs::canonicalize(path).map_err(|error| {
+    let path = rune::folders::canonicalize(path).map_err(|error| {
         incomplete(format!(
             "source root {} is unavailable: {error}",
             path.display()

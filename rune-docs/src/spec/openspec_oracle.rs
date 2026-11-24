@@ -2,6 +2,7 @@
 //! `tests/fixtures/openspec/` proving that artifacts the pinned upstream
 //! release accepts load, apply, and round-trip here without semantic loss.
 
+use crate::support::Canonical as _;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -90,7 +91,7 @@ fn compatibility_manifest_references_pinned_existing_fixtures() {
     let manifest: CompatibilityManifest =
         serde_yaml::from_str(MANIFEST).expect("compatibility manifest must deserialize");
     let fixture_root = Path::new(FIXTURE_ROOT)
-        .canonicalize()
+        .canonical()
         .expect("fixture root must exist");
 
     assert_eq!(manifest.version, 1);
@@ -306,7 +307,7 @@ fn assert_fixture_path(fixture_root: &Path, relative_path: &str) {
     );
     let canonical_path = fixture_root
         .join(declared_path)
-        .canonicalize()
+        .canonical()
         .unwrap_or_else(|error| panic!("fixture path is missing: {relative_path}: {error}"));
     assert!(
         canonical_path.starts_with(fixture_root),
@@ -316,7 +317,7 @@ fn assert_fixture_path(fixture_root: &Path, relative_path: &str) {
 
 fn collect_tree(root_path: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
     let canonical_root = root_path
-        .canonicalize()
+        .canonical()
         .map_err(|error| format!("failed to resolve {}: {error}", root_path.display()))?;
     let mut files = BTreeMap::new();
     collect_tree_files(&canonical_root, &canonical_root, &mut files)?;

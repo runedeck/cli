@@ -15,6 +15,7 @@ pub(crate) use verify::sha256_file;
 
 use super::root::SpecRoot;
 use crate::error::{Error, ErrorKind};
+use crate::support::Canonical as _;
 use confine::{
     create_confined_directories, file_identity, inspect_existing_ancestors, is_same_file,
     path_exists_without_following, reject_symlink,
@@ -27,7 +28,7 @@ use journal::{
 use serde::{Deserialize, Serialize};
 use staging::{
     archive_staging_path, copy_file_exclusive, copy_tree_exclusive, remove_verified_tree,
-    replace_file_from_backup, write_file_exclusive,
+    replace_file_from_backup, sync_directory, write_file_exclusive,
 };
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -215,11 +216,11 @@ impl<I: TransactionIo> Transaction<I> {
             .map_err(|error| io_error("create", spec_root.base(), error))?;
         let repository = spec_root
             .repository()
-            .canonicalize()
+            .canonical()
             .map_err(|error| io_error("resolve", spec_root.repository(), error))?;
         let root = spec_root
             .base()
-            .canonicalize()
+            .canonical()
             .map_err(|error| io_error("resolve", spec_root.base(), error))?;
         let lock_path = root.join(LOCK_FILE);
         reject_symlink(&lock_path)?;
@@ -602,7 +603,7 @@ pub(super) fn health_findings(
     }
     let root = spec_root
         .base()
-        .canonicalize()
+        .canonical()
         .map_err(|error| io_error("resolve", spec_root.base(), error))?;
     // Diagnosis never writes: the lock is probed only if it already exists
     // (acquisition creates it), and a created lock is never unlinked here
@@ -671,7 +672,7 @@ fn incomplete_transaction_findings(
     };
     let repository = spec_root
         .repository()
-        .canonicalize()
+        .canonical()
         .map_err(|error| io_error("resolve", spec_root.repository(), error))?;
     let transaction = Transaction {
         repository,
@@ -724,5 +725,7 @@ fn io_error(action: &str, path: &Path, error: impl std::fmt::Display) -> Error {
     )
 }
 
+#[cfg(test)]
+mod identity_tests;
 #[cfg(test)]
 mod tests;

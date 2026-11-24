@@ -27,6 +27,9 @@ pub(crate) fn path() -> Result<PathBuf, Error> {
     std::path::absolute(&path).map_err(|error| Error::io(format!("{}: {error}", path.display())))
 }
 
+/// Write the whole plan. The listing that calls this holds the install's
+/// whole lock set already, from before its compile; the lock here nests
+/// in it, and stands alone for no caller.
 pub(crate) fn write(plan: &Plan) -> Result<PathBuf, Error> {
     let path = path()?;
     let text = serde_json::to_string_pretty(plan).map_err(|error| Error::io(error.to_string()))?;

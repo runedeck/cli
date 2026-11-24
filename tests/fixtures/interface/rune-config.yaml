@@ -1,0 +1,21 @@
+# Launch profiles for tests/interface.rs: one for the native Claude
+# instance, one whose model the fixture settings already list, one behind a
+# hub, and one that T3 Code cannot carry.
+launch:
+    profiles:
+        claude:
+            grok:
+                model: grok
+            sol:
+                model: sol
+            hub:
+                model: lumo
+                env:
+                    ANTHROPIC_BASE_URL: http://127.0.0.1:8317
+                    ANTHROPIC_AUTH_TOKEN:
+                        from_env: HUB_KEY
+                    EXTRA_HEADER: fixture-literal-that-no-output-shows
+        codex:
+            wrapped:
+                model: sol
+                with: [otel]

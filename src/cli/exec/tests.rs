@@ -39,6 +39,10 @@ fn capture_accepts_child_that_closes_stdin() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "runs a shell script through bash, and on Windows the bash in System32 is the WSL launcher"
+)]
 fn shell_fixture_round_trips_json_and_input_env() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -69,6 +73,10 @@ fn shell_fixture_round_trips_json_and_input_env() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "runs a shell script through bash, and on Windows the bash in System32 is the WSL launcher"
+)]
 fn output_schema_bad_payload_fails_validation() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();

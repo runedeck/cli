@@ -1,0 +1,5 @@
+#!/bin/sh
+# A stand-in for a harness binary. Each name in this directory links here.
+# Starting it appends one line to the log HARNESS_LOG names, so a scene
+# can show that no harness started.
+echo "$(basename "$0") started with: $*" >>"${HARNESS_LOG:?set HARNESS_LOG}"

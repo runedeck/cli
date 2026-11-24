@@ -222,8 +222,7 @@ impl Terms {
                 label: unescape(&label[1]),
                 comment: COMMENT
                     .captures(&capture[4])
-                    .map(|comment| unescape(&comment[1]))
-                    .unwrap_or_default(),
+                    .map_or_default(|comment| unescape(&comment[1])),
                 kind,
                 draft: DRAFT.is_match(&capture[4]),
             };

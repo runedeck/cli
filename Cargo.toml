@@ -1,6 +1,6 @@
 [package]
 name = "rune-cli"
-version = "0.6.0"
+version = "0.7.1"
 edition = "2024"
 license = "EUPL-1.2"
 repository = "https://github.com/runedeck/cli"
@@ -71,6 +71,10 @@ regex = "1"
 # `new URL()` reads it in the harness: a hand-written slash rule missed
 # `https:\\u:p@h`, `https:/u:p@h`, `https:///u:p@h`, and `https:u:p@h`.
 url = "2"
+# A zstd decoder in Rust, with no C library to link on any release
+# target. Codex compresses an older session file, and session capture
+# must read the working folder in it before it copies the file.
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 console = "0.15"
 base64 = "0.22"
 dirs = "6"
@@ -79,9 +83,6 @@ rune-docs = { path = "rune-docs", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 webpki-root-certs = "1"
 signal-hook = "=0.3.18"
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
 
 # git
 gix = { version = "0.66", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation"] }
@@ -104,6 +105,17 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 ansi-to-tui = { version = "8.0.1", optional = true }
 unicode-width = { version = "0.2", optional = true }
 edtui = { version = "0.11", default-features = false, optional = true }
+
+# Only nix is Unix-only. The target tables stay after every other
+# dependency: a dependency written below a target table header belongs to
+# that target.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["fs", "process", "resource", "signal"] }
+
+# The seal nonce is 32 random bytes. Unix reads them from /dev/urandom, and
+# Windows has no such file. getrandom is already in the dependency tree.
+[target.'cfg(windows)'.dependencies]
+getrandom = "0.3"
 
 [build-dependencies]
 sha2 = "0.10"

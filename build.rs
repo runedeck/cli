@@ -33,6 +33,19 @@ fn main() {
         build_commit(&manifest_dir)
     );
     println!("cargo:rustc-env=RUNE_BUILD_TIME={}", build_time());
+
+    // Windows reserves 1 MB of stack for the main thread, where Linux and
+    // macOS give it 8 MB. A debug build of rune overflows 1 MB while it
+    // builds its command tree, before any command runs, so rune.exe asks
+    // the linker for the 8 MB the other platforms have.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let argument = if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            "/STACK:8388608"
+        } else {
+            "-Wl,--stack,8388608"
+        };
+        println!("cargo:rustc-link-arg-bins={argument}");
+    }
 }
 
 fn build_commit(manifest_dir: &Path) -> String {

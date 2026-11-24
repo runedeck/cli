@@ -39,7 +39,7 @@ pub(crate) fn agy_data_dir(invocation: &SurfaceInvocation) -> Option<PathBuf> {
         .find(|(name, _)| *name == key)
         .map(|(_, value)| PathBuf::from(value))
         .or_else(|| std::env::var_os(AGY_DATA_DIR).map(PathBuf::from))
-        .or_else(|| dirs::home_dir().map(|home| home.join(AGY_DEFAULT_DATA_DIR)))
+        .or_else(|| rune::folders::home_dir().map(|home| home.join(AGY_DEFAULT_DATA_DIR)))
 }
 
 /// The folder agy fills for one conversation.
@@ -59,7 +59,7 @@ pub(crate) fn find_artifacts(folder: &Path, since: SystemTime) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_file() && !is_bookkeeping(path))
         .filter(|path| modified_at_or_after(path, since))
-        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .filter_map(|path| rune::folders::canonicalize(path).ok())
         .collect();
     files.sort();
     files
@@ -100,7 +100,7 @@ pub(crate) fn copy_artifacts(
             destination.display()
         )
     })?;
-    let destination = std::fs::canonicalize(destination).map_err(|error| {
+    let destination = rune::folders::canonicalize(destination).map_err(|error| {
         format!(
             "cannot resolve artifacts directory {}: {error}",
             destination.display()
@@ -132,10 +132,7 @@ fn free_name(directory: &Path, name: &Path) -> PathBuf {
     if std::fs::symlink_metadata(&first).is_err() {
         return first;
     }
-    let stem = name
-        .file_stem()
-        .map(OsStr::to_os_string)
-        .unwrap_or_default();
+    let stem = name.file_stem().map_or_default(OsStr::to_os_string);
     let mut index = 1_u32;
     loop {
         let mut candidate = stem.clone();

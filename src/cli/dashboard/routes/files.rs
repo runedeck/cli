@@ -297,7 +297,7 @@ pub(super) async fn schema_page(
         &format!("{dir}/.mdschema"),
         &repo_path.join(dir).join(".mdschema"),
         "yaml",
-        dirs::home_dir().as_deref(),
+        rune::folders::home_dir().as_deref(),
     ) else {
         return (
             axum::http::StatusCode::NOT_FOUND,

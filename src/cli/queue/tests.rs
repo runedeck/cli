@@ -67,6 +67,56 @@ fn output_without_a_receipt_line_has_no_receipt() {
 }
 
 #[test]
+fn a_uuid_is_five_hex_groups_and_a_name_is_anything_else() {
+    assert!(is_uuid("01a15844-7b2e-71a0-aa88-b41f3c4622af"));
+    assert!(is_uuid("01A15844-7B2E-71A0-AA88-B41F3C4622AF"));
+    for name in [
+        "ouroboros",
+        "example/ai-demo",
+        "01a15844-7b2e-71a0-aa88",
+        "01a15844-7b2e-71a0-aa88-b41f3c4622ag",
+        "01a15844-7b2e-71a0-aa88-b41f3c4622af-",
+    ] {
+        assert!(!is_uuid(name), "{name}");
+    }
+    assert_eq!(
+        name_lookup_warning("01a15844-7b2e-71a0-aa88-b41f3c4622af"),
+        None
+    );
+    let warning = name_lookup_warning("example/ai-demo").expect("a warning for a name");
+    assert!(warning.contains("example/ai-demo"), "{warning}");
+    assert!(warning.contains("session UUID"), "{warning}");
+}
+
+#[test]
+fn a_refused_name_hints_at_the_uuid_codex_matched() {
+    let unverified = "Error: Cannot verify a unique session label across server pages; matching session UUID: 01a15844-7b2e-71a0-aa88-b41f3c4622af";
+    assert_eq!(
+        session_hint(unverified).as_deref(),
+        Some(
+            "Codex matched the name to session 01a15844-7b2e-71a0-aa88-b41f3c4622af: post with --session 01a15844-7b2e-71a0-aa88-b41f3c4622af"
+        )
+    );
+    let ambiguous = "Error: session name 'demo' matches 01a15844-7b2e-71a0-aa88-b41f3c4622af, 01a0abff-74d9-7390-b827-57ef47c982c2 (01a0abff-74d9-7390-b827-57ef47c982c2); use a session UUID to disambiguate.";
+    let hint = session_hint(ambiguous).expect("a hint");
+    assert!(
+        hint.ends_with(
+            "sessions 01a15844-7b2e-71a0-aa88-b41f3c4622af, 01a0abff-74d9-7390-b827-57ef47c982c2: post with --session and the UUID of the one you mean"
+        ),
+        "{hint}"
+    );
+    assert_eq!(
+        session_hint("Error: No active session found matching 'ouroboros'."),
+        None
+    );
+    assert_eq!(
+        session_hint("thread 01a15844-7b2e-71a0-aa88-b41f3c4622af failed"),
+        None,
+        "a UUID without Codex's name refusal"
+    );
+}
+
+#[test]
 fn profile_arguments_are_named_with_credentials_hidden() {
     assert_eq!(dropped_profile_args(&[]), None);
     let warning = dropped_profile_args(&[
@@ -156,6 +206,50 @@ fn hook_keeps_a_codex_turn_going_with_the_message_at_its_end() {
 }
 
 #[test]
+fn hook_keeps_a_cursor_prompt_message_posted_and_delivers_it_after_a_tool() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    posted(&path, "m-1", "c1");
+
+    // Cursor takes context on `sessionStart` and `postToolUse`, not on
+    // `beforeSubmitPrompt`: a message taken there was marked read and the
+    // encoder dropped it (found 2026-11-02).
+    let result = postbox_at(&hook_payload("cursor", "prompt.before", "c1"), &path).expect("hook");
+    assert!(
+        result.context.is_empty() && result.reason.is_none(),
+        "{result:?}"
+    );
+    let (events, _) = ledger::load(&path).expect("load");
+    assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
+
+    let result = postbox_at(&hook_payload("cursor", "tool.after", "c1"), &path).expect("hook");
+    assert_eq!(result.context.len(), 1, "{result:?}");
+    assert!(result.context[0].contains("Is the deck ready?"));
+}
+
+#[test]
+fn hook_delivers_to_a_cursor_tool_failure_and_keeps_a_message_on_another_extension() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    posted(&path, "m-1", "c1");
+
+    // An extension has no canonical event, and the postbox once answered
+    // nothing on every one, where Cursor's `postToolUseFailure` takes
+    // `additional_context` as `postToolUse` does (review, 2026-11-02).
+    let result = postbox_at(&hook_payload("cursor", "afterFileEdit", "c1"), &path).expect("hook");
+    assert!(result.context.is_empty(), "{result:?}");
+    let (events, _) = ledger::load(&path).expect("load");
+    assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
+
+    let result =
+        postbox_at(&hook_payload("cursor", "postToolUseFailure", "c1"), &path).expect("hook");
+    assert_eq!(result.context.len(), 1, "{result:?}");
+    assert!(result.context[0].contains("Is the deck ready?"));
+}
+
+#[test]
 fn hook_reads_nothing_where_the_harness_cannot_show_it() {
     use crate::cli::hook::adapters::postbox_at;
     let folder = tempfile::tempdir().expect("folder");
@@ -168,6 +262,75 @@ fn hook_reads_nothing_where_the_harness_cannot_show_it() {
     assert!(result.context.is_empty() && result.reason.is_none());
     let (events, _) = ledger::load(&path).expect("load");
     assert_eq!(ledger::fold(&events)[0].state, ledger::State::Posted);
+}
+
+fn queued_for_codex(path: &Path, id: &str, session: &str, text: &str) {
+    let posted = ledger::Event {
+        timestamp: ledger::now(),
+        id: id.to_string(),
+        state: ledger::State::Posted,
+        sender: "claude:42e43c0b".to_string(),
+        harness: "codex".to_string(),
+        session: session.to_string(),
+        message: text.to_string(),
+    };
+    let queued = ledger::Event {
+        state: ledger::State::Queued,
+        message: String::new(),
+        ..posted.clone()
+    };
+    ledger::append(path, &[posted, queued]).expect("queue");
+}
+
+fn prompt_payload(session: &str, prompt: &str) -> crate::cli::hook::payload::HandlerPayload {
+    crate::cli::hook::payload::HandlerPayload {
+        prompt: Some(prompt.to_string()),
+        ..hook_payload("codex", "prompt.before", session)
+    }
+}
+
+#[test]
+fn a_codex_turn_that_starts_with_a_queued_message_marks_it_read() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    queued_for_codex(&path, "m-1", "01a0abff", "Is the deck ready?");
+    queued_for_codex(&path, "m-2", "01a0abff", "Is the proof recorded?");
+    queued_for_codex(&path, "m-3", "019a2222", "Is the deck ready?");
+
+    let result =
+        postbox_at(&prompt_payload("01a0abff", "Is the deck ready?\n"), &path).expect("hook");
+    assert!(
+        result.context.is_empty() && result.reason.is_none(),
+        "Codex takes no context on a prompt: {result:?}"
+    );
+    let (events, _) = ledger::load(&path).expect("load");
+    let states: Vec<(String, ledger::State)> = ledger::fold(&events)
+        .into_iter()
+        .map(|message| (message.id, message.state))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("m-1".to_string(), ledger::State::Read),
+            ("m-2".to_string(), ledger::State::Queued),
+            ("m-3".to_string(), ledger::State::Queued),
+        ],
+        "only the message the turn started with, for this session"
+    );
+}
+
+#[test]
+fn a_prompt_of_the_owner_leaves_queued_messages_queued() {
+    use crate::cli::hook::adapters::postbox_at;
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(ledger::FILE_NAME);
+    queued_for_codex(&path, "m-1", "01a0abff", "Is the deck ready?");
+
+    postbox_at(&prompt_payload("01a0abff", "Run the tests"), &path).expect("hook");
+    postbox_at(&hook_payload("codex", "prompt.before", "01a0abff"), &path).expect("hook");
+    let (events, _) = ledger::load(&path).expect("load");
+    assert_eq!(ledger::fold(&events)[0].state, ledger::State::Queued);
 }
 
 #[test]

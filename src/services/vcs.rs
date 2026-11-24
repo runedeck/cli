@@ -76,13 +76,13 @@ impl RepoVcs {
 
 pub(super) fn repo_vcs(module_dir: &Path) -> Option<RepoVcs> {
     let root_raw = git_stdout(module_dir, &["rev-parse", "--show-toplevel"])?;
-    let root = std::fs::canonicalize(root_raw.trim()).ok()?;
+    let root = crate::folders::canonicalize(root_raw.trim()).ok()?;
     let jj_colocated = root.join(".jj").is_dir();
     let branch = branch_label(module_dir, jj_colocated);
     let (behind, ahead) = upstream_counts(module_dir, &branch);
     let status = git_stdout(module_dir, &["status", "--porcelain", "-z"]).unwrap_or_default();
     let (dirty, untracked) = parse_status(&status);
-    let module_canonical = std::fs::canonicalize(module_dir).ok()?;
+    let module_canonical = crate::folders::canonicalize(module_dir).ok()?;
     let prefix = module_canonical
         .strip_prefix(&root)
         .unwrap_or(Path::new(""))
@@ -103,8 +103,7 @@ pub(super) fn repo_vcs(module_dir: &Path) -> Option<RepoVcs> {
 /// then a branch pointing at HEAD, then the short sha.
 fn branch_label(dir: &Path, jj_colocated: bool) -> String {
     let named = git_stdout(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .map(|out| out.trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|out| out.trim().to_string());
     if !named.is_empty() && named != "HEAD" {
         return named;
     }
@@ -144,8 +143,7 @@ fn branch_label(dir: &Path, jj_colocated: bool) -> String {
         return pointing;
     }
     git_stdout(dir, &["rev-parse", "--short", "HEAD"])
-        .map(|out| format!("detached {}", out.trim()))
-        .unwrap_or_default()
+        .map_or_default(|out| format!("detached {}", out.trim()))
 }
 
 /// Most recent commits across the whole repo, for the repository detail view.

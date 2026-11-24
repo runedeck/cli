@@ -89,8 +89,7 @@ pub(super) fn parse_adoption(content: &str) -> Option<Adoption> {
         .resolved_dependencies
         .iter()
         .find(|dependency| dependency.name == "upstream")
-        .map(|dependency| dependency.digest.sha256.clone())
-        .unwrap_or_default();
+        .map_or_default(|dependency| dependency.digest.sha256.clone());
     let dependencies = definition
         .resolved_dependencies
         .iter()

@@ -8,6 +8,10 @@
 # the manifest below. Without the key, Rune uses ~/.config/rune/secretspec.toml
 # when that file exists, and otherwise the env file (key `env`, default ~/.env).
 # secrets: ~/.config/rune/secretspec.toml
+#
+# Each secretspec read names the profile below. Without the key, or with an
+# empty value, Rune names no profile and secretspec uses its own default.
+# secrets_profile: owner
 launch:
     models:
         sol:
@@ -36,3 +40,18 @@ launch:
                         from_env: CLIPROXY_API_KEY
                     ANTHROPIC_SMALL_FAST_MODEL: grok-composer-2.5-fast
                 with: [cliproxy]
+
+# rune ask sends a judging model a question set about a text. The built-in
+# route jev names jev-1.13.0 at https://api.typesafe.ai and reads JEV_API_KEY
+# at call time. Repeating it here overrides a field, and any other route that
+# speaks POST <base>/v1/systemone joins by name.
+ask:
+    model: jev
+    questions: [~/Developer/runedeck/jev/questions]
+    routes:
+        jev:
+            base_url: https://cliproxy.internal
+            key_env: CLIPROXY_API_KEY
+        local:
+            id: gemma3
+            base_url: http://127.0.0.1:11434

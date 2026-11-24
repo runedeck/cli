@@ -2,6 +2,7 @@
 //! owner's `sandbox.excludedCommands` of 2026-10-22, cut to the tools the
 //! guard exists for.
 
+use rune::folders::Canonical as _;
 use serde_json::json;
 
 use super::shell::parse;
@@ -460,6 +461,10 @@ fn checkout(config: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "rune hooks are not supported on Windows yet: they assume a Unix shell, the executable bit, and Unix paths"
+)]
 fn a_manifest_path_under_a_configured_target_dir_gets_advice() {
     let (dir, ws) = checkout(Some("[build]\ntarget-dir = \"target\"\n"));
     let manifest = ws.join("Cargo.toml");
@@ -482,12 +487,8 @@ fn a_manifest_path_under_a_configured_target_dir_gets_advice() {
         assert_eq!(result.effect, Effect::Pass, "{line}");
         assert_eq!(result.context.len(), 1, "{line}: {:?}", result.context);
         let advice = &result.context[0];
-        let folder = ws.canonicalize().unwrap();
-        let config = dir
-            .path()
-            .canonicalize()
-            .unwrap()
-            .join(".cargo/config.toml");
+        let folder = ws.canonical().unwrap();
+        let config = dir.path().canonical().unwrap().join(".cargo/config.toml");
         assert!(
             advice.contains(&format!("`{}`", config.display())),
             "{advice}"

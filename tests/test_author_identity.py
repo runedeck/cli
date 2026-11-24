@@ -235,8 +235,29 @@ class IdentityTests(unittest.TestCase):
     def test_resolve_generates_future_model_identity(self):
         self.assertEqual(
             identity.resolve_identity(self.policy, "gpt-6-astra[1m]", "codex"),
-            model_identity(name="Codex Gpt 6 Astra"),
+            model_identity(name="Codex GPT 6 Astra"),
         )
+
+    def test_resolve_keeps_the_version_in_the_display_name(self):
+        # A point release is a different model. The generated name spells
+        # it the way the roster does, so `5.1` never collapses into `5`.
+        self.assertEqual(
+            identity.resolve_identity(self.policy, "claude-fable-5-1[1m]", "claude"),
+            "Claude Fable 5.1 (claude-fable-5-1) "
+            "<claude-fable-5-1@claude.noreply.nexus.local>",
+        )
+
+    def test_display_name_matches_the_roster_spelling(self):
+        for model, harness, expected in (
+            ("claude-opus-4-8", "claude", "Claude Opus 4.8"),
+            ("gpt-5.6-sol", "codex", "Codex GPT 5.6 Sol"),
+            ("gpt-5.6-sol", "claude", "Claude GPT 5.6 Sol"),
+            ("grok-4.6", "grok", "Grok 4.6"),
+            ("lumo-max", "lumo", "Lumo Max"),
+            ("kimi-k3", "kimi", "Kimi K3"),
+        ):
+            with self.subTest(model=model, harness=harness):
+                self.assertEqual(identity.display_name(model, harness), expected)
 
     def test_resolve_rejects_unknown_harness_or_model(self):
         for model, harness in (
@@ -395,7 +416,7 @@ class IdentityTests(unittest.TestCase):
                 invoke("resolve", "--model", "gpt-6-astra", "--harness", "codex")[
                     1
                 ].strip(),
-                model_identity(name="Codex Gpt 6 Astra"),
+                model_identity(name="Codex GPT 6 Astra"),
             )
             path.write_text("authors: []\n", encoding="utf-8")
             self.assertEqual(invoke("check-policy")[0], 2)
@@ -408,6 +429,62 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(invoke("validate", "--identity", OWNER)[0], 2)
             path.unlink()
             self.assertEqual(invoke("check-policy")[0], 2)
+
+
+class RepositoryPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = identity.load_policy(SCRIPT.parents[1] / "authors.yaml")
+
+    def test_cursor_resolves_confirmed_fable_model(self):
+        expected = model_identity(
+            "claude-fable-5-1",
+            domain="cursor.noreply.nexus.local",
+            name="Cursor Claude Fable 5.1",
+        )
+        self.assertEqual(
+            identity.resolve_identity(self.policy, "claude-fable-5-1", "cursor"),
+            expected,
+        )
+        identity.validate_identity(self.policy, expected)
+
+    def test_cursor_accepts_future_versions_without_catalog_entries(self):
+        for model, name in (
+            ("claude-fable-5-2", "Cursor Claude Fable 5.2"),
+            ("future-model-2040.12", "Cursor Future Model 2040.12"),
+        ):
+            with self.subTest(model=model):
+                author = identity.resolve_identity(self.policy, model, "cursor")
+                self.assertEqual(
+                    author,
+                    model_identity(
+                        model, domain="cursor.noreply.nexus.local", name=name
+                    ),
+                )
+                identity.validate_identity(self.policy, author)
+
+    def test_cursor_rejects_model_address_mismatch(self):
+        author = model_identity(
+            "claude-fable-5-1",
+            local="claude-fable-5-2",
+            domain="cursor.noreply.nexus.local",
+            name="Cursor",
+        )
+        with self.assertRaisesRegex(identity.IdentityError, "model ID must match"):
+            identity.validate_identity(self.policy, author)
+
+    def test_cursor_registration_keeps_unapproved_domains_blocked(self):
+        for domain in (
+            "unapproved.noreply.nexus.local",
+            "cursor.noreply.nexus.local.evil.test",
+        ):
+            with self.subTest(domain=domain):
+                author = model_identity(
+                    "claude-fable-5-1", domain=domain, name="Cursor"
+                )
+                with self.assertRaisesRegex(identity.IdentityError, "not trusted"):
+                    identity.validate_identity(self.policy, author)
+        with self.assertRaisesRegex(identity.IdentityError, "not trusted"):
+            identity.resolve_identity(self.policy, "claude-fable-5-1", "unapproved")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 
 use super::io_error;
 use crate::error::{Error, ErrorKind};
+use crate::support::Canonical as _;
 use std::fs;
 use std::io;
 use std::path::{Component, Path};
@@ -15,62 +16,178 @@ pub(super) struct FileIdentity {
     inode: u64,
 }
 
+/// The volume serial number and the file index, read from an open handle.
+/// Stable Rust gives neither from `fs::Metadata` on Windows, and an
+/// identity with no value in it would make every file equal every other.
+///
+/// The index is the 64-bit one. NTFS keeps it unique on a volume. `ReFS`
+/// names a file with a 128-bit identifier and gives the 64-bit index only
+/// where it can map the long identifier to it without loss. Everywhere
+/// else it reports all bits set, and a file system with no index reports
+/// zero. Neither value names a file, so `windows_identity` refuses both
+/// instead of letting two files compare equal.
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FileIdentity {
-    volume: Option<u32>,
-    index: Option<u64>,
+    volume: u64,
+    index: u64,
 }
 
 #[cfg(not(any(unix, windows)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FileIdentity;
 
+/// `FILE_FLAG_BACKUP_SEMANTICS`: lets a directory open, so a directory is
+/// reported as not a regular file instead of as an access error.
+#[cfg(windows)]
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+/// `FILE_FLAG_OPEN_REPARSE_POINT`: opens a symlink itself, not its target.
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
 #[cfg(any(unix, windows))]
-pub(super) fn metadata_identity(metadata: &fs::Metadata) -> FileIdentity {
+fn not_a_regular_file(path: &Path) -> Error {
+    Error::new(
+        ErrorKind::Io,
+        format!("transaction path is not a regular file: {}", path.display()),
+    )
+}
+
+/// The identity of an open regular file. The caller keeps the handle, so
+/// the identity names the file the caller reads, not whatever the path
+/// names a moment later.
+#[cfg(any(unix, windows))]
+pub(super) fn open_file_identity(file: &fs::File, path: &Path) -> Result<FileIdentity, Error> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_error("inspect", path, error))?;
+    if !metadata.is_file() {
+        return Err(not_a_regular_file(path));
+    }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt as _;
-        FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        }
+        Ok(unix_identity(&metadata))
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt as _;
-        FileIdentity {
-            volume: metadata.volume_serial_number(),
-            index: metadata.file_index(),
-        }
+        windows_identity(file, path)
     }
 }
 
-pub(super) fn file_identity(path: &Path) -> Result<FileIdentity, Error> {
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = path;
+#[cfg(unix)]
+fn unix_identity(metadata: &fs::Metadata) -> FileIdentity {
+    use std::os::unix::fs::MetadataExt as _;
+    FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
+/// Whether a 64-bit file index names one file. Zero means the file system
+/// keeps no index. All bits set means it could not give this file a
+/// unique one, which `ReFS` does for a file whose 128-bit identifier does
+/// not fit.
+#[cfg(windows)]
+pub(super) const fn index_names_one_file(index: u64) -> bool {
+    index != 0 && index != u64::MAX
+}
+
+/// The identity behind an open handle to a regular file. Every Windows
+/// identity comes through here, so a path and an open file are held to
+/// the same rules: the handle is not a console, a pipe, or another
+/// device, and its index names one file.
+#[cfg(windows)]
+fn windows_identity(file: &fs::File, path: &Path) -> Result<FileIdentity, Error> {
+    let kind = winapi_util::file::typ(file).map_err(|error| io_error("inspect", path, error))?;
+    if kind.is_char() || kind.is_pipe() || kind.is_unknown() {
+        return Err(not_a_regular_file(path));
+    }
+    let information =
+        winapi_util::file::information(file).map_err(|error| io_error("inspect", path, error))?;
+    let index = information.file_index();
+    if !index_names_one_file(index) {
         return Err(Error::new(
             ErrorKind::Io,
-            "cannot verify file identity on this platform",
+            format!(
+                "cannot prove file identity because the file system gives no unique file index: {}",
+                path.display()
+            ),
         ));
     }
-    #[cfg(any(unix, windows))]
+    Ok(FileIdentity {
+        volume: information.volume_serial_number(),
+        index,
+    })
+}
+
+/// Opens `path` without following a symlink and without any access right:
+/// reading the file information needs none. This is the handle form of
+/// `fs::symlink_metadata`.
+#[cfg(windows)]
+fn open_without_following(path: &Path) -> Result<fs::File, Error> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|error| io_error("inspect", path, error))
+}
+
+/// The identity behind a handle from `open_without_following`. The
+/// metadata of that handle classifies the path as `fs::symlink_metadata`
+/// does: a symlink or a junction is refused, and so is a directory. A
+/// deduplicated file or a cloud file also carries a reparse point, but it
+/// is a regular file with its own index, and a followed open of the same
+/// path reads that same index.
+#[cfg(windows)]
+fn unfollowed_identity(file: &fs::File, path: &Path) -> Result<FileIdentity, Error> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_error("inspect", path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(not_a_regular_file(path));
+    }
+    windows_identity(file, path)
+}
+
+pub(super) fn file_identity(path: &Path) -> Result<FileIdentity, Error> {
+    #[cfg(unix)]
     {
         let metadata =
             fs::symlink_metadata(path).map_err(|error| io_error("inspect", path, error))?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(Error::new(
-                ErrorKind::Io,
-                format!("transaction path is not a regular file: {}", path.display()),
-            ));
+            return Err(not_a_regular_file(path));
         }
-        Ok(metadata_identity(&metadata))
+        Ok(unix_identity(&metadata))
+    }
+    #[cfg(windows)]
+    {
+        unfollowed_identity(&open_without_following(path)?, path)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err(Error::new(
+            ErrorKind::Io,
+            "cannot verify file identity on this platform",
+        ))
     }
 }
 
 pub(super) fn is_same_file(left: &Path, right: &Path) -> Result<bool, Error> {
-    Ok(file_identity(left)? == file_identity(right)?)
+    #[cfg(windows)]
+    {
+        // Both handles stay open until the comparison. A file index is
+        // unique only while the file exists, and an open handle keeps it
+        // from being given to another file.
+        let left_file = open_without_following(left)?;
+        let right_file = open_without_following(right)?;
+        Ok(unfollowed_identity(&left_file, left)? == unfollowed_identity(&right_file, right)?)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(file_identity(left)? == file_identity(right)?)
+    }
 }
 
 pub(super) fn path_exists_without_following(path: &Path) -> Result<bool, Error> {
@@ -115,7 +232,7 @@ pub(super) fn inspect_existing_ancestors(root: &Path, candidate: &Path) -> Resul
             }
             Ok(_) => {
                 let resolved = current
-                    .canonicalize()
+                    .canonical()
                     .map_err(|error| io_error("resolve", &current, error))?;
                 if !resolved.starts_with(root) {
                     return Err(Error::new(

@@ -17,6 +17,7 @@
 - [x] 1.15 Every piece of repository text the views print passes through the hook dispatcher's `visible` escape
 - [x] 1.16 A signed seal rewritten under a new id lists as `stale`, never as `moved`
 - [x] 1.17 The gpg program `jj sign` runs is pinned to `rune sign gpg-shim`, which refuses any payload that is not the rewrite of a named commit before the owner's program runs, so the run fails and the request is recorded as failed with the refused commit named
+- [x] 1.18 The queue copies the receipt into `sign-queue/receipts/<id>.log` when it records a request, the signer checks the copy when the named file is gone, and removal of a request removes the copy
 
 ## 2. Verification
 
@@ -29,7 +30,8 @@
 - [x] 2.8 Integration tests for the second round: a nested-scope alias, a run that asks the key for a commit outside the named set, and a merge seal rewritten by signing its ancestor
 - [x] 2.9 Unit tests for the shim: the match with parents mapped through signed ids, the signed object as jj writes it, and the hash as git computes it
 - [x] 2.10 Integration tests for the shim: the jj 0.46 payload proof, an alias written between the guard and the run, and a jj operation written during the run. Both race tests fail on the revert design
-- [ ] 2.4 Behavior proof under `docs/proofs/queue-signs-whole-ranges/` on the shared `signing-fixture.sh`
+- [x] 2.11 Tests for the receipt copy: a receipt deleted after queueing still signs, an edited receipt and an edited copy are refused, and `drop` and `--prune` remove the copy
+- [x] 2.4 Behavior proof under `docs/proofs/queue-signs-whole-ranges/` on the shared `signing-fixture.sh`
 
 ## 3. Record
 

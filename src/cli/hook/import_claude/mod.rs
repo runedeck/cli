@@ -50,7 +50,7 @@ pub(crate) struct Report {
 /// The default transcript store: the capture mirror when it exists, else
 /// the harness's own store.
 pub(crate) fn default_store() -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
+    let home = rune::folders::home_dir()?;
     let mirror = home.join("Data").join("Sessions").join("claude");
     if mirror.is_dir() {
         return Some(mirror);
@@ -81,7 +81,7 @@ pub(crate) fn import(store: &Path, dir: &Path) -> Result<Report, String> {
     };
     let mut fresh: Vec<Record> = Vec::new();
     for path in &transcripts {
-        let key = std::fs::canonicalize(path)
+        let key = rune::folders::canonicalize(path)
             .unwrap_or_else(|_| path.clone())
             .display()
             .to_string();
@@ -265,6 +265,7 @@ fn attachment_record(value: &Value, tools: &BTreeMap<String, String>) -> Option<
         metrics: Some(found.metrics()),
         source: None,
         skipped: None,
+        unapplied: None,
     })
 }
 
@@ -294,12 +295,11 @@ fn persisted(content: &str) -> String {
 pub(crate) fn checkpoint_tools(dir: &Path, file: &Path) -> std::collections::BTreeSet<String> {
     let text = std::fs::read_to_string(dir.join(CHECKPOINT)).unwrap_or_default();
     let checkpoint: Checkpoint = serde_json::from_str(&text).unwrap_or_default();
-    let key = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let key = rune::folders::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
     checkpoint
         .files
         .get(&key.display().to_string())
-        .map(|s| s.tools.keys().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|s| s.tools.keys().cloned().collect())
 }
 
 #[cfg(test)]

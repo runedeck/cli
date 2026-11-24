@@ -4,7 +4,6 @@
 
 use rune::error::{Error, ErrorKind};
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::assemble::sources::{self, SourceFile};
@@ -50,12 +49,17 @@ pub fn resolve_sources(
                         ),
                     ));
                 }
-                filter_to_requested(
-                    sources::collect(module_root, valid_qualifiers)?,
-                    rune_list,
-                    source_label,
-                    module_root,
-                )?
+                // The module names its own source, as a deck entry does
+                // below. Without it provenance falls back to the consumer's
+                // root, which has no module.yaml, and records an empty source.
+                let source_uri = crate::cli::config::load_source_uri(module_root);
+                let mut files = sources::collect(module_root, valid_qualifiers)?;
+                if !source_uri.is_empty() {
+                    for file in &mut files {
+                        file.source_uri = Some(source_uri.clone());
+                    }
+                }
+                filter_to_requested(files, rune_list, source_label, module_root)?
             }
             CanonicalSource::Deck(deck) => {
                 let mut files = Vec::new();
@@ -200,7 +204,7 @@ fn canonicalize_local(path: &Path, source_label: &str, repo_root: &Path) -> Resu
     } else {
         repo_root.join(path)
     };
-    fs::canonicalize(&resolved).map_err(|error| {
+    rune::folders::canonicalize(&resolved).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(
@@ -216,7 +220,7 @@ fn canonicalize_subpath(
     subpath: Option<&Path>,
     source_label: &str,
 ) -> Result<PathBuf, Error> {
-    let materialized = fs::canonicalize(materialized).map_err(|error| {
+    let materialized = rune::folders::canonicalize(materialized).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(
@@ -229,7 +233,7 @@ fn canonicalize_subpath(
         return Ok(materialized);
     };
     let joined = materialized.join(subpath);
-    let canonical = fs::canonicalize(&joined).map_err(|error| {
+    let canonical = rune::folders::canonicalize(&joined).map_err(|error| {
         Error::new(
             ErrorKind::Config,
             format!(

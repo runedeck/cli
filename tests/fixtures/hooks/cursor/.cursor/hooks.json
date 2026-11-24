@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {"command": "/Users/x/.local/bin/shell-guard", "failClosed": true}
+    ],
+    "postToolUse": [
+      {"command": "/Users/x/.git-ai/bin/git-ai checkpoint cursor --hook-input stdin"},
+      {"command": "/Users/x/.git-ai/bin/git-ai notes cursor"}
+    ],
+    "preToolUse": [
+      {"command": "/Users/x/.git-ai/bin/git-ai checkpoint cursor --hook-input stdin"}
+    ],
+    "stop": [
+      {"command": "/Users/x/.git-ai/bin/git-ai notes cursor"}
+    ]
+  }
+}

@@ -52,9 +52,9 @@ fn project_scope_includes_cwd_based_key() {
     let paths = resolve_paths(Scope::Project, PROVIDER, "agents", Some(home()), None).unwrap();
 
     assert_eq!(paths.len(), 1);
-    let path_string = paths[0].to_string_lossy().to_string();
-    assert!(path_string.starts_with("/home/user/.claude/"));
-    assert!(path_string.ends_with("/agents"));
+    // By path part, not by text: the separator differs by platform.
+    assert!(paths[0].starts_with(home().join(".claude")), "{paths:?}");
+    assert!(paths[0].ends_with("agents"), "{paths:?}");
 }
 
 #[test]

@@ -94,7 +94,8 @@ fn installed_companion_leak_blocks_strict_readiness() {
         .unwrap();
     assert_eq!(finding.line, Some(1));
     assert_eq!(finding.token.as_deref(), Some("AskUserQuestion"));
-    assert!(finding.paths[0].ends_with("Question/Workflow.md"));
+    // By path part: the separator differs by platform.
+    assert!(Path::new(&finding.paths[0]).ends_with("Question/Workflow.md"));
     let output = support::rune_clean()
         .timeout(Duration::from_secs(60))
         .current_dir(source.path())
@@ -112,9 +113,7 @@ fn installed_companion_leak_blocks_strict_readiness() {
             .any(|finding| {
                 finding["code"] == "CSI007_HARNESS_LEAKAGE"
                     && finding["token"] == "AskUserQuestion"
-                    && finding["paths"][0]
-                        .as_str()
-                        .unwrap()
+                    && Path::new(finding["paths"][0].as_str().unwrap())
                         .ends_with("Question/Workflow.md")
             }),
         "{json}"

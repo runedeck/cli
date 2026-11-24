@@ -42,6 +42,15 @@ pub fn is_linked_directory(repo_root: &Path) -> bool {
         && dot_rune.is_dir()
 }
 
+/// The `.rune` directory of `repo_root`, when `.rune` is a directory: the
+/// home of the records and of the repository's policy file. A `.rune` that
+/// is a file, as a consumer manifest is, has no such directory.
+#[must_use]
+pub fn directory(repo_root: &Path) -> Option<PathBuf> {
+    let dot_rune = repo_root.join(".rune");
+    dot_rune.is_dir().then_some(dot_rune)
+}
+
 /// The owner's own `.rune` folder under `home`, apart from any repository's:
 /// it holds what every session on the machine shares, such as the postbox
 /// that `rune queue` writes. It is never a consumer manifest.
@@ -52,7 +61,9 @@ pub fn user_directory(home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{MANIFEST_IN_DIRECTORY, is_linked_directory, manifest_exists, manifest_path};
+    #[cfg(unix)]
+    use super::is_linked_directory;
+    use super::{MANIFEST_IN_DIRECTORY, manifest_exists, manifest_path};
     use std::path::Path;
 
     #[test]

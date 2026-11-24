@@ -165,6 +165,11 @@ pub(crate) struct Workspace {
     pub(crate) guard_error: Option<String>,
     /// Whether `jj workspace add` succeeded.
     added: bool,
+    /// The change id of the working-copy commit `jj workspace add` made,
+    /// read right after the add. From jj 0.47 the operation that creates
+    /// it carries the caller's workspace name, not the run's, so its
+    /// evolution no longer proves that the run made it.
+    initial_change: Option<String>,
     lock_path: PathBuf,
     state_path: PathBuf,
 }
@@ -333,7 +338,7 @@ fn repository_store(vcs: &Vcs) -> PathBuf {
             _ => marker,
         }
     };
-    std::fs::canonicalize(&store).unwrap_or(store)
+    rune::folders::canonicalize(&store).unwrap_or(store)
 }
 
 /// The folder under the state directory that holds every workspace of one
@@ -514,9 +519,7 @@ fn hook_line(entry: &std::fs::DirEntry) -> Option<String> {
     } else {
         "file"
     };
-    let target = std::fs::read_link(&path)
-        .map(|target| target.display().to_string())
-        .unwrap_or_default();
+    let target = std::fs::read_link(&path).map_or_default(|target| target.display().to_string());
     #[cfg(unix)]
     let mode = {
         use std::os::unix::fs::PermissionsExt;
@@ -526,9 +529,7 @@ fn hook_line(entry: &std::fs::DirEntry) -> Option<String> {
     let mode = u32::from(metadata.permissions().readonly());
     // The content of the file the entry resolves to: a dangling symlink or
     // a directory has none.
-    let content = std::fs::read(&path)
-        .map(|bytes| sha256_hex(&bytes))
-        .unwrap_or_default();
+    let content = std::fs::read(&path).map_or_default(|bytes| sha256_hex(&bytes));
     Some(format!(
         "hook:{}={kind}:{target}:{mode:o}:{content}",
         entry.file_name().to_string_lossy()
@@ -781,7 +782,7 @@ fn find_marked(root: &Path, description: &str, start_operation: &str) -> Result<
 /// exist yet is judged by where it would be created.
 fn resolved_location(path: &Path) -> PathBuf {
     for ancestor in path.ancestors() {
-        if let Ok(canonical) = std::fs::canonicalize(ancestor) {
+        if let Ok(canonical) = rune::folders::canonicalize(ancestor) {
             let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
             return canonical.join(rest);
         }
@@ -795,7 +796,7 @@ fn resolved_location(path: &Path) -> PathBuf {
 /// harness would work inside the checkout it must not touch.
 fn refuse_inside_checkout(path: &Path, root: &Path) -> Result<(), String> {
     let location = resolved_location(path);
-    let checkout = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let checkout = rune::folders::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if location.starts_with(&checkout) {
         return Err(format!(
             "the workspace folder {} would lie inside the checkout {}; set RUNE_STATE_DIR or XDG_STATE_HOME to a folder outside the repository, or use --mode read-only",
@@ -813,11 +814,11 @@ fn subfolder_of(repository: &Path, root: &Path) -> PathBuf {
     if let Ok(rest) = repository.strip_prefix(root) {
         return rest.to_path_buf();
     }
-    let canonical = std::fs::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
+    let canonical =
+        rune::folders::canonicalize(repository).unwrap_or_else(|_| repository.to_path_buf());
     canonical
         .strip_prefix(root)
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
+        .map_or_default(Path::to_path_buf)
 }
 
 /// Plan the workspace for one run: where it goes, what it is called, and
@@ -1011,6 +1012,7 @@ pub(crate) fn begin(plan: &Plan) -> Result<Workspace, String> {
         config_dir: None,
         guard_error: None,
         added: false,
+        initial_change: None,
         lock_path: plan.lock_path.clone(),
         state_path: plan.state_path.clone(),
     };
@@ -1051,6 +1053,16 @@ pub(crate) fn prepare(workspace: &mut Workspace) -> Result<(), String> {
     Ok(())
 }
 
+/// The change id of workspace `name`'s working copy, read right after
+/// `jj workspace add`: the change id holds whatever the harness does to
+/// the commit. A failed read loses only that evidence, so the change then
+/// stays and the result names it.
+fn initial_change(root: &Path, name: &str) -> Option<String> {
+    log_first(root, &format!("\"{name}\"@"), "change_id")
+        .ok()
+        .flatten()
+}
+
 /// Add the workspace on the copy and set its guard, under the repository
 /// lock. `workspace add` refuses `--ignore-working-copy`, so it snapshots
 /// the caller's checkout once more, which changes nothing the copy holds.
@@ -1089,6 +1101,7 @@ pub(crate) fn add(workspace: &mut Workspace) -> Result<(), String> {
         return Err(error);
     }
     workspace.added = true;
+    workspace.initial_change = initial_change(root, &workspace.name);
     // The guard goes into the workspace's own configuration, so it binds
     // every jj command the harness runs there and none the caller runs. It
     // is one layer: where that configuration cannot be written (a sandbox
@@ -1277,21 +1290,27 @@ fn worktree_head_log(workspace: &Workspace) -> Vec<String> {
         .collect()
 }
 
-/// Whether the run made `commit`: jj records, for every version of a
-/// change, the operation that created it and the workspace that operation
-/// was created from (`jj evolog -T operation.workspace_name()`). The
-/// oldest version is the change's creation, so a change the run's
-/// workspace created (`jj new`, `jj commit`, `jj split`, the initial
-/// working copy of `jj workspace add`) carries the run's name on it. A
-/// commit imported from git carries no operation: the run's worktree
-/// reflog names the ones made there. A commit the caller made and the
-/// harness merely rebased carries the caller's workspace there: ancestry
-/// of the final commit proves nothing about who made it.
+/// Whether the run made `commit` of `change`: jj records, for every
+/// version of a change, the operation that created it and the workspace
+/// that operation was created from (`jj evolog -T
+/// operation.workspace_name()`). The oldest version is the change's
+/// creation, so a change the run's workspace created (`jj new`, `jj
+/// commit`, `jj split`) carries the run's name on it. The initial working
+/// copy of `jj workspace add` is known by the change id the add recorded:
+/// jj 0.46 names the run's workspace on its creation, jj 0.47 the
+/// caller's. A commit imported from git carries no operation: the run's
+/// worktree reflog names the ones made there. A commit the caller made and
+/// the harness merely rebased carries the caller's workspace there:
+/// ancestry of the final commit proves nothing about who made it.
 fn made_by_the_run(
     workspace: &Workspace,
+    change: &str,
     commit: &str,
     worktree_log: &[String],
 ) -> Result<bool, String> {
+    if workspace.initial_change.as_deref() == Some(change) {
+        return Ok(true);
+    }
     if worktree_log.iter().any(|logged| logged == commit) {
         return Ok(true);
     }
@@ -1372,7 +1391,7 @@ fn clean_up(
             && !existed.contains(change)
             && !bookmarked.contains(commit)
             && (Some(change.as_str()) == result_change
-                || made_by_the_run(workspace, commit, worktree_log)?);
+                || made_by_the_run(workspace, change, commit, worktree_log)?);
         if abandon {
             gone.push(commit.clone());
         } else {
@@ -1859,7 +1878,7 @@ mod tests {
         assert_eq!(main_store, secondary_store);
         assert_eq!(
             main_store,
-            std::fs::canonicalize(main.join(".jj/repo")).expect("canonical")
+            rune::folders::canonicalize(main.join(".jj/repo")).expect("canonical")
         );
         assert_eq!(repository_id(&main_store), repository_id(&secondary_store));
         assert!(repository_id(&main_store).starts_with("main-"));
@@ -1885,14 +1904,14 @@ mod tests {
         assert_eq!(before, after);
         assert_eq!(
             before,
-            std::fs::canonicalize(repo.join(".git")).expect("canonical")
+            rune::folders::canonicalize(repo.join(".git")).expect("canonical")
         );
     }
 
     #[test]
     fn detect_asks_jj_for_the_root_above_a_subfolder_and_sees_colocation() {
         let root = tempfile::tempdir().expect("root");
-        let repo = std::fs::canonicalize(root.path()).expect("canonical root");
+        let repo = rune::folders::canonicalize(root.path()).expect("canonical root");
         let status = Command::new("jj")
             .args(["--config", "git.colocate=false", "git", "init"])
             .arg(&repo)
@@ -1920,6 +1939,85 @@ mod tests {
         );
         assert_eq!(subfolder_of(&nested, &repo), PathBuf::from("src/deep"));
         assert_eq!(subfolder_of(&repo, &repo), PathBuf::new());
+    }
+
+    /// `jj` in `cwd` with a test identity.
+    fn test_jj(cwd: &Path, args: &[&str]) {
+        let status = Command::new("jj")
+            .args(args)
+            .current_dir(cwd)
+            .env("JJ_USER", "Test")
+            .env("JJ_EMAIL", "test@example.test")
+            .status()
+            .expect("jj runs");
+        assert!(status.success(), "jj {args:?}");
+    }
+
+    #[test]
+    fn the_initial_working_copy_of_the_added_workspace_is_the_runs_own() {
+        let root = tempfile::tempdir().expect("root");
+        let base = rune::folders::canonicalize(root.path()).expect("canonical root");
+        let repo = base.join("repo");
+        let run_path = base.join("run");
+        test_jj(
+            &base,
+            &["--config", "git.colocate=false", "git", "init", "repo"],
+        );
+        test_jj(&repo, &["describe", "-m", "caller"]);
+        test_jj(
+            &repo,
+            &[
+                "workspace",
+                "add",
+                "--name",
+                "run-t",
+                "-r",
+                "@",
+                "-m",
+                "copy",
+                "../run",
+            ],
+        );
+        let caller = log_first(&repo, "@", "change_id ++ \" \" ++ commit_id")
+            .expect("caller log")
+            .expect("caller change");
+        let (caller_change, caller_commit) = caller.split_once(' ').expect("pair");
+        let initial = initial_change(&repo, "run-t").expect("initial change");
+        let initial_commit = log_first(&repo, "\"run-t\"@", "commit_id")
+            .expect("run log")
+            .expect("run commit");
+        let workspace = Workspace {
+            root: repo.clone(),
+            name: "run-t".to_string(),
+            path: run_path.clone(),
+            harness_dir: run_path,
+            description: String::new(),
+            colocated: false,
+            has_git: false,
+            copy_description: String::new(),
+            copy: None,
+            start_operation: String::new(),
+            caller_commits: Vec::new(),
+            caller_head: None,
+            git_settings: Vec::new(),
+            config_dir: None,
+            guard_error: None,
+            added: true,
+            initial_change: Some(initial.clone()),
+            lock_path: base.join("lock"),
+            state_path: base.join("state.json"),
+        };
+        // jj 0.47 records the caller's workspace on the operation that
+        // creates the new working copy, jj 0.46 the new workspace: the
+        // recorded change id holds on both.
+        assert_eq!(
+            made_by_the_run(&workspace, &initial, &initial_commit, &[]),
+            Ok(true)
+        );
+        assert_eq!(
+            made_by_the_run(&workspace, caller_change, caller_commit, &[]),
+            Ok(false)
+        );
     }
 
     #[test]

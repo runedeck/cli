@@ -460,7 +460,7 @@ fn missing_managed_file_with_matching_build_can_be_repaired() {
     assert!(report.evidence.iter().any(|evidence| {
         evidence.kind == detection::EvidenceKind::ManagedFile
             && evidence.result == detection::EvidenceResult::Missing
-            && evidence.value.ends_with(".codex/skills/Alpha/SKILL.md")
+            && std::path::Path::new(&evidence.value).ends_with(".codex/skills/Alpha/SKILL.md")
     }));
 }
 
@@ -548,7 +548,7 @@ fn new_and_removed_build_files_make_the_deployment_outdated() {
     assert!(report.evidence.iter().any(|evidence| {
         evidence.kind == detection::EvidenceKind::ManagedFile
             && evidence.result == detection::EvidenceResult::Outdated
-            && evidence.value.ends_with(".codex/skills/New/SKILL.md")
+            && std::path::Path::new(&evidence.value).ends_with(".codex/skills/New/SKILL.md")
     }));
 
     let removed_file = tempfile::tempdir().unwrap();
@@ -810,7 +810,7 @@ fn opencode_managed_instruction_is_checked() {
     assert!(current.evidence.iter().any(|evidence| {
         evidence.kind == detection::EvidenceKind::ManagedFile
             && evidence.result == detection::EvidenceResult::Current
-            && evidence.value.ends_with(".config/opencode/opencode.json")
+            && std::path::Path::new(&evidence.value).ends_with(".config/opencode/opencode.json")
     }));
 
     std::fs::write(
@@ -838,7 +838,7 @@ fn opencode_managed_instruction_is_checked() {
     assert!(missing.evidence.iter().any(|evidence| {
         evidence.kind == detection::EvidenceKind::ManagedFile
             && evidence.result == detection::EvidenceResult::Missing
-            && evidence.value.ends_with(".config/opencode/opencode.json")
+            && std::path::Path::new(&evidence.value).ends_with(".config/opencode/opencode.json")
     }));
 }
 

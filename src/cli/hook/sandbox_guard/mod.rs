@@ -26,6 +26,7 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
+use rune::folders::Canonical as _;
 use std::path::{Path, PathBuf};
 
 use rune::hooks::Harness;
@@ -180,7 +181,7 @@ pub(crate) fn guard(payload: &HandlerPayload, args: &[String]) -> Result<Handler
     let exemptions = if args.is_empty() {
         let config = std::env::var_os("CLAUDE_CONFIG_DIR")
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+            .or_else(|| rune::folders::home_dir().map(|h| h.join(".claude")))
             .unwrap_or_default();
         let project = std::env::var_os("CLAUDE_PROJECT_DIR")
             .map(PathBuf::from)
@@ -594,12 +595,10 @@ fn manifest_advice(command: &Command, cwd: Option<&Path>) -> Option<String> {
         cwd?.join(manifest)
     };
     let folder = manifest.parent()?;
-    let folder = folder
-        .canonicalize()
-        .unwrap_or_else(|_| folder.to_path_buf());
+    let folder = folder.canonical().unwrap_or_else(|_| folder.to_path_buf());
     let (checkout, config) = configured_target_dir(&folder)?;
     if cwd.is_some_and(|cwd| {
-        cwd.canonicalize()
+        cwd.canonical()
             .unwrap_or_else(|_| cwd.to_path_buf())
             .starts_with(&checkout)
     }) {

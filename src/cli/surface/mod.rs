@@ -511,7 +511,7 @@ pub(crate) fn settings_env(args: &[OsString]) -> Vec<(OsString, OsString)> {
             serde_json::Value::Object(env) => Some(env),
             _ => None,
         })
-        .map(|env| {
+        .map_or_default(|env| {
             env.into_iter()
                 .map(|(key, value)| {
                     let value = match value {
@@ -522,7 +522,6 @@ pub(crate) fn settings_env(args: &[OsString]) -> Vec<(OsString, OsString)> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// Every inline `--settings` object in `args` merged in order, a later
@@ -614,8 +613,7 @@ fn assignment_credential_values(args: &[OsString]) -> Vec<String> {
 pub(crate) fn settings_strings(args: &[OsString]) -> Vec<String> {
     merged_settings(args)
         .0
-        .map(|settings| string_leaves(&serde_json::Value::Object(settings)))
-        .unwrap_or_default()
+        .map_or_default(|settings| string_leaves(&serde_json::Value::Object(settings)))
 }
 
 /// Every string a codex `-c key=value` assignment in `args` carries, as
@@ -854,9 +852,8 @@ pub(crate) fn child_secrets(invocation: &SurfaceInvocation) -> Vec<String> {
         // The owner's key map names the variable that holds each model's
         // key, whatever that variable is called: its value is a credential.
         Surface::Grok => {
-            let names = grok_config_source()
-                .map(|source| grok_key_variable_names(&source))
-                .unwrap_or_default();
+            let names =
+                grok_config_source().map_or_default(|source| grok_key_variable_names(&source));
             secrets.extend(names.iter().filter_map(|name| {
                 crate::cli::launch::env_value(&effective, name)
                     .or_else(|| crate::cli::launch::env_value(&inherited, name))
@@ -1184,10 +1181,7 @@ fn stopped_with_errors(
     parse: impl Fn(&str) -> Vec<String>,
 ) -> SurfaceFailure {
     let failure = SurfaceFailure::from(failure);
-    let errors = failure
-        .tails()
-        .map(|(stdout, _)| parse(stdout))
-        .unwrap_or_default();
+    let errors = failure.tails().map_or_default(|(stdout, _)| parse(stdout));
     failure.with_harness_errors(errors)
 }
 
@@ -1876,7 +1870,7 @@ pub(crate) fn grok_model_env_key(source: &Path, model: &str) -> GrokKeyChoice {
 
 /// The owner's grok configuration file.
 pub(crate) fn grok_config_source() -> Result<PathBuf, SurfaceFailure> {
-    dirs::home_dir()
+    rune::folders::home_dir()
         .map(|home| home.join(".grok/config.toml"))
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))
 }
@@ -1888,9 +1882,7 @@ pub(crate) fn clean_config_keys(surface: Surface) -> Result<Vec<String>, Surface
     if surface != Surface::Grok {
         return Ok(Vec::new());
     }
-    Ok(grok_clean_model_table(&grok_config_source()?)?
-        .map(|(_, names)| names)
-        .unwrap_or_default())
+    Ok(grok_clean_model_table(&grok_config_source()?)?.map_or_default(|(_, names)| names))
 }
 
 /// Prepare the clean state under `root` for `surface`. `env` is the
@@ -1902,7 +1894,7 @@ pub(crate) fn prepare_clean_state(
     model: Option<&str>,
     env: &[(OsString, OsString)],
 ) -> Result<(), SurfaceFailure> {
-    let home = dirs::home_dir()
+    let home = rune::folders::home_dir()
         .ok_or_else(|| SurfaceFailure::Io("cannot resolve home directory".to_string()))?;
     match surface {
         Surface::Cursor => cursor::prepare_clean_state(root, cursor::has_api_key(env)),
@@ -2032,7 +2024,7 @@ fn process_request(
                 // reads first. The shim, and its sandbox, stay in the loop.
                 if std::env::var_os("HARNESS_REAL_BIN_DIR").is_none()
                     && let Some(real_bin) =
-                        dirs::home_dir().and_then(|home| grok_install_dir(&home))
+                        rune::folders::home_dir().and_then(|home| grok_install_dir(&home))
                 {
                     request
                         .env
@@ -2375,8 +2367,7 @@ fn invoke_claude(
     let model_usage = result.model_usage.filter(|usage| !usage.is_empty());
     let models: Vec<String> = model_usage
         .as_ref()
-        .map(|usage| usage.keys().cloned().collect())
-        .unwrap_or_default();
+        .map_or_default(|usage| usage.keys().cloned().collect());
     if models.iter().any(|model| model.trim().is_empty()) {
         return Err(with_output(SurfaceFailure::Reported(
             "claude print reported a model without a name".to_string(),
