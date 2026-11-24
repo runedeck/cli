@@ -298,6 +298,24 @@ fn lock_contention_preserves_the_permanent_lock_file() {
     assert!(fixture.spec_root.base().join(LOCK_FILE).is_file());
 }
 
+/// A child process that another test thread spawns holds a copy of the
+/// lock descriptor until its exec. The duplicate here stands for that copy.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "the inherited copy is a Unix descriptor that shares the flock"
+)]
+fn a_dropped_transaction_releases_the_lock_that_a_duplicate_descriptor_shares() {
+    let fixture = transaction_fixture();
+    let transaction = acquire(&fixture.spec_root).unwrap();
+    let duplicate = transaction._lock.0.try_clone().unwrap();
+
+    drop(transaction);
+
+    drop(acquire(&fixture.spec_root).unwrap());
+    drop(duplicate);
+}
+
 #[test]
 fn prepared_recovery_discards_staged_state() {
     let fixture = fail_at_phase(Phase::Prepared);

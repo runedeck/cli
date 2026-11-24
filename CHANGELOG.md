@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 [0.2.0]: https://github.com/runedeck/rune/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/runedeck/rune/releases/tag/v0.1.0
 
+## [Unreleased]
+
+### Fixed
+
+- Release the spec archive lock when a transaction ends. A child process of another thread could hold the lock, so an immediate retry failed.
+
 ## [0.7.1] - 2026-11-19
 
 ### Fixed
