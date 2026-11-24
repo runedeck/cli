@@ -7,9 +7,9 @@ tags:
     - cli
     - hooks
     - entire
-status: accepted
+status: superseded
 created: 2026-06-23
-updated: 2026-06-23
+updated: 2026-11-23
 author: "@N4M3Z"
 project: rune-cli
 related:
@@ -23,6 +23,12 @@ upstream:
 ---
 
 # Entire Git-Hook Coexistence
+
+> **Superseded on 2026-11-23.** We retired Entire on every machine and project. Agent sessions, not git commits, are
+> the artifact worth keeping, and the agentsview session archive keeps them. Commit-anchored checkpoints did not
+> survive jj rewrites and squash merges. The `rune init` template and this repository no longer include Entire hooks,
+> and `pre-push` runs the pre-push validation check directly again. The rest of this record describes the arrangement
+> as it was.
 
 ## Context and Problem Statement
 
