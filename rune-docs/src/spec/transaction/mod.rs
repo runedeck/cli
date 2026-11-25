@@ -157,9 +157,22 @@ pub(crate) struct Transaction<I: TransactionIo = SystemIo> {
     root: PathBuf,
     state_directory: PathBuf,
     journal_path: PathBuf,
-    _lock: File,
+    _lock: HeldLock,
     io: I,
     recovery: Option<RecoveryOutcome>,
+}
+
+/// The held `LOCK_FILE`, unlocked before its descriptor closes. The lock
+/// belongs to the open file description, and a child process that any
+/// thread spawns holds a copy of the descriptor until its exec. A close
+/// alone leaves the lock held until that child execs or exits.
+struct HeldLock(File);
+
+impl Drop for HeldLock {
+    fn drop(&mut self) {
+        // The close that follows still releases the lock if this fails.
+        let _ = self.0.unlock();
+    }
 }
 
 /// The failure-injection seam, and the deliberate exception to RUST-0008
@@ -243,6 +256,7 @@ impl<I: TransactionIo> Transaction<I> {
             };
             Error::new(ErrorKind::Io, message)
         })?;
+        let lock = HeldLock(lock);
         let state_directory = root.join(TRANSACTION_DIRECTORY);
         reject_symlink(&state_directory)?;
         let journal_path = state_directory.join(JOURNAL_FILE);
@@ -627,6 +641,7 @@ pub(super) fn health_findings(
             fs::TryLockError::Error(error) => Err(io_error("lock", &lock_path, error)),
         };
     }
+    let lock = lock.map(HeldLock);
 
     let state_directory = root.join(TRANSACTION_DIRECTORY);
     if !state_directory.exists() {
@@ -656,7 +671,7 @@ fn incomplete_transaction_findings(
     root: PathBuf,
     state_directory: PathBuf,
     journal_path: PathBuf,
-    lock: File,
+    lock: HeldLock,
 ) -> Result<Vec<TransactionHealthFinding>, Error> {
     let content = fs::read_to_string(&journal_path)
         .map_err(|error| io_error("read", &journal_path, error))?;
